@@ -1,4 +1,4 @@
-from __future__ import print_function
+
 
 import argparse
 import collections
@@ -18,7 +18,8 @@ debug_graph = False
 verbose_merging = False
 
 
-def normalize_edge((id_a, id_b)):
+def normalize_edge(id_pair):
+  (id_a, id_b) = id_pair
   if id_a > id_b:
     id_a, id_b = id_b, id_a
   return id_a, id_b
@@ -41,7 +42,8 @@ class GreedyMulticut(object):
     self.num_valid_edges = 0
     self._initialized = False
 
-  def add_edge(self, (id_a, id_b), edge):
+  def add_edge(self, id_pair, edge):
+    (id_a, id_b) = id_pair
     id_a, id_b = normalize_edge((id_a, id_b))
     self.regions.setdefault(id_a, set()).add(id_b)
     self.regions.setdefault(id_b, set()).add(id_a)
@@ -91,7 +93,8 @@ class GreedyMulticut(object):
         num_valid_edges += 1
     assert num_valid_edges == self.num_valid_edges
 
-  def merge(self, (id_a, id_b)):
+  def merge(self, id_pair):
+    (id_a, id_b) = id_pair
     self._initialize_heap()
     id_a, id_b = normalize_edge((id_a, id_b))
     if (id_a, id_b) not in self.edge_map:
