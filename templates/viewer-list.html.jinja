@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>Viewer List</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+
+  <!-- TODO: Use a local copy of bootstrap css instead of downloading from a CDN -->
+  <link rel="stylesheet" href="http://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/css/bootstrap.min.css">
+
+</head>
+<body>
+
+<div class="container">
+
+  {% if err_msg %}
+    <h4 style="background-color:red;">{{err_msg}}<h4>
+  {% endif %}
+
+  <h1>Split Viewer List</h1>
+  <h3>{{ hostname }}</h3>
+
+  <form action="create-split-viewer" method="post">
+    Body ID:<input type="text", name="body_id">
+    <input type="submit" value="Create Split Viewer">
+  </form>
+
+  <table class="table table-striped">
+    <thead>
+      <tr>
+        {% for column_name in column_names %}
+          <th>{{column_name}}</th>
+        {% endfor %}
+      </tr>
+    </thead>
+
+    <tbody>
+      {% for viewer_tuple in viewer_tuples %}
+        <tr>
+          <td class="text-nowrap"><a href="{{viewer_tuple[1]}}">{{ viewer_tuple[0] }}</a></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+</body>
+</html>

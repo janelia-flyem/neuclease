@@ -1,5 +1,4 @@
-
-
+import sys
 import argparse
 import collections
 import copy
@@ -553,7 +552,7 @@ def run_batch(args, graph):
     print('<p><a href="%s">%s</a></p>' % (neuroglancer.to_url(state), path))
 
 
-def run_interactive(args, graph):
+def run_interactive(args, graph, agglo_id=None):
   # Make splitter a global variable so that it is accessible from the
   # interactive `python -i` shell.
   global splitter
@@ -562,17 +561,20 @@ def run_interactive(args, graph):
       url='https://neuroglancer-demo.appspot.com/python')
   neuroglancer.set_server_bind_address('0.0.0.0')
 
+  if not agglo_id:
+      agglo_id = args.agglo_id
+
   split_seeds = None
   if args.split_seeds is not None:
     split_seeds = load_split_seeds(args.split_seeds)
 
   splitter = InteractiveSplitter(
-        graph, agglo_id=args.agglo_id, image_url=args.image_url,
+        graph, agglo_id=agglo_id, image_url=args.image_url,
         split_seeds=split_seeds, segmentation_url=args.segmentation_url)
   print(splitter.viewer)
+  return splitter
 
-
-if __name__ == '__main__':
+def parse_args(argv=sys.argv[1:]):
   ap = argparse.ArgumentParser()
 
   ap.add_argument('-v', '--verbose', action='store_true',
@@ -593,10 +595,11 @@ if __name__ == '__main__':
   batch_ap = sub_aps.add_parser('batch', help='Split based on pre-specified seed files', parents=[common_ap])
 
   interactive_ap.add_argument('--agglo-id', type=int,
-                              required=True,
+                              default=0,
                               help='Agglomerated component id to split')
   interactive_ap.add_argument('--split-seeds',
                               help='Path to JSON file specifying split seeds')
+  interactive_ap.add_argument('--port', default=0)
   interactive_ap.set_defaults(func=run_interactive)
 
   batch_ap.add_argument('--split-seeds',
@@ -606,15 +609,23 @@ if __name__ == '__main__':
                         help='Agglomerated component id to split')
   batch_ap.set_defaults(func=run_batch)
 
-  args = ap.parse_args()
+  args = ap.parse_args(argv)
+  return args
 
-  graph = AgglomerationGraph(
-      sqlite3.connect(args.graph_db, check_same_thread=False))
+def main():
+  args = parse_args()
+  graph = AgglomerationGraph(sqlite3.connect(args.graph_db, check_same_thread=False))
 
   if args.verbose:
     logging.basicConfig(level=logging.INFO)
 
-  args.func(args, graph)
+  if args.agglo_id:
+    args.func(args, graph)
+
+  return (args, graph)
+
+if __name__ == '__main__':
+    main()
 
 # python agglomeration_split_tool.py batch --graph ~/merge_graphs/274750196357:janelia-flyem-cx-flattened-tabs:sec24_seg_v2a:ffn_agglo_pass1_cpt5663627_medt160_with_celis_cx2-2048_r10_mask200_0.sqlite --image-url brainmaps://274750196357:janelia-flyem-cx-flattened-tabs:sec24_image --segmentation-url brainmaps://274750196357:janelia-flyem-cx-flattened-tabs:sec24_seg_v2a --split-seeds ~/tmp/celis_seeds_5e40_converted/*.json --html
 # python split_interactive.py --graph-db ~/merge_log_sec24.sqlite --image-url brainmaps://274750196357:janelia-flyem-cx-flattened-tabs:sec24_image --segmentation-url brainmaps://274750196357:janelia-flyem-cx-flattened-tabs:sec24_seg_v2a --agglo-id 95668070
