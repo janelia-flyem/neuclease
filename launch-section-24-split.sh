@@ -41,8 +41,8 @@ fi
 
 python viewer_list_server.py \
     interactive \
-    --graph exported_merge_graphs/${MERGE_GRAPH_DB} \
+    --graph-db exported_merge_graphs/${MERGE_GRAPH_DB} \
     --image-url brainmaps://${GRAYSCALE_VOLUME_ID} \
-    --segmentation-url brainmaps://${BASE_SEGMENTATION_VOLUME_ID}
+    --segmentation-url brainmaps://${BASE_SEGMENTATION_VOLUME_ID} \
 ##
 

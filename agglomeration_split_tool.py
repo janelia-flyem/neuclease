@@ -552,7 +552,7 @@ def run_batch(args, graph):
     print('<p><a href="%s">%s</a></p>' % (neuroglancer.to_url(state), path))
 
 
-def run_interactive(args, graph, agglo_id=None):
+def run_interactive(args, graph, agglo_id=None, split_seeds=None):
   # Make splitter a global variable so that it is accessible from the
   # interactive `python -i` shell.
   global splitter
@@ -564,9 +564,10 @@ def run_interactive(args, graph, agglo_id=None):
   if not agglo_id:
       agglo_id = args.agglo_id
 
-  split_seeds = None
-  if args.split_seeds is not None:
-    split_seeds = load_split_seeds(args.split_seeds)
+  split_seeds = split_seeds or args.split_seeds
+
+  if split_seeds:
+    split_seeds = load_split_seeds(split_seeds)
 
   splitter = InteractiveSplitter(
         graph, agglo_id=agglo_id, image_url=args.image_url,
