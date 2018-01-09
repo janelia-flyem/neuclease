@@ -1,3 +1,11 @@
+"""
+A tool for fixing undersegmentations via cleaving objects into groups of
+supervoxels based on a greedy multicut solver and using Neuroglancer for
+visualization and seeding.
+
+Author: Jeremy Maitin-Shepard (https://github.com/jbms)
+"""
+
 import sys
 import argparse
 import collections

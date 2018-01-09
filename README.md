@@ -1,4 +1,6 @@
-This is a tiny server to wrap Jeremy Maitin-Shepard's greedy multicut solver for cleaving undersegmentations along supervoxel boundaries.
+This is a tiny server to wrap [Jeremy Maitin-Shepard][1]'s greedy multicut solver for cleaving undersegmentations along supervoxel boundaries.
+
+[1]: https://github.com/jbms
 
 Prerequisites:
 
