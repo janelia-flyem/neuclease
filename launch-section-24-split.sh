@@ -39,10 +39,14 @@ fi
 #    --segmentation-url brainmaps://${BASE_SEGMENTATION_VOLUME_ID} \
 ##
 
-python viewer_list_server.py \
-    interactive \
-    --graph-db exported_merge_graphs/${MERGE_GRAPH_DB} \
-    --image-url brainmaps://${GRAYSCALE_VOLUME_ID} \
-    --segmentation-url brainmaps://${BASE_SEGMENTATION_VOLUME_ID} \
-##
+CMD="python viewer_list_server.py"
+CMD="$CMD interactive"
+CMD="$CMD --graph-db=exported_merge_graphs/${MERGE_GRAPH_DB}"
+CMD="$CMD --image-url=brainmaps://${GRAYSCALE_VOLUME_ID}"
+CMD="$CMD --segmentation-url=brainmaps://${BASE_SEGMENTATION_VOLUME_ID}"
 
+echo "----------------"
+echo $CMD
+echo "----------------"
+
+$CMD

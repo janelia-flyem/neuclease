@@ -163,11 +163,18 @@ def mkdir_p(path):
         else:
             raise
 
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     import argparse
     import sys
     print(sys.argv)
+    
+    # DEBUG
+#     if len(sys.argv) == 1:
+#         sys.argv.extend( "interactive"\
+#                          " --graph-db=exported_merge_graphs/274750196357:janelia-flyem-cx-flattened-tabs:sec24_seg_v2a:ffn_agglo_pass1_cpt5663627_medt160_with_celis_cx2-2048_r10_mask200_0.sqlite"\
+#                          " --image-url=brainmaps://274750196357:janelia-flyem-cx-flattened-tabs:sec24_image"\
+#                          " --segmentation-url=brainmaps://274750196357:janelia-flyem-cx-flattened-tabs:sec24_seg_v2a"\
+#                          .split() )
 
     mkdir_p(UPLOAD_FOLDER)
 

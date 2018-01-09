@@ -170,6 +170,85 @@ def load_edges(path):
 
 
 def load_split_seeds(path):
+  """
+    Json example:
+    
+    [
+        {
+            "label": 1,
+            "supervoxels": [
+                {
+                    "count": 1,
+                    "position": [
+                        12386,
+                        2288,
+                        17498
+                    ],
+                    "supervoxel_id": 107017171
+                }
+            ]
+        },
+        {
+            "label": 2,
+            "supervoxels": [
+                {
+                    "count": 1,
+                    "position": [
+                        12396,
+                        2339,
+                        17597
+                    ],
+                    "supervoxel_id": 116271630
+                },
+                {
+                    "count": 1,
+                    "position": [
+                        12382,
+                        2418,
+                        17682
+                    ],
+                    "supervoxel_id": 116271579
+                }
+            ]
+        }
+    ]
+
+  Example return value:
+  
+    { 1 : [
+            {
+                "count": 1,
+                "position": [
+                    12386,
+                    2288,
+                    17498
+                ],
+                "supervoxel_id": 107017171
+            }
+          ],
+
+      2: [
+            {
+                "count": 1,
+                "position": [
+                    12396,
+                    2339,
+                    17597
+                ],
+                "supervoxel_id": 116271630
+            },
+            {
+                "count": 1,
+                "position": [
+                    12382,
+                    2418,
+                    17682
+                ],
+                "supervoxel_id": 116271579
+            }
+        ]
+    }
+  """
   with open(path, 'r') as f:
     raw_seeds = json.loads(f.read())
   seeds = collections.OrderedDict()
@@ -575,7 +654,10 @@ def run_interactive(args, graph, agglo_id=None, split_seeds=None):
   print(splitter.viewer)
   return splitter
 
-def parse_args(argv=sys.argv[1:]):
+def parse_args(argv=None):
+  if argv is None:
+      argv = sys.argv[1:]
+    
   ap = argparse.ArgumentParser()
 
   ap.add_argument('-v', '--verbose', action='store_true',
@@ -610,6 +692,7 @@ def parse_args(argv=sys.argv[1:]):
                         help='Agglomerated component id to split')
   batch_ap.set_defaults(func=run_batch)
 
+  print(argv)
   args = ap.parse_args(argv)
   return args
 
