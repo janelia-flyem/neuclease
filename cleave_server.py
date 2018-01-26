@@ -12,6 +12,10 @@ HTTP_PORT = 5555
 
 app = Flask(__name__)
 
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+logger.addHandler(logging.StreamHandler(sys.stdout))
+
 @app.route('/')
 def index():
     return redirect(url_for('show_debug_info'))
@@ -37,6 +41,8 @@ def compute_cleave():
     data = request.json
     if not data:
         abort(Response('Request is missing a JSON body', status=400))
+
+    logger.info("Received cleave request: {}".format(data))
 
     body_id = data["body-id"]
     seeds = { int(k): v for k,v in data["seeds"].items() }
@@ -76,6 +82,7 @@ def compute_cleave():
         label_equivalences = cur_eqs.members(first_member)
         cleave_results["assignments"][str(label)] = list(label_equivalences)
 
+    logger.info("Sending cleave results: {}".format(cleave_results))
     return jsonify(cleave_results)
 
 if __name__ == '__main__':
