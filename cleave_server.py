@@ -8,8 +8,6 @@ from flask import Flask, request, abort, redirect, url_for, jsonify, Response
 
 from agglomeration_split_tool import AgglomerationGraph, do_split
 
-HTTP_PORT = 5555
-
 app = Flask(__name__)
 
 logger = logging.getLogger(__name__)
@@ -103,11 +101,12 @@ if __name__ == '__main__':
     signal.signal(signal.SIGTERM, lambda signum, stack_frame: exit(1))
 
     parser = argparse.ArgumentParser()
+    parser.add_argument('-p', '--port', default=5555, type=int)
     parser.add_argument('--graph-db', required=True)
     args = parser.parse_args()
 
     graph_name = os.path.split(args.graph_db)[1].split(':')[-1]
     GRAPH = AgglomerationGraph(sqlite3.connect(args.graph_db, check_same_thread=False))
     
-    print("Starting server on 0.0.0.0:{}".format(HTTP_PORT))
-    app.run(host='0.0.0.0', port=HTTP_PORT, debug=True)
+    print("Starting server on 0.0.0.0:{}".format(args.port))
+    app.run(host='0.0.0.0', port=args.port, debug=True)
