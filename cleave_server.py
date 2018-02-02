@@ -10,9 +10,12 @@ from agglomeration_split_tool import AgglomerationGraph, do_split
 
 app = Flask(__name__)
 
+formatter = logging.Formatter('%(levelname)s [%(asctime)s] %(message)s')
+handler = logging.StreamHandler(sys.stdout)
+handler.setFormatter(formatter)
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
-logger.addHandler(logging.StreamHandler(sys.stdout))
+logger.addHandler(handler)
 
 @app.route('/')
 def index():
