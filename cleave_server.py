@@ -8,14 +8,10 @@ from flask import Flask, request, abort, redirect, url_for, jsonify, Response
 
 from agglomeration_split_tool import AgglomerationGraph, do_split
 
-app = Flask(__name__)
-
-formatter = logging.Formatter('%(levelname)s [%(asctime)s] %(message)s')
-handler = logging.StreamHandler(sys.stdout)
-handler.setFormatter(formatter)
+root_logger = logging.getLogger()
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
-logger.addHandler(handler)
+
+app = Flask(__name__)
 
 @app.route('/')
 def index():
@@ -110,6 +106,17 @@ if __name__ == '__main__':
 
     graph_name = os.path.split(args.graph_db)[1].split(':')[-1]
     GRAPH = AgglomerationGraph(sqlite3.connect(args.graph_db, check_same_thread=False))
+    
+    # Clear any handlers that were automatically added (by flask? by neuroglancer?)
+    root_logger.handlers = []
+    logger.handlers = []
+
+    # Configure logging
+    formatter = logging.Formatter('%(levelname)s [%(asctime)s] %(message)s')
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(formatter)
+    logger.setLevel(logging.INFO)
+    logger.addHandler(handler)
     
     print("Starting server on 0.0.0.0:{}".format(args.port))
     app.run(host='0.0.0.0', port=args.port, debug=True)
