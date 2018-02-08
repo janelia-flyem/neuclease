@@ -57,6 +57,7 @@ def compute_cleave():
         for sv in supervoxel_ids:
             agglo_tool_split_seeds.setdefault(int(label), []).append({ "supervoxel_id": sv })
     
+    # Note: The GRAPH object is thread-safe (for reads, at least)
     split_result = do_split(GRAPH, agglo_tool_split_seeds, body_id)
 
     agglo_id = split_result['agglo_id']
@@ -107,7 +108,7 @@ if __name__ == '__main__':
     graph_name = os.path.split(args.graph_db)[1].split(':')[-1]
     GRAPH = AgglomerationGraph(sqlite3.connect(args.graph_db, check_same_thread=False))
     
-    # Clear any handlers that were automatically added (by flask? by neuroglancer?)
+    # Clear any handlers that were automatically added (by werkzeug)
     root_logger.handlers = []
     logger.handlers = []
 
@@ -119,4 +120,4 @@ if __name__ == '__main__':
     logger.addHandler(handler)
     
     print("Starting server on 0.0.0.0:{}".format(args.port))
-    app.run(host='0.0.0.0', port=args.port, debug=True)
+    app.run(host='0.0.0.0', port=args.port, debug=True, threaded=True)
