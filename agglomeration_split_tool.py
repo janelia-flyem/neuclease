@@ -361,12 +361,13 @@ def do_split(graph, split_seeds, agglo_id=None):
                    agglo_id)
       logging.info('agglo_id_counts = %r', agglo_id_counts)
 
+  logging.info('Building graph for body {}'.format(agglo_id))
   graph = build_graph(graph.get_agglo_edges(agglo_id))
   if debug_graph:
     graph.check_consistency()
 
   cur_eqs = neuroglancer.EquivalenceMap()
-  logging.info('Agglomerating')
+  logging.info('Agglomerating body {}'.format(agglo_id))
   threshold = float('inf')
   while True:
     entry = graph.get_next_edge()
@@ -401,6 +402,7 @@ def do_split(graph, split_seeds, agglo_id=None):
     if new_seeds:
       supervoxel_map[new_id] = new_seeds
 
+  logging.info('DONE agglomerating body {}'.format(agglo_id))
   return dict(agglo_id=agglo_id, cur_eqs=cur_eqs, supervoxel_map=supervoxel_map)
 
 

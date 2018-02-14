@@ -117,7 +117,10 @@ if __name__ == '__main__':
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(formatter)
     logger.setLevel(logging.INFO)
-    logger.addHandler(handler)
+
+    rootLogger = logging.getLogger()
+    rootLogger.setLevel(logging.INFO)
+    rootLogger.addHandler(handler)
     
     print("Starting server on 0.0.0.0:{}".format(args.port))
     app.run(host='0.0.0.0', port=args.port, debug=True, threaded=True)
