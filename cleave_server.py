@@ -76,8 +76,10 @@ def compute_cleave():
                        "assignments": {} }
 
     for label in seeds.keys():
-        first_member = seeds[label][0]
-        label_equivalences = cur_eqs.members(first_member)
+        label_equivalences = set()
+        for seed in seeds[label]:
+            if seed not in label_equivalences:
+                label_equivalences.update(cur_eqs.members(seed))
         cleave_results["assignments"][str(label)] = list(label_equivalences)
 
     logger.info("Sending cleave results: {}".format(cleave_results))
