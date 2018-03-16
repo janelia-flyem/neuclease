@@ -74,30 +74,38 @@ def compute_cleave():
     assert agglo_id == body_id
 
     cleave_results = { "body-id": body_id,
-                       "assignments": {} }
+                       "assignments": {},
+                       "warnings": [] }
 
+    disconnected_seeds = set()
     for label in seeds.keys():
-#         first_member = seeds[label][0]
-#         label_equivalences = cur_eqs.members(first_member)
-        label_equivalences = set()
-        for seed in seeds[label]:
+        first_member = seeds[label][0]
+        label_equivalences = set(cur_eqs.members(first_member))
+        for seed in seeds[label][1:]:
+            disconnected_seeds.add(label)
             if seed not in label_equivalences:
                 label_equivalences.update(cur_eqs.members(seed))
         cleave_results["assignments"][str(label)] = list(label_equivalences)
 
-    CHECK_VALID = True
-    if CHECK_VALID:
-        logger.info("Checking cleave results consistency for body {}".format(body_id))
-        all_body_edges = GRAPH.get_agglo_edges(body_id)
+    if disconnected_seeds:
+        msg = "Cleave result for body {} contains non-contiguous objects for seeds: {}".format(body_id, list(disconnected_seeds))
+        logger.warning(msg)
+        cleave_results["warnings"].append(msg)
+
+    CHECK_MISSING_SUPERVOXELS = True
+    all_body_edges = None
+
+    if CHECK_MISSING_SUPERVOXELS:
+        logger.info("Checking for missing supervoxels in cleave results for body {}".format(body_id))
+        if all_body_edges is None:
+            all_body_edges = GRAPH.get_agglo_edges(body_id)
         all_body_ids = set(chain(*(edge.segment_ids for edge in all_body_edges)))
         assigned_ids = set(chain(*cleave_results["assignments"].values()))
         if set(all_body_ids) != assigned_ids:
-            logger.warning('bad cleave had {} ids in total.'.format(len(assigned_ids)))
-            msg = "Agglomeration is not complete/connected for body {body_id}, using seeds {seeds}".format(body_id=body_id, seeds=data["seeds"])
+            msg = "Cleave result is not complete for body {body_id}, using seeds {seeds}".format(body_id=body_id, seeds=data["seeds"])
             logger.warning(msg)
-            cleave_results["warning"] = msg
+            cleave_results["warnings"].append(msg)
 
-    #logger.info("Sending cleave results: {}".format(cleave_results))
     logger.info("Sending cleave results for body: {}".format(cleave_results['body-id']))
     return jsonify(cleave_results)
 
