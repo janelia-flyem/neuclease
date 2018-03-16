@@ -38,7 +38,7 @@ In [1]: cleave_request_body = {
    ...:   }
    ...: }
 
-In [2]: r = requests.post('http://http://bergs-ws1.int.janelia.org:5555/compute-cleave', json=cleave_request_body)
+In [2]: r = requests.post('http://bergs-ws1.int.janelia.org:5556/compute-cleave', json=cleave_request_body)
 
 In [3]: print(r.content.decode())
 {
