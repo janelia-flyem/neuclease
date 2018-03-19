@@ -82,8 +82,8 @@ def compute_cleave():
         first_member = seeds[label][0]
         label_equivalences = set(cur_eqs.members(first_member))
         for seed in seeds[label][1:]:
-            disconnected_seeds.add(label)
             if seed not in label_equivalences:
+                disconnected_seeds.add(label)
                 label_equivalences.update(cur_eqs.members(seed))
         cleave_results["assignments"][str(label)] = list(label_equivalences)
 
