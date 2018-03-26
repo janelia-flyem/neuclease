@@ -72,6 +72,9 @@ def load_edges2(path, col_format):
     df['y'] = df['y'].astype(np.int64)
     df['z'] = df['z'].astype(np.int64)
 
+    # Remove all self-edges (self loops)
+    df = df.query('segment_a != segment_b')
+
     return df
 
 
