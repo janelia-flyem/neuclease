@@ -88,7 +88,7 @@ def compute_cleave():
         cleave_results["assignments"][str(label)] = list(label_equivalences)
 
     if disconnected_seeds:
-        msg = "Cleave result for body {} contains non-contiguous objects for seeds: {}".format(body_id, list(disconnected_seeds))
+        msg = "Cleave result for body {} contains non-contiguous objects for seeds: {}".format(body_id, sorted(list(disconnected_seeds)))
         logger.warning(msg)
         cleave_results["warnings"].append(msg)
 
@@ -102,7 +102,7 @@ def compute_cleave():
         all_body_ids = set(chain(*(edge.segment_ids for edge in all_body_edges)))
         assigned_ids = set(chain(*cleave_results["assignments"].values()))
         if set(all_body_ids) != assigned_ids:
-            msg = "Cleave result is not complete for body {body_id}, using seeds {seeds}".format(body_id=body_id, seeds=data["seeds"])
+            msg = "Cleave result is not complete for body {body_id}, using seeds {seeds}".format(body_id=body_id, seeds=sorted(map(int, data["seeds"])))
             logger.warning(msg)
             cleave_results["warnings"].append(msg)
 
