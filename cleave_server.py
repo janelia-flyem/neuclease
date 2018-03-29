@@ -6,6 +6,7 @@ import signal
 import sqlite3
 from itertools import chain
 from flask import Flask, request, abort, redirect, url_for, jsonify, Response
+import httplib
 
 from agglomeration_split_tool import AgglomerationGraph, do_split
 
@@ -50,6 +51,18 @@ def compute_cleave():
         if len(seeds[label]) == 0:
             del seeds[label]
 
+    cleave_results = { "body-id": body_id,
+                       "assignments": {},
+                       "warnings": [] }
+
+
+    if not data["seeds"]:
+        msg = "Request contained no seeds!"
+        logger.error(msg)
+        logger.info("Responding with error PRECONDITION_FAILED.")
+        cleave_results.setdefault("errors", []).append(msg)
+        return jsonify(cleave_results), httplib.PRECONDITION_FAILED # code 412
+
     # Structure seed data for do_split()
     # (These dicts would have more members when using Neuroglancer viewers,
     #  but for do_split() we only need to provide the supervoxel_id.)
@@ -72,10 +85,6 @@ def compute_cleave():
     # - cur_eq is a neuroglancer.equivalence_map.EquivalenceMap
     
     assert agglo_id == body_id
-
-    cleave_results = { "body-id": body_id,
-                       "assignments": {},
-                       "warnings": [] }
 
     disconnected_seeds = set()
     for label in seeds.keys():
@@ -102,9 +111,11 @@ def compute_cleave():
         all_body_ids = set(chain(*(edge.segment_ids for edge in all_body_edges)))
         assigned_ids = set(chain(*cleave_results["assignments"].values()))
         if set(all_body_ids) != assigned_ids:
-            msg = "Cleave result is not complete for body {body_id}, using seeds {seeds}".format(body_id=body_id, seeds=sorted(map(int, data["seeds"])))
-            logger.warning(msg)
-            cleave_results["warnings"].append(msg)
+            msg = "Cleave result is not complete for body {body_id}, using seeds {seeds}.".format(body_id=body_id, seeds=sorted(map(int, data["seeds"])))
+            logger.error(msg)
+            cleave_results.setdefault("errors", []).append(msg)
+            logger.info("Responding with error PRECONDITION_FAILED.")
+            return ( jsonify(cleave_results), httplib.PRECONDITION_FAILED )
 
     logger.info("Sending cleave results for body: {}".format(cleave_results['body-id']))
     return jsonify(cleave_results)
