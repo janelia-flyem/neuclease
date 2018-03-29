@@ -5,23 +5,47 @@ import logging
 import signal
 import sqlite3
 from itertools import chain
-from flask import Flask, request, abort, redirect, url_for, jsonify, Response
+from flask import Flask, request, abort, redirect, url_for, jsonify, Response, make_response
 import httplib
 
 from agglomeration_split_tool import AgglomerationGraph, do_split
 
 root_logger = logging.getLogger()
 logger = logging.getLogger(__name__)
+LOGFILE = None # Will be set in __main__, below
 
 app = Flask(__name__)
 
 @app.route('/')
 def index():
-    return redirect(url_for('show_debug_info'))
+    return redirect(url_for('show_log', page='0'))
 
-@app.route('/debug')
-def show_debug_info():
-    return "TODO: Show cleaving log data here, for debugging purposes."
+@app.route('/log')
+def show_log():
+    page = request.args.get('page')
+    if page and page != '0':
+        path = LOGFILE + '.' + page
+    else:
+        path = LOGFILE
+
+    path = os.path.abspath(path)
+
+    if not os.path.exists(path):
+        msg = "Error 404: Could not find log page " + page + ".\n"
+        msg += "File does not exist:\n"
+        msg += path
+        response = make_response(msg)
+        response.headers['Content-Type'] = 'text/plain'
+        return response, 404
+
+    with open(path, 'r') as f:
+        contents = f.read()
+    
+    response = make_response(contents)
+    response.headers['Content-Type'] = 'text/plain'
+    return response
+    return contents
+    
 
 @app.route('/compute-cleave', methods=['POST'])
 def compute_cleave():
@@ -150,8 +174,9 @@ if __name__ == '__main__':
     logger.handlers = []
 
     # Configure logging
+    LOGFILE = os.path.splitext(args.graph_db)[0] + '.log'
     formatter = logging.Formatter('%(levelname)s [%(asctime)s] %(message)s')
-    handler = logging.StreamHandler(sys.stdout)
+    handler = logging.handlers.RotatingFileHandler(LOGFILE, maxBytes=int(10e6), backupCount=10)
     handler.setFormatter(formatter)
     logger.setLevel(logging.INFO)
 
