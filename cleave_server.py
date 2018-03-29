@@ -181,7 +181,7 @@ if __name__ == '__main__':
             os.makedirs(args.log_dir)
         db_name = os.path.basename(args.graph_db)
         db_name = db_name.replace(':', '_') # For OSX, which treats ':' like '/'
-        LOGFILE = os.path.join(args.log_dir, os.path.splitext(db_name)[0])
+        LOGFILE = os.path.join(args.log_dir, os.path.splitext(db_name)[0]) + '.log'
     else:
         LOGFILE = os.path.splitext(args.graph_db)[0] + '.log'
     formatter = logging.Formatter('%(levelname)s [%(asctime)s] %(message)s')
