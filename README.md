@@ -20,8 +20,10 @@ python cleave_server.py --port 5556 --graph-db /magnetic/cleave-server-files/exp
 Or use `nohup`:
 
 ```
-nohup python cleave_server.py --port 5556 --graph-db /magnetic/cleave-server-files/exported_merge_graphs/sec24_seg_v2a/ffn_agglo_pass1_cpt5663627_medt160_with_celis_cx2-2048_r10_mask_only_celis200_0.sqlite &
+nohup python cleave_server.py --port 5556 --graph-db /magnetic/cleave-server-files/exported_merge_graphs/sec24_seg_v2a/ffn_agglo_pass1_cpt5663627_medt160_with_celis_cx2-2048_r10_mask_only_celis200_0.sqlite --log-dir=logs &
 ```
+
+Logs are placed in the same directory as the `graph-db`, unless you specify a `--log-dir`.
 
 When using  `--graph-db=foo.sqlite`, the server will log to `foo.log`, with rollover files in `foo.log.1`, etc.
 

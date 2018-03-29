@@ -151,7 +151,8 @@ if __name__ == '__main__':
 #     # Careful:
 #     # The flask debug server's "reloader" feature may cause this section to be executed more than once!
 #     if len(sys.argv) == 1:
-#         sys.argv += ["--graph-db", "exported_merge_graphs/274750196357:janelia-flyem-cx-flattened-tabs:sec24_seg_v2a:ffn_agglo_pass1_cpt5663627_medt160_with_celis_cx2-2048_r10_mask200_0.sqlite"]
+#         sys.argv += ["--graph-db", "exported_merge_graphs/274750196357:janelia-flyem-cx-flattened-tabs:sec24_seg_v2a:ffn_agglo_pass1_cpt5663627_medt160_with_celis_cx2-2048_r10_mask200_0.sqlite",
+#                      "--log-dir", "logs"]
 
     print(sys.argv)
 
@@ -164,6 +165,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('-p', '--port', default=5555, type=int)
     parser.add_argument('--graph-db', required=True)
+    parser.add_argument('--log-dir', required=False)
     args = parser.parse_args()
 
     graph_name = os.path.split(args.graph_db)[1].split(':')[-1]
@@ -174,7 +176,14 @@ if __name__ == '__main__':
     logger.handlers = []
 
     # Configure logging
-    LOGFILE = os.path.splitext(args.graph_db)[0] + '.log'
+    if args.log_dir:
+        if not os.path.exists(args.log_dir):
+            os.makedirs(args.log_dir)
+        db_name = os.path.basename(args.graph_db)
+        db_name = db_name.replace(':', '_') # For OSX, which treats ':' like '/'
+        LOGFILE = os.path.join(args.log_dir, os.path.splitext(db_name)[0])
+    else:
+        LOGFILE = os.path.splitext(args.graph_db)[0] + '.log'
     formatter = logging.Formatter('%(levelname)s [%(asctime)s] %(message)s')
     handler = logging.handlers.RotatingFileHandler(LOGFILE, maxBytes=int(10e6), backupCount=10)
     handler.setFormatter(formatter)
