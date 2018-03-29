@@ -20,8 +20,7 @@ python cleave_server.py --port 5556 --graph-db /magnetic/cleave-server-files/exp
 Or use `nohup`:
 
 ```
-PORT=5556
-nohup python cleave_server.py --port ${PORT} --graph-db /magnetic/cleave-server-files/exported_merge_graphs/sec24_seg_v2a/ffn_agglo_pass1_cpt5663627_medt160_with_celis_cx2-2048_r10_mask_only_celis200_0.sqlite > /magnetic/cleave-server-files/${PORT}.log &
+nohup python cleave_server.py --port 5556 --graph-db /magnetic/cleave-server-files/exported_merge_graphs/sec24_seg_v2a/ffn_agglo_pass1_cpt5663627_medt160_with_celis_cx2-2048_r10_mask_only_celis200_0.sqlite >> /magnetic/cleave-server-files/logs/ffn_agglo_pass1_cpt5663627_medt160_with_celis_cx2-2048_r10_mask_only_celis200_0.log &
 ```
 
 Request a cleave:
