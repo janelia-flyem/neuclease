@@ -4,17 +4,42 @@ import os
 import logging
 import signal
 import sqlite3
-from itertools import chain
-from flask import Flask, request, abort, redirect, url_for, jsonify, Response, make_response
 import httplib
+import multiprocessing
+from itertools import chain
+
+from flask import Flask, request, abort, redirect, url_for, jsonify, Response, make_response
 
 from agglomeration_split_tool import AgglomerationGraph, do_split
 
+# Globals
+pool = None # Must be instantiated after this module definition, at the bottom of main().
 root_logger = logging.getLogger()
-logger = logging.getLogger(__name__)
 LOGFILE = None # Will be set in __main__, below
-
 app = Flask(__name__)
+
+class ProtectedLogger:
+    """
+    A simple wrapper around logging.Logger that protects the log() method
+    (and therefore also protects info(), warning(), etc.) with a multiprocessing.Lock,
+    to avoid intermingled log messages when writing from multiple processes.
+    """
+    def __init__(self, logger):
+        self.logger = logger
+        self.lock = multiprocessing.Lock()
+    
+    def __getattr__(self, name):
+        if name == 'log':
+            return object.__getattr__(self, name)
+        else:
+            return getattr(self.logger, name)
+
+    def log(self, *args, **kwargs):
+        with self.lock:
+            return self.logger.log(*args, **kwargs)
+
+# Global
+logger = ProtectedLogger( logging.getLogger(__name__) )
 
 @app.route('/')
 def index():
@@ -66,6 +91,17 @@ def compute_cleave():
         abort(Response('Request is missing a JSON body', status=400))
 
     logger.info("Received cleave request: {}".format(data))
+    cleave_results, status_code = pool.apply(_run_cleave, [data])
+    return jsonify(cleave_results), status_code
+
+def _run_cleave(data):
+    """
+    Helper function that actually performs the cleave,
+    and can be run in a separate process.
+    Must not use any flask functions.
+    """
+    global logger
+    global GRAPH
 
     body_id = data["body-id"]
     seeds = { int(k): v for k,v in data["seeds"].items() }
@@ -79,13 +115,12 @@ def compute_cleave():
                        "assignments": {},
                        "warnings": [] }
 
-
     if not data["seeds"]:
         msg = "Request contained no seeds!"
         logger.error(msg)
         logger.info("Responding with error PRECONDITION_FAILED.")
         cleave_results.setdefault("errors", []).append(msg)
-        return jsonify(cleave_results), httplib.PRECONDITION_FAILED # code 412
+        return cleave_results, httplib.PRECONDITION_FAILED # code 412
 
     # Structure seed data for do_split()
     # (These dicts would have more members when using Neuroglancer viewers,
@@ -139,20 +174,27 @@ def compute_cleave():
             logger.error(msg)
             cleave_results.setdefault("errors", []).append(msg)
             logger.info("Responding with error PRECONDITION_FAILED.")
-            return ( jsonify(cleave_results), httplib.PRECONDITION_FAILED )
+            return ( cleave_results, httplib.PRECONDITION_FAILED )
 
     logger.info("Sending cleave results for body: {}".format(cleave_results['body-id']))
-    return jsonify(cleave_results)
+    return ( cleave_results, httplib.OK )
 
-if __name__ == '__main__':
+def main():
+    global GRAPH
+    global pool
+    global LOGFILE
+    global root_logger
+    global logger
+    global app
+
     import argparse
 
-#     ## DEBUG
-#     # Careful:
-#     # The flask debug server's "reloader" feature may cause this section to be executed more than once!
-#     if len(sys.argv) == 1:
-#         sys.argv += ["--graph-db", "exported_merge_graphs/274750196357:janelia-flyem-cx-flattened-tabs:sec24_seg_v2a:ffn_agglo_pass1_cpt5663627_medt160_with_celis_cx2-2048_r10_mask200_0.sqlite",
-#                      "--log-dir", "logs"]
+    ## DEBUG
+    # Careful:
+    # The flask debug server's "reloader" feature may cause this section to be executed more than once!
+    if len(sys.argv) == 1:
+        sys.argv += ["--graph-db", "exported_merge_graphs/274750196357:janelia-flyem-cx-flattened-tabs:sec24_seg_v2a:ffn_agglo_pass1_cpt5663627_medt160_with_celis_cx2-2048_r10_mask200_0.sqlite",
+                     "--log-dir", "logs"]
 
     print(sys.argv)
 
@@ -168,13 +210,12 @@ if __name__ == '__main__':
     parser.add_argument('--log-dir', required=False)
     args = parser.parse_args()
 
-    graph_name = os.path.split(args.graph_db)[1].split(':')[-1]
     GRAPH = AgglomerationGraph(sqlite3.connect(args.graph_db, check_same_thread=False))
     
     # Clear any handlers that were automatically added (by werkzeug)
     root_logger.handlers = []
     logger.handlers = []
-
+    
     # Configure logging
     if args.log_dir:
         if not os.path.exists(args.log_dir):
@@ -192,6 +233,13 @@ if __name__ == '__main__':
     rootLogger = logging.getLogger()
     rootLogger.setLevel(logging.INFO)
     rootLogger.addHandler(handler)
+
+    # Pool must be started LAST, after we've configured all the global variables (logger, etc.),
+    # so that the forked (child) processes have the same setup as the parent process.
+    pool = multiprocessing.Pool(8)
     
     print("Starting server on 0.0.0.0:{}".format(args.port))
     app.run(host='0.0.0.0', port=args.port, debug=True, threaded=True)
+
+if __name__ == "__main__":
+    main()
