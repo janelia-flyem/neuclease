@@ -1,6 +1,7 @@
 from __future__ import print_function
 import sys
 import os
+import json
 import signal
 import httplib
 import multiprocessing
@@ -68,7 +69,7 @@ def compute_cleave():
     if not data:
         abort(Response('Request is missing a JSON body', status=400))
 
-    logger.info("Received cleave request: {}".format(data))
+    logger.info("Received cleave request: {}".format(json.dumps(data, sort_keys=True)))
     cleave_results, status_code = pool.apply(_run_cleave, [data])
     return jsonify(cleave_results), status_code
 
