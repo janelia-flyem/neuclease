@@ -3,7 +3,6 @@ import sys
 import os
 import logging
 import signal
-import sqlite3
 import httplib
 import multiprocessing
 from itertools import chain
@@ -210,12 +209,17 @@ def main():
     parser.add_argument('--log-dir', required=False)
     args = parser.parse_args()
 
-    GRAPH = AgglomerationGraph(sqlite3.connect(args.graph_db, check_same_thread=False))
     
     # Clear any handlers that were automatically added (by werkzeug)
     root_logger.handlers = []
     logger.handlers = []
+
+    if not os.path.exists(args.graph_db):
+        sys.stderr.write("Graph database not found: {}\n".format(args.graph_db))
+        sys.exit(-1)
     
+    GRAPH = AgglomerationGraph(args.graph_db)
+
     # Configure logging
     if args.log_dir:
         if not os.path.exists(args.log_dir):

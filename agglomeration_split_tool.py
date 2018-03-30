@@ -299,8 +299,18 @@ def build_graph(edges):
 
 class AgglomerationGraph(object):
 
-  def __init__(self, conn):
-    self.conn = conn
+  def __init__(self, graph_db_path):
+    self.graph_db_path = graph_db_path
+    self._conn = None
+
+  @property
+  def conn(self):
+    if self._conn is None:
+        # Python 3 supports read-only mode, but this is Python 2
+        #self._conn = sqlite3.connect('file:' + self.graph_db_path + '?mode=ro', uri=True, check_same_thread=False)
+        
+        self._conn = sqlite3.connect(self.graph_db_path, check_same_thread=False)
+    return self._conn
 
   def get_agglo_id(self, supervoxel_id):
     c = self.conn.cursor()
