@@ -173,12 +173,12 @@ def main():
     # Terminate results in normal shutdown
     signal.signal(signal.SIGTERM, lambda signum, stack_frame: exit(1))
 
-    ## DEBUG
-    # Careful:
-    # The flask debug server's "reloader" feature may cause this section to be executed more than once!
-    if len(sys.argv) == 1:
-        sys.argv += ["--graph-db", "exported_merge_graphs/274750196357:janelia-flyem-cx-flattened-tabs:sec24_seg_v2a:ffn_agglo_pass1_cpt5663627_medt160_with_celis_cx2-2048_r10_mask200_0.sqlite",
-                     "--log-dir", "logs"]
+#     ## DEBUG
+#     # Careful:
+#     # The flask debug server's "reloader" feature may cause this section to be executed more than once!
+#     if len(sys.argv) == 1:
+#         sys.argv += ["--graph-db", "exported_merge_graphs/274750196357:janelia-flyem-cx-flattened-tabs:sec24_seg_v2a:ffn_agglo_pass1_cpt5663627_medt160_with_celis_cx2-2048_r10_mask200_0.sqlite",
+#                      "--log-dir", "logs"]
 
     parser = argparse.ArgumentParser()
     parser.add_argument('-p', '--port', default=5555, type=int)
