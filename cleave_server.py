@@ -239,7 +239,7 @@ def main():
     pool = multiprocessing.Pool(8)
     
     print("Starting server on 0.0.0.0:{}".format(args.port))
-    app.run(host='0.0.0.0', port=args.port, debug=True, threaded=True)
+    app.run(host='0.0.0.0', port=args.port, debug=True, threaded=True, use_reloader=False)
 
 if __name__ == "__main__":
     main()
