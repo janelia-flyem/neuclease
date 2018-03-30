@@ -1,7 +1,6 @@
 from __future__ import print_function
 import sys
 import os
-import logging
 import signal
 import httplib
 import multiprocessing
@@ -10,41 +9,20 @@ from itertools import chain
 from flask import Flask, request, abort, redirect, url_for, jsonify, Response, make_response
 
 from agglomeration_split_tool import AgglomerationGraph, do_split
+from logging_setup import init_logging, log_exceptions, ProtectedLogger
 
 # Globals
 pool = None # Must be instantiated after this module definition, at the bottom of main().
-root_logger = logging.getLogger()
 LOGFILE = None # Will be set in __main__, below
 app = Flask(__name__)
-
-class ProtectedLogger:
-    """
-    A simple wrapper around logging.Logger that protects the log() method
-    (and therefore also protects info(), warning(), etc.) with a multiprocessing.Lock,
-    to avoid intermingled log messages when writing from multiple processes.
-    """
-    def __init__(self, logger):
-        self.logger = logger
-        self.lock = multiprocessing.Lock()
-    
-    def __getattr__(self, name):
-        if name == 'log':
-            return object.__getattr__(self, name)
-        else:
-            return getattr(self.logger, name)
-
-    def log(self, *args, **kwargs):
-        with self.lock:
-            return self.logger.log(*args, **kwargs)
-
-# Global
-logger = ProtectedLogger( logging.getLogger(__name__) )
+logger = ProtectedLogger(__name__)
 
 @app.route('/')
 def index():
     return redirect(url_for('show_log', page='0'))
 
 @app.route('/log')
+@log_exceptions(logger)
 def show_log():
     page = request.args.get('page')
     if page and page != '0':
@@ -72,6 +50,7 @@ def show_log():
     
 
 @app.route('/compute-cleave', methods=['POST'])
+@log_exceptions(logger)
 def compute_cleave():
     """
     Example body json:
@@ -93,6 +72,7 @@ def compute_cleave():
     cleave_results, status_code = pool.apply(_run_cleave, [data])
     return jsonify(cleave_results), status_code
 
+@log_exceptions(logger)
 def _run_cleave(data):
     """
     Helper function that actually performs the cleave,
@@ -182,11 +162,15 @@ def main():
     global GRAPH
     global pool
     global LOGFILE
-    global root_logger
     global logger
     global app
+    global compute_cleave
+    global show_log
 
     import argparse
+
+    # Terminate results in normal shutdown
+    signal.signal(signal.SIGTERM, lambda signum, stack_frame: exit(1))
 
     ## DEBUG
     # Careful:
@@ -195,55 +179,30 @@ def main():
         sys.argv += ["--graph-db", "exported_merge_graphs/274750196357:janelia-flyem-cx-flattened-tabs:sec24_seg_v2a:ffn_agglo_pass1_cpt5663627_medt160_with_celis_cx2-2048_r10_mask200_0.sqlite",
                      "--log-dir", "logs"]
 
-    print(sys.argv)
-
-    # Don't log ordinary GET, POST, etc.
-    logging.getLogger('werkzeug').setLevel(logging.ERROR)
-    
-    # Terminate results in normal shutdown
-    signal.signal(signal.SIGTERM, lambda signum, stack_frame: exit(1))
-
     parser = argparse.ArgumentParser()
     parser.add_argument('-p', '--port', default=5555, type=int)
     parser.add_argument('--graph-db', required=True)
     parser.add_argument('--log-dir', required=False)
     args = parser.parse_args()
 
-    
-    # Clear any handlers that were automatically added (by werkzeug)
-    root_logger.handlers = []
-    logger.handlers = []
-
     if not os.path.exists(args.graph_db):
         sys.stderr.write("Graph database not found: {}\n".format(args.graph_db))
         sys.exit(-1)
-    
+
     GRAPH = AgglomerationGraph(args.graph_db)
 
-    # Configure logging
-    if args.log_dir:
-        if not os.path.exists(args.log_dir):
-            os.makedirs(args.log_dir)
-        db_name = os.path.basename(args.graph_db)
-        db_name = db_name.replace(':', '_') # For OSX, which treats ':' like '/'
-        LOGFILE = os.path.join(args.log_dir, os.path.splitext(db_name)[0]) + '.log'
-    else:
-        LOGFILE = os.path.splitext(args.graph_db)[0] + '.log'
-    formatter = logging.Formatter('%(levelname)s [%(asctime)s] %(message)s')
-    handler = logging.handlers.RotatingFileHandler(LOGFILE, maxBytes=int(10e6), backupCount=10)
-    handler.setFormatter(formatter)
-    logger.setLevel(logging.INFO)
-
-    rootLogger = logging.getLogger()
-    rootLogger.setLevel(logging.INFO)
-    rootLogger.addHandler(handler)
+    ##
+    ## Configure logging
+    ##
+    LOGFILE = init_logging(logger, args.log_dir, args.graph_db)
+    logger.info("Server started with command: {}".format(' '.join(sys.argv)))
 
     # Pool must be started LAST, after we've configured all the global variables (logger, etc.),
     # so that the forked (child) processes have the same setup as the parent process.
     pool = multiprocessing.Pool(8)
-    
-    print("Starting server on 0.0.0.0:{}".format(args.port))
-    app.run(host='0.0.0.0', port=args.port, debug=True, threaded=True, use_reloader=False)
+
+    # Start app
+    app.run(host='0.0.0.0', port=args.port, debug=False, threaded=True, use_reloader=False)
 
 if __name__ == "__main__":
     main()
