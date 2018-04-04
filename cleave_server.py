@@ -2,6 +2,7 @@ from __future__ import print_function
 import sys
 import os
 import json
+import copy
 import signal
 import httplib
 import multiprocessing
@@ -91,9 +92,10 @@ def _run_cleave(data):
         if len(seeds[label]) == 0:
             del seeds[label]
 
-    cleave_results = { "body-id": body_id,
-                       "assignments": {},
-                       "warnings": [] }
+    cleave_results = copy.copy(data)
+    cleave_results["seeds"] = dict(sorted((k, sorted(v)) for (k,v) in data["seeds"].items()))
+    cleave_results["assignments"] = {}
+    cleave_results["warnings"] = []
 
     if not data["seeds"]:
         msg = "Request contained no seeds!"
