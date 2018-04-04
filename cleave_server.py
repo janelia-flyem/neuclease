@@ -133,7 +133,7 @@ def _run_cleave(data):
             if seed not in label_equivalences:
                 disconnected_seeds.add(label)
                 label_equivalences.update(cur_eqs.members(seed))
-        cleave_results["assignments"][str(label)] = list(label_equivalences)
+        cleave_results["assignments"][str(label)] = sorted(list(label_equivalences))
 
     if disconnected_seeds:
         msg = "Cleave result for body {} contains non-contiguous objects for seeds: {}".format(body_id, sorted(list(disconnected_seeds)))
