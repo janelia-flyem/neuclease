@@ -13,6 +13,9 @@ from flask import Flask, request, abort, redirect, url_for, jsonify, Response, m
 from agglomeration_split_tool import AgglomerationGraph, do_split
 from logging_setup import init_logging, log_exceptions, ProtectedLogger
 
+# FIXME: multiprocessing has unintended consequences for the log rollover procedure.
+USE_MULTIPROCESSING = False
+
 # Globals
 pool = None # Must be instantiated after this module definition, at the bottom of main().
 LOGFILE = None # Will be set in __main__, below
@@ -71,7 +74,10 @@ def compute_cleave():
         abort(Response('Request is missing a JSON body', status=400))
 
     logger.info("Received cleave request: {}".format(json.dumps(data, sort_keys=True)))
-    cleave_results, status_code = pool.apply(_run_cleave, [data])
+    if USE_MULTIPROCESSING:
+        cleave_results, status_code = pool.apply(_run_cleave, [data])
+    else:
+        cleave_results, status_code = _run_cleave(data)
     return jsonify(cleave_results), status_code
 
 @log_exceptions(logger)
