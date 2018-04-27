@@ -28,9 +28,56 @@ LOGFILE = None # Will be set in __main__, below
 app = Flask(__name__)
 logger = ProtectedLogger(__name__)
 
+
+def main(use_reloader=False):
+    global MERGE_TABLE
+    global pool
+    global LOGFILE
+    global logger
+    global app
+    global compute_cleave
+    global show_log
+
+    import argparse
+
+    # Terminate results in normal shutdown
+    signal.signal(signal.SIGTERM, lambda signum, stack_frame: exit(1))
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-p', '--port', default=5555, type=int)
+    parser.add_argument('--merge-table', required=True)
+    parser.add_argument('--log-dir', required=False)
+    args = parser.parse_args()
+
+    ##
+    ## Configure logging
+    ##
+    LOGFILE = init_logging(logger, args.log_dir, args.merge_table)
+    logger.info("Server started with command: {}".format(' '.join(sys.argv)))
+
+    ##
+    ## Load merge table
+    ##
+    if not os.path.exists(args.merge_table):
+        sys.stderr.write("Merge table not found: {}\n".format(args.graph_db))
+        sys.exit(-1)
+
+    with Timer(f"Loading merge table from: {args.merge_table}", logger):
+        MERGE_TABLE = load_merge_table(args.merge_table, set_multiindex=True, scores_only=True)
+        
+    if USE_MULTIPROCESSING:
+        # Pool must be started LAST, after we've configured all the global variables (logger, etc.),
+        # so that the forked (child) processes have the same setup as the parent process.
+        pool = multiprocessing.Pool(8)
+
+    # Start app
+    app.run(host='0.0.0.0', port=args.port, debug=False, threaded=True, use_reloader=use_reloader)
+
+
 @app.route('/')
 def index():
     return redirect(url_for('show_log', page='0'))
+
 
 @app.route('/log')
 @log_exceptions(logger)
@@ -104,6 +151,7 @@ def compute_cleave():
     
     logger.info(f"User {user}: Body {body_id}: Total time: {timer.timedelta}")
     return json_response, status_code
+
 
 @log_exceptions(logger)
 def _run_cleave(data):
@@ -192,48 +240,4 @@ def _run_cleave(data):
 
     logger.info(f"User {user}: Body {body_id}: Sending cleave results")
     return ( cleave_response, HTTPStatus.OK )
-
-def main(use_reloader=False):
-    global MERGE_TABLE
-    global pool
-    global LOGFILE
-    global logger
-    global app
-    global compute_cleave
-    global show_log
-
-    import argparse
-
-    # Terminate results in normal shutdown
-    signal.signal(signal.SIGTERM, lambda signum, stack_frame: exit(1))
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument('-p', '--port', default=5555, type=int)
-    parser.add_argument('--merge-table', required=True)
-    parser.add_argument('--log-dir', required=False)
-    args = parser.parse_args()
-
-    ##
-    ## Configure logging
-    ##
-    LOGFILE = init_logging(logger, args.log_dir, args.merge_table)
-    logger.info("Server started with command: {}".format(' '.join(sys.argv)))
-
-    ##
-    ## Load merge table
-    ##
-    if not os.path.exists(args.merge_table):
-        sys.stderr.write("Merge table not found: {}\n".format(args.graph_db))
-        sys.exit(-1)
-
-    with Timer(f"Loading merge table from: {args.merge_table}", logger):
-        MERGE_TABLE = load_merge_table(args.merge_table, set_multiindex=True, scores_only=True)
-        
-    if USE_MULTIPROCESSING:
-        # Pool must be started LAST, after we've configured all the global variables (logger, etc.),
-        # so that the forked (child) processes have the same setup as the parent process.
-        pool = multiprocessing.Pool(8)
-
-    # Start app
-    app.run(host='0.0.0.0', port=args.port, debug=False, threaded=True, use_reloader=use_reloader)
 
