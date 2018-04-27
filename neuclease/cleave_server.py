@@ -4,14 +4,20 @@ import os
 import json
 import copy
 import signal
-import httplib
 import multiprocessing
 from itertools import chain
+from http import HTTPStatus
+
+import numpy as np
+import pandas as pd
 
 from flask import Flask, request, abort, redirect, url_for, jsonify, Response, make_response
 
-from agglomeration_split_tool import AgglomerationGraph, do_split
-from logging_setup import init_logging, log_exceptions, ProtectedLogger
+from .logging_setup import init_logging, log_exceptions, ProtectedLogger
+from .merge_table import load_merge_table, extract_rows
+from .dvid import get_supervoxels_for_body
+from .cleave import cleave
+from .util import Timer
 
 # FIXME: multiprocessing has unintended consequences for the log rollover procedure.
 USE_MULTIPROCESSING = False
@@ -66,19 +72,38 @@ def compute_cleave():
             "1" : [1234, 1235, 1236],
             "2": [],
             "4": [234, 235, 236],
-        }
+        },
+
+        "user": "bergs",
+        "server": "emdata2.int.janelia.org",
+        "port": 8700,
+        "uuid": "f73ce97d08064bcba34f2637c356e490",
+        "segmentation-instance": "segmentation",
+        "mesh-instance": "segmentation_meshes_tars"
     }
     """
-    data = request.json
-    if not data:
-        abort(Response('Request is missing a JSON body', status=400))
+    with Timer() as timer:
+        data = request.json
+        if not data:
+            abort(Response('Request is missing a JSON body', status=400))
+    
+        body_id = data["body-id"]
+        try:
+            user = data["user"]
+        except KeyError:
+            user = "unknown"
+    
+        req_string = json.dumps(data, sort_keys=True)
+        logger.info(f"User {user}: Body {body_id}: Received cleave request: {req_string}")
+        if USE_MULTIPROCESSING:
+            cleave_results, status_code = pool.apply(_run_cleave, [data])
+        else:
+            cleave_results, status_code = _run_cleave(data)
 
-    logger.info("Received cleave request: {}".format(json.dumps(data, sort_keys=True)))
-    if USE_MULTIPROCESSING:
-        cleave_results, status_code = pool.apply(_run_cleave, [data])
-    else:
-        cleave_results, status_code = _run_cleave(data)
-    return jsonify(cleave_results), status_code
+        json_response = jsonify(cleave_results)
+    
+    logger.info(f"User {user}: Body {body_id}: Total time: {timer.timedelta}")
+    return json_response, status_code
 
 @log_exceptions(logger)
 def _run_cleave(data):
@@ -88,87 +113,88 @@ def _run_cleave(data):
     Must not use any flask functions.
     """
     global logger
-    global GRAPH
+    global MERGE_TABLE
+
+    try:
+        user = data["user"]
+    except KeyError:
+        user = "unknown"
 
     body_id = data["body-id"]
     seeds = { int(k): v for k,v in data["seeds"].items() }
+    server = data["server"] + ':' + str(data["port"])
+    uuid = data["uuid"]
+    segmentation_instance = data["segmentation-instance"]
+
+    if not server.startswith('http://'):
+        server = 'http://' + server
 
     # Remove empty seed classes (if any)
     for label in list(seeds.keys()):
         if len(seeds[label]) == 0:
             del seeds[label]
 
-    cleave_results = copy.copy(data)
-    cleave_results["seeds"] = dict(sorted((k, sorted(v)) for (k,v) in data["seeds"].items()))
-    cleave_results["assignments"] = {}
-    cleave_results["warnings"] = []
+    cleave_response = copy.copy(data)
+    cleave_response["seeds"] = dict(sorted((k, sorted(v)) for (k,v) in data["seeds"].items()))
+    cleave_response["assignments"] = {}
+    cleave_response["warnings"] = []
 
     if not data["seeds"]:
-        msg = "Request contained no seeds!"
+        msg = f"User {user}: Body {body_id}: Request contained no seeds!"
         logger.error(msg)
-        logger.info("Responding with error PRECONDITION_FAILED.")
-        cleave_results.setdefault("errors", []).append(msg)
-        return cleave_results, httplib.PRECONDITION_FAILED # code 412
+        logger.info(f"User {user}: Body {body_id}: Responding with error PRECONDITION_FAILED.")
+        cleave_response.setdefault("errors", []).append(msg)
+        return cleave_response, HTTPStatus.PRECONDITION_FAILED # code 412
 
-    # Structure seed data for do_split()
-    # (These dicts would have more members when using Neuroglancer viewers,
-    #  but for do_split() we only need to provide the supervoxel_id.)
-    agglo_tool_split_seeds = {}
-    for label, supervoxel_ids in data["seeds"].items():
-        for sv in supervoxel_ids:
-            agglo_tool_split_seeds.setdefault(int(label), []).append({ "supervoxel_id": sv })
+    with Timer(f"User {user}: Body {body_id}: Retrieving supervoxel list from DVID"):
+        supervoxels = get_supervoxels_for_body(server, uuid, segmentation_instance, body_id)
+        supervoxels = np.asarray(supervoxels, np.uint64)
+        supervoxels.sort()
     
-    # Note: The GRAPH object is thread-safe (for reads, at least)
-    split_result = do_split(GRAPH, agglo_tool_split_seeds, body_id)
+    unexpected_seeds = set(chain(*seeds.values())) - set(supervoxels)
+    if unexpected_seeds:
+        msg = f"User {user}: Body {body_id}: Request contained seeds that do not belong to body: {sorted(unexpected_seeds)}"
+        logger.error(msg)
+        logger.info(f"User {user}: Body {body_id}: Responding with error PRECONDITION_FAILED.")
+        cleave_response.setdefault("errors", []).append(msg)
+        return cleave_response, HTTPStatus.PRECONDITION_FAILED # code 412
 
-    agglo_id = split_result['agglo_id']
-    cur_eqs = split_result['cur_eqs']
-    _supervoxel_map = split_result['supervoxel_map']
-
-    # Notes:    
-    # - supervoxel_map is a dict of { sv_id: set([seed_class, seed_class,...]) }
-    #   (Most supervoxels contain only one seed class, though.)
-    #   It does NOT contain all supervoxels in the body, so we have to use cur_eq
-    # - cur_eq is a neuroglancer.equivalence_map.EquivalenceMap
+    # Extract this body's edges from the complete merge graph
+    with Timer(f"User {user}: Body {body_id}: Extracting body graph", logger):
+        df = extract_rows(MERGE_TABLE, supervoxels)
+        
+        edges = df[['id_a', 'id_b']].values.astype(np.uint64)
+        weights = df['score'].values
     
-    assert agglo_id == body_id
+    # Perform the computation
+    with Timer(f"User {user}: Body {body_id}: Computing cleave", logger):
+        results = cleave(edges, weights, seeds, supervoxels)
 
-    disconnected_seeds = set()
-    for label in seeds.keys():
-        first_member = seeds[label][0]
-        label_equivalences = set(cur_eqs.members(first_member))
-        for seed in seeds[label][1:]:
-            if seed not in label_equivalences:
-                disconnected_seeds.add(label)
-                label_equivalences.update(cur_eqs.members(seed))
-        cleave_results["assignments"][str(label)] = sorted(list(label_equivalences))
+    # Convert assignments to JSON
+    with Timer(f"User {user}: Body {body_id}: Populating response", logger):
+        df = pd.DataFrame({'node': results.node_ids, 'label': results.output_labels})
+        df.sort_values('node', inplace=True)
+        for label, group in df.groupby('label'):
+            cleave_response["assignments"][str(label)] = group['node'].tolist()
 
-    if disconnected_seeds:
-        msg = "Cleave result for body {} contains non-contiguous objects for seeds: {}".format(body_id, sorted(list(disconnected_seeds)))
+    if results.disconnected_components:
+        msg = (f"User {user}: Body {body_id}: Cleave result contains non-contiguous objects for seeds: "
+               f"{sorted(results.disconnected_components)}")
         logger.warning(msg)
-        cleave_results["warnings"].append(msg)
+        cleave_response["warnings"].append(msg)
 
-    CHECK_MISSING_SUPERVOXELS = True
-    all_body_edges = None
+    if results.contains_unlabeled_components:
+        msg = f"User {user}: Body {body_id}: Cleave result is not complete."
+        logger.error(msg)
+        cleave_response.setdefault("errors", []).append(msg)
+        logger.info("User {user}: Body {body_id}: Responding with error PRECONDITION_FAILED.")
+        return ( cleave_response, HTTPStatus.PRECONDITION_FAILED )
 
-    if CHECK_MISSING_SUPERVOXELS:
-        logger.info("Checking for missing supervoxels in cleave results for body {}".format(body_id))
-        if all_body_edges is None:
-            all_body_edges = GRAPH.get_agglo_edges(body_id)
-        all_body_ids = set(chain(*(edge.segment_ids for edge in all_body_edges)))
-        assigned_ids = set(chain(*cleave_results["assignments"].values()))
-        if set(all_body_ids) != assigned_ids:
-            msg = "Cleave result is not complete for body {body_id}, using seeds {seeds}.".format(body_id=body_id, seeds=sorted(map(int, data["seeds"])))
-            logger.error(msg)
-            cleave_results.setdefault("errors", []).append(msg)
-            logger.info("Responding with error PRECONDITION_FAILED.")
-            return ( cleave_results, httplib.PRECONDITION_FAILED )
+    logger.info(f"User {user}: Body {body_id}: Sending cleave results")
+    return ( cleave_response, HTTPStatus.OK )
 
-    logger.info("Sending cleave results for body: {}".format(cleave_results['body-id']))
-    return ( cleave_results, httplib.OK )
-
-def main():
-    global GRAPH
+def main(use_reloader=False):
+    global MERGE_TABLE
     global pool
     global LOGFILE
     global logger
@@ -181,37 +207,33 @@ def main():
     # Terminate results in normal shutdown
     signal.signal(signal.SIGTERM, lambda signum, stack_frame: exit(1))
 
-#     ## DEBUG
-#     # Careful:
-#     # The flask debug server's "reloader" feature may cause this section to be executed more than once!
-#     if len(sys.argv) == 1:
-#         sys.argv += ["--graph-db", "exported_merge_graphs/274750196357:janelia-flyem-cx-flattened-tabs:sec24_seg_v2a:ffn_agglo_pass1_cpt5663627_medt160_with_celis_cx2-2048_r10_mask200_0.sqlite",
-#                      "--log-dir", "logs"]
-
     parser = argparse.ArgumentParser()
     parser.add_argument('-p', '--port', default=5555, type=int)
-    parser.add_argument('--graph-db', required=True)
+    parser.add_argument('--merge-table', required=True)
     parser.add_argument('--log-dir', required=False)
     args = parser.parse_args()
-
-    if not os.path.exists(args.graph_db):
-        sys.stderr.write("Graph database not found: {}\n".format(args.graph_db))
-        sys.exit(-1)
-
-    GRAPH = AgglomerationGraph(args.graph_db)
 
     ##
     ## Configure logging
     ##
-    LOGFILE = init_logging(logger, args.log_dir, args.graph_db)
+    LOGFILE = init_logging(logger, args.log_dir, args.merge_table)
     logger.info("Server started with command: {}".format(' '.join(sys.argv)))
 
-    # Pool must be started LAST, after we've configured all the global variables (logger, etc.),
-    # so that the forked (child) processes have the same setup as the parent process.
-    pool = multiprocessing.Pool(8)
+    ##
+    ## Load merge table
+    ##
+    if not os.path.exists(args.merge_table):
+        sys.stderr.write("Merge table not found: {}\n".format(args.graph_db))
+        sys.exit(-1)
+
+    with Timer(f"Loading merge table from: {args.merge_table}", logger):
+        MERGE_TABLE = load_merge_table(args.merge_table, set_multiindex=True, scores_only=True)
+        
+    if USE_MULTIPROCESSING:
+        # Pool must be started LAST, after we've configured all the global variables (logger, etc.),
+        # so that the forked (child) processes have the same setup as the parent process.
+        pool = multiprocessing.Pool(8)
 
     # Start app
-    app.run(host='0.0.0.0', port=args.port, debug=False, threaded=True, use_reloader=False)
+    app.run(host='0.0.0.0', port=args.port, debug=False, threaded=True, use_reloader=use_reloader)
 
-if __name__ == "__main__":
-    main()
