@@ -1,11 +1,12 @@
 import os
 import sys
 import logging
+import logging.handlers
 import threading
 import traceback
 import functools
 import multiprocessing
-from io import BytesIO
+from io import StringIO
 
 
 def init_logging(logger, log_dir, db_path):
@@ -78,7 +79,7 @@ class ExceptionLogger:
     
     def __exit__(self, exc_type, exc_value, exc_tb):
         if exc_type is not None:
-            sio = BytesIO()
+            sio = StringIO()
             traceback.print_exception( exc_type, exc_value, exc_tb, file=sio )
             self.logger.error( sio.getvalue() )
 
@@ -105,7 +106,7 @@ def initialize_excepthook(logger=logging.getLogger()):
     def _log_exception(*exc_info):
         thread_name = threading.current_thread().name
         logger.error( "Unhandled exception in thread: '{}'".format(thread_name) )
-        sio = BytesIO()
+        sio = StringIO()
         traceback.print_exception( exc_info[0], exc_info[1], exc_info[2], file=sio )
         logger.error( sio.getvalue() )
 
