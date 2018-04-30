@@ -29,7 +29,7 @@ app = Flask(__name__)
 logger = ProtectedLogger(__name__)
 
 
-def main(use_reloader=False):
+def main(debug_mode=False):
     global MERGE_TABLE
     global pool
     global LOGFILE
@@ -53,7 +53,7 @@ def main(use_reloader=False):
     ##
     ## Configure logging
     ##
-    LOGFILE = init_logging(logger, args.log_dir, args.merge_table)
+    LOGFILE = init_logging(logger, args.log_dir, args.merge_table, debug_mode)
     logger.info("Server started with command: {}".format(' '.join(sys.argv)))
 
     ##
@@ -64,15 +64,15 @@ def main(use_reloader=False):
         sys.exit(-1)
 
     with Timer(f"Loading merge table from: {args.merge_table}", logger):
-        MERGE_TABLE = load_merge_table(args.merge_table, set_multiindex=True, scores_only=True)
+        MERGE_TABLE = load_merge_table(args.merge_table, args.mapping_file, set_multiindex=True, scores_only=True)
         
     if USE_MULTIPROCESSING:
         # Pool must be started LAST, after we've configured all the global variables (logger, etc.),
         # so that the forked (child) processes have the same setup as the parent process.
         pool = multiprocessing.Pool(8)
 
-    # Start app
-    app.run(host='0.0.0.0', port=args.port, debug=False, threaded=True, use_reloader=use_reloader)
+    print("Starting app...")
+    app.run(host='0.0.0.0', port=args.port, debug=debug_mode, threaded=not debug_mode, use_reloader=debug_mode)
 
 
 @app.route('/')
