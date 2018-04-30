@@ -46,6 +46,7 @@ def main(use_reloader=False):
     parser = argparse.ArgumentParser()
     parser.add_argument('-p', '--port', default=5555, type=int)
     parser.add_argument('--merge-table', required=True)
+    parser.add_argument('--mapping-file', required=False)
     parser.add_argument('--log-dir', required=False)
     args = parser.parse_args()
 
@@ -209,7 +210,7 @@ def _run_cleave(data):
 
     # Extract this body's edges from the complete merge graph
     with Timer(f"User {user}: Body {body_id}: Extracting body graph", logger):
-        df = extract_rows(MERGE_TABLE, supervoxels)
+        df = extract_rows(MERGE_TABLE, body_id, supervoxels, update_inplace=True)
         
         edges = df[['id_a', 'id_b']].values.astype(np.uint64)
         weights = df['score'].values
