@@ -39,7 +39,7 @@ test:
     - neuclease
 
   commands:
-    - pytest neuclease.tests
+    - pytest --pyargs neuclease.tests
 
 about:
   home: https://github.com/janelia-flyem/neuclease
