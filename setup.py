@@ -8,7 +8,7 @@ setup( name='neuclease',
        package_data={},
        entry_points={
           'console_scripts': [
-              'neuclease_cleave_server = neuclease.cleave_server:main'
+              'neuclease_cleave_server = neuclease.bin.cleave_server:main'
           ]
        }
      )
