@@ -15,7 +15,7 @@ from .util import Timer
 
 logger = logging.getLogger(__name__)
 
-def load_merge_table(path, mapping_path=None, normalize=True, set_multiindex=True, scores_only=True):
+def load_merge_table(path, mapping_path=None, normalize=True, set_multiindex=False, scores_only=True):
     """
     Load the merge table from the given path (preferably '.npy' in FFN format),
     and return it as a DataFrame, with an appended a 'body' column according to the given mapping.
@@ -155,28 +155,22 @@ def extract_rows(merge_table_df, body_id, supervoxels, update_inplace=True):
     if svs_from_table.shape == supervoxels.shape and (svs_from_table == supervoxels).all():
         return subset_df
     
-    if update_inplace:
-        with Timer("Clearing old body rows"):
-            merge_table_df['body'].values[body_positions_orig] = 0
-
     # Body doesn't match the desired supervoxels.
     # Extract the desired rows the slow way, by selecting all matching supervoxels
-    if merge_table_df.index.names == ['idx_a', 'idx_b']:
-        supervoxels = list(supervoxels)
-        if update_inplace:
-            # Faster to update first and then query than the other way around,
-            # since updating via index selection seems to be slow.
-            merge_table_df.loc[(supervoxels, supervoxels), 'body'] = body_id
-            body_positions = (merge_table_df['body'] == body_id).values.nonzero()[0]
-            subset_df = merge_table_df.iloc[body_positions]
-        else:
-            subset_df = merge_table_df.loc[(supervoxels, supervoxels), :]
-    else:
-        _sv_set = set(supervoxels)
-        subset_positions = merge_table_df.eval('id_a in @_sv_set or id_b in @_sv_set').values
-        subset_df = merge_table_df.iloc[subset_positions]
-        if update_inplace:
-            merge_table_df['body'].values[subset_positions] = body_id
+    #
+    # Note:
+    #    I tried speeding this up using proper index-based pandas selection:
+    #        merge_table_df.loc[(supervoxels, supervoxels), 'body'] = body_id
+    #    ...but that is MUCH worse for large selections, and only marginally
+    #    faster for small selections.
+    #    Using eval() seems to be the best option here.
+    #    The worst body we've got still only takes ~2.5 seconds to extract.
+    _sv_set = set(supervoxels)
+    subset_positions = merge_table_df.eval('id_a in @_sv_set or id_b in @_sv_set').values
+    subset_df = merge_table_df.iloc[subset_positions]
+    if update_inplace:
+        merge_table_df['body'].values[body_positions_orig] = 0
+        merge_table_df['body'].values[subset_positions] = body_id
 
     return subset_df
 
