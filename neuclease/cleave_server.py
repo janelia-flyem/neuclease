@@ -143,10 +143,7 @@ def compute_cleave():
             abort(Response('Request is missing a JSON body', status=400))
     
         body_id = data["body-id"]
-        try:
-            user = data["user"]
-        except KeyError:
-            user = "unknown"
+        user = data.get("user", "unknown")
     
         req_string = json.dumps(data, sort_keys=True)
         logger.info(f"User {user}: Body {body_id}: Received cleave request: {req_string}")
@@ -171,11 +168,8 @@ def _run_cleave(data):
     global logger
     global MERGE_TABLE
 
-    try:
-        user = data["user"]
-    except KeyError:
-        user = "unknown"
-
+    user = data.get("user", "unknown")
+    method = data.get("method", "seeded-watershed")
     body_id = data["body-id"]
     seeds = { int(k): v for k,v in data["seeds"].items() }
     server = data["server"] + ':' + str(data["port"])
@@ -225,7 +219,7 @@ def _run_cleave(data):
     
     # Perform the computation
     with Timer(f"User {user}: Body {body_id}: Computing cleave", logger):
-        results = cleave(edges, weights, seeds, supervoxels)
+        results = cleave(edges, weights, seeds, supervoxels, method=method)
 
     # Convert assignments to JSON
     with Timer(f"User {user}: Body {body_id}: Populating response", logger):
