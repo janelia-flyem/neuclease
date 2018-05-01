@@ -7,6 +7,7 @@ import signal
 import multiprocessing
 from itertools import chain
 from http import HTTPStatus
+from datetime import datetime
 
 import numpy as np
 import pandas as pd
@@ -144,6 +145,9 @@ def compute_cleave():
     
         body_id = data["body-id"]
         user = data.get("user", "unknown")
+        
+        # This is injected into the request so that it will be echoed back to the client
+        data['request-timestamp'] = str(datetime.now())
     
         req_string = json.dumps(data, sort_keys=True)
         logger.info(f"User {user}: Body {body_id}: Received cleave request: {req_string}")
