@@ -38,9 +38,9 @@ def test_discontiguous_components():
     (node_ids, output_labels, disconnected_components, contains_unlabeled_components) = cleave(edges, edge_weights, seeds_dict, np.arange(10, dtype=np.uint64))
     
     assert (node_ids == np.arange(10)).all()
+    assert (output_labels == [1,1,1,1,2,2,1,1,1,1]).all()
     assert disconnected_components
     assert not contains_unlabeled_components
-    assert (output_labels == [1,1,1,1,2,2,1,1,1,1]).all()
 
 
 def test_unlabeled_components():
@@ -85,9 +85,9 @@ def test_discontiguous_components_and_unlabeled_components():
     (node_ids, output_labels, disconnected_components, contains_unlabeled_components) = cleave(edges, edge_weights, seeds_dict, np.arange(10, dtype=np.uint64))
     
     assert (node_ids == np.arange(10)).all()
+    assert (output_labels == [1,1,1,1,2,2,1,1,0,0]).all()
     assert disconnected_components
     assert contains_unlabeled_components
-    assert (output_labels == [1,1,1,1,2,2,1,1,0,0]).all()
 
 
 def test_discontiguous_unlabeled_components():

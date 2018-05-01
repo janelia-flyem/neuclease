@@ -1,12 +1,25 @@
+import warnings
 from collections import namedtuple
 import numpy as np
 import pandas as pd
 import vigra.graphs as vg
+import nifty.graph
 
 from dvidutils import LabelMapper
 
+try:
+    with warnings.catch_warnings():
+        # Importing graph_tool results in warnings about duplicate C++/Python conversion functions.
+        # Ignore those warnings
+        warnings.filterwarnings("ignore", "to-Python converter")
+        import graph_tool as gt
+
+    _graph_tool_available = True
+except ImportError:
+    _graph_tool_available = False
+
 CleaveResults = namedtuple("CleaveResults", "node_ids output_labels disconnected_components contains_unlabeled_components")
-def cleave(edges, edge_weights, seeds_dict, node_ids=None):
+def cleave(edges, edge_weights, seeds_dict, node_ids=None, method='seeded-watershed'):
     """
     Cleave the graph with the given edges and edge weights.
     If node_ids is given, it must contain a superset of the ids given in edges.
@@ -26,6 +39,9 @@ def cleave(edges, edge_weights, seeds_dict, node_ids=None):
         
         node_ids:
             The complete list of node IDs in the graph.
+        
+        method:
+            Either 'seeded-watershed' or 'agglomerative-clustering'
 
     Returns:
     
@@ -56,6 +72,8 @@ def cleave(edges, edge_weights, seeds_dict, node_ids=None):
     assert node_ids.dtype in (np.uint32, np.uint64)
     assert node_ids.ndim == 1
 
+    assert method in ('seeded-watershed', 'agglomerative-clustering')
+
     # Clean the edges (normalized form, no duplicates, no loops)
     edges.sort(axis=1)
     edges_df = pd.DataFrame({'u': edges[:,0], 'v': edges[:,1], 'weight': edge_weights})
@@ -77,7 +95,11 @@ def cleave(edges, edge_weights, seeds_dict, node_ids=None):
         mapper.apply_inplace(seed_nodes)
         seed_labels[seed_nodes] = seed_class
     
-    output_labels, disconnected_components, contains_unlabeled_components = agglomerative_clustering(cons_edges, edge_weights, seed_labels)
+    if method == 'agglomerative-clustering':
+        output_labels, disconnected_components, contains_unlabeled_components = agglomerative_clustering(cons_edges, edge_weights, seed_labels)
+    elif method == 'seeded-watershed':
+        output_labels, disconnected_components, contains_unlabeled_components = edge_weighted_watershed(cons_edges, edge_weights, seed_labels)
+        
     return CleaveResults(node_ids, output_labels, disconnected_components, contains_unlabeled_components)
     
     
@@ -165,7 +187,7 @@ def agglomerative_clustering(cleaned_edges, edge_weights, seed_labels, num_class
     assert cleaned_edges.shape[1] == 2
     assert edge_weights.shape == (len(cleaned_edges),)
     assert seed_labels.ndim == 1
-    assert cleaned_edges.min() < len(seed_labels)
+    assert cleaned_edges.max() < len(seed_labels)
     
     # Initialize graph
     # (These params merely reserve RAM in advance. They don't initialize actual graph state.)
@@ -244,3 +266,50 @@ def agglomerative_clustering(cleaned_edges, edge_weights, seed_labels, num_class
     mapper.apply_inplace(output_labels)
     
     return output_labels, disconnected_components, contains_unlabeled_components
+
+
+def edge_weighted_watershed(cleaned_edges, edge_weights, seed_labels):
+    assert cleaned_edges.dtype == np.uint32
+    assert cleaned_edges.ndim == 2
+    assert cleaned_edges.shape[1] == 2
+    assert edge_weights.shape == (len(cleaned_edges),)
+    assert seed_labels.ndim == 1
+    assert cleaned_edges.max() < len(seed_labels)
+    
+    g = nifty.graph.UndirectedGraph(len(seed_labels))
+    g.insertEdges(cleaned_edges)
+    output_labels = nifty.graph.edgeWeightedWatershedsSegmentation(g, seed_labels, edge_weights)
+    contains_unlabeled_components = not output_labels.all()
+
+    mapper = LabelMapper(np.arange(output_labels.shape[0], dtype=np.uint32), output_labels)
+    labeled_edges = mapper.apply(cleaned_edges)
+    preserved_edges = cleaned_edges[labeled_edges[:,0] == labeled_edges[:,1]]
+    
+    component_labels = connected_components(preserved_edges, len(output_labels))
+    assert len(component_labels) == len(output_labels) == len(seed_labels)
+    cc_df = pd.DataFrame({'label': output_labels, 'cc': component_labels})
+    cc_counts = cc_df.groupby('label').nunique()['cc']
+    disconneted_cc_counts = cc_counts[cc_counts > 1]
+    disconnected_components = set(disconneted_cc_counts.index) - set([0])
+    
+    return output_labels, disconnected_components, contains_unlabeled_components
+    
+    
+def connected_components(edges, num_nodes):
+    if _graph_tool_available:
+        from graph_tool.topology import label_components
+        g = gt.Graph(directed=False)
+        g.add_vertex(num_nodes)
+        g.add_edge_list(edges)
+        cc_pmap, _hist = label_components(g)
+        return cc_pmap.get_array()
+
+    else:
+        import networkx as nx
+        g = nx.Graph()
+        g.add_edges_from(edges)
+
+        cc_labels = np.zeros((num_nodes,), np.uint32)
+        for i, component_set in enumerate(nx.connected_components(g)):
+            cc_labels[np.array(list(component_set))] = i
+        return cc_labels
