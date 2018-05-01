@@ -1,8 +1,9 @@
+#!/usr/bin/env python3
 import sys
 import neuclease.cleave_server
 
-_debug_mode = False
 def main():
+    _debug_mode = False
     ## DEBUG
     if len(sys.argv) == 1:
         import os
