@@ -27,10 +27,12 @@ pool = None # Must be instantiated after this module definition, at the bottom o
 LOGFILE = None # Will be set in __main__, below
 app = Flask(__name__)
 logger = ProtectedLogger(__name__)
-
+MERGE_TABLE = None
+PRIMARY_UUID = None
 
 def main(debug_mode=False):
     global MERGE_TABLE
+    global PRIMARY_UUID
     global pool
     global LOGFILE
     global logger
@@ -48,6 +50,9 @@ def main(debug_mode=False):
     parser.add_argument('--merge-table', required=True)
     parser.add_argument('--mapping-file', required=False)
     parser.add_argument('--log-dir', required=False)
+    parser.add_argument('--primary-uuid', required=False,
+                        help="If provided, do not update the internal cached merge table mapping except for the given UUID. "
+                        "(Prioritizes speed of the primary UUID over all others.)")
     args = parser.parse_args()
 
     ##
@@ -66,6 +71,7 @@ def main(debug_mode=False):
     with Timer(f"Loading merge table from: {args.merge_table}", logger):
         MERGE_TABLE = load_merge_table(args.merge_table, args.mapping_file, set_multiindex=False, scores_only=True)
 
+    PRIMARY_UUID = args.primary_uuid
         
     if USE_MULTIPROCESSING:
         # Pool must be started LAST, after we've configured all the global variables (logger, etc.),
@@ -211,7 +217,8 @@ def _run_cleave(data):
 
     # Extract this body's edges from the complete merge graph
     with Timer(f"User {user}: Body {body_id}: Extracting body graph", logger):
-        df = extract_rows(MERGE_TABLE, body_id, supervoxels, update_inplace=True)
+        permit_table_update = (PRIMARY_UUID is None or uuid == PRIMARY_UUID)
+        df = extract_rows(MERGE_TABLE, body_id, supervoxels, update_inplace=permit_table_update)
         
         edges = df[['id_a', 'id_b']].values.astype(np.uint64)
         weights = df['score'].values
