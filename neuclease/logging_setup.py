@@ -1,14 +1,15 @@
 import os
 import sys
 import logging
+import logging.handlers
 import threading
 import traceback
 import functools
 import multiprocessing
-from io import BytesIO
+from io import StringIO
 
 
-def init_logging(logger, log_dir, db_path):
+def init_logging(logger, log_dir, db_path, debug_mode=False):
     if not log_dir:
         log_dir = os.path.dirname(db_path)
     if not os.path.exists(log_dir):
@@ -27,12 +28,15 @@ def init_logging(logger, log_dir, db_path):
     logger.handlers = []
 
     formatter = logging.Formatter('%(levelname)s [%(asctime)s] %(message)s')
-    handler = logging.handlers.RotatingFileHandler(logfile_path, maxBytes=int(10e6), backupCount=10)
+    handler = logging.handlers.RotatingFileHandler(logfile_path, maxBytes=int(10e9), backupCount=10)
     handler.setFormatter(formatter)
     logger.setLevel(logging.INFO)
 
     rootLogger.setLevel(logging.INFO)
     rootLogger.addHandler(handler)
+    
+    if debug_mode:
+        rootLogger.addHandler( logging.StreamHandler(sys.stdout) )
 
     # FIXME: For some reason monkey-patching threading.Thread.run()
     #        doesn't seem to work properly in a Flask app,
@@ -78,7 +82,7 @@ class ExceptionLogger:
     
     def __exit__(self, exc_type, exc_value, exc_tb):
         if exc_type is not None:
-            sio = BytesIO()
+            sio = StringIO()
             traceback.print_exception( exc_type, exc_value, exc_tb, file=sio )
             self.logger.error( sio.getvalue() )
 
@@ -102,12 +106,17 @@ def initialize_excepthook(logger=logging.getLogger()):
     """
     This excepthook simply logs all unhandled exception tracebacks with Logger.error()
     """
+    orig_excepthook = sys.excepthook
     def _log_exception(*exc_info):
+        # Write traceback to logger.error
         thread_name = threading.current_thread().name
         logger.error( "Unhandled exception in thread: '{}'".format(thread_name) )
-        sio = BytesIO()
+        sio = StringIO()
         traceback.print_exception( exc_info[0], exc_info[1], exc_info[2], file=sio )
         logger.error( sio.getvalue() )
+
+        # Also call the original exception hook
+        orig_excepthook(*exc_info)
 
     sys.excepthook = _log_exception
     _install_thread_excepthook()

@@ -2,3 +2,6 @@
 .pydevproject
 *.pyc
 *~
+
+.cache
+logs
