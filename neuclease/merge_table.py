@@ -68,9 +68,10 @@ def load_merge_table(path, mapping_path=None, normalize=True, set_multiindex=Fal
     if mapping_path is None:
         merge_table_df['body'] = np.zeros((len(merge_table_df),), dtype=np.uint64)
     else:
-        mapping_series = load_mapping(mapping_path)
-        mapper = LabelMapper(mapping_series.index.values, mapping_series.values)
-        merge_table_df['body'] = mapper.apply(merge_table_df['id_a'], allow_unmapped=True)
+        with Timer("Loading and applying preloaded mapping to merge table", logger):
+            mapping_series = load_mapping(mapping_path)
+            mapper = LabelMapper(mapping_series.index.values, mapping_series.values)
+            merge_table_df['body'] = mapper.apply(merge_table_df['id_a'].values, allow_unmapped=True)
 
     return merge_table_df
 
@@ -137,7 +138,7 @@ def load_ffn_merge_table(npy_path, normalize=True, sort_by=None):
     return pd.DataFrame(merge_table)
 
 
-def extract_rows(merge_table_df, body_id, supervoxels, update_inplace=True):
+def extract_rows(merge_table_df, body_id, supervoxels, update_inplace=True, log_prefix=""):
     """
     Extract all edges involving the given supervoxels from the given merge table.
     """
@@ -154,6 +155,8 @@ def extract_rows(merge_table_df, body_id, supervoxels, update_inplace=True):
     svs_from_table = np.unique(subset_df[['id_a', 'id_b']].values)
     if svs_from_table.shape == supervoxels.shape and (svs_from_table == supervoxels).all():
         return subset_df
+
+    logger.info(log_prefix + f"Cached supervoxels (N={len(svs_from_table)}) don't match expected (N={len(supervoxels)}).  Updating cache.")
     
     # Body doesn't match the desired supervoxels.
     # Extract the desired rows the slow way, by selecting all matching supervoxels
