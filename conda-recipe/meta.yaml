@@ -28,6 +28,8 @@ requirements:
     - pandas
     - flask
     - dvidutils
+    - nifty
+    - vigra
 
 test:
   requires:
