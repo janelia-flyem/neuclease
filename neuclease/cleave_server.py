@@ -64,7 +64,8 @@ def main(debug_mode=False):
         sys.exit(-1)
 
     with Timer(f"Loading merge table from: {args.merge_table}", logger):
-        MERGE_TABLE = load_merge_table(args.merge_table, args.mapping_file, set_multiindex=True, scores_only=True)
+        MERGE_TABLE = load_merge_table(args.merge_table, args.mapping_file, set_multiindex=False, scores_only=True)
+
         
     if USE_MULTIPROCESSING:
         # Pool must be started LAST, after we've configured all the global variables (logger, etc.),
