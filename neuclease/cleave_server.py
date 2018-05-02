@@ -4,6 +4,7 @@ import json
 import copy
 import signal
 import argparse
+import threading
 import multiprocessing
 from itertools import chain
 from http import HTTPStatus
@@ -26,6 +27,7 @@ LOGFILE = None # Will be set in __main__, below
 app = Flask(__name__)
 logger = ProtectedLogger(__name__)
 MERGE_TABLE = None
+MERGE_TABLE_LOCK = threading.Lock()
 PRIMARY_UUID = None
 
 # FIXME: multiprocessing has unintended consequences for the log rollover procedure.
@@ -221,7 +223,8 @@ def _run_cleave(data):
     # Extract this body's edges from the complete merge graph
     with Timer("Extracting body graph", body_logger):
         permit_table_update = (PRIMARY_UUID is None or uuid == PRIMARY_UUID)
-        df = extract_rows(MERGE_TABLE, body_id, supervoxels, permit_table_update, body_logger)
+        with MERGE_TABLE_LOCK:
+            df = extract_rows(MERGE_TABLE, body_id, supervoxels, permit_table_update, body_logger)
         
         edges = df[['id_a', 'id_b']].values.astype(np.uint64)
         weights = df['score'].values
