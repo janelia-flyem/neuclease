@@ -138,7 +138,7 @@ def load_ffn_merge_table(npy_path, normalize=True, sort_by=None):
     return pd.DataFrame(merge_table)
 
 
-def extract_rows(merge_table_df, body_id, supervoxels, update_inplace=True, log_prefix=""):
+def extract_rows(merge_table_df, body_id, supervoxels, update_inplace=True, user_logger=None):
     """
     Extract all edges involving the given supervoxels from the given merge table.
     """
@@ -146,6 +146,8 @@ def extract_rows(merge_table_df, body_id, supervoxels, update_inplace=True, log_
     supervoxels = np.asarray(supervoxels, dtype=np.uint64)
     assert supervoxels.ndim == 1
     supervoxels = np.sort(supervoxels)
+    if user_logger is None:
+        user_logger = logger
 
     # It's very fast to select rows based on the body_id,
     # so try that and see if the supervoxel set matches.
@@ -156,7 +158,7 @@ def extract_rows(merge_table_df, body_id, supervoxels, update_inplace=True, log_
     if svs_from_table.shape == supervoxels.shape and (svs_from_table == supervoxels).all():
         return subset_df
 
-    logger.info(log_prefix + f"Cached supervoxels (N={len(svs_from_table)}) don't match expected (N={len(supervoxels)}).  Updating cache.")
+    user_logger.info(f"Cached supervoxels (N={len(svs_from_table)}) don't match expected (N={len(supervoxels)}).  Updating cache.")
     
     # Body doesn't match the desired supervoxels.
     # Extract the desired rows the slow way, by selecting all matching supervoxels

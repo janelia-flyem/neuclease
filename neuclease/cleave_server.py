@@ -14,7 +14,7 @@ import pandas as pd
 
 from flask import Flask, request, abort, redirect, url_for, jsonify, Response, make_response
 
-from .logging_setup import init_logging, log_exceptions, ProtectedLogger
+from .logging_setup import init_logging, log_exceptions, ProtectedLogger, PrefixedLogger
 from .merge_table import load_merge_table, extract_rows
 from .dvid import get_supervoxels_for_body
 from .cleave import cleave
@@ -145,12 +145,13 @@ def compute_cleave():
     
         body_id = data["body-id"]
         user = data.get("user", "unknown")
+        body_logger = PrefixedLogger(logger, f"User {user}: Body {body_id}: ")
         
         # This is injected into the request so that it will be echoed back to the client
         data['request-timestamp'] = str(datetime.now())
     
         req_string = json.dumps(data, sort_keys=True)
-        logger.info(f"User {user}: Body {body_id}: Received cleave request: {req_string}")
+        body_logger.info(f"Received cleave request: {req_string}")
         if USE_MULTIPROCESSING:
             cleave_results, status_code = pool.apply(_run_cleave, [data])
         else:
@@ -158,7 +159,7 @@ def compute_cleave():
 
         json_response = jsonify(cleave_results)
     
-    logger.info(f"User {user}: Body {body_id}: Total time: {timer.timedelta}")
+    body_logger.info(f"Total time: {timer.timedelta}")
     return json_response, status_code
 
 
@@ -179,6 +180,7 @@ def _run_cleave(data):
     server = data["server"] + ':' + str(data["port"])
     uuid = data["uuid"]
     segmentation_instance = data["segmentation-instance"]
+    body_logger = PrefixedLogger(logger, f"User {user}: Body {body_id}: ")
 
     if not server.startswith('http://'):
         server = 'http://' + server
@@ -194,57 +196,57 @@ def _run_cleave(data):
     cleave_response["warnings"] = []
 
     if not data["seeds"]:
-        msg = f"User {user}: Body {body_id}: Request contained no seeds!"
-        logger.error(msg)
-        logger.info(f"User {user}: Body {body_id}: Responding with error PRECONDITION_FAILED.")
+        msg = "Request contained no seeds!"
+        body_logger.error(msg)
+        body_logger.info(f"Responding with error PRECONDITION_FAILED.")
         cleave_response.setdefault("errors", []).append(msg)
         return cleave_response, HTTPStatus.PRECONDITION_FAILED # code 412
 
-    with Timer(f"User {user}: Body {body_id}: Retrieving supervoxel list from DVID"):
+    with Timer("Retrieving supervoxel list from DVID", body_logger):
         supervoxels = get_supervoxels_for_body(server, uuid, segmentation_instance, body_id)
         supervoxels = np.asarray(supervoxels, np.uint64)
         supervoxels.sort()
     
     unexpected_seeds = set(chain(*seeds.values())) - set(supervoxels)
     if unexpected_seeds:
-        msg = f"User {user}: Body {body_id}: Request contained seeds that do not belong to body: {sorted(unexpected_seeds)}"
-        logger.error(msg)
-        logger.info(f"User {user}: Body {body_id}: Responding with error PRECONDITION_FAILED.")
+        msg = f"Request contained seeds that do not belong to body: {sorted(unexpected_seeds)}"
+        body_logger.error(msg)
+        body_logger.info("Responding with error PRECONDITION_FAILED.")
         cleave_response.setdefault("errors", []).append(msg)
         return cleave_response, HTTPStatus.PRECONDITION_FAILED # code 412
 
     # Extract this body's edges from the complete merge graph
-    with Timer(f"User {user}: Body {body_id}: Extracting body graph", logger):
+    with Timer("Extracting body graph", body_logger):
         permit_table_update = (PRIMARY_UUID is None or uuid == PRIMARY_UUID)
-        df = extract_rows(MERGE_TABLE, body_id, supervoxels, update_inplace=permit_table_update)
+        df = extract_rows(MERGE_TABLE, body_id, supervoxels, permit_table_update, body_logger)
         
         edges = df[['id_a', 'id_b']].values.astype(np.uint64)
         weights = df['score'].values
     
     # Perform the computation
-    with Timer(f"User {user}: Body {body_id}: Computing cleave", logger):
+    with Timer("Computing cleave", body_logger):
         results = cleave(edges, weights, seeds, supervoxels, method=method)
 
     # Convert assignments to JSON
-    with Timer(f"User {user}: Body {body_id}: Populating response", logger):
+    with Timer("Populating response", body_logger):
         df = pd.DataFrame({'node': results.node_ids, 'label': results.output_labels})
         df.sort_values('node', inplace=True)
         for label, group in df.groupby('label'):
             cleave_response["assignments"][str(label)] = group['node'].tolist()
 
     if results.disconnected_components:
-        msg = (f"User {user}: Body {body_id}: Cleave result contains non-contiguous objects for seeds: "
+        msg = (f"Cleave result contains non-contiguous objects for seeds: "
                f"{sorted(results.disconnected_components)}")
-        logger.warning(msg)
+        body_logger.warning(msg)
         cleave_response["warnings"].append(msg)
 
     if results.contains_unlabeled_components:
-        msg = f"User {user}: Body {body_id}: Cleave result is not complete."
-        logger.error(msg)
+        msg = "Cleave result is not complete."
+        body_logger.error(msg)
         cleave_response.setdefault("errors", []).append(msg)
-        logger.info("User {user}: Body {body_id}: Responding with error PRECONDITION_FAILED.")
+        body_logger.info("User {user}: Body {body_id}: Responding with error PRECONDITION_FAILED.")
         return ( cleave_response, HTTPStatus.PRECONDITION_FAILED )
 
-    logger.info(f"User {user}: Body {body_id}: Sending cleave results")
+    body_logger.info("Sending cleave results")
     return ( cleave_response, HTTPStatus.OK )
 

@@ -68,6 +68,20 @@ class ProtectedLogger:
             return logging.getLogger(self.name).log(*args, **kwargs)
 
 
+class PrefixedLogger(logging.Logger):
+    """
+    Logger subclass that prepends a pre-configured string to every log message.
+    """
+    def __init__(self, base_logger, msg_prefix):
+        super().__init__(base_logger.name, base_logger.level)
+        self.base_logger = base_logger
+        self.msg_prefix = msg_prefix
+    
+    def log(self, msg, *args, **kwargs):
+        msg = self.msg_prefix + msg
+        self.base_logger.log(msg, *args, **kwargs)
+
+
 class ExceptionLogger:
     """
     Context manager.
