@@ -1,9 +1,9 @@
-from __future__ import print_function
-import sys
 import os
+import sys
 import json
 import copy
 import signal
+import argparse
 import multiprocessing
 from itertools import chain
 from http import HTTPStatus
@@ -20,9 +20,6 @@ from .dvid import get_supervoxels_for_body
 from .cleave import cleave
 from .util import Timer
 
-# FIXME: multiprocessing has unintended consequences for the log rollover procedure.
-USE_MULTIPROCESSING = False
-
 # Globals
 pool = None # Must be instantiated after this module definition, at the bottom of main().
 LOGFILE = None # Will be set in __main__, below
@@ -30,6 +27,10 @@ app = Flask(__name__)
 logger = ProtectedLogger(__name__)
 MERGE_TABLE = None
 PRIMARY_UUID = None
+
+# FIXME: multiprocessing has unintended consequences for the log rollover procedure.
+USE_MULTIPROCESSING = False
+
 
 def main(debug_mode=False):
     global MERGE_TABLE
@@ -40,8 +41,6 @@ def main(debug_mode=False):
     global app
     global compute_cleave
     global show_log
-
-    import argparse
 
     # Terminate results in normal shutdown
     signal.signal(signal.SIGTERM, lambda signum, stack_frame: exit(1))
@@ -55,29 +54,33 @@ def main(debug_mode=False):
                         help="If provided, do not update the internal cached merge table mapping except for the given UUID. "
                         "(Prioritizes speed of the primary UUID over all others.)")
     args = parser.parse_args()
-
-    ##
-    ## Configure logging
-    ##
-    LOGFILE = init_logging(logger, args.log_dir, args.merge_table, debug_mode)
-    logger.info("Server started with command: {}".format(' '.join(sys.argv)))
-
-    ##
-    ## Load merge table
-    ##
-    if not os.path.exists(args.merge_table):
-        sys.stderr.write("Merge table not found: {}\n".format(args.graph_db))
-        sys.exit(-1)
-
-    with Timer(f"Loading merge table from: {args.merge_table}", logger):
-        MERGE_TABLE = load_merge_table(args.merge_table, args.mapping_file, set_multiindex=False, scores_only=True)
-
     PRIMARY_UUID = args.primary_uuid
-        
-    if USE_MULTIPROCESSING:
-        # Pool must be started LAST, after we've configured all the global variables (logger, etc.),
-        # so that the forked (child) processes have the same setup as the parent process.
-        pool = multiprocessing.Pool(8)
+
+    # This check is to ensure that this initialization is only run once,
+    # even in the presence of the flask debug 'reloader'.
+    if not debug_mode or os.environ.get("WERKZEUG_RUN_MAIN") == "true":
+        ##
+        ## Configure logging
+        ##
+        print("Configuring logging...")
+        LOGFILE = init_logging(logger, args.log_dir, args.merge_table, debug_mode)
+        logger.info("Server started with command: {}".format(' '.join(sys.argv)))
+    
+        ##
+        ## Load merge table
+        ##
+        if not os.path.exists(args.merge_table):
+            sys.stderr.write("Merge table not found: {}\n".format(args.graph_db))
+            sys.exit(-1)
+
+        print("Loading merge table...")
+        with Timer(f"Loading merge table from: {args.merge_table}", logger):
+            MERGE_TABLE = load_merge_table(args.merge_table, args.mapping_file, set_multiindex=False, scores_only=True)
+
+        if USE_MULTIPROCESSING:
+            # Pool must be started LAST, after we've configured all the global variables (logger, etc.),
+            # so that the forked (child) processes have the same setup as the parent process.
+            pool = multiprocessing.Pool(8)
 
     print("Starting app...")
     app.run(host='0.0.0.0', port=args.port, debug=debug_mode, threaded=not debug_mode, use_reloader=debug_mode)

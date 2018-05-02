@@ -9,6 +9,7 @@ def main():
         import os
         log_dir = os.path.dirname(neuclease.__file__) + '/../logs'
         sys.argv += ["--merge-table", "/tmp/old-table-reviewed-only.npy",
+                     "--mapping-file", "/tmp/old-mapping.npy",
                      "--log-dir", log_dir]
         _debug_mode = True
 
