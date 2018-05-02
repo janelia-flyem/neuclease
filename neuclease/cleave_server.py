@@ -3,9 +3,9 @@ import sys
 import json
 import copy
 import signal
+import logging
 import argparse
 import threading
-import multiprocessing
 from itertools import chain
 from http import HTTPStatus
 from datetime import datetime
@@ -15,34 +15,25 @@ import pandas as pd
 
 from flask import Flask, request, abort, redirect, url_for, jsonify, Response, make_response
 
-from .logging_setup import init_logging, log_exceptions, ProtectedLogger, PrefixedLogger
+from .logging_setup import init_logging, log_exceptions, PrefixedLogger
 from .merge_table import load_merge_table, extract_rows
 from .dvid import get_supervoxels_for_body
 from .cleave import cleave
 from .util import Timer
 
 # Globals
-pool = None # Must be instantiated after this module definition, at the bottom of main().
-LOGFILE = None # Will be set in __main__, below
-app = Flask(__name__)
-logger = ProtectedLogger(__name__)
 MERGE_TABLE = None
 MERGE_TABLE_LOCK = threading.Lock()
 PRIMARY_UUID = None
-
-# FIXME: multiprocessing has unintended consequences for the log rollover procedure.
-USE_MULTIPROCESSING = False
+LOGFILE = None # Will be set in __main__, below
+logger = logging.getLogger(__name__)
+app = Flask(__name__)
 
 
 def main(debug_mode=False):
     global MERGE_TABLE
     global PRIMARY_UUID
-    global pool
     global LOGFILE
-    global logger
-    global app
-    global compute_cleave
-    global show_log
 
     # Terminate results in normal shutdown
     signal.signal(signal.SIGTERM, lambda signum, stack_frame: exit(1))
@@ -78,11 +69,6 @@ def main(debug_mode=False):
         print("Loading merge table...")
         with Timer(f"Loading merge table from: {args.merge_table}", logger):
             MERGE_TABLE = load_merge_table(args.merge_table, args.mapping_file, set_multiindex=False, scores_only=True)
-
-        if USE_MULTIPROCESSING:
-            # Pool must be started LAST, after we've configured all the global variables (logger, etc.),
-            # so that the forked (child) processes have the same setup as the parent process.
-            pool = multiprocessing.Pool(8)
 
     print("Starting app...")
     app.run(host='0.0.0.0', port=args.port, debug=debug_mode, threaded=not debug_mode, use_reloader=debug_mode)
@@ -157,10 +143,7 @@ def compute_cleave():
     
         req_string = json.dumps(data, sort_keys=True)
         body_logger.info(f"Received cleave request: {req_string}")
-        if USE_MULTIPROCESSING:
-            cleave_results, status_code = pool.apply(_run_cleave, [data])
-        else:
-            cleave_results, status_code = _run_cleave(data)
+        cleave_results, status_code = _run_cleave(data)
 
         json_response = jsonify(cleave_results)
     

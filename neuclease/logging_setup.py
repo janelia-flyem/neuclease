@@ -5,7 +5,6 @@ import logging.handlers
 import threading
 import traceback
 import functools
-import multiprocessing
 from io import StringIO
 
 
@@ -45,27 +44,6 @@ def init_logging(logger, log_dir, db_path, debug_mode=False):
     initialize_excepthook(logger)
 
     return logfile_path
-
-
-class ProtectedLogger:
-    """
-    A simple wrapper around logging.Logger that protects the log() method
-    (and therefore also protects info(), warning(), etc.) with a multiprocessing.Lock,
-    to avoid intermingled log messages when writing from multiple processes.
-    """
-    def __init__(self, name):
-        self.name = name
-        self.lock = multiprocessing.Lock()
-    
-    def __getattr__(self, attrname):
-        if attrname == 'log':
-            return object.__getattr__(self, attrname)
-        else:
-            return getattr(logging.getLogger(self.name), attrname)
-
-    def log(self, *args, **kwargs):
-        with self.lock:
-            return logging.getLogger(self.name).log(*args, **kwargs)
 
 
 class PrefixedLogger(logging.Logger):
