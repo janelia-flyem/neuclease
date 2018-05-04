@@ -27,7 +27,7 @@ def default_dvid_session(appname=None):
     return s
 
 
-def get_supervoxels_for_body(server, uuid, segmentation_instance, body_id, user=None):
+def fetch_supervoxels_for_body(server, uuid, segmentation_instance, body_id, user=None):
     query_params = {}
     if user:
         query_params['u'] = user

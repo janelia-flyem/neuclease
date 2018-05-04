@@ -15,7 +15,8 @@ from .util import Timer
 
 logger = logging.getLogger(__name__)
 
-def load_merge_table(path, mapping_path=None, normalize=True, set_multiindex=False, scores_only=True):
+
+def load_merge_table(path, mapping=None, normalize=True, set_multiindex=False, scores_only=False):
     """
     Load the merge table from the given path (preferably '.npy' in FFN format),
     and return it as a DataFrame, with an appended a 'body' column according to the given mapping.
@@ -23,7 +24,8 @@ def load_merge_table(path, mapping_path=None, normalize=True, set_multiindex=Fal
         path:
             Either .npy (with FFN-style columns) or .csv (with CELIS-style columns)
         
-        mapping_path:
+        mapping:
+            Either None, a pd.Series (index is SV, value is body), or a path from which one can be loaded.
             Assign 'body' column according to the given mapping of SV->body.
             Only id_a is considered when applying the mapping to each edge.
             If None, the returned 'body' column will be zero for all rows.
@@ -65,12 +67,16 @@ def load_merge_table(path, mapping_path=None, normalize=True, set_multiindex=Fal
         idx_columns = (merge_table_df['id_a'], merge_table_df['id_b'])
         merge_table_df.index = pd.MultiIndex.from_arrays(idx_columns, names=['idx_a', 'idx_b'])
     
-    if mapping_path is None:
+    if mapping is None:
         merge_table_df['body'] = np.zeros((len(merge_table_df),), dtype=np.uint64)
     else:
-        with Timer("Loading and applying preloaded mapping to merge table", logger):
-            mapping_series = load_mapping(mapping_path)
-            mapper = LabelMapper(mapping_series.index.values, mapping_series.values)
+        if isinstance(mapping, str):
+            with Timer("Loading preloaded mapping to merge table", logger):
+                mapping = load_mapping(mapping)
+
+        assert isinstance(mapping, pd.Series), "Mapping must be a pd.Series"        
+        with Timer("Loading preloaded mapping to merge table", logger):
+            mapper = LabelMapper(mapping.index.values, mapping.values)
             merge_table_df['body'] = mapper.apply(merge_table_df['id_a'].values, allow_unmapped=True)
 
     return merge_table_df
@@ -136,48 +142,6 @@ def load_ffn_merge_table(npy_path, normalize=True, sort_by=None):
         merge_table.sort(0, order=sort_by)
     
     return pd.DataFrame(merge_table)
-
-
-def extract_rows(merge_table_df, body_id, supervoxels, update_inplace=True, user_logger=None):
-    """
-    Extract all edges involving the given supervoxels from the given merge table.
-    """
-    body_id = np.uint64(body_id)
-    supervoxels = np.asarray(supervoxels, dtype=np.uint64)
-    assert supervoxels.ndim == 1
-    supervoxels = np.sort(supervoxels)
-    if user_logger is None:
-        user_logger = logger
-
-    # It's very fast to select rows based on the body_id,
-    # so try that and see if the supervoxel set matches.
-    # If it does, we can return immediately.
-    body_positions_orig = (merge_table_df['body'] == body_id).values.nonzero()[0]
-    subset_df = merge_table_df.iloc[body_positions_orig]
-    svs_from_table = np.unique(subset_df[['id_a', 'id_b']].values)
-    if svs_from_table.shape == supervoxels.shape and (svs_from_table == supervoxels).all():
-        return subset_df
-
-    user_logger.info(f"Cached supervoxels (N={len(svs_from_table)}) don't match expected (N={len(supervoxels)}).  Updating cache.")
-    
-    # Body doesn't match the desired supervoxels.
-    # Extract the desired rows the slow way, by selecting all matching supervoxels
-    #
-    # Note:
-    #    I tried speeding this up using proper index-based pandas selection:
-    #        merge_table_df.loc[(supervoxels, supervoxels), 'body'] = body_id
-    #    ...but that is MUCH worse for large selections, and only marginally
-    #    faster for small selections.
-    #    Using eval() seems to be the best option here.
-    #    The worst body we've got still only takes ~2.5 seconds to extract.
-    _sv_set = set(supervoxels)
-    subset_positions = merge_table_df.eval('id_a in @_sv_set or id_b in @_sv_set').values
-    subset_df = merge_table_df.iloc[subset_positions]
-    if update_inplace:
-        merge_table_df['body'].values[body_positions_orig] = 0
-        merge_table_df['body'].values[subset_positions] = body_id
-
-    return subset_df
 
 
 def load_mapping(path):

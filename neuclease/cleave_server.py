@@ -5,7 +5,6 @@ import copy
 import signal
 import logging
 import argparse
-import threading
 from itertools import chain
 from http import HTTPStatus
 from datetime import datetime
@@ -16,23 +15,19 @@ import pandas as pd
 from flask import Flask, request, abort, redirect, url_for, jsonify, Response, make_response
 
 from .logging_setup import init_logging, log_exceptions, PrefixedLogger
-from .merge_table import load_merge_table, extract_rows
-from .dvid import get_supervoxels_for_body
+from .merge_graph import  LabelmapMergeGraph
 from .cleave import cleave
 from .util import Timer
 
 # Globals
-MERGE_TABLE = None
-MERGE_TABLE_LOCK = threading.Lock()
-PRIMARY_UUID = None
+MERGE_GRAPH = None
 LOGFILE = None # Will be set in __main__, below
 logger = logging.getLogger(__name__)
 app = Flask(__name__)
 
 
 def main(debug_mode=False):
-    global MERGE_TABLE
-    global PRIMARY_UUID
+    global MERGE_GRAPH
     global LOGFILE
 
     # Terminate results in normal shutdown
@@ -47,7 +42,6 @@ def main(debug_mode=False):
                         help="If provided, do not update the internal cached merge table mapping except for the given UUID. "
                         "(Prioritizes speed of the primary UUID over all others.)")
     args = parser.parse_args()
-    PRIMARY_UUID = args.primary_uuid
 
     # This check is to ensure that this initialization is only run once,
     # even in the presence of the flask debug 'reloader'.
@@ -68,7 +62,7 @@ def main(debug_mode=False):
 
         print("Loading merge table...")
         with Timer(f"Loading merge table from: {args.merge_table}", logger):
-            MERGE_TABLE = load_merge_table(args.merge_table, args.mapping_file, set_multiindex=False, scores_only=True)
+            MERGE_GRAPH = LabelmapMergeGraph(args.merge_table, args.mapping_file, logger, args.primary_uuid)
 
     print("Starting app...")
     app.run(host='0.0.0.0', port=args.port, debug=debug_mode, threaded=not debug_mode, use_reloader=debug_mode)
@@ -190,11 +184,12 @@ def _run_cleave(data):
         cleave_response.setdefault("errors", []).append(msg)
         return cleave_response, HTTPStatus.PRECONDITION_FAILED # code 412
 
-    with Timer("Retrieving supervoxel list from DVID", body_logger):
-        supervoxels = get_supervoxels_for_body(server, uuid, segmentation_instance, body_id)
-        supervoxels = np.asarray(supervoxels, np.uint64)
-        supervoxels.sort()
-    
+    # Extract this body's edges from the complete merge graph
+    with Timer("Extracting body graph", body_logger):
+        df, supervoxels = MERGE_GRAPH.extract_rows(server, uuid, segmentation_instance, body_id)
+        edges = df[['id_a', 'id_b']].values.astype(np.uint64)
+        weights = df['score'].values
+
     unexpected_seeds = set(chain(*seeds.values())) - set(supervoxels)
     if unexpected_seeds:
         msg = f"Request contained seeds that do not belong to body: {sorted(unexpected_seeds)}"
@@ -203,15 +198,6 @@ def _run_cleave(data):
         cleave_response.setdefault("errors", []).append(msg)
         return cleave_response, HTTPStatus.PRECONDITION_FAILED # code 412
 
-    # Extract this body's edges from the complete merge graph
-    with Timer("Extracting body graph", body_logger):
-        permit_table_update = (PRIMARY_UUID is None or uuid == PRIMARY_UUID)
-        with MERGE_TABLE_LOCK:
-            df = extract_rows(MERGE_TABLE, body_id, supervoxels, permit_table_update, body_logger)
-        
-        edges = df[['id_a', 'id_b']].values.astype(np.uint64)
-        weights = df['score'].values
-    
     # Perform the computation
     with Timer("Computing cleave", body_logger):
         results = cleave(edges, weights, seeds, supervoxels, method=method)
