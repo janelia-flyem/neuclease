@@ -55,10 +55,16 @@ class PrefixedLogger(logging.Logger):
         self.base_logger = base_logger
         self.msg_prefix = msg_prefix
     
-    def log(self, msg, *args, **kwargs):
+    def _log(self, level, msg, args, exc_info=None, extra=None, stack_info=False):
         msg = self.msg_prefix + msg
-        self.base_logger.log(msg, *args, **kwargs)
+        self.base_logger._log(level, msg, args, exc_info, extra, stack_info)
 
+    def __eq__(self, other):
+        return (self.base_logger.name == other.base_logger.name
+                and self.msg_prefix == other.msg_prefix)
+
+    def __hash__(self):
+        return hash((self.base_logger.name, self.msg_prefix))
 
 class ExceptionLogger:
     """

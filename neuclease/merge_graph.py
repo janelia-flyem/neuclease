@@ -20,7 +20,6 @@ class LabelmapMergeGraph:
         
     def __init__(self, table_path, mapping_path=None, logger=None, primary_uuid=None):
         self.primary_uuid = primary_uuid
-        self.logger = logger or _logger
         if mapping_path:
             self.mapping = load_mapping(mapping_path)
         else:
@@ -29,8 +28,9 @@ class LabelmapMergeGraph:
         self.merge_table_df = load_merge_table(table_path, self.mapping, normalize=True)
         self.lock = threading.Lock()
 
+
     @lru_cache(maxsize=1000)
-    def fetch_supervoxels_for_body(self, dvid_server, uuid, labelmap_instance, body_id, mut_id):
+    def fetch_supervoxels_for_body(self, dvid_server, uuid, labelmap_instance, body_id, mut_id, logger):
         """
         Fetch the supervoxels for the given body from DVID.
         The results are memoized via the @lru_cache decorator.
@@ -40,21 +40,26 @@ class LabelmapMergeGraph:
         
         Note: @lru_cache is threadsafe (https://bugs.python.org/issue28969)
         """
-        with Timer("Retrieving supervoxel list from DVID", self.logger):
+        with Timer() as timer:
             supervoxels = fetch_supervoxels_for_body(dvid_server, uuid, labelmap_instance, body_id)
             supervoxels = np.asarray(supervoxels, np.uint64)
             supervoxels.sort()
+
+        logger.info(f"Retrieving supervoxel list from DVID took {timer.timedelta}")
         return supervoxels
 
-    def extract_rows(self, dvid_server, uuid, labelmap_instance, body_id):
+
+    def extract_rows(self, dvid_server, uuid, labelmap_instance, body_id, logger=None):
         """
         Determine which supervoxels belong to the given body,
         and extract all edges involving those supervoxels (and only those supervoxels).
         """
         body_id = np.uint64(body_id)
+        if logger is None:
+            logger = _logger
         
         # FIXME: Actually fetch mutation ID for each body when that DVID endpoint is implemented...
-        dvid_supervoxels = self.fetch_supervoxels_for_body(dvid_server, uuid, labelmap_instance, body_id, mut_id=None)
+        dvid_supervoxels = self.fetch_supervoxels_for_body(dvid_server, uuid, labelmap_instance, body_id, None, logger)
 
         with self.lock:
             # It's very fast to select rows based on the body_id,
@@ -66,7 +71,7 @@ class LabelmapMergeGraph:
             if svs_from_table.shape == dvid_supervoxels.shape and (svs_from_table == dvid_supervoxels).all():
                 return subset_df, dvid_supervoxels
         
-            self.logger.info(f"Cached supervoxels (N={len(svs_from_table)}) don't match expected (N={len(dvid_supervoxels)}).  Updating cache.")
+            logger.info(f"Cached supervoxels (N={len(svs_from_table)}) don't match expected (N={len(dvid_supervoxels)}).  Updating cache.")
             
             # Body doesn't match the desired supervoxels.
             # Extract the desired rows the slow way, by selecting all matching supervoxels

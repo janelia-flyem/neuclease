@@ -185,10 +185,11 @@ def _run_cleave(data):
         return cleave_response, HTTPStatus.PRECONDITION_FAILED # code 412
 
     # Extract this body's edges from the complete merge graph
-    with Timer("Extracting body graph", body_logger):
-        df, supervoxels = MERGE_GRAPH.extract_rows(server, uuid, segmentation_instance, body_id)
+    with Timer() as timer:
+        df, supervoxels = MERGE_GRAPH.extract_rows(server, uuid, segmentation_instance, body_id, body_logger)
         edges = df[['id_a', 'id_b']].values.astype(np.uint64)
         weights = df['score'].values
+    body_logger.info(f"Extracting body graph took {timer.timedelta}")
 
     unexpected_seeds = set(chain(*seeds.values())) - set(supervoxels)
     if unexpected_seeds:
@@ -199,15 +200,15 @@ def _run_cleave(data):
         return cleave_response, HTTPStatus.PRECONDITION_FAILED # code 412
 
     # Perform the computation
-    with Timer("Computing cleave", body_logger):
+    with Timer() as timer:
         results = cleave(edges, weights, seeds, supervoxels, method=method)
+    body_logger.info(f"Computing cleave took {timer.timedelta}")
 
     # Convert assignments to JSON
-    with Timer("Populating response", body_logger):
-        df = pd.DataFrame({'node': results.node_ids, 'label': results.output_labels})
-        df.sort_values('node', inplace=True)
-        for label, group in df.groupby('label'):
-            cleave_response["assignments"][str(label)] = group['node'].tolist()
+    df = pd.DataFrame({'node': results.node_ids, 'label': results.output_labels})
+    df.sort_values('node', inplace=True)
+    for label, group in df.groupby('label'):
+        cleave_response["assignments"][str(label)] = group['node'].tolist()
 
     if results.disconnected_components:
         msg = (f"Cleave result contains non-contiguous objects for seeds: "
