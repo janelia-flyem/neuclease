@@ -269,6 +269,42 @@ def agglomerative_clustering(cleaned_edges, edge_weights, seed_labels, num_class
 
 
 def edge_weighted_watershed(cleaned_edges, edge_weights, seed_labels):
+    """
+    Run nifty.graph.edgeWeightedWatershedsSegmentation() on the given graph with N nodes and E edges.
+    The graph node IDs must be consecutive, starting with zero, dtype=np.uint32
+    
+    
+    Args:
+        cleaned_edges:
+            array, (E,2), uint32
+            Node IDs should be consecutive (more-or-less).
+            To avoid segfaults:
+                - Must not contain duplicates.
+                - Must not contain 'loops' (no self-edges).
+        
+        edge_weights:
+            array, (E,), float32
+        
+        seed_labels:
+            array (N,), uint32
+            All un-seeded nodes should be marked as 0.
+        
+    Returns:
+        (output_labels, disconnected_components, contains_unlabeled_components)
+        
+        Where:
+        
+            output_labels:
+                array (N,), uint32
+                Agglomerated node labeling.
+                
+            disconnected_components:
+                A set of seeds which ended up with more than one component in the result.
+            
+            contains_unlabeled_components:
+                True if the input contains one or more disjoint components that were not seeded
+                and thus not labeled during agglomeration. False otherwise.
+    """
     assert cleaned_edges.dtype == np.uint32
     assert cleaned_edges.ndim == 2
     assert cleaned_edges.shape[1] == 2
@@ -296,6 +332,22 @@ def edge_weighted_watershed(cleaned_edges, edge_weights, seed_labels):
     
     
 def connected_components(edges, num_nodes):
+    """
+    Run connected components on the graph encoded by 'edges' and num_nodes.
+    The graph vertex IDs must be CONSECUTIVE.
+    
+    edges:
+        ndarray, shape=(N,2), dtype=np.uint32
+    
+    num_nodes:
+        Integer, max_node+1.
+        (Allows for graphs which contain nodes that are not referenced in 'edges'.)
+    
+    Returns:
+        ndarray of shape (num_nodes,), labeled by component index from 0..C
+    
+    Note: Uses graph-tool if it's installed; otherwise uses networkx (slower).
+    """
     if _graph_tool_available:
         from graph_tool.topology import label_components
         g = gt.Graph(directed=False)
