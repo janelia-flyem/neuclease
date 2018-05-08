@@ -18,7 +18,8 @@ class LabelmapMergeGraph:
     dynamically-queried supervoxel members.
     """
         
-    def __init__(self, table_path, mapping_path=None, logger=None, primary_uuid=None):
+    def __init__(self, table_path, mapping_path=None, primary_uuid=None):
+        self.lock = threading.Lock()
         self.primary_uuid = primary_uuid
         if mapping_path:
             self.mapping = load_mapping(mapping_path)
@@ -26,7 +27,6 @@ class LabelmapMergeGraph:
             self.mapping = None
 
         self.merge_table_df = load_merge_table(table_path, self.mapping, normalize=True)
-        self.lock = threading.Lock()
 
 
     @lru_cache(maxsize=1000)

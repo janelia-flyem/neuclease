@@ -65,7 +65,7 @@ def main(debug_mode=False):
 
         print("Loading merge table...")
         with Timer(f"Loading merge table from: {args.merge_table}", logger):
-            MERGE_GRAPH = LabelmapMergeGraph(args.merge_table, args.mapping_file, logger, args.primary_uuid)
+            MERGE_GRAPH = LabelmapMergeGraph(args.merge_table, args.mapping_file, args.primary_uuid)
 
         if args.suspend_before_launch:
             pid = os.getpid()
@@ -107,7 +107,6 @@ def show_log():
     response = make_response(contents)
     response.headers['Content-Type'] = 'text/plain'
     return response
-    return contents
     
 
 @app.route('/compute-cleave', methods=['POST'])

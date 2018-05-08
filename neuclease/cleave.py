@@ -325,8 +325,8 @@ def edge_weighted_watershed(cleaned_edges, edge_weights, seed_labels):
     assert len(component_labels) == len(output_labels) == len(seed_labels)
     cc_df = pd.DataFrame({'label': output_labels, 'cc': component_labels})
     cc_counts = cc_df.groupby('label').nunique()['cc']
-    disconneted_cc_counts = cc_counts[cc_counts > 1]
-    disconnected_components = set(disconneted_cc_counts.index) - set([0])
+    disconnected_cc_counts = cc_counts[cc_counts > 1]
+    disconnected_components = set(disconnected_cc_counts.index) - set([0])
     
     return output_labels, disconnected_components, contains_unlabeled_components
     
