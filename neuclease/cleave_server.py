@@ -40,7 +40,10 @@ def main(debug_mode=False):
     parser.add_argument('--log-dir', required=False)
     parser.add_argument('--primary-uuid', required=False,
                         help="If provided, do not update the internal cached merge table mapping except for the given UUID. "
-                        "(Prioritizes speed of the primary UUID over all others.)")
+                             "(Prioritizes speed of the primary UUID over all others.)")
+    parser.add_argument('--suspend-before-launch', action='store_true',
+                        help="After loading the merge graph, suspend the process before launching the server, and await a SIGCONT. "
+                             "Allows you to ALMOST hot-swap a running cleave server. (You can load the new merge graph before killing the old server).")
     args = parser.parse_args()
 
     # This check is to ensure that this initialization is only run once,
@@ -63,6 +66,12 @@ def main(debug_mode=False):
         print("Loading merge table...")
         with Timer(f"Loading merge table from: {args.merge_table}", logger):
             MERGE_GRAPH = LabelmapMergeGraph(args.merge_table, args.mapping_file, logger, args.primary_uuid)
+
+        if args.suspend_before_launch:
+            pid = os.getpid()
+            print(f"Suspending process.  Please use 'kill -CONT {pid}' to resume app startup.")
+            os.kill(pid, signal.SIGSTOP)
+            print(f"Process resumed.  Starting server.")
 
     print("Starting app...")
     app.run(host='0.0.0.0', port=args.port, debug=debug_mode, threaded=not debug_mode, use_reloader=debug_mode)
