@@ -4,14 +4,25 @@ import os
 import json
 import copy
 import signal
-import httplib
 import multiprocessing
 from itertools import chain
+
+try:
+    # Python 2
+    from httplib import OK, PRECONDITION_FAILED
+except ImportError:
+    # Python 3
+    from http import HTTPStatus
+    OK = HTTPStatus.OK
+    PRECONDITION_FAILED = HTTPStatus.PRECONDITION_FAILED
+
 
 from flask import Flask, request, abort, redirect, url_for, jsonify, Response, make_response
 
 from agglomeration_split_tool import AgglomerationGraph, do_split
 from logging_setup import init_logging, log_exceptions, ProtectedLogger
+
+
 
 # FIXME: multiprocessing has unintended consequences for the log rollover procedure.
 USE_MULTIPROCESSING = False
@@ -108,7 +119,7 @@ def _run_cleave(data):
         logger.error(msg)
         logger.info("Responding with error PRECONDITION_FAILED.")
         cleave_results.setdefault("errors", []).append(msg)
-        return cleave_results, httplib.PRECONDITION_FAILED # code 412
+        return cleave_results, PRECONDITION_FAILED # code 412
 
     # Structure seed data for do_split()
     # (These dicts would have more members when using Neuroglancer viewers,
@@ -162,10 +173,10 @@ def _run_cleave(data):
             logger.error(msg)
             cleave_results.setdefault("errors", []).append(msg)
             logger.info("Responding with error PRECONDITION_FAILED.")
-            return ( cleave_results, httplib.PRECONDITION_FAILED )
+            return ( cleave_results, PRECONDITION_FAILED )
 
     logger.info("Sending cleave results for body: {}".format(cleave_results['body-id']))
-    return ( cleave_results, httplib.OK )
+    return ( cleave_results, OK )
 
 def main():
     global GRAPH
