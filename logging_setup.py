@@ -27,7 +27,7 @@ def init_logging(logger, log_dir, db_path):
     logger.handlers = []
 
     formatter = logging.Formatter('%(levelname)s [%(asctime)s] %(message)s')
-    handler = logging.handlers.RotatingFileHandler(logfile_path, maxBytes=int(10e6), backupCount=10)
+    handler = logging.handlers.RotatingFileHandler(logfile_path, maxBytes=int(10e6), backupCount=100)
     handler.setFormatter(formatter)
     logger.setLevel(logging.INFO)
 
