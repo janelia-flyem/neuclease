@@ -64,7 +64,7 @@ class ProtectedLogger:
             return logging.getLogger(self.name).log(*args, **kwargs)
 
 
-class ExceptionLogger:
+class ExceptionLoggingContext:
     """
     Context manager.
     Any exceptions that occur while the context is active
@@ -92,7 +92,7 @@ def log_exceptions(logger):
     def decorator(f):
         @functools.wraps(f)
         def wrapper(*args, **kwargs):
-            with ExceptionLogger(logger):
+            with ExceptionLoggingContext(logger):
                 return f(*args, **kwargs)
         return wrapper
     return decorator
