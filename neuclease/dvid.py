@@ -1,7 +1,11 @@
 import getpass
 import threading
+from io import BytesIO
 
 import requests
+
+import numpy as np
+import pandas as pd
 
 DEFAULT_DVID_SESSIONS = {}
 DEFAULT_APPNAME = "neuclease"
@@ -27,18 +31,65 @@ def default_dvid_session(appname=None):
     return s
 
 
-def fetch_supervoxels_for_body(server, uuid, segmentation_instance, body_id, user=None):
+def fetch_supervoxels_for_body(server, uuid, labelmap_instance, body_id, user=None):
     query_params = {}
     if user:
         query_params['u'] = user
 
-    url = f'{server}/api/node/{uuid}/{segmentation_instance}/supervoxels/{body_id}'
+    url = f'{server}/api/node/{uuid}/{labelmap_instance}/supervoxels/{body_id}'
     r = default_dvid_session().get(url, params=query_params)
     r.raise_for_status()
     return r.json()
 
+
+def fetch_label_for_coordinate(server, uuid, instance, coordinate_zyx, supervoxels=False):
+    session = default_dvid_session()
+    coord_xyz = np.array(coordinate_zyx)[::-1]
+    coord_str = '_'.join(map(str, coord_xyz))
+    supervoxels = str(bool(supervoxels)).lower()
+    r = session.get(f'http://{server}/api/node/{uuid}/{instance}/label/{coord_str}?supervoxels={supervoxels}')
+    r.raise_for_status()
+    return r.json()["Label"]
+
 def split_supervoxel(server, uuid, instance, supervoxel, rle_payload_bytes):
+    """
+    Split the given supervoxel according to the provided RLE payload, as specified in DVID's split-supervoxel docs.
+    
+    Returns:
+        The two new IDs resulting from the split: (split_sv_id, remaining_sv_id)
+    """
     session = default_dvid_session()
     r = session.post(f'http://{server}/api/node/{uuid}/{instance}/split-supervoxel/{supervoxel}', data=rle_payload_bytes)
-    r.raise_for_status()    
+    r.raise_for_status()   
+    
+    results = r.json()
+    return (results["SplitSupervoxel"], results["RemainSupervoxel"] )
+
+def fetch_mappings(server, uuid, labelmap_instance, include_identities=True):
+    """
+    Fetch the complete sv-to-label mapping table from DVID and return it as a pandas Series (indexed by sv).
+    
+    Args:
+        include_identities:
+            If True, add rows for identity mappings (which are not included in DVID's response).
+    
+    Returns:
+        pd.Series(index=sv, data=body)
+    """
+    session = default_dvid_session()
+    r = session.get(f"http://{server}/api/node/{uuid}/{labelmap_instance}/mappings")
+    with BytesIO(r.content) as f:
+        df = pd.read_csv(f, sep=' ', header=None, names=['sv', 'body'], engine='c', dtype=np.uint64)
+
+    if include_identities:
+        missing_idents = set(df['body']) - set(df['sv'])
+        missing_idents = np.fromiter(missing_idents, np.uint64)
+        missing_idents.sort()
+        
+        idents_df = pd.DataFrame({'sv': missing_idents, 'body': missing_idents})
+        df = pd.concat((df, idents_df))
+
+    df.set_index('sv', inplace=True)
+    return df['body']
+
 

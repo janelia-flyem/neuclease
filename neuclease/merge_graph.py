@@ -3,10 +3,13 @@ import threading
 from functools import lru_cache
 
 import numpy as np
+import pandas as pd
+
+from DVIDSparkServices.io_util.labelmap_utils import load_edge_csv
 
 from .util import Timer
-from .dvid import fetch_supervoxels_for_body
-from .merge_table import load_mapping, load_merge_table
+from .dvid import fetch_supervoxels_for_body, fetch_label_for_coordinate, fetch_mappings
+from .merge_table import load_mapping, load_merge_table, apply_mapping_to_mergetable
 
 _logger = logging.getLogger(__name__)
 
@@ -18,16 +21,53 @@ class LabelmapMergeGraph:
     dynamically-queried supervoxel members.
     """
         
-    def __init__(self, table_path, mapping_path=None, primary_uuid=None):
+    def __init__(self, table_path, mapping=None, primary_uuid=None):
         self.lock = threading.Lock()
         self.primary_uuid = primary_uuid
-        if mapping_path:
-            self.mapping = load_mapping(mapping_path)
-        else:
-            self.mapping = None
 
-        self.merge_table_df = load_merge_table(table_path, self.mapping, normalize=True)
+        if isinstance(mapping, str):
+            mapping = load_mapping(mapping)
 
+        self.merge_table_df = load_merge_table(table_path, mapping, normalize=True)
+
+        
+    def append_edges_for_split_supervoxels(self, split_mapping, server, uuid, instance):
+        if isinstance(split_mapping, str):
+            split_mapping = load_edge_csv(split_mapping)
+
+        assert np.unique(split_mapping[:,0]).shape[0] == split_mapping.shape[0], \
+            "Split mapping should be given as [[child, parent],...], not [parent, child] (and every child should have only one parent)."
+
+        # First extract relevant rows for faster queries below
+        children = set(split_mapping[:,0])
+        _parents = set(split_mapping[:,1])
+        update_table_df = self.merge_table_df.query('id_a in @_parents or id_b in @_parents').copy()
+        assert update_table_df.columns[:2].tolist() == ['id_a', 'id_b']
+
+        with Timer(f"Appending {len(update_table_df)} edges with split supervoxel IDs", _logger):
+            for i in range(len(update_table_df)):
+                row = update_table_df.iloc[i:i+1]
+                coord_a = row[['za', 'ya', 'xa']].values[0]
+                coord_b = row[['zb', 'yb', 'xb']].values[0]
+                
+                if (coord_a == (0,0,0)).all() or (coord_b == (0,0,0)).all():
+                    assert False, "FIXME"
+                
+                sv_a = fetch_label_for_coordinate(server, uuid, instance, coord_a, supervoxels=True)
+                sv_b = fetch_label_for_coordinate(server, uuid, instance, coord_b, supervoxels=True)
+                if sv_a not in children or sv_b not in children:
+                    msg = f"The provided split mapping does not match the currently stored labels for row:\n {row}"
+                    msg += f"Found labels: {sv_a} and {sv_b}"
+                    raise RuntimeError(msg)
+    
+                update_table_df.iloc[i, 0] = sv_a # id_a
+                update_table_df.iloc[i, 1] = sv_b # id_b
+        
+        self.merge_table_df = pd.concat(self.merge_table_df, update_table_df, ignore_index=True, copy=False)
+
+    def fetch_and_apply_mapping(self, server, uuid, labelmap_instance):
+        mapping = fetch_mappings(server, uuid, labelmap_instance, True)
+        apply_mapping_to_mergetable(self.merge_table_df, mapping)
 
     @lru_cache(maxsize=1000)
     def fetch_supervoxels_for_body(self, dvid_server, uuid, labelmap_instance, body_id, mut_id, logger):

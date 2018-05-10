@@ -70,16 +70,24 @@ def load_merge_table(path, mapping=None, normalize=True, set_multiindex=False, s
     if mapping is None:
         merge_table_df['body'] = np.zeros((len(merge_table_df),), dtype=np.uint64)
     else:
-        if isinstance(mapping, str):
-            with Timer("Loading preloaded mapping to merge table", logger):
-                mapping = load_mapping(mapping)
-
-        assert isinstance(mapping, pd.Series), "Mapping must be a pd.Series"        
-        with Timer("Loading preloaded mapping to merge table", logger):
-            mapper = LabelMapper(mapping.index.values, mapping.values)
-            merge_table_df['body'] = mapper.apply(merge_table_df['id_a'].values, allow_unmapped=True)
-
+        apply_mapping_to_mergetable(merge_table_df, mapping)
     return merge_table_df
+
+
+def apply_mapping_to_mergetable(merge_table_df, mapping):
+    """
+    Set the 'body' column of the given merge table (append one if it didn't exist)
+    by applying the given SV->body mapping to the merge table's id_a column.
+    """
+    if isinstance(mapping, str):
+        with Timer("Loading preloaded mapping to merge table", logger):
+            mapping = load_mapping(mapping)
+
+    assert isinstance(mapping, pd.Series), "Mapping must be a pd.Series"        
+    with Timer("Loading preloaded mapping to merge table", logger):
+        mapper = LabelMapper(mapping.index.values, mapping.values)
+        merge_table_df['body'] = mapper.apply(merge_table_df['id_a'].values, allow_unmapped=True)
+
 
 def load_celis_csv(csv_path, normalize=True, sort_by=None):
     """
