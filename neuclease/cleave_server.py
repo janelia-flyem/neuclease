@@ -70,6 +70,7 @@ def main(debug_mode=False):
         if args.suspend_before_launch:
             pid = os.getpid()
             print(f"Suspending process.  Please use 'kill -CONT {pid}' to resume app startup.")
+            sys.stdout.flush()
             os.kill(pid, signal.SIGSTOP)
             print(f"Process resumed.  Starting server.")
 
