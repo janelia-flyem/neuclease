@@ -227,9 +227,8 @@ def _run_cleave(data):
     if results.contains_unlabeled_components:
         msg = "Cleave result is not complete."
         body_logger.error(msg)
-        cleave_response.setdefault("errors", []).append(msg)
-        body_logger.info("User {user}: Body {body_id}: Responding with error PRECONDITION_FAILED.")
-        return ( cleave_response, HTTPStatus.PRECONDITION_FAILED )
+        body_logger.warning(msg)
+        cleave_response["warnings"].append(msg)
 
     body_logger.info("Sending cleave results")
     return ( cleave_response, HTTPStatus.OK )
