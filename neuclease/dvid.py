@@ -36,3 +36,9 @@ def fetch_supervoxels_for_body(server, uuid, segmentation_instance, body_id, use
     r = default_dvid_session().get(url, params=query_params)
     r.raise_for_status()
     return r.json()
+
+def split_supervoxel(server, uuid, instance, supervoxel, rle_payload_bytes):
+    session = default_dvid_session()
+    r = session.post(f'http://{server}/api/node/{uuid}/{instance}/split-supervoxel/{supervoxel}', data=rle_payload_bytes)
+    r.raise_for_status()    
+
