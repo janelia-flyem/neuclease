@@ -80,11 +80,11 @@ def apply_mapping_to_mergetable(merge_table_df, mapping):
     by applying the given SV->body mapping to the merge table's id_a column.
     """
     if isinstance(mapping, str):
-        with Timer("Loading preloaded mapping to merge table", logger):
+        with Timer("Loading mapping", logger):
             mapping = load_mapping(mapping)
 
     assert isinstance(mapping, pd.Series), "Mapping must be a pd.Series"        
-    with Timer("Loading preloaded mapping to merge table", logger):
+    with Timer("Applying mapping to merge table", logger):
         mapper = LabelMapper(mapping.index.values, mapping.values)
         merge_table_df['body'] = mapper.apply(merge_table_df['id_a'].values, allow_unmapped=True)
 
