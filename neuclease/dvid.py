@@ -30,18 +30,31 @@ def default_dvid_session(appname=None):
 
     return s
 
+def sanitize_server_arg(f):
+    """
+    Decorator for functions whose first arg is 'server'.
+    If the server begins with 'http://', that prefix is stripped from the argument.
+    """
+    def wrapper(server, *args, **kwargs):
+        if server.startswith('http://'):
+            server = server[len('http://'):]
+        return f(server, *args, **kwargs)
+    return wrapper
 
+
+@sanitize_server_arg
 def fetch_supervoxels_for_body(server, uuid, labelmap_instance, body_id, user=None):
     query_params = {}
     if user:
         query_params['u'] = user
 
-    url = f'{server}/api/node/{uuid}/{labelmap_instance}/supervoxels/{body_id}'
+    url = f'http://{server}/api/node/{uuid}/{labelmap_instance}/supervoxels/{body_id}'
     r = default_dvid_session().get(url, params=query_params)
     r.raise_for_status()
     return r.json()
 
 
+@sanitize_server_arg
 def fetch_label_for_coordinate(server, uuid, instance, coordinate_zyx, supervoxels=False):
     session = default_dvid_session()
     coord_xyz = np.array(coordinate_zyx)[::-1]
@@ -51,6 +64,8 @@ def fetch_label_for_coordinate(server, uuid, instance, coordinate_zyx, supervoxe
     r.raise_for_status()
     return r.json()["Label"]
 
+
+@sanitize_server_arg
 def split_supervoxel(server, uuid, instance, supervoxel, rle_payload_bytes):
     """
     Split the given supervoxel according to the provided RLE payload, as specified in DVID's split-supervoxel docs.
@@ -65,6 +80,8 @@ def split_supervoxel(server, uuid, instance, supervoxel, rle_payload_bytes):
     results = r.json()
     return (results["SplitSupervoxel"], results["RemainSupervoxel"] )
 
+
+@sanitize_server_arg
 def fetch_mappings(server, uuid, labelmap_instance, include_identities=True):
     """
     Fetch the complete sv-to-label mapping table from DVID and return it as a pandas Series (indexed by sv).
