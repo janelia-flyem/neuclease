@@ -55,8 +55,8 @@ class LabelmapMergeGraph:
                 
                 sv_a = fetch_label_for_coordinate(server, uuid, instance, coord_a, supervoxels=True)
                 sv_b = fetch_label_for_coordinate(server, uuid, instance, coord_b, supervoxels=True)
-                if sv_a not in children or sv_b not in children:
-                    msg = f"The provided split mapping does not match the currently stored labels for row:\n {row}"
+                if sv_a not in children and sv_b not in children:
+                    msg = f"The provided split mapping does not match the currently stored labels for row:\n{row}\n"
                     msg += f"Found labels: {sv_a} and {sv_b}"
                     raise RuntimeError(msg)
     
