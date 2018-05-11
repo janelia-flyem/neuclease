@@ -49,9 +49,11 @@ def labelmap_setup():
     global TEST_DVID_SERVER_PROC
     TEST_DVID_SERVER_PROC = launch_dvid_server()
     try:
+        # Can't reuse previous repos because we lock the repo node
+        # (and somehow -fullwrite doesn't work?)
         init_test_repo(reuse_existing=False)
-        merge_table_path, mapping_path = init_labelmap_nodes()
-        yield TEST_SERVER, TEST_REPO, merge_table_path, mapping_path
+        merge_table_path, mapping_path, supervoxel_vol = init_labelmap_nodes()
+        yield TEST_SERVER, TEST_REPO, merge_table_path, mapping_path, supervoxel_vol
     finally:
         # Shutdown
         TEST_DVID_SERVER_PROC.send_signal(signal.SIGTERM)
@@ -125,11 +127,11 @@ def init_labelmap_nodes():
     id_b = np.array([2, 3, 4, 5], np.uint64)
 
     xa = np.array([2, 5, 8, 11], np.uint32)
-    ya = np.array([2, 2, 2, 2], np.uint32)
+    ya = np.array([1, 1, 1, 1], np.uint32)
     za = np.array([0, 0, 0, 0], np.uint32)
 
     xb = np.array([3, 6, 9, 12], np.uint32)
-    yb = np.array([2, 2, 2, 2], np.uint32)
+    yb = np.array([1, 1, 1, 1], np.uint32)
     zb = np.array([0, 0, 0, 0], np.uint32)
 
     score = np.array([0.5, 0.5, 0.5, 0.5], np.float32)
@@ -150,10 +152,9 @@ def init_labelmap_nodes():
     supervoxel_block[:1,:3,:15] = supervoxel_vol
     DVIDNodeService(TEST_SERVER, TEST_REPO).put_labels3D('segmentation', supervoxel_block, (0,0,0))
 
-#     # Create a node for supervoxels    
-#     r = requests.post(f'http://{TEST_SERVER}/api/node/{TEST_REPO}/commit', json={'note': 'supervoxels'})
-#     r.raise_for_status()
-# 
+    r = requests.post(f'http://{TEST_SERVER}/api/node/{TEST_REPO}/commit', json={'note': 'supervoxels'})
+    r.raise_for_status()
+
 #     # Create a child node for agglo mappings    
 #     r = requests.post(f'http://{TEST_SERVER}/api/node/{TEST_REPO}/newversion', json={'note': 'agglo'})
 #     r.raise_for_status()
@@ -170,6 +171,6 @@ def init_labelmap_nodes():
     mapping_path = f'{TEST_DATA_DIR}/mapping.npy'
     np.save(mapping_path, mapping)
 
-    return merge_table_path, mapping_path
+    return merge_table_path, mapping_path, supervoxel_vol
 
 
