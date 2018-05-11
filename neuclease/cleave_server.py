@@ -37,7 +37,10 @@ def main(debug_mode=False):
     parser.add_argument('-p', '--port', default=5555, type=int)
     parser.add_argument('--merge-table', required=True)
     parser.add_argument('--mapping-file', required=False)
+    parser.add_argument('--split-mapping', required=False)
     parser.add_argument('--log-dir', required=False)
+    parser.add_argument('--primary-dvid-server', required=False)
+    parser.add_argument('--primary-instance', required=False)
     parser.add_argument('--primary-uuid', required=False,
                         help="If provided, do not update the internal cached merge table mapping except for the given UUID. "
                              "(Prioritizes speed of the primary UUID over all others.)")
@@ -66,6 +69,15 @@ def main(debug_mode=False):
         print("Loading merge table...")
         with Timer(f"Loading merge table from: {args.merge_table}", logger):
             MERGE_GRAPH = LabelmapMergeGraph(args.merge_table, args.mapping_file, args.primary_uuid)
+
+        if args.split_mapping:
+            if not args.primary_dvid_server or not args.primary_uuid or not args.primary_instance:
+                raise RuntimeError("Can't append split supervoxel edges without all primary server/uuid/instance info")
+            with Timer(f"Appending split supervoxel edges for supervoxels in {args.split_mapping}", logger):
+                MERGE_GRAPH.append_edges_for_split_supervoxels( args.split_mapping,
+                                                                args.primary_dvid_server,
+                                                                args.primary_uuid,
+                                                                args.primary_instance )
 
         if args.suspend_before_launch:
             pid = os.getpid()
