@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 
 from DVIDSparkServices.io_util.labelmap_utils import load_edge_csv
+from DVIDSparkServices.graph_comparison import normalize_merge_table
 
 from .util import Timer
 from .dvid import fetch_supervoxels_for_body, fetch_label_for_coordinate, fetch_mappings, fetch_mutation_id
@@ -32,6 +33,17 @@ class LabelmapMergeGraph:
 
         
     def append_edges_for_split_supervoxels(self, split_mapping, server, uuid, instance):
+        """
+        Append edges to the merge table for the given split supervoxels (do not remove edges for their parents).
+        
+        Args:
+            split_mapping:
+                A mapping (2-column numpy array) of [[child, parent], [child,parent],...] or a path from which it can be loaded.
+            
+            server, uuid, instance:
+                Identifies a DVID labelmap instance from which new supervoxel IDs
+                can be queried via points in the DVID labelmap volume.
+        """
         if isinstance(split_mapping, str):
             split_mapping = load_edge_csv(split_mapping)
 
@@ -63,7 +75,11 @@ class LabelmapMergeGraph:
                 update_table_df.iloc[i, 0] = sv_a # id_a
                 update_table_df.iloc[i, 1] = sv_b # id_b
         
-        self.merge_table_df = pd.concat(self.merge_table_df, update_table_df, ignore_index=True, copy=False)
+        # Normalize the updates
+        normalized_update = normalize_merge_table(update_table_df.drop('body', axis=1).to_records(index=False))
+        normalized_update_df = pd.DataFrame(normalized_update)
+        normalized_update_df['body'] = update_table_df['body']
+        self.merge_table_df = pd.concat((self.merge_table_df, normalized_update_df), ignore_index=True, copy=False)
 
     def fetch_and_apply_mapping(self, server, uuid, labelmap_instance):
         mapping = fetch_mappings(server, uuid, labelmap_instance, True)
