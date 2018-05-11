@@ -146,6 +146,8 @@ def compute_cleave():
     """
     with Timer() as timer:
         data = request.json
+        json_loading_time = timer.seconds
+        
         if not data:
             abort(Response('Request is missing a JSON body', status=400))
     
@@ -153,6 +155,9 @@ def compute_cleave():
         user = data.get("user", "unknown")
         body_logger = PrefixedLogger(logger, f"User {user}: Body {body_id}: ")
         
+        if json_loading_time > 0.5:
+            body_logger.warning(f"Loading JSON for the following request took {json_loading_time:.2f} seconds!")
+
         # This is injected into the request so that it will be echoed back to the client
         data['request-timestamp'] = str(datetime.now())
     
