@@ -110,3 +110,10 @@ def fetch_mappings(server, uuid, labelmap_instance, include_identities=True):
     return df['body']
 
 
+@sanitize_server_arg
+def fetch_mutation_id(server, uuid, labelmap_instance, body_id):
+    session = default_dvid_session()
+    r = session.get(f'http://{server}/api/node/{uuid}/{labelmap_instance}/lastmod/{body_id}')
+    r.raise_for_status()
+    return r.json()["mutation id"]
+

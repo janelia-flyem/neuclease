@@ -8,7 +8,7 @@ import pandas as pd
 from DVIDSparkServices.io_util.labelmap_utils import load_edge_csv
 
 from .util import Timer
-from .dvid import fetch_supervoxels_for_body, fetch_label_for_coordinate, fetch_mappings
+from .dvid import fetch_supervoxels_for_body, fetch_label_for_coordinate, fetch_mappings, fetch_mutation_id
 from .merge_table import load_mapping, load_merge_table, apply_mapping_to_mergetable
 
 _logger = logging.getLogger(__name__)
@@ -70,7 +70,7 @@ class LabelmapMergeGraph:
         apply_mapping_to_mergetable(self.merge_table_df, mapping)
 
     @lru_cache(maxsize=1000)
-    def fetch_supervoxels_for_body(self, dvid_server, uuid, labelmap_instance, body_id, mut_id, logger):
+    def fetch_supervoxels_for_body(self, dvid_server, uuid, labelmap_instance, body_id, mut_id, logger=_logger):
         """
         Fetch the supervoxels for the given body from DVID.
         The results are memoized via the @lru_cache decorator.
@@ -98,8 +98,8 @@ class LabelmapMergeGraph:
         if logger is None:
             logger = _logger
         
-        # FIXME: Actually fetch mutation ID for each body when that DVID endpoint is implemented...
-        dvid_supervoxels = self.fetch_supervoxels_for_body(dvid_server, uuid, labelmap_instance, body_id, None, logger)
+        mut_id = fetch_mutation_id(dvid_server, uuid, labelmap_instance, body_id)
+        dvid_supervoxels = self.fetch_supervoxels_for_body(dvid_server, uuid, labelmap_instance, body_id, mut_id, logger)
 
         with self.lock:
             # It's very fast to select rows based on the body_id,
