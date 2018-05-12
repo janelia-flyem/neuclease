@@ -103,4 +103,4 @@ def test_append_edges_for_split_supervoxels(labelmap_setup):
     
 
 if __name__ == "__main__":
-    pytest.main()
+    pytest.main(['--pyargs', 'neuclease.tests.test_merge_graph'])

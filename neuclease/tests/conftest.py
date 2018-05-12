@@ -134,7 +134,8 @@ def init_labelmap_nodes():
     yb = np.array([1, 1, 1, 1], np.uint32)
     zb = np.array([0, 0, 0, 0], np.uint32)
 
-    score = np.array([0.5, 0.5, 0.5, 0.5], np.float32)
+    # Weak edge between 3 and 4
+    score = np.array([0.4, 0.4, 0.8, 0.4], np.float32)
 
     merge_table = pd.DataFrame({'id_a': id_a, 'id_b': id_b,
                                 'xa': xa, 'ya': ya, 'za': za,
