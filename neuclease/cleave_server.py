@@ -35,15 +35,15 @@ def main(debug_mode=False):
 
     parser = argparse.ArgumentParser()
     parser.add_argument('-p', '--port', default=5555, type=int)
+    parser.add_argument('--log-dir', required=False)
     parser.add_argument('--merge-table', required=True)
     parser.add_argument('--mapping-file', required=False)
     parser.add_argument('--split-mapping', required=False)
-    parser.add_argument('--log-dir', required=False)
-    parser.add_argument('--primary-dvid-server', required=False)
-    parser.add_argument('--primary-instance', required=False)
+    parser.add_argument('--primary-dvid-server')
     parser.add_argument('--primary-uuid', required=False,
                         help="If provided, do not update the internal cached merge table mapping except for the given UUID. "
                              "(Prioritizes speed of the primary UUID over all others.)")
+    parser.add_argument('--primary-labelmap-instance')
     parser.add_argument('--suspend-before-launch', action='store_true',
                         help="After loading the merge graph, suspend the process before launching the server, and await a SIGCONT. "
                              "Allows you to ALMOST hot-swap a running cleave server. (You can load the new merge graph before killing the old server).")
@@ -57,18 +57,22 @@ def main(debug_mode=False):
         ##
         print("Configuring logging...")
         LOGFILE = init_logging(logger, args.log_dir, args.merge_table, debug_mode)
-        logger.info("Server started with command: {}".format(' '.join(sys.argv)))
+        logger.info("Server started with command: " + ' '.join(sys.argv))
     
         ##
         ## Load merge table
         ##
         if not os.path.exists(args.merge_table):
-            sys.stderr.write("Merge table not found: {}\n".format(args.graph_db))
+            sys.stderr.write(f"Merge table not found: {args.merge_table}\n")
             sys.exit(-1)
 
         print("Loading merge table...")
         with Timer(f"Loading merge table from: {args.merge_table}", logger):
             MERGE_GRAPH = LabelmapMergeGraph(args.merge_table, args.mapping_file, args.primary_uuid)
+
+        # If no mappings file was given, fetch it from DVID.
+        if not args.mapping_file and args.primary_dvid_server and args.primary_uuid and args.primary_labelmap_instance:
+            MERGE_GRAPH.fetch_and_apply_mapping(args.primary_dvid_server, args.primary_uuid, args.primary_labelmap_instance)
 
         if args.split_mapping:
             if not args.primary_dvid_server or not args.primary_uuid or not args.primary_instance:
