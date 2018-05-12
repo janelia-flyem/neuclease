@@ -67,7 +67,7 @@ def fetch_label_for_coordinate(server, uuid, instance, coordinate_zyx, supervoxe
     supervoxels = str(bool(supervoxels)).lower()
     r = session.get(f'http://{server}/api/node/{uuid}/{instance}/label/{coord_str}?supervoxels={supervoxels}')
     r.raise_for_status()
-    return r.json()["Label"]
+    return np.uint64(r.json()["Label"])
 
 
 @sanitize_server_arg
