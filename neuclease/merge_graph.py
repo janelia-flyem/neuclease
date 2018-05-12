@@ -5,12 +5,9 @@ from collections import defaultdict
 import numpy as np
 import pandas as pd
 
-from DVIDSparkServices.io_util.labelmap_utils import load_edge_csv
-from DVIDSparkServices.graph_comparison import normalize_merge_table
-
 from .util import Timer
 from .dvid import fetch_supervoxels_for_body, fetch_label_for_coordinate, fetch_mappings, fetch_mutation_id
-from .merge_table import load_mapping, load_merge_table, apply_mapping_to_mergetable
+from .merge_table import load_edge_csv, load_mapping, load_merge_table, normalize_merge_table, apply_mapping_to_mergetable
 
 _logger = logging.getLogger(__name__)
 
