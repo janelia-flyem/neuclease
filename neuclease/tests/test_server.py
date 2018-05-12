@@ -53,7 +53,7 @@ def test_simple_request(cleave_server_setup):
              "mesh-instance": "segmentation_meshes_tars" }
 
     try:
-        r = requests.post(f'http://localhost:{port}/compute-cleave', json=data)
+        r = requests.post(f'http://127.0.0.1:{port}/compute-cleave', json=data)
         r.raise_for_status()
     except requests.RequestException:
         sys.stderr.write(r.content.decode() + '\n')
@@ -72,7 +72,7 @@ def test_fetch_log(cleave_server_setup):
     _dvid_server, _dvid_port, _dvid_repo, port = cleave_server_setup
 
     try:
-        r = requests.get(f'http://localhost:{port}')
+        r = requests.get(f'http://127.0.0.1:{port}')
         r.raise_for_status()
     except requests.RequestException:
         sys.stderr.write(r.content.decode() + '\n')
