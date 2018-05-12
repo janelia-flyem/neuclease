@@ -31,6 +31,7 @@ requirements:
     - vigra
     - nifty
     - dvidutils
+    #- graph-tool  <-- Optional dependency. Install to your own conda env if desired (but check the license).
 
 test:
   requires:
