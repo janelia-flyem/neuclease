@@ -230,7 +230,7 @@ def normalize_merge_table(merge_table, drop_duplicate_edges=True, sort=None):
     without regard to any of the other columns (e.g. two rows with
     identical edges but different scores are still considered duplicates).
     """
-    assert merge_table.dtype == MERGE_TABLE_DTYPE
+    assert merge_table.dtype == MERGE_TABLE_DTYPE, f"Table has wrong dtype: {merge_table.dtype}"
 
     # Group the A coords and the B coords so they can be swapped together
     grouped_dtype = [('id_a', '<u8'),
