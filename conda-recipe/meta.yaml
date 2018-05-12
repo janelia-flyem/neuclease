@@ -24,12 +24,13 @@ requirements:
 
   run:
     - python {{PY_VER}}*
+    - requests
+    - flask
     - numpy
     - pandas
-    - flask
-    - dvidutils
-    - nifty
     - vigra
+    - nifty
+    - dvidutils
 
 test:
   requires:
