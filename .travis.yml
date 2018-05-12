@@ -5,6 +5,14 @@ python:
 cache:
   directories: /home/travis/miniconda
 
+before_cache:
+  # Don't cache build artifacts, or any metadata files that changed in the conda prefix
+  - rm -rf /home/travis/miniconda/conda-bld
+  - conda clean --lock --index-cache
+  - rm -rf /home/travis/miniconda/pkgs/neuclease*
+  - rm -rf /home/travis/miniconda/pkgs/urls.txt
+  - rm -rf /home/travis/miniconda/locks
+
 install:
   #- sudo apt-get update
   - if [ ! -e $HOME/miniconda/bin/conda ]; then
