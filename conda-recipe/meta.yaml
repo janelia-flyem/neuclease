@@ -25,7 +25,7 @@ requirements:
   run:
     - python {{PY_VER}}*
     - requests
-    - flask
+    - flask >=1.0
     - numpy
     - pandas
     - vigra
@@ -36,8 +36,8 @@ requirements:
 test:
   requires:
     - pytest
-    - dvid
-    - libdvid-cpp
+    - dvid >=dvid-0.8.17
+    - libdvid-cpp >=0.3.post51
 
   imports:
     - neuclease
