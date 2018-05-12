@@ -14,7 +14,7 @@ def test_fetch_supervoxels_for_body(labelmap_setup):
     dvid_server, dvid_repo, merge_table_path, mapping_path, _supervoxel_vol = labelmap_setup
     
     merge_graph = LabelmapMergeGraph(merge_table_path, mapping_path)
-    supervoxels = merge_graph.fetch_supervoxels_for_body(dvid_server, dvid_repo, 'segmentation', 1, 0)
+    _mut_id, supervoxels = merge_graph.fetch_supervoxels_for_body(dvid_server, dvid_repo, 'segmentation', 1)
     assert (sorted(supervoxels) == [1,2,3,4,5])
 
 
