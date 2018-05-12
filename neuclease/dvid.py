@@ -1,4 +1,5 @@
 import getpass
+import logging
 import threading
 from io import BytesIO
 
@@ -7,8 +8,12 @@ import requests
 import numpy as np
 import pandas as pd
 
+from .util import Timer
+
 DEFAULT_DVID_SESSIONS = {}
 DEFAULT_APPNAME = "neuclease"
+
+logger = logging.getLogger(__name__)
 
 def default_dvid_session(appname=None):
     """
@@ -94,19 +99,25 @@ def fetch_mappings(server, uuid, labelmap_instance, include_identities=True):
         pd.Series(index=sv, data=body)
     """
     session = default_dvid_session()
-    r = session.get(f"http://{server}/api/node/{uuid}/{labelmap_instance}/mappings")
-    with BytesIO(r.content) as f:
+    
+    # This takes ~30 seconds so it's nice to log it.
+    uri = f"http://{server}/api/node/{uuid}/{labelmap_instance}/mappings"
+    with Timer(f"Fetching {uri}", logger):
+        r = session.get(uri)
+
+    with Timer(f"Parsing mapping", logger), BytesIO(r.content) as f:
         df = pd.read_csv(f, sep=' ', header=None, names=['sv', 'body'], engine='c', dtype=np.uint64)
 
-    if include_identities:
-        missing_idents = set(df['body']) - set(df['sv'])
-        missing_idents = np.fromiter(missing_idents, np.uint64)
-        missing_idents.sort()
-        
-        idents_df = pd.DataFrame({'sv': missing_idents, 'body': missing_idents})
-        df = pd.concat((df, idents_df))
+        if include_identities:
+            missing_idents = set(df['body']) - set(df['sv'])
+            missing_idents = np.fromiter(missing_idents, np.uint64)
+            missing_idents.sort()
+            
+            idents_df = pd.DataFrame({'sv': missing_idents, 'body': missing_idents})
+            df = pd.concat((df, idents_df))
+    
+        df.set_index('sv', inplace=True)
 
-    df.set_index('sv', inplace=True)
     return df['body']
 
 
