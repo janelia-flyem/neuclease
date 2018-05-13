@@ -142,7 +142,8 @@ class LabelmapMergeGraph:
         
         mut_id, dvid_supervoxels = self.fetch_supervoxels_for_body(dvid_server, uuid, labelmap_instance, body_id, logger)
 
-        # FIXME: We could optimize this with a multi-read-single-write lock.
+        # FIXME: We could optimize this with a multi-read-single-write lock, such as:
+        #        https://www.safaribooksonline.com/library/view/python-cookbook/0596001673/ch06s04.html
         with self.lock:
             try:
                 mapping_is_in_sync = (self._mapping_versions[body_id] == (dvid_server, uuid, labelmap_instance, mut_id))
@@ -172,7 +173,7 @@ class LabelmapMergeGraph:
             #    ...but that is MUCH worse for large selections, and only marginally
             #    faster for small selections.
             #    Using eval() seems to be the best option here.
-            #    The worst body we've got still only takes ~2.5 seconds to extract.
+            #    The worst body we've got takes ~30 seconds to extract.
             logger.info(f"Cached supervoxels (N={len(svs_from_table)}) don't match expected (N={len(dvid_supervoxels)}).  Updating cache.")
             _sv_set = set(dvid_supervoxels)
             subset_positions = self.merge_table_df.eval('id_a in @_sv_set and id_b in @_sv_set').values
