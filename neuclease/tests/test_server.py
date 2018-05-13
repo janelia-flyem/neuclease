@@ -30,7 +30,13 @@ def cleave_server_setup(labelmap_setup):
 
     # Give the server time to initialize
     time.sleep(2.0)
-    assert server_proc.poll() is None, "cleave server process couldn't be started"
+    if server_proc.poll() is not None:
+        logfile = os.path.splitext(merge_table_path)[0] + '.log'
+        with open(logfile, 'r') as f:
+            log_contents = f.read()
+        log_tail = '\n'.join(log_contents.split('\n')[-100:])
+        raise RuntimeError("Cleave server process couldn't be started.\n"
+                           "Log tail:\n" + log_tail)
 
     yield dvid_server, dvid_port, dvid_repo, cleave_server_port
         
