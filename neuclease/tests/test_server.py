@@ -31,12 +31,14 @@ def cleave_server_setup(labelmap_setup):
     # Give the server time to initialize
     time.sleep(2.0)
     if server_proc.poll() is not None:
+        msg = "Cleave server process couldn't be started.\n"
         logfile = os.path.splitext(merge_table_path)[0] + '.log'
-        with open(logfile, 'r') as f:
-            log_contents = f.read()
-        log_tail = '\n'.join(log_contents.split('\n')[-100:])
-        raise RuntimeError("Cleave server process couldn't be started.\n"
-                           "Log tail:\n" + log_tail)
+        if os.path.exists(logfile):
+            with open(logfile, 'r') as f:
+                log_contents = f.read()
+            log_tail = '\n'.join(log_contents.split('\n')[-100:])
+            msg += "Log tail:\n" + log_tail
+        raise RuntimeError(msg)
 
     yield dvid_server, dvid_port, dvid_repo, cleave_server_port
         
