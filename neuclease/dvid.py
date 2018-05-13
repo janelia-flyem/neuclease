@@ -1,6 +1,7 @@
 import getpass
 import logging
 import threading
+import functools
 from io import BytesIO
 
 import requests
@@ -40,6 +41,7 @@ def sanitize_server_arg(f):
     Decorator for functions whose first arg is 'server'.
     If the server begins with 'http://', that prefix is stripped from the argument.
     """
+    @functools.wraps(f)
     def wrapper(server, *args, **kwargs):
         if server.startswith('http://'):
             server = server[len('http://'):]
