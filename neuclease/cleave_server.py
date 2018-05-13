@@ -75,13 +75,13 @@ def main(debug_mode=False):
             MERGE_GRAPH.fetch_and_apply_mapping(args.primary_dvid_server, args.primary_uuid, args.primary_labelmap_instance)
 
         if args.split_mapping:
-            if not args.primary_dvid_server or not args.primary_uuid or not args.primary_instance:
+            if not args.primary_dvid_server or not args.primary_uuid or not args.primary_labelmap_instance:
                 raise RuntimeError("Can't append split supervoxel edges without all primary server/uuid/instance info")
             with Timer(f"Appending split supervoxel edges for supervoxels in {args.split_mapping}", logger):
                 MERGE_GRAPH.append_edges_for_split_supervoxels( args.split_mapping,
                                                                 args.primary_dvid_server,
                                                                 args.primary_uuid,
-                                                                args.primary_instance )
+                                                                args.primary_labelmap_instance )
 
         if args.suspend_before_launch:
             pid = os.getpid()
