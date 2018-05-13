@@ -106,6 +106,7 @@ def fetch_mappings(server, uuid, labelmap_instance, include_identities=True):
     uri = f"http://{server}/api/node/{uuid}/{labelmap_instance}/mappings"
     with Timer(f"Fetching {uri}", logger):
         r = session.get(uri)
+        r.raise_for_status()
 
     with Timer(f"Parsing mapping", logger), BytesIO(r.content) as f:
         df = pd.read_csv(f, sep=' ', header=None, names=['sv', 'body'], engine='c', dtype=np.uint64)
