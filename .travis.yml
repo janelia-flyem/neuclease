@@ -13,6 +13,13 @@ before_cache:
   - rm -rf /home/travis/miniconda/pkgs/urls.txt
   - rm -rf /home/travis/miniconda/locks
 
+git:
+  # By default, travis uses git clone --depth=50,
+  # which may not be deep enough to capture the most recent tag,
+  # and the tags are necessary for our conda build.
+  # Force a full clone.
+  depth: false
+  
 install:
   #- sudo apt-get update
   - if [ ! -e $HOME/miniconda/bin/conda ]; then
