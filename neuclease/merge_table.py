@@ -258,3 +258,16 @@ def normalize_merge_table(merge_table, drop_duplicate_edges=True, sort=None):
     
     return merge_table
 
+def apply_mappings(supervoxels, mappings):
+    assert isinstance(mappings, dict)
+    df = pd.DataFrame(index=supervoxels.astype(np.uint64, copy=False))
+    df.index.name = 'sv'
+
+    for name, mapping in mappings.items():
+        assert isinstance(mapping, pd.Series)
+        index_values = mapping.index.values.astype(np.uint64, copy=False)
+        mapping_values = mapping.values.astype(np.uint64, copy=False)
+        mapper = LabelMapper(index_values, mapping_values)
+        df[name] = mapper.apply(df.index.values, allow_unmapped=True)
+
+    return df
