@@ -88,7 +88,7 @@ def main(debug_mode=False):
 
                 if len(bad_edges) > 0:
                     split_mapping_name = os.path.split(args.split_mapping)[1]
-                    bad_edges_name = os.path.splitext(split_mapping_name)[0] + '.csv'
+                    bad_edges_name = os.path.splitext(split_mapping_name)[0] + '-BAD-EDGES.csv'
                     bad_edges_filepath = args.log_dir + '/' + bad_edges_name
                     bad_edges.to_csv(bad_edges_filepath, index=False, header=True)
                     logger.error(f"Some edges belonging to split supervoxels could not be preserved, due to {len(bad_edges)} bad representative points.")
