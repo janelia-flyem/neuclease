@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 
 from .util import Timer
+from .rwlock import ReadWriteLock
 from .dvid import fetch_supervoxels_for_body, fetch_label_for_coordinate, fetch_mappings, fetch_mutation_id
 from .merge_table import load_edge_csv, load_mapping, load_merge_table, normalize_merge_table, apply_mapping_to_mergetable
 
@@ -20,7 +21,7 @@ class LabelmapMergeGraph:
     """
         
     def __init__(self, table_path, mapping=None, primary_uuid=None):
-        self.lock = threading.Lock()
+        self.rwlock = ReadWriteLock()
         self.primary_uuid = primary_uuid
 
         if isinstance(mapping, str):
@@ -161,9 +162,7 @@ class LabelmapMergeGraph:
         
         mut_id, dvid_supervoxels = self.fetch_supervoxels_for_body(dvid_server, uuid, labelmap_instance, body_id, logger)
 
-        # FIXME: We could optimize this with a multi-read-single-write lock, such as:
-        #        https://www.safaribooksonline.com/library/view/python-cookbook/0596001673/ch06s04.html
-        with self.lock:
+        with self.rwlock.context(write=False):
             try:
                 mapping_is_in_sync = (self._mapping_versions[body_id] == (dvid_server, uuid, labelmap_instance, mut_id))
             except KeyError:
@@ -183,24 +182,29 @@ class LabelmapMergeGraph:
                 self._mapping_versions[body_id] = (dvid_server, uuid, labelmap_instance, mut_id)
                 return subset_df, dvid_supervoxels
 
-            # Our mapping is out-of-sync with DVID's agglomeration.
-            # Query for the rows the slow way (via set membership).
-            # 
-            # Note:
-            #    I tried speeding this up using proper index-based pandas selection:
-            #        merge_table_df.loc[(supervoxels, supervoxels), 'body'] = body_id
-            #    ...but that is MUCH worse for large selections, and only marginally
-            #    faster for small selections.
-            #    Using eval() seems to be the best option here.
-            #    The worst body we've got takes ~30 seconds to extract.
+        # If we get this far, our mapping is out-of-sync with DVID's agglomeration.
+        # Query for the rows the slow way (via set membership).
+        # 
+        # Note:
+        #    I tried speeding this up using proper index-based pandas selection:
+        #        merge_table_df.loc[(supervoxels, supervoxels), 'body'] = body_id
+        #    ...but that is MUCH worse for large selections, and only marginally
+        #    faster for small selections.
+        #    Using eval() seems to be the best option here.
+        #    The worst body we've got takes ~30 seconds to extract.
+
+        # Should we overwrite the body column for these rows?
+        permit_write = (self.primary_uuid is None or uuid == self.primary_uuid)
+        with self.rwlock.context(permit_write):
+            # Must re-query the rows to change, since the table might have changed while the lock was released.
+            body_positions_orig = (self.merge_table_df['body'] == body_id).values.nonzero()[0]
             logger.info(f"Cached supervoxels (N={len(svs_from_table)}) don't match expected (N={len(dvid_supervoxels)}).  Updating cache.")
             _sv_set = set(dvid_supervoxels)
             subset_positions = self.merge_table_df.eval('id_a in @_sv_set and id_b in @_sv_set').values
             subset_df = self.merge_table_df.iloc[subset_positions].copy()
             subset_df['body'] = body_id
 
-            # Should we overwrite the body column for these rows?
-            if self.primary_uuid is None or uuid == self.primary_uuid:
+            if permit_write:
                 # Before we overwrite, invalidate the mapping version for any body IDs we're about to overwrite
                 for prev_body in pd.unique(subset_df['body'].values):
                     if prev_body in self._mapping_versions:
