@@ -101,7 +101,7 @@ class LabelmapMergeGraph:
 
         # Normalize the updates
         normalized_update = normalize_merge_table(update_table_df.drop('body', axis=1).to_records(index=False))
-        normalized_update_df = pd.DataFrame(normalized_update)
+        normalized_update_df = pd.DataFrame(normalized_update, index=update_table_df.index)
         normalized_update_df['body'] = update_table_df['body']
 
         # Append the updates

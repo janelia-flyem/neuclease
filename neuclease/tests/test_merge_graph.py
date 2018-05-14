@@ -3,7 +3,7 @@ import requests
 import numpy as np
 
 from neuclease.merge_graph import LabelmapMergeGraph
-from neuclease.merge_table import load_merge_table
+from neuclease.merge_table import load_merge_table, MAPPED_MERGE_TABLE_DTYPE
 
 ##
 ## These tests rely on the global setupfunction 'labelmap_setup',
@@ -87,7 +87,17 @@ def test_append_edges_for_split_supervoxels(labelmap_setup):
     merge_graph = LabelmapMergeGraph(merge_table_path)
     orig_table = merge_graph.merge_table_df.copy()
     
+    table_dtype = merge_graph.merge_table_df.to_records(index=False).dtype
+    assert table_dtype == MAPPED_MERGE_TABLE_DTYPE, \
+        f"Merge table started with wrong dtype: \n{table_dtype}\nExpected:\n{MAPPED_MERGE_TABLE_DTYPE}"
+
+    # Append edges for split supervoxels.
     merge_graph.append_edges_for_split_supervoxels(split_mapping, dvid_server, uuid, 'segmentation')
+
+    table_dtype = merge_graph.merge_table_df.to_records(index=False).dtype
+    assert merge_graph.merge_table_df.to_records(index=False).dtype == MAPPED_MERGE_TABLE_DTYPE, \
+        f"Merge table has wrong dtype after splits were appended: \n{table_dtype}\nExpected:\n{MAPPED_MERGE_TABLE_DTYPE}"
+        
     #print(merge_graph.merge_table_df)
     assert merge_graph.merge_table_df.shape[0] == orig_table.shape[0] + 2
     

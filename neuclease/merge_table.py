@@ -22,6 +22,7 @@ MERGE_TABLE_DTYPE = [('id_a', '<u8'),
                      ('zb', '<u4'),
                      ('score', '<f4')]
 
+MAPPED_MERGE_TABLE_DTYPE = MERGE_TABLE_DTYPE + [('body', '<u8')]
 
 def load_merge_table(path, mapping=None, normalize=True, set_multiindex=False, scores_only=False):
     """
