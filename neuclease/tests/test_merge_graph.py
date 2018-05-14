@@ -27,20 +27,25 @@ def test_fetch_and_apply_mapping(labelmap_setup):
     assert (merge_graph.merge_table_df['body'] == 1).all()
 
 
-def test_extract_rows(labelmap_setup):
+def _test_extract_rows(labelmap_setup, force_dirty_mapping):
     dvid_server, dvid_repo, merge_table_path, mapping_path, _supervoxel_vol = labelmap_setup
     orig_merge_table = load_merge_table(merge_table_path, mapping_path, normalize=True)
     
     merge_graph = LabelmapMergeGraph(merge_table_path, mapping_path)
 
-    r = requests.post(f'http://{dvid_server}/api/node/{dvid_repo}/branch', json={'branch': 'extract-rows-test'})
+    r = requests.post(f'http://{dvid_server}/api/node/{dvid_repo}/branch', json={'branch': f'extract-rows-test-{force_dirty_mapping}'})
     r.raise_for_status()
     uuid = r.json()["child"]
+
+    if force_dirty_mapping:
+        # A little white-box manipulation here to ensure that the mapping is dirty
+        merge_graph.merge_table_df['body'] = np.uint64(0)
+        merge_graph._mapping_versions.clear()
 
     # First test: If nothing has changed in DVID, we get all rows.
     subset_df, dvid_supervoxels = merge_graph.extract_rows(dvid_server, dvid_repo, 'segmentation', 1)
     assert (dvid_supervoxels == [1,2,3,4,5]).all()
-    assert (subset_df == orig_merge_table).all().all()
+    assert (orig_merge_table == subset_df).all().all(), f"Original merge table doesn't match fetched:\n{orig_merge_table}\n\n{subset_df}\n"
 
     # Now change the mapping in DVID and verify it is reflected in the extracted rows.
     # For this test, we'll cleave supervoxel 5 from the rest of the body.
@@ -48,10 +53,19 @@ def test_extract_rows(labelmap_setup):
     r.raise_for_status()
     _cleaved_body = r.json()["CleavedLabel"]
 
+    if force_dirty_mapping:
+        merge_graph.merge_table_df['body'] = np.uint64(0)
+        merge_graph._mapping_versions.clear()
+
     subset_df, dvid_supervoxels = merge_graph.extract_rows(dvid_server, uuid, 'segmentation', 1)
     assert (dvid_supervoxels == [1,2,3,4]).all()
     assert (subset_df == orig_merge_table.query('id_a != 5 and id_b != 5')).all().all()
 
+def test_extract_rows_clean_mapping(labelmap_setup):
+    _test_extract_rows(labelmap_setup, force_dirty_mapping=False)
+
+def test_extract_rows_dirty_mapping(labelmap_setup):
+    _test_extract_rows(labelmap_setup, force_dirty_mapping=True)
 
 def test_append_edges_for_split_supervoxels(labelmap_setup):
     dvid_server, dvid_repo, merge_table_path, _mapping_path, supervoxel_vol = labelmap_setup
