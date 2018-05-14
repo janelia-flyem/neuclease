@@ -2,12 +2,18 @@ import os
 import sys
 import time
 import signal
+import logging
 import subprocess
 
 import pytest
 import requests
 
 import neuclease
+
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+logger.addHandler(logging.StreamHandler(sys.stdout))
 
 ##
 ## These tests rely on the global setupfunction 'labelmap_setup',
@@ -29,7 +35,16 @@ def cleave_server_setup(labelmap_setup):
                                     "--primary-labelmap-instance", "segmentation"])
 
     # Give the server time to initialize
-    time.sleep(2.0)
+    max_tries = 10
+    while max_tries > 0:
+        try:
+            time.sleep(1.0)
+            requests.get(f'http://127.0.0.1:{cleave_server_port}')
+            break
+        except requests.ConnectionError:
+            logger.info("Cleave server is not started yet.  Waiting...")
+            max_tries -= 1
+
     if server_proc.poll() is not None:
         msg = "Cleave server process couldn't be started.\n"
         logfile = os.path.splitext(merge_table_path)[0] + '.log'
@@ -89,4 +104,4 @@ def test_fetch_log(cleave_server_setup):
     assert 'INFO' in r.content.decode()
 
 if __name__ == "__main__":
-    pytest.main(['--pyargs', 'neuclease.tests.test_server'])
+    pytest.main(['-s', '--tb=native', '--pyargs', 'neuclease.tests.test_server'])
