@@ -101,9 +101,10 @@ class LabelmapMergeGraph:
             bad_edges = update_table_df.iloc[:0] # No bad edges: Empty DataFrame
 
         # Normalize the updates
-        normalized_update = normalize_merge_table(update_table_df.drop('body', axis=1).to_records(index=False))
+        update_table_array = update_table_df.drop('body', axis=1).to_records(index=False)
+        normalized_update = normalize_merge_table(update_table_array, False, None)
         normalized_update_df = pd.DataFrame(normalized_update, index=update_table_df.index)
-        normalized_update_df['body'] = update_table_df['body']
+        normalized_update_df['body'] = update_table_df['body'].values
 
         # Append the updates
         self.merge_table_df = pd.concat((self.merge_table_df, normalized_update_df), ignore_index=True, copy=False)
