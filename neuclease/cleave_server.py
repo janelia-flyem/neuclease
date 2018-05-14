@@ -56,6 +56,9 @@ def main(debug_mode=False):
         ## Configure logging
         ##
         print("Configuring logging...")
+        if not args.log_dir:
+            args.log_dir = os.path.dirname(args.merge_table)
+
         LOGFILE = init_logging(logger, args.log_dir, args.merge_table, debug_mode)
         logger.info("Server started with command: " + ' '.join(sys.argv))
     
@@ -78,10 +81,18 @@ def main(debug_mode=False):
             if not args.primary_dvid_server or not args.primary_uuid or not args.primary_labelmap_instance:
                 raise RuntimeError("Can't append split supervoxel edges without all primary server/uuid/instance info")
             with Timer(f"Appending split supervoxel edges for supervoxels in {args.split_mapping}", logger):
-                MERGE_GRAPH.append_edges_for_split_supervoxels( args.split_mapping,
-                                                                args.primary_dvid_server,
-                                                                args.primary_uuid,
-                                                                args.primary_labelmap_instance )
+                bad_edges = MERGE_GRAPH.append_edges_for_split_supervoxels( args.split_mapping,
+                                                                            args.primary_dvid_server,
+                                                                            args.primary_uuid,
+                                                                            args.primary_labelmap_instance )
+
+                if len(bad_edges) > 0:
+                    split_mapping_name = os.path.split(args.split_mapping)[1]
+                    bad_edges_name = os.path.splitext(split_mapping_name)[0] + '.csv'
+                    bad_edges_filepath = args.log_dir + '/' + bad_edges_name
+                    bad_edges.to_csv(bad_edges_filepath, index=False, header=True)
+                    logger.error(f"Some edges belonging to split supervoxels could not be preserved, due to {len(bad_edges)} bad representative points.")
+                    logger.error(f"See {bad_edges_filepath}")
 
         if args.suspend_before_launch:
             pid = os.getpid()

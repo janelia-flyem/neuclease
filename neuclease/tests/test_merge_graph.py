@@ -93,8 +93,10 @@ def test_append_edges_for_split_supervoxels(labelmap_setup):
     
     # SV 3 was originally connected to SV 2 and 4.
     # We should have new rows for those connections, but with the new IDs
-    assert len(merge_graph.merge_table_df.query('id_a == 2 and id_b == @split_sv')) == 1
-    assert len(merge_graph.merge_table_df.query('id_a == 4 and id_b == @remainder_sv')) == 1
+    assert len(merge_graph.merge_table_df.query('id_a == 2 and id_b == @split_sv')) == 1, \
+        f"Merge graph:\n:{str(merge_graph.merge_table_df)}"
+    assert len(merge_graph.merge_table_df.query('id_a == 4 and id_b == @remainder_sv')) == 1, \
+        f"Merge graph:\n:{str(merge_graph.merge_table_df)}"
     
     #from libdvid import DVIDNodeService
     #ns = DVIDNodeService(dvid_server, uuid)

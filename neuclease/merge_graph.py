@@ -51,6 +51,9 @@ class LabelmapMergeGraph:
             server, uuid, instance:
                 Identifies a DVID labelmap instance from which new supervoxel IDs
                 can be queried via points in the DVID labelmap volume.
+        Returns:
+            If any edges could not be preserved because the queried point in DVID does not seem to be a split child,
+            a DataFrame of such edges is returned.
         """
         if isinstance(split_mapping, str):
             split_mapping = load_edge_csv(split_mapping)
@@ -65,6 +68,7 @@ class LabelmapMergeGraph:
         assert update_table_df.columns[:2].tolist() == ['id_a', 'id_b']
 
         with Timer(f"Appending {len(update_table_df)} edges with split supervoxel IDs", _logger):
+            bad_edges = []
             for i in range(len(update_table_df)):
                 row = update_table_df.iloc[i:i+1]
                 coord_a = row[['za', 'ya', 'xa']].values[0]
@@ -75,20 +79,35 @@ class LabelmapMergeGraph:
                 
                 sv_a = fetch_label_for_coordinate(server, uuid, instance, coord_a, supervoxels=True)
                 sv_b = fetch_label_for_coordinate(server, uuid, instance, coord_b, supervoxels=True)
+
+                # If either coordinate returns a non-sensical point, then
+                # the provided split mapping does not match the currently stored labels.
                 if sv_a not in children and sv_b not in children:
-                    msg = f"The provided split mapping does not match the currently stored labels for row:\n{row}\n"
-                    msg += f"Found labels: {sv_a} and {sv_b}"
-                    raise RuntimeError(msg)
-    
-                update_table_df.iloc[i, 0] = sv_a # id_a
-                update_table_df.iloc[i, 1] = sv_b # id_b
-        
+                    if sv_a not in children and sv_a != update_table_df.iloc[i, 0]:
+                        bad_edges.append(('a', sv_a) + tuple(update_table_df.iloc[i]))
+                    if sv_b not in children and sv_b != update_table_df.iloc[i, 1]:
+                        bad_edges.append(('b', sv_b) + tuple(update_table_df.iloc[i]))
+                else:
+                    update_table_df.iloc[i, 0] = sv_a # id_a
+                    update_table_df.iloc[i, 1] = sv_b # id_b
+
+        if bad_edges:
+            # FIXME: Rows with 'bad edges' were not updated with new SV ids,
+            #        meaning that they remain duplicates of the original rows.
+            #        we should remove them from update_table_df before appending to self.merge_table_df 
+            bad_edges = pd.DataFrame(bad_edges, columns=['end', 'found_sv'] + list(update_table_df.columns))
+        else:
+            bad_edges = update_table_df.iloc[:0] # No bad edges: Empty DataFrame
+
         # Normalize the updates
         normalized_update = normalize_merge_table(update_table_df.drop('body', axis=1).to_records(index=False))
         normalized_update_df = pd.DataFrame(normalized_update)
         normalized_update_df['body'] = update_table_df['body']
+
+        # Append the updates
         self.merge_table_df = pd.concat((self.merge_table_df, normalized_update_df), ignore_index=True, copy=False)
 
+        return bad_edges
 
     def fetch_and_apply_mapping(self, server, uuid, labelmap_instance):
         mapping = fetch_mappings(server, uuid, labelmap_instance, True)

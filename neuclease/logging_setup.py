@@ -9,8 +9,6 @@ from io import StringIO
 
 
 def init_logging(logger, log_dir, db_path, debug_mode=False):
-    if not log_dir:
-        log_dir = os.path.dirname(db_path)
     if not os.path.exists(log_dir):
         os.makedirs(log_dir)
     db_name = os.path.basename(db_path)
