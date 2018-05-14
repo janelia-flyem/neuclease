@@ -196,7 +196,8 @@ class LabelmapMergeGraph:
             logger.info(f"Cached supervoxels (N={len(svs_from_table)}) don't match expected (N={len(dvid_supervoxels)}).  Updating cache.")
             _sv_set = set(dvid_supervoxels)
             subset_positions = self.merge_table_df.eval('id_a in @_sv_set and id_b in @_sv_set').values
-            subset_df = self.merge_table_df.iloc[subset_positions]
+            subset_df = self.merge_table_df.iloc[subset_positions].copy()
+            subset_df['body'] = body_id
 
             # Should we overwrite the body column for these rows?
             if self.primary_uuid is None or uuid == self.primary_uuid:
