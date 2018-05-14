@@ -21,7 +21,6 @@ git:
   depth: false
   
 install:
-  #- sudo apt-get update
   - if [ ! -e $HOME/miniconda/bin/conda ]; then
       rm -rf $HOME/miniconda;
       wget https://repo.continuum.io/miniconda/Miniconda3-latest-Linux-x86_64.sh -O miniconda.sh;
@@ -35,10 +34,6 @@ install:
   - conda update -q conda
   - conda install -y conda-build
   - conda info -a
-
-  #- conda create -q -n test-environment python=$TRAVIS_PYTHON_VERSION dep1 dep2 ...
-  #- source activate test-environment
-  #- python setup.py install
 
 script:
   conda build conda-recipe
