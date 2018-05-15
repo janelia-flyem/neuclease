@@ -120,11 +120,12 @@ def parent_sv_handling(request):
     yield request.param
 
 def test_append_edges_for_split_supervoxels(labelmap_setup, parent_sv_handling):
-    dvid_server, _dvid_repo, merge_table_path, _mapping_path, _supervoxel_vol = labelmap_setup
+    dvid_server, _dvid_repo, merge_table_path, mapping_path, _supervoxel_vol = labelmap_setup
     uuid, split_mapping, split_sv, remainder_sv = \
         _setup_test_append_edges_for_split(labelmap_setup, f'split-test-{parent_sv_handling}')
     
     merge_graph = LabelmapMergeGraph(merge_table_path)
+    merge_graph.apply_mapping(mapping_path)
     orig_table = merge_graph.merge_table_df.copy()
     
     table_dtype = merge_graph.merge_table_df.to_records(index=False).dtype
@@ -157,11 +158,12 @@ def test_append_edges_for_split_supervoxels(labelmap_setup, parent_sv_handling):
         f"Merge graph:\n:{str(merge_graph.merge_table_df)}"
 
 def test_append_edges_for_split_supervoxels_with_bad_edges(labelmap_setup, parent_sv_handling):
-    dvid_server, _dvid_repo, merge_table_path, _mapping_path, _supervoxel_vol = labelmap_setup
+    dvid_server, _dvid_repo, merge_table_path, mapping_path, _supervoxel_vol = labelmap_setup
     uuid, split_mapping, split_sv, _remainder_sv = \
         _setup_test_append_edges_for_split(labelmap_setup, f'split-bad-edge-test-{parent_sv_handling}')
 
     merge_graph = LabelmapMergeGraph(merge_table_path)
+    merge_graph.apply_mapping(mapping_path)
     orig_table = merge_graph.merge_table_df.copy()
 
     # Overwrite the coordinate in one of the edges with something incorrect.
@@ -210,4 +212,10 @@ def test_extract_rows_multithreaded(labelmap_setup):
 
 
 if __name__ == "__main__":
-    pytest.main(['--pyargs', 'neuclease.tests.test_merge_graph'])
+#     import sys
+#     import logging
+#     handler = logging.StreamHandler(sys.stdout)
+#     logging.getLogger().addHandler(handler)
+#     logging.getLogger().setLevel(logging.INFO)
+    
+    pytest.main(['-s', '--tb=native', '--pyargs', 'neuclease.tests.test_merge_graph'])
