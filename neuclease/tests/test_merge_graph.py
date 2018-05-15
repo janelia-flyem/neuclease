@@ -169,7 +169,7 @@ def test_append_edges_for_split_supervoxels_with_bad_edges(labelmap_setup, paren
     # Overwrite the coordinate in one of the edges with something incorrect.
     # That edges should not be included in the appended results 
     edge_row = merge_graph.merge_table_df.query('id_a == 3').index
-    merge_graph.merge_table_df.loc[edge_row, 'xa'] = np.int32(0)
+    merge_graph.merge_table_df.loc[edge_row, 'xa'] = np.uint32(0)
     bad_edges = merge_graph.append_edges_for_split_supervoxels(split_mapping, dvid_server, uuid, 'segmentation', parent_sv_handling)
     assert len(bad_edges) == 1
     
