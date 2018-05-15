@@ -1,4 +1,3 @@
-import warnings
 from collections import namedtuple
 import numpy as np
 import pandas as pd
@@ -7,16 +6,7 @@ import nifty.graph
 
 from dvidutils import LabelMapper
 
-try:
-    with warnings.catch_warnings():
-        # Importing graph_tool results in warnings about duplicate C++/Python conversion functions.
-        # Ignore those warnings
-        warnings.filterwarnings("ignore", "to-Python converter")
-        import graph_tool as gt
-
-    _graph_tool_available = True
-except ImportError:
-    _graph_tool_available = False
+from .util import connected_components
 
 CleaveResults = namedtuple("CleaveResults", "node_ids output_labels disconnected_components contains_unlabeled_components")
 def cleave(edges, edge_weights, seeds_dict, node_ids=None, method='seeded-watershed'):
@@ -331,37 +321,3 @@ def edge_weighted_watershed(cleaned_edges, edge_weights, seed_labels):
     return output_labels, disconnected_components, contains_unlabeled_components
     
     
-def connected_components(edges, num_nodes):
-    """
-    Run connected components on the graph encoded by 'edges' and num_nodes.
-    The graph vertex IDs must be CONSECUTIVE.
-    
-    edges:
-        ndarray, shape=(N,2), dtype=np.uint32
-    
-    num_nodes:
-        Integer, max_node+1.
-        (Allows for graphs which contain nodes that are not referenced in 'edges'.)
-    
-    Returns:
-        ndarray of shape (num_nodes,), labeled by component index from 0..C
-    
-    Note: Uses graph-tool if it's installed; otherwise uses networkx (slower).
-    """
-    if _graph_tool_available:
-        from graph_tool.topology import label_components
-        g = gt.Graph(directed=False)
-        g.add_vertex(num_nodes)
-        g.add_edge_list(edges)
-        cc_pmap, _hist = label_components(g)
-        return cc_pmap.get_array()
-
-    else:
-        import networkx as nx
-        g = nx.Graph()
-        g.add_edges_from(edges)
-
-        cc_labels = np.zeros((num_nodes,), np.uint32)
-        for i, component_set in enumerate(nx.connected_components(g)):
-            cc_labels[np.array(list(component_set))] = i
-        return cc_labels
