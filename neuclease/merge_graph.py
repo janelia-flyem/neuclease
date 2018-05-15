@@ -21,6 +21,19 @@ def dummy_lock():
     """
     yield
 
+def uuids_match(uuid1, uuid2):
+    """
+    Return True if the two uuids are the equivalent.
+    
+    >>> assert uuids_match('abcd', 'abcdef') == True
+    >>> assert uuids_match('abc9', 'abcdef') == False
+    """
+    if len(uuid1) > len(uuid2):
+        uuid1, uuid2 = uuid2, uuid1
+    
+    uuid2 = uuid2[:len(uuid1)]
+    return (uuid2 == uuid1)
+
 class LabelmapMergeGraph:
     """
     Represents a volume-wide merge graph.
@@ -171,7 +184,7 @@ class LabelmapMergeGraph:
         mut_id, dvid_supervoxels = self.fetch_supervoxels_for_body(dvid_server, uuid, labelmap_instance, body_id, logger)
 
         # Are we allowed to update the merge table 'body' column?
-        permit_write = (self.primary_uuid is None or uuid == self.primary_uuid)
+        permit_write = (self.primary_uuid is None or uuids_match(uuid, self.primary_uuid))
 
         # If we're permitted to write, then avoid running this function in parallel for the same computation.
         # (The first thread to enter will take a while to apply the body mapping, but the rest will be fast.)
