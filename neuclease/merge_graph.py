@@ -62,7 +62,7 @@ class LabelmapMergeGraph:
         # (but requesting supervoxels for different bodies in parallel is OK).
         self._sv_cache_key_locks = defaultdict(lambda: threading.Lock())
 
-    def append_edges_for_split_supervoxels(self, split_mapping, server, uuid, instance):
+    def append_edges_for_split_supervoxels(self, split_mapping, server, uuid, instance, drop_parent_svs=False):
         """
         Append edges to the merge table for the given split supervoxels (do not remove edges for their parents).
         
@@ -86,13 +86,17 @@ class LabelmapMergeGraph:
         # First extract relevant rows for faster queries below
         children = set(split_mapping[:,0])
         _parents = set(split_mapping[:,1])
-        update_table_df = self.merge_table_df.query('id_a in @_parents or id_b in @_parents').copy()
-        assert update_table_df.columns[:2].tolist() == ['id_a', 'id_b']
+        parent_rows_df = self.merge_table_df.query('id_a in @_parents or id_b in @_parents').copy()
+        assert parent_rows_df.columns[:2].tolist() == ['id_a', 'id_b']
+        
+        if drop_parent_svs:
+            self.merge_table_df = self.merge_table_df.drop(parent_rows_df.index)
 
-        with Timer(f"Appending {len(update_table_df)} edges with split supervoxel IDs", _logger):
+        with Timer(f"Appending {len(parent_rows_df)} edges with split supervoxel IDs", _logger):
             bad_edges = []
-            for i in range(len(update_table_df)):
-                row = update_table_df.iloc[i:i+1]
+            update_rows = [parent_rows_df.iloc[:0]] # Init with empty df in case there are no updates
+            for i in range(len(parent_rows_df)):
+                row = parent_rows_df.iloc[i:i+1]
                 coord_a = row[['za', 'ya', 'xa']].values[0]
                 coord_b = row[['zb', 'yb', 'xb']].values[0]
                 
@@ -105,18 +109,19 @@ class LabelmapMergeGraph:
                 # If either coordinate returns a non-sensical point, then
                 # the provided split mapping does not match the currently stored labels.
                 if sv_a not in children and sv_b not in children:
-                    if sv_a not in children and sv_a != update_table_df.iloc[i, 0]:
-                        bad_edges.append(('a', sv_a) + tuple(update_table_df.iloc[i]))
-                    if sv_b not in children and sv_b != update_table_df.iloc[i, 1]:
-                        bad_edges.append(('b', sv_b) + tuple(update_table_df.iloc[i]))
+                    if sv_a not in children and sv_a != parent_rows_df.iloc[i, 0]:
+                        bad_edges.append(('a', sv_a) + tuple(parent_rows_df.iloc[i]))
+                    if sv_b not in children and sv_b != parent_rows_df.iloc[i, 1]:
+                        bad_edges.append(('b', sv_b) + tuple(parent_rows_df.iloc[i]))
                 else:
-                    update_table_df.iloc[i, 0] = sv_a # id_a
-                    update_table_df.iloc[i, 1] = sv_b # id_b
+                    parent_rows_df.iloc[i, 0] = sv_a # id_a
+                    parent_rows_df.iloc[i, 1] = sv_b # id_b
+                    update_rows.append(parent_rows_df[i:i+1])
+
+        update_table_df = pd.concat(update_rows, ignore_index=True)
+        assert (update_table_df.columns == self.merge_table_df.columns).all()
 
         if bad_edges:
-            # FIXME: Rows with 'bad edges' were not updated with new SV ids,
-            #        meaning that they remain duplicates of the original rows.
-            #        we should remove them from update_table_df before appending to self.merge_table_df 
             bad_edges = pd.DataFrame(bad_edges, columns=['end', 'found_sv'] + list(update_table_df.columns))
         else:
             bad_edges = update_table_df.iloc[:0] # No bad edges: Empty DataFrame
@@ -128,7 +133,9 @@ class LabelmapMergeGraph:
         normalized_update_df['body'] = update_table_df['body'].values
 
         # Append the updates
+        assert (normalized_update_df.columns == self.merge_table_df.columns).all()
         self.merge_table_df = pd.concat((self.merge_table_df, normalized_update_df), ignore_index=True, copy=False)
+
 
         return bad_edges
 
