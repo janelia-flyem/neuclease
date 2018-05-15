@@ -103,7 +103,7 @@ class LabelmapMergeGraph:
         if parent_sv_handling == 'drop':
             self.merge_table_df = self.merge_table_df.drop(parent_rows_df.index)
         elif parent_sv_handling == 'unmap':
-            self.merge_table_df.loc[parent_rows_df.index, 'body'] = 0
+            self.merge_table_df.loc[parent_rows_df.index, 'body'] = np.uint64(0)
 
         with Timer(f"Appending {len(parent_rows_df)} edges with split supervoxel IDs", _logger):
             bad_edges = []
