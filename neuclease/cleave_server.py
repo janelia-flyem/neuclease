@@ -71,8 +71,9 @@ def main(debug_mode=False):
 
         print("Loading merge table...")
         with Timer(f"Loading merge table from: {args.merge_table}", logger):
-            MERGE_GRAPH = LabelmapMergeGraph(args.merge_table, args.mapping_file, args.primary_uuid)
+            MERGE_GRAPH = LabelmapMergeGraph(args.merge_table, args.primary_uuid)
 
+        # Apply splits first
         if args.split_mapping:
             if not args.primary_dvid_server or not args.primary_uuid or not args.primary_labelmap_instance:
                 raise RuntimeError("Can't append split supervoxel edges without all primary server/uuid/instance info")
@@ -90,8 +91,10 @@ def main(debug_mode=False):
                     logger.error(f"Some edges belonging to split supervoxels could not be preserved, due to {len(bad_edges)} bad representative points.")
                     logger.error(f"See {bad_edges_filepath}")
 
-        # If no mappings file was given, fetch it from DVID.
-        if not args.mapping_file and args.primary_dvid_server and args.primary_uuid and args.primary_labelmap_instance:
+        # Apply mapping (after splits), either from file or from DVID.
+        if args.mapping_file:
+            MERGE_GRAPH.apply_mapping(args.mapping_file)
+        elif args.primary_dvid_server and args.primary_uuid and args.primary_labelmap_instance:
             MERGE_GRAPH.fetch_and_apply_mapping(args.primary_dvid_server, args.primary_uuid, args.primary_labelmap_instance)
 
         if args.suspend_before_launch:

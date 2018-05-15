@@ -15,7 +15,8 @@ from neuclease.merge_table import load_merge_table, MAPPED_MERGE_TABLE_DTYPE
 def test_fetch_supervoxels_for_body(labelmap_setup):
     dvid_server, dvid_repo, merge_table_path, mapping_path, _supervoxel_vol = labelmap_setup
     
-    merge_graph = LabelmapMergeGraph(merge_table_path, mapping_path)
+    merge_graph = LabelmapMergeGraph(merge_table_path)
+    merge_graph.apply_mapping(mapping_path)
     _mut_id, supervoxels = merge_graph.fetch_supervoxels_for_body(dvid_server, dvid_repo, 'segmentation', 1)
     assert (sorted(supervoxels) == [1,2,3,4,5])
 
@@ -38,7 +39,8 @@ def _test_extract_rows(labelmap_setup, force_dirty_mapping):
     dvid_server, dvid_repo, merge_table_path, mapping_path, _supervoxel_vol = labelmap_setup
     orig_merge_table = load_merge_table(merge_table_path, mapping_path, normalize=True)
     
-    merge_graph = LabelmapMergeGraph(merge_table_path, mapping_path)
+    merge_graph = LabelmapMergeGraph(merge_table_path)
+    merge_graph.apply_mapping(mapping_path)
 
     if force_dirty_mapping:
         # A little white-box manipulation here to ensure that the mapping is dirty
@@ -182,7 +184,8 @@ def test_extract_rows_multithreaded(labelmap_setup):
     dvid_server, dvid_repo, merge_table_path, mapping_path, _supervoxel_vol = labelmap_setup
     orig_merge_table = load_merge_table(merge_table_path, mapping_path, normalize=True)
      
-    merge_graph = LabelmapMergeGraph(merge_table_path, mapping_path)
+    merge_graph = LabelmapMergeGraph(merge_table_path)
+    merge_graph.apply_mapping(mapping_path)
 
     def _test(force_dirty):
         if force_dirty:

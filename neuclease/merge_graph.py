@@ -42,14 +42,11 @@ class LabelmapMergeGraph:
     dynamically-queried supervoxel members.
     """
         
-    def __init__(self, table_path, mapping=None, primary_uuid=None):
+    def __init__(self, table_path, primary_uuid=None):
         self.rwlock = ReadWriteLock()
         self.primary_uuid = primary_uuid
 
-        if isinstance(mapping, str):
-            mapping = load_mapping(mapping)
-
-        self.merge_table_df = load_merge_table(table_path, mapping, normalize=True)
+        self.merge_table_df = load_merge_table(table_path, normalize=True)
         self._mapping_versions = {}
         
         # Supervoxels retrieved from DVID are cached in this member.
@@ -61,6 +58,13 @@ class LabelmapMergeGraph:
         # This dict holds a lock for each body, to avoid requesting supervoxels for the same body in parallel,
         # (but requesting supervoxels for different bodies in parallel is OK).
         self._sv_cache_key_locks = defaultdict(lambda: threading.Lock())
+
+
+    def apply_mapping(self, mapping):
+        if isinstance(mapping, str):
+            mapping = load_mapping(mapping)
+        apply_mapping_to_mergetable(self.merge_table_df, mapping)
+        
 
     def append_edges_for_split_supervoxels(self, split_mapping, server, uuid, instance, drop_parent_svs=False):
         """
@@ -136,8 +140,8 @@ class LabelmapMergeGraph:
         assert (normalized_update_df.columns == self.merge_table_df.columns).all()
         self.merge_table_df = pd.concat((self.merge_table_df, normalized_update_df), ignore_index=True, copy=False)
 
-
         return bad_edges
+
 
     def fetch_and_apply_mapping(self, server, uuid, labelmap_instance):
         mapping = fetch_mappings(server, uuid, labelmap_instance, True)
