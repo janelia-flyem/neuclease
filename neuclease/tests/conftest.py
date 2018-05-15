@@ -55,13 +55,14 @@ def labelmap_setup():
         merge_table_path, mapping_path, supervoxel_vol = init_labelmap_nodes()
         yield TEST_SERVER, TEST_REPO, merge_table_path, mapping_path, supervoxel_vol
     finally:
-        # Shutdown
+        print("\nTerminating DVID test server...")
         TEST_DVID_SERVER_PROC.send_signal(signal.SIGTERM)
         try:
             TEST_DVID_SERVER_PROC.wait(DVID_SHUTDOWN_TIMEOUT)
         except subprocess.TimeoutExpired:
             print("DVID test server did not shut down cleanly.  Killing...")
             TEST_DVID_SERVER_PROC.send_signal(signal.SIGKILL)
+        print("DVID test server is terminated.")
 
 
 def launch_dvid_server():
