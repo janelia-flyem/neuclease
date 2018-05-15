@@ -82,7 +82,7 @@ def test_extract_rows_dirty_mapping(labelmap_setup):
     
 
 def _setup_test_append_edges_for_split(labelmap_setup, branch_name):
-    dvid_server, dvid_repo, merge_table_path, _mapping_path, supervoxel_vol = labelmap_setup
+    dvid_server, dvid_repo, _merge_table_path, _mapping_path, supervoxel_vol = labelmap_setup
     r = requests.post(f'http://{dvid_server}/api/node/{dvid_repo}/branch', json={'branch': branch_name})
     r.raise_for_status()
     uuid = r.json()["child"]
@@ -114,10 +114,15 @@ def _setup_test_append_edges_for_split(labelmap_setup, branch_name):
 
     return uuid, split_mapping, split_sv, remainder_sv
 
-def _test_append_edges_for_split_supervoxels(labelmap_setup, drop_parents):
+
+@pytest.fixture(params=('drop', 'keep', 'unmap'))#, ids=('drop', 'keep', 'unmap'))
+def parent_sv_handling(request):
+    yield request.param
+
+def test_append_edges_for_split_supervoxels(labelmap_setup, parent_sv_handling):
     dvid_server, _dvid_repo, merge_table_path, _mapping_path, _supervoxel_vol = labelmap_setup
     uuid, split_mapping, split_sv, remainder_sv = \
-        _setup_test_append_edges_for_split(labelmap_setup, f'split-test-{drop_parents}')
+        _setup_test_append_edges_for_split(labelmap_setup, f'split-test-{parent_sv_handling}')
     
     merge_graph = LabelmapMergeGraph(merge_table_path)
     orig_table = merge_graph.merge_table_df.copy()
@@ -127,18 +132,22 @@ def _test_append_edges_for_split_supervoxels(labelmap_setup, drop_parents):
         f"Merge table started with wrong dtype: \n{table_dtype}\nExpected:\n{MAPPED_MERGE_TABLE_DTYPE}"
 
     # Append edges for split supervoxels.
-    merge_graph.append_edges_for_split_supervoxels(split_mapping, dvid_server, uuid, 'segmentation', drop_parents)
+    merge_graph.append_edges_for_split_supervoxels(split_mapping, dvid_server, uuid, 'segmentation', parent_sv_handling)
 
     table_dtype = merge_graph.merge_table_df.to_records(index=False).dtype
     assert merge_graph.merge_table_df.to_records(index=False).dtype == MAPPED_MERGE_TABLE_DTYPE, \
         f"Merge table has wrong dtype after splits were appended: \n{table_dtype}\nExpected:\n{MAPPED_MERGE_TABLE_DTYPE}"
         
-    if drop_parents:
+    if parent_sv_handling == 'drop':
         assert merge_graph.merge_table_df.shape[0] == orig_table.shape[0]
         assert set(merge_graph.merge_table_df[['id_a', 'id_b']].values.flat) == set([1,2,4,5,split_sv,remainder_sv])
-    else:
+    elif parent_sv_handling == 'keep':
         assert merge_graph.merge_table_df.shape[0] == orig_table.shape[0] + 2
         assert set(merge_graph.merge_table_df[['id_a', 'id_b']].values.flat) == set([1,2,3,4,5,split_sv,remainder_sv])
+    elif parent_sv_handling == 'unmap':
+        assert merge_graph.merge_table_df.shape[0] == orig_table.shape[0] + 2
+        assert set(merge_graph.merge_table_df[['id_a', 'id_b']].values.flat) == set([1,2,3,4,5,split_sv,remainder_sv])
+        assert (merge_graph.merge_table_df.query('id_a == 3 or id_b == 3')['body'] == 0).all()
     
     # SV 3 was originally connected to SV 2 and 4.
     # We should have new rows for those connections, but with the new IDs
@@ -147,10 +156,10 @@ def _test_append_edges_for_split_supervoxels(labelmap_setup, drop_parents):
     assert len(merge_graph.merge_table_df.query('id_a == 4 and id_b == @remainder_sv')) == 1, \
         f"Merge graph:\n:{str(merge_graph.merge_table_df)}"
 
-def _test_append_edges_for_split_supervoxels_with_bad_edges(labelmap_setup, drop_parents):
+def test_append_edges_for_split_supervoxels_with_bad_edges(labelmap_setup, parent_sv_handling):
     dvid_server, _dvid_repo, merge_table_path, _mapping_path, _supervoxel_vol = labelmap_setup
     uuid, split_mapping, split_sv, _remainder_sv = \
-        _setup_test_append_edges_for_split(labelmap_setup, f'split-bad-edge-test-{drop_parents}')
+        _setup_test_append_edges_for_split(labelmap_setup, f'split-bad-edge-test-{parent_sv_handling}')
 
     merge_graph = LabelmapMergeGraph(merge_table_path)
     orig_table = merge_graph.merge_table_df.copy()
@@ -159,22 +168,19 @@ def _test_append_edges_for_split_supervoxels_with_bad_edges(labelmap_setup, drop
     # That edges should not be included in the appended results 
     edge_row = merge_graph.merge_table_df.query('id_a == 3').index
     merge_graph.merge_table_df.loc[edge_row, 'xa'] = 0
-    bad_edges = merge_graph.append_edges_for_split_supervoxels(split_mapping, dvid_server, uuid, 'segmentation', drop_parents)
+    bad_edges = merge_graph.append_edges_for_split_supervoxels(split_mapping, dvid_server, uuid, 'segmentation', parent_sv_handling)
     assert len(bad_edges) == 1
     
-    if drop_parents:
+    if parent_sv_handling == 'drop':
         assert merge_graph.merge_table_df.shape[0] == orig_table.shape[0] - 1 # bad edge dropped and not replaced
         assert set(merge_graph.merge_table_df[['id_a', 'id_b']].values.flat) == set([1,2,4,5,split_sv])
-    else:
+    elif parent_sv_handling == 'keep':
         assert merge_graph.merge_table_df.shape[0] == orig_table.shape[0] + 2 - 1 # bad edge dropped
         assert set(merge_graph.merge_table_df[['id_a', 'id_b']].values.flat) == set([1,2,3,4,5,split_sv])
-
-    
-def test_append_edges_for_split_supervoxels(labelmap_setup):
-    _test_append_edges_for_split_supervoxels(labelmap_setup, drop_parents=False)
-    
-def test_append_edges_for_split_supervoxels_drop_parents(labelmap_setup):
-    _test_append_edges_for_split_supervoxels(labelmap_setup, drop_parents=True)
+    elif parent_sv_handling == 'unmap':
+        assert merge_graph.merge_table_df.shape[0] == orig_table.shape[0] + 2 - 1 # bad edge dropped
+        assert set(merge_graph.merge_table_df[['id_a', 'id_b']].values.flat) == set([1,2,3,4,5,split_sv])
+        assert (merge_graph.merge_table_df.query('id_a == 3 or id_b == 3')['body'] == 0).all()
 
 
 def test_extract_rows_multithreaded(labelmap_setup):

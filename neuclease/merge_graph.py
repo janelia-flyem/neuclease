@@ -66,7 +66,7 @@ class LabelmapMergeGraph:
         apply_mapping_to_mergetable(self.merge_table_df, mapping)
         
 
-    def append_edges_for_split_supervoxels(self, split_mapping, server, uuid, instance, drop_parent_svs=False):
+    def append_edges_for_split_supervoxels(self, split_mapping, server, uuid, instance, parent_sv_handling='unmap'):
         """
         Append edges to the merge table for the given split supervoxels (do not remove edges for their parents).
         
@@ -77,10 +77,17 @@ class LabelmapMergeGraph:
             server, uuid, instance:
                 Identifies a DVID labelmap instance from which new supervoxel IDs
                 can be queried via points in the DVID labelmap volume.
+            
+            parent_sv_handling:
+                One of the following:
+                    - 'drop': Delete the edges that referred to the parent split IDs
+                    - 'keep': Keep the edges that referred to the parent split IDs
+                    - 'unmap': Keep the edges that referred to the parent split IDs, but reset their 'body' column to 0.
         Returns:
             If any edges could not be preserved because the queried point in DVID does not seem to be a split child,
             a DataFrame of such edges is returned.
         """
+        assert parent_sv_handling in ('keep', 'drop', 'unmap')
         if isinstance(split_mapping, str):
             split_mapping = load_edge_csv(split_mapping)
 
@@ -93,8 +100,10 @@ class LabelmapMergeGraph:
         parent_rows_df = self.merge_table_df.query('id_a in @_parents or id_b in @_parents').copy()
         assert parent_rows_df.columns[:2].tolist() == ['id_a', 'id_b']
         
-        if drop_parent_svs:
+        if parent_sv_handling == 'drop':
             self.merge_table_df = self.merge_table_df.drop(parent_rows_df.index)
+        elif parent_sv_handling == 'unmap':
+            self.merge_table_df.loc[parent_rows_df.index, 'body'] = 0
 
         with Timer(f"Appending {len(parent_rows_df)} edges with split supervoxel IDs", _logger):
             bad_edges = []
