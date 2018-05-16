@@ -116,12 +116,13 @@ def fetch_mappings(server, uuid, labelmap_instance, include_identities=True, ret
         df = pd.read_csv(f, sep=' ', header=None, names=['sv', 'body'], engine='c', dtype=np.uint64)
 
     if include_identities:
-        missing_idents = set(df['body']) - set(df['sv']) - set(retired_supervoxels)
-        missing_idents = np.fromiter(missing_idents, np.uint64)
-        missing_idents.sort()
-        
-        idents_df = pd.DataFrame({'sv': missing_idents, 'body': missing_idents})
-        df = pd.concat((df, idents_df), ignore_index=True)
+        with Timer(f"Appending missing identity-mappings", logger), BytesIO(r.content) as f:
+            missing_idents = set(df['body']) - set(df['sv']) - set(retired_supervoxels)
+            missing_idents = np.fromiter(missing_idents, np.uint64)
+            missing_idents.sort()
+            
+            idents_df = pd.DataFrame({'sv': missing_idents, 'body': missing_idents})
+            df = pd.concat((df, idents_df), ignore_index=True)
 
     df.set_index('sv', inplace=True)
 

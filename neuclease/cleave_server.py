@@ -105,9 +105,10 @@ def main(debug_mode=False):
             print(f"Suspending process.  Please use 'kill -CONT {pid}' to resume app startup.")
             sys.stdout.flush()
             os.kill(pid, signal.SIGSTOP)
-            print(f"Process resumed.  Starting server.")
+            print(f"Process resumed.")
 
-    print("Starting app...")
+    logger.info("Merge graph loaded. Starting server.")
+    print("Merge graph loaded. Starting server.")
     app.run(host='0.0.0.0', port=args.port, debug=debug_mode, threaded=not debug_mode, use_reloader=debug_mode)
 
 
