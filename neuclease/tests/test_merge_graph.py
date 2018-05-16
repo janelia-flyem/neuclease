@@ -48,32 +48,46 @@ def _test_extract_rows(labelmap_setup, force_dirty_mapping):
         merge_graph._mapping_versions.clear()
 
     # First test: If nothing has changed in DVID, we get all rows.
-    subset_df, dvid_supervoxels = merge_graph.extract_rows(dvid_server, dvid_repo, 'segmentation', 1)
-    assert (dvid_supervoxels == [1,2,3,4,5]).all()
-    assert (orig_merge_table == subset_df).all().all(), \
-        f"Original merge table doesn't match fetched:\n{orig_merge_table}\n\n{subset_df}\n"
-    assert (orig_merge_table == merge_graph.merge_table_df).all().all(), \
-        f"Original merge table doesn't match updated:\n{orig_merge_table}\n\n{merge_graph.merge_table_df}\n"
+    # We should be able to repeat this with the same results
+    # (Make sure the cache is repopulated correctly.)
+    def _extract():
+        subset_df, dvid_supervoxels = merge_graph.extract_rows(dvid_server, dvid_repo, 'segmentation', 1)
+        assert (dvid_supervoxels == [1,2,3,4,5]).all()
+        assert (orig_merge_table == subset_df).all().all(), \
+            f"Original merge table doesn't match fetched:\n{orig_merge_table}\n\n{subset_df}\n"
+        assert (orig_merge_table == merge_graph.merge_table_df).all().all(), \
+            f"Original merge table doesn't match updated:\n{orig_merge_table}\n\n{merge_graph.merge_table_df}\n"
+    _extract()
+    _extract()
 
     # Now change the mapping in DVID and verify it is reflected in the extracted rows.
-    # For this test, we'll cleave supervoxel 5 from the rest of the body.
+    # For this test, we'll cleave supervoxels [4,5] from the rest of the body.
     r = requests.post(f'http://{dvid_server}/api/node/{dvid_repo}/branch', json={'branch': f'extract-rows-test-{force_dirty_mapping}'})
     r.raise_for_status()
     uuid = r.json()["child"]
 
-    r = requests.post(f'http://{dvid_server}/api/node/{uuid}/segmentation/cleave/1', json=[5])
+    r = requests.post(f'http://{dvid_server}/api/node/{uuid}/segmentation/cleave/1', json=[4,5])
     r.raise_for_status()
-    _cleaved_body = r.json()["CleavedLabel"]
+    cleaved_body = r.json()["CleavedLabel"]
 
     if force_dirty_mapping:
         # A little white-box manipulation here to ensure that the mapping is dirty
-        merge_graph.merge_table_df['body'] = np.uint64(0)
+        merge_graph.merge_table_df['body'].values[0:2] = np.uint64(0)
         merge_graph._mapping_versions.clear()
 
     subset_df, dvid_supervoxels = merge_graph.extract_rows(dvid_server, uuid, 'segmentation', 1)
-    assert (dvid_supervoxels == [1,2,3,4]).all()
-    assert (subset_df == orig_merge_table.query('id_a != 5 and id_b != 5')).all().all()
+    assert (dvid_supervoxels == [1,2,3]).all()
+    cleaved_svs = set([4,5])
+    assert (subset_df == orig_merge_table.query('id_a not in @cleaved_svs and id_b not in @cleaved_svs')).all().all()
 
+    # Check the other body
+    subset_df, dvid_supervoxels = merge_graph.extract_rows(dvid_server, uuid, 'segmentation', cleaved_body)
+
+    # Checking one body or the other shouldn't invalidate the rest of the body column!
+    assert (merge_graph.merge_table_df.iloc[:2]['body'] == 1).all()
+    assert merge_graph.merge_table_df.iloc[2]['body'] == 0 # This edge (3,4) was cut by the cleave, and so has no body
+    assert merge_graph.merge_table_df.iloc[3]['body'] == cleaved_body
+    
 def test_extract_rows_clean_mapping(labelmap_setup):
     _test_extract_rows(labelmap_setup, force_dirty_mapping=False)
 

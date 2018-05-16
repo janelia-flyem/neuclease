@@ -261,6 +261,7 @@ class LabelmapMergeGraph:
             with self.rwlock.context(permit_write):
                 # Must re-query the rows to change, since the table might have changed while the lock was released.
                 body_positions_orig = (self.merge_table_df['body'] == body_id)
+                body_positions_index = body_positions_orig[body_positions_orig].index
 
                 if self.debug_export_dir:
                     export_path = self.debug_export_dir + f"/body-{body_id}-table-before-sync.csv"
@@ -274,14 +275,14 @@ class LabelmapMergeGraph:
                 subset_df['body'] = body_id
     
                 if permit_write:
-                    logger.info("Overwriting cached mapping")
+                    logger.info(f"Overwriting cached mapping (erasing {len(body_positions_index)}, updating {len(subset_df)})")
                     # Before we overwrite, invalidate the mapping version for any body IDs we're about to overwrite
                     for prev_body in pd.unique(subset_df['body'].values):
                         if prev_body in self._mapping_versions:
                             del self._mapping_versions[prev_body]
     
                     self._mapping_versions[body_id] = (dvid_server, uuid, labelmap_instance, mut_id)
-                    self.merge_table_df.loc[body_positions_orig.index, 'body'] = np.uint64(0)
+                    self.merge_table_df.loc[body_positions_index, 'body'] = np.uint64(0)
                     self.merge_table_df.loc[subset_df.index, 'body'] = body_id
 
                 if self.debug_export_dir:
