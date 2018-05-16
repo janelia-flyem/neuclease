@@ -1,6 +1,6 @@
 import pytest
 import requests
-from multiprocessing.pool import ThreadPool
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import numpy as np
 
@@ -221,9 +221,13 @@ def test_extract_rows_multithreaded(labelmap_setup):
         assert (dvid_supervoxels == [1,2,3,4,5]).all()
         assert (orig_merge_table == subset_df).all().all(), f"Original merge table doesn't match fetched:\n{orig_merge_table}\n\n{subset_df}\n"
 
-    pool = ThreadPool(11)
-    pool.map(_test, 300*[True, False, False])
+    # Quickly check the test function before loading it into a pool.
+    # (If it's going to fail in a trivial way, let's see it in the main thread.)
+    _test(False)
+    _test(True)
 
+    with ThreadPoolExecutor(max_workers=11) as executor:
+        list(executor.map(_test, 300*[[True], [False], [False]]))
 
 if __name__ == "__main__":
 #     import sys
