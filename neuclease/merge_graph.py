@@ -1,3 +1,4 @@
+import os
 import logging
 import threading
 from collections import defaultdict
@@ -42,10 +43,13 @@ class LabelmapMergeGraph:
     dynamically-queried supervoxel members.
     """
         
-    def __init__(self, table_path, primary_uuid=None):
+    def __init__(self, table_path, primary_uuid=None, debug_export_dir=None):
         self.rwlock = ReadWriteLock()
         self.primary_uuid = primary_uuid
-
+        self.debug_export_dir = debug_export_dir
+        if debug_export_dir:
+            os.makedirs(debug_export_dir, exist_ok=True)
+            
         self.merge_table_df = load_merge_table(table_path, normalize=True)
         self._mapping_versions = {}
         
@@ -258,6 +262,12 @@ class LabelmapMergeGraph:
                 # Must re-query the rows to change, since the table might have changed while the lock was released.
                 body_positions_orig = (self.merge_table_df['body'] == body_id)
 
+                if self.debug_export_dir:
+                    export_path = self.debug_export_dir + f"/body-{body_id}-table-before-sync.csv"
+                    logger.info(f"Exporting {export_path}")
+                    orig_rows = body_positions_orig.values.nonzero()[0] # can't use bool array with iloc
+                    self.merge_table_df.iloc[orig_rows].to_csv(export_path, index=False)
+
                 logger.info(f"Cached supervoxels (N={len(svs_from_table)}) don't match expected (N={len(dvid_supervoxels)}).  Updating cache.")
                 sv_set = set(dvid_supervoxels)
                 subset_df = self.merge_table_df.query('id_a in @sv_set and id_b in @sv_set').copy()
@@ -273,6 +283,14 @@ class LabelmapMergeGraph:
                     self._mapping_versions[body_id] = (dvid_server, uuid, labelmap_instance, mut_id)
                     self.merge_table_df.loc[body_positions_orig.index, 'body'] = np.uint64(0)
                     self.merge_table_df.loc[subset_df.index, 'body'] = body_id
+
+                if self.debug_export_dir:
+                    export_path = self.debug_export_dir + f"/body-{body_id}-table-after-sync.csv"
+                    logger.info(f"Exporting {export_path}")
+                    subset_df.to_csv(export_path, index=False)
+                    assert set(pd.unique(subset_df[['id_a', 'id_b']].values.flat)) - sv_set == set(), \
+                        "Our new subset includes supervoxels that DVID didn't want!"
+
 
                 return subset_df, dvid_supervoxels
 

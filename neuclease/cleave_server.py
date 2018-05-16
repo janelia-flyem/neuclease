@@ -36,6 +36,7 @@ def main(debug_mode=False):
     parser = argparse.ArgumentParser()
     parser.add_argument('-p', '--port', default=5555, type=int)
     parser.add_argument('--log-dir', required=False)
+    parser.add_argument('--debug-export-dir', required=False, help="For debugging only. Enables export of certain intermediate results.")
     parser.add_argument('--merge-table', required=True)
     parser.add_argument('--mapping-file', required=False)
     parser.add_argument('--split-mapping', required=False)
@@ -71,7 +72,7 @@ def main(debug_mode=False):
 
         print("Loading merge table...")
         with Timer(f"Loading merge table from: {args.merge_table}", logger):
-            MERGE_GRAPH = LabelmapMergeGraph(args.merge_table, args.primary_uuid)
+            MERGE_GRAPH = LabelmapMergeGraph(args.merge_table, args.primary_uuid, args.debug_export_dir)
 
         # Apply splits first
         if args.split_mapping:
@@ -95,7 +96,7 @@ def main(debug_mode=False):
         if args.mapping_file:
             MERGE_GRAPH.apply_mapping(args.mapping_file)
         elif args.primary_dvid_server and args.primary_uuid and args.primary_labelmap_instance:
-            MERGE_GRAPH.fetch_and_apply_mapping(args.primary_dvid_server, args.primary_uuid, args.primary_labelmap_instance)
+            MERGE_GRAPH.fetch_and_apply_mapping(args.primary_dvid_server, args.primary_uuid, args.primary_labelmap_instance, args.split_mapping)
 
         if args.suspend_before_launch:
             pid = os.getpid()

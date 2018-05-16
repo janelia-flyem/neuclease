@@ -30,6 +30,7 @@ def cleave_server_setup(labelmap_setup):
     launch_script = os.path.dirname(neuclease.__file__) + '/bin/cleave_server_main.py'
     server_proc = subprocess.Popen(["python", launch_script,
                                     "--port", cleave_server_port,
+                                    "--debug-export-dir", os.path.dirname(merge_table_path),
                                     "--merge-table", merge_table_path,
                                     "--primary-dvid-server", dvid_server,
                                     "--primary-labelmap-instance", "segmentation"])
