@@ -152,8 +152,15 @@ class LabelmapMergeGraph:
         return bad_edges
 
 
-    def fetch_and_apply_mapping(self, server, uuid, labelmap_instance):
-        mapping = fetch_mappings(server, uuid, labelmap_instance, True)
+    def fetch_and_apply_mapping(self, server, uuid, labelmap_instance, split_mapping=None):
+        if isinstance(split_mapping, str):
+            split_mapping = load_edge_csv(split_mapping)
+
+        split_sv_parents = []
+        if split_mapping is not None:
+            split_sv_parents = set(split_mapping[:,1])
+
+        mapping = fetch_mappings(server, uuid, labelmap_instance, include_identities=True, retired_supervoxels=split_sv_parents)
         apply_mapping_to_mergetable(self.merge_table_df, mapping)
 
 

@@ -89,13 +89,17 @@ def split_supervoxel(server, uuid, instance, supervoxel, rle_payload_bytes):
 
 
 @sanitize_server_arg
-def fetch_mappings(server, uuid, labelmap_instance, include_identities=True):
+def fetch_mappings(server, uuid, labelmap_instance, include_identities=True, retired_supervoxels=[]):
     """
     Fetch the complete sv-to-label mapping table from DVID and return it as a pandas Series (indexed by sv).
     
     Args:
         include_identities:
             If True, add rows for identity mappings (which are not included in DVID's response).
+        
+        retired_supervoxels:
+            A set of supervoxels NOT to automatically add as identity mappings,
+            e.g. due to the fact that they were split.
     
     Returns:
         pd.Series(index=sv, data=body)
@@ -112,7 +116,7 @@ def fetch_mappings(server, uuid, labelmap_instance, include_identities=True):
         df = pd.read_csv(f, sep=' ', header=None, names=['sv', 'body'], engine='c', dtype=np.uint64)
 
         if include_identities:
-            missing_idents = set(df['body']) - set(df['sv'])
+            missing_idents = set(df['body']) - set(df['sv']) - set(retired_supervoxels)
             missing_idents = np.fromiter(missing_idents, np.uint64)
             missing_idents.sort()
             
