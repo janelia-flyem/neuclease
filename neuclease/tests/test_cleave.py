@@ -149,17 +149,17 @@ def test_stability():
 def test_empty_cleave():
     # Simple graph (a line of 10 adjacent nodes)
     edges = np.zeros((0,2), dtype=np.uint64)
-    node_ids = np.arange(10, dtype=np.uint64)
+    node_ids = 10*np.arange(10, dtype=np.uint64)
     
     # Edges are uniform, except the middle edge, which is more costly
     edge_weights = np.zeros((0,2), dtype=np.float32)
 
     # Seeds at both ends
-    seeds_dict = { 1: [0], 2: [9] }
+    seeds_dict = { 1: [0], 2: [90] }
     
     (node_ids, output_labels, disconnected_components, contains_unlabeled_components) = cleave(edges, edge_weights, seeds_dict, node_ids)
     
-    assert (node_ids == np.arange(10)).all()
+    assert (node_ids == 10*np.arange(10)).all()
     assert disconnected_components == set(seeds_dict.keys())
     assert contains_unlabeled_components
     assert (output_labels == [1,0,0,0,0,0,0,0,0,2]).all()

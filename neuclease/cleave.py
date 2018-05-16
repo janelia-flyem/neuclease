@@ -64,12 +64,19 @@ def cleave(edges, edge_weights, seeds_dict, node_ids=None, method='seeded-waters
 
     assert method in ('seeded-watershed', 'agglomerative-clustering')
 
+    # Relabel node ids consecutively
+    cons_node_ids = np.arange(len(node_ids), dtype=np.uint32)
+    mapper = LabelMapper(node_ids, cons_node_ids)
+
+    # Initialize sparse seed label array
+    seed_labels = np.zeros_like(cons_node_ids)
+    for seed_class, seed_nodes in seeds_dict.items():
+        seed_nodes = np.asarray(seed_nodes, dtype=np.uint64)
+        mapper.apply_inplace(seed_nodes)
+        seed_labels[seed_nodes] = seed_class
+    
     if len(edges) == 0:
         # No edges: Return empty results (just seeds)
-        seed_labels = np.zeros_like(node_ids)
-        for seed_class, seed_nodes in seeds_dict.items():
-            seed_nodes = np.asarray(seed_nodes, dtype=np.uint64)
-            seed_labels[seed_nodes] = seed_class
         return CleaveResults(node_ids, seed_labels, set(seeds_dict.keys()), True)
 
     # Clean the edges (normalized form, no duplicates, no loops)
@@ -79,20 +86,11 @@ def cleave(edges, edge_weights, seeds_dict, node_ids=None, method='seeded-waters
     edges_df = edges_df.query('u != v')
     edges = edges_df[['u', 'v']].values
     edge_weights = edges_df['weight'].values
-    
-    # Relabel node ids consecutively
-    cons_node_ids = np.arange(len(node_ids), dtype=np.uint32)
-    mapper = LabelMapper(node_ids, cons_node_ids)
+
+    # Relabel edges for consecutive nodes
     cons_edges = mapper.apply(edges)
     assert cons_edges.dtype == np.uint32
 
-    # Initialize sparse seed label array
-    seed_labels = np.zeros_like(cons_node_ids)
-    for seed_class, seed_nodes in seeds_dict.items():
-        seed_nodes = np.asarray(seed_nodes, dtype=np.uint64)
-        mapper.apply_inplace(seed_nodes)
-        seed_labels[seed_nodes] = seed_class
-    
     if method == 'agglomerative-clustering':
         output_labels, disconnected_components, contains_unlabeled_components = agglomerative_clustering(cons_edges, edge_weights, seed_labels)
     elif method == 'seeded-watershed':
