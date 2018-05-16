@@ -22,6 +22,8 @@ neuclease_cleave_server \
     --log-dir /path/to/logs
 ```
 
+**FlyEM developers:** See [`flyem-production-commands.sh`](flyem-production-commands.sh) for example launch commands.
+
 ## Example Client Request
 
 ```python
