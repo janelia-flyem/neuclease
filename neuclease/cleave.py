@@ -64,6 +64,14 @@ def cleave(edges, edge_weights, seeds_dict, node_ids=None, method='seeded-waters
 
     assert method in ('seeded-watershed', 'agglomerative-clustering')
 
+    if len(edges) == 0:
+        # No edges: Return empty results (just seeds)
+        seed_labels = np.zeros_like(node_ids)
+        for seed_class, seed_nodes in seeds_dict.items():
+            seed_nodes = np.asarray(seed_nodes, dtype=np.uint64)
+            seed_labels[seed_nodes] = seed_class
+        return CleaveResults(node_ids, seed_labels, set(seeds_dict.keys()), True)
+
     # Clean the edges (normalized form, no duplicates, no loops)
     edges.sort(axis=1)
     edges_df = pd.DataFrame({'u': edges[:,0], 'v': edges[:,1], 'weight': edge_weights})
