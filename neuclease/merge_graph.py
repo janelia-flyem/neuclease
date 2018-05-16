@@ -269,7 +269,7 @@ class LabelmapMergeGraph:
                     orig_rows = body_positions_orig.values.nonzero()[0] # can't use bool array with iloc
                     self.merge_table_df.iloc[orig_rows].to_csv(export_path, index=False)
 
-                logger.info(f"Cached supervoxels (N={len(svs_from_table)}) don't match expected (N={len(dvid_supervoxels)}).  Updating cache.")
+                logger.info(f"Cached supervoxels (N={len(svs_from_table)}) don't match expected (N={len(dvid_supervoxels)}).")
                 sv_set = set(dvid_supervoxels)
                 subset_df = self.merge_table_df.query('id_a in @sv_set and id_b in @sv_set').copy()
                 subset_df['body'] = body_id
