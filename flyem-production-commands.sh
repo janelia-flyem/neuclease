@@ -20,3 +20,19 @@ nohup neuclease_cleave_server \
   --split-mapping /nrs/flyem/bergs/final-agglo-fixsplit-patched/split-lineage-017ad.csv \
   &
 ##
+
+
+##
+## Practice server (same as above, but with a different dvid server and different log directory)
+##
+PRACTICE_PARENT_UUID="6134ca01a0cf444baf82d5bc1efb49e8"
+nohup neuclease_cleave_server \
+  -p 5551 \
+  --log-dir /nrs/flyem/bergs/neuclease-logs/practice-emdata1-8900 \
+  --merge-table /nrs/flyem/bergs/final-agglo-fixsplit-patched/final_patched_20180426_merge_table.npy \
+  --primary-dvid-server emdata1:8900 \
+  --primary-uuid ${PRACTICE_PARENT_UUID} \
+  --primary-labelmap-instance segmentation \
+  --split-mapping /nrs/flyem/bergs/final-agglo-fixsplit-patched/split-lineage-017ad.csv \
+  &
+##
