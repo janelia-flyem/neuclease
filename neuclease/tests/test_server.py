@@ -104,5 +104,25 @@ def test_fetch_log(cleave_server_setup):
 
     assert 'INFO' in r.content.decode()
 
+def test_body_edge_table(cleave_server_setup):
+    dvid_server, dvid_port, dvid_repo, port = cleave_server_setup
+
+    data = { "body-id": 1,
+             "port": dvid_port,
+             "server": dvid_server,
+             "uuid": dvid_repo,
+             "segmentation-instance": "segmentation" }
+
+    r = requests.post(f'http://127.0.0.1:{port}/body-edge-table', json=data)
+    try:
+        r.raise_for_status()
+    except requests.RequestException:
+        sys.stderr.write(r.content.decode() + '\n')
+        raise
+
+    lines = r.content.decode().rstrip().split('\n')
+    assert lines[0] == 'id_a,id_b,xa,ya,za,xb,yb,zb,score,body'
+    assert len(lines) == 5, '\n' +  '\n'.join(lines)
+
 if __name__ == "__main__":
     pytest.main(['-s', '--tb=native', '--pyargs', 'neuclease.tests.test_server'])

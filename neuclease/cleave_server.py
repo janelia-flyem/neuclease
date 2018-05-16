@@ -5,6 +5,7 @@ import copy
 import signal
 import logging
 import argparse
+from io import StringIO
 from itertools import chain
 from http import HTTPStatus
 from datetime import datetime
@@ -283,3 +284,39 @@ def _run_cleave(data):
     body_logger.info("Sending cleave results")
     return ( cleave_response, HTTPStatus.OK )
 
+@app.route('/body-edge-table', methods=['POST'])
+def body_edge_table():
+    """
+    Extract rows for a particular body from the merge table.
+    Useful for debugging, or for warming up the merge graph cache.
+    """
+    global logger
+    global MERGE_TABLE
+
+    data = request.json
+    user = data.get("user", "unknown")
+    body_id = data["body-id"]
+    server = data["server"] + ':' + str(data["port"])
+    uuid = data["uuid"]
+    segmentation_instance = data["segmentation-instance"]
+    body_logger = PrefixedLogger(logger, f"User {user}: Body {body_id}: ")
+
+    if not server.startswith('http://'):
+        server = 'http://' + server
+
+    body_logger.info("Recevied body-edge-table request")
+
+    try:
+        subset_df, _supervoxels = MERGE_GRAPH.extract_rows(server, uuid, segmentation_instance, body_id, body_logger)
+    except requests.HTTPError as ex:
+        status_name = str(HTTPStatus(ex.response.status_code)).split('.')[1]
+        if ex.response.status_code == HTTPStatus.NOT_FOUND:
+            msg = f"Body not found: {body_id}"
+        else:
+            msg = f"Received error from DVID: {status_name}"
+        body_logger.error(msg)
+        return msg, ex.response.status_code
+
+    response = StringIO()
+    subset_df.to_csv(response, index=False, header=True)
+    return response.getvalue()
