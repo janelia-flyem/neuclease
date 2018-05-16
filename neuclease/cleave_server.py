@@ -12,6 +12,7 @@ from datetime import datetime
 import numpy as np
 import pandas as pd
 
+import requests
 from flask import Flask, request, abort, redirect, url_for, jsonify, Response, make_response
 
 from .logging_setup import init_logging, log_exceptions, PrefixedLogger
@@ -231,7 +232,19 @@ def _run_cleave(data):
 
     # Extract this body's edges from the complete merge graph
     with Timer() as timer:
-        df, supervoxels = MERGE_GRAPH.extract_rows(server, uuid, segmentation_instance, body_id, body_logger)
+        try:
+            df, supervoxels = MERGE_GRAPH.extract_rows(server, uuid, segmentation_instance, body_id, body_logger)
+        except requests.HTTPError as ex:
+            status_name = str(HTTPStatus(ex.response.status_code)).split('.')[1]
+            if ex.response.status_code == HTTPStatus.NOT_FOUND:
+                msg = f"Body not found: {body_id}"
+            else:
+                msg = f"Received error from DVID: {status_name}"
+            body_logger.error(msg)
+            body_logger.info(f"Responding with error {status_name}.")
+            cleave_response.setdefault("errors", []).append(msg)
+            return cleave_response, ex.response.status_code
+
         edges = df[['id_a', 'id_b']].values.astype(np.uint64)
         weights = df['score'].values
     body_logger.info(f"Extracting body graph took {timer.timedelta}")
