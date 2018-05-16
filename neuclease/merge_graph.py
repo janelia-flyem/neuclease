@@ -256,23 +256,24 @@ class LabelmapMergeGraph:
             # Should we overwrite the body column for these rows?
             with self.rwlock.context(permit_write):
                 # Must re-query the rows to change, since the table might have changed while the lock was released.
-                body_positions_orig = (self.merge_table_df['body'] == body_id).values.nonzero()[0]
+                body_positions_orig = (self.merge_table_df['body'] == body_id)
+
                 logger.info(f"Cached supervoxels (N={len(svs_from_table)}) don't match expected (N={len(dvid_supervoxels)}).  Updating cache.")
-                _sv_set = set(dvid_supervoxels)
-                subset_positions = self.merge_table_df.eval('id_a in @_sv_set and id_b in @_sv_set').values
-                subset_df = self.merge_table_df.iloc[subset_positions].copy()
+                sv_set = set(dvid_supervoxels)
+                subset_df = self.merge_table_df.query('id_a in @sv_set and id_b in @sv_set').copy()
                 subset_df['body'] = body_id
     
                 if permit_write:
+                    logger.info("Overwriting cached mapping")
                     # Before we overwrite, invalidate the mapping version for any body IDs we're about to overwrite
                     for prev_body in pd.unique(subset_df['body'].values):
                         if prev_body in self._mapping_versions:
                             del self._mapping_versions[prev_body]
     
                     self._mapping_versions[body_id] = (dvid_server, uuid, labelmap_instance, mut_id)
-                    self.merge_table_df['body'].values[body_positions_orig] = 0
-                    self.merge_table_df['body'].values[subset_positions] = body_id
-        
+                    self.merge_table_df.loc[body_positions_orig.index, 'body'] = np.uint64(0)
+                    self.merge_table_df.loc[subset_df.index, 'body'] = body_id
+
                 return subset_df, dvid_supervoxels
 
     def get_key_lock(self, dvid_server, uuid, labelmap_instance, body_id):
