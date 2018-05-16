@@ -94,8 +94,12 @@ def apply_mapping_to_mergetable(merge_table_df, mapping):
     assert isinstance(mapping, pd.Series), "Mapping must be a pd.Series"        
     with Timer("Applying mapping to merge table", logger):
         mapper = LabelMapper(mapping.index.values, mapping.values)
-        merge_table_df['body'] = mapper.apply(merge_table_df['id_a'].values, allow_unmapped=True)
+        body_a = mapper.apply(merge_table_df['id_a'].values, allow_unmapped=True)
+        body_b = mapper.apply(merge_table_df['id_b'].values, allow_unmapped=True)
 
+        # Cut edges that span across bodies
+        body_a[body_a != body_b] = 0
+        merge_table_df['body'] = body_a
 
 def load_celis_csv(csv_path, normalize=True, sort_by=None):
     """
