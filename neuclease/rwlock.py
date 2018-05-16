@@ -74,9 +74,13 @@ class ReadWriteLock:
     def context(self, write=False):
         if write:
             self.acquire_write()
-            yield
-            self.release_write()
+            try:
+                yield
+            finally:
+                self.release_write()
         else:
             self.acquire_read()
-            yield
-            self.release_read()
+            try:
+                yield
+            finally:
+                self.release_read()
