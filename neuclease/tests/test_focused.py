@@ -83,14 +83,15 @@ def test_find_paths_from(toy_graph_setup):
 
     def _find_from(v):
         all_paths[v] = []
-        find_paths_from(v, important_verts, g, v, all_paths[v], [v], 0)
+        find_paths_from(v, important_verts, g, v, all_paths[v], [v], [None], 0)
 
     starts = [10, 20, 30, 40, 60, 90, 100, 110]
     for start in starts:
         _find_from(start)
 
     for start in expected_paths.keys():
-        assert_path_lists_equal(all_paths[start], expected_paths[start])
+        vertex_paths = [p.vertices for p in all_paths[start]]
+        assert_path_lists_equal(vertex_paths, expected_paths[start])
 
 
 def test_find_all_paths(toy_graph_setup):

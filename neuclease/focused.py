@@ -53,7 +53,7 @@ def main():
 
 DvidInstanceInfo = namedtuple("DvidInstanceInfo", "server uuid instance")
 def compute_focused_paths(instance_info, original_mapping, important_bodies, speculative_merge_tables, split_mapping=None, max_depth=10):
-    instance_info = DvidInstanceInfo(instance_info)
+    instance_info = DvidInstanceInfo(*instance_info)
     with Timer("Loading speculative merge graph", logger):
         merge_graph = LabelmapMergeGraph(speculative_merge_tables, instance_info.uuid)   
 
@@ -63,7 +63,6 @@ def compute_focused_paths(instance_info, original_mapping, important_bodies, spe
                                                                      instance_info.uuid,
                                                                      instance_info.instance,
                                                                      parent_sv_handling='drop' )
-
     merge_table_df = merge_graph.merge_table_df
         
     if isinstance(original_mapping, str):
@@ -92,7 +91,6 @@ def compute_focused_paths(instance_info, original_mapping, important_bodies, spe
         size_after = len(merge_table_df)
         logger.info(f"Discarded {size_before - size_after} edges")
 
-
     edges = merge_table_df[['id_a', 'id_b']].values
     assert edges.dtype == np.uint64
 
@@ -102,6 +100,9 @@ def compute_focused_paths(instance_info, original_mapping, important_bodies, spe
 
 
 def find_all_paths(edges, original_mapping, important_bodies, max_depth=10):
+    """
+    Returns a dict of { start_sv: VertexPath }
+    """
     # Load into Graph
     import graph_tool as gt
     g = gt.Graph(directed=False)
@@ -122,34 +123,45 @@ def find_all_paths(edges, original_mapping, important_bodies, max_depth=10):
     for sv in important_svs:
         v = sv_to_v.loc[sv]
         v_paths = []
-        find_paths_from(max_depth, important_verts, g, v, v_paths, current_path=[v], current_depth=0)
+        find_paths_from( max_depth,
+                         important_verts,
+                         g,
+                         v,
+                         v_paths,
+                         current_path=[v],
+                         current_path_edge_ids=[None],
+                         current_depth=0 )
 
         # map v_paths to sv_paths
         sv_paths = []
         for v_path in v_paths:
-            sv_paths.append(v_to_sv[v_path])
+            sv_paths.append(v_to_sv[v_path.vertices])
         all_paths[sv] = sv_paths
 
     return all_paths
 
-
-def find_paths_from(max_depth, important_verts, g, v, v_paths, current_path, current_depth):
+VertexPath = namedtuple("VertexPath", "vertices edge_ids")
+def find_paths_from(max_depth, important_verts, g, v, v_paths, current_path, current_path_edge_ids, current_depth):
+    """
+    """
     if current_depth > max_depth:
         return
 
-    _sources, targets, _edge_ids = g.get_out_edges(v).transpose()    
-    for t in targets:
+    _sources, targets, edge_ids = g.get_out_edges(v).transpose()    
+    for t, eid in zip(targets, edge_ids):
         if t in current_path:
             continue
 
         current_path.append(t)
+        current_path_edge_ids.append(eid)
         if t in important_verts:
             # Endpoint found.  Path is complete.
-            v_paths.append(list(current_path))
+            v_paths.append( VertexPath(list(current_path), list(current_path_edge_ids)) )
         else:
             # Keep going
-            find_paths_from(max_depth, important_verts, g, t, v_paths, current_path, current_depth+1)
+            find_paths_from(max_depth, important_verts, g, t, v_paths, current_path, current_path_edge_ids, current_depth+1)
         current_path.pop()
+        current_path_edge_ids.pop()
 
 
 if __name__ == "__main__":
