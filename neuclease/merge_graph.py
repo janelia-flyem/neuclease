@@ -10,7 +10,7 @@ import pandas as pd
 from .util import Timer
 from .rwlock import ReadWriteLock
 from .dvid import fetch_supervoxels_for_body, fetch_label_for_coordinate, fetch_mappings, fetch_mutation_id
-from .merge_table import load_edge_csv, load_mapping, load_merge_table, normalize_merge_table, apply_mapping_to_mergetable
+from .merge_table import MERGE_TABLE_DTYPE, load_edge_csv, load_mapping, load_merge_table, normalize_merge_table, apply_mapping_to_mergetable
 
 _logger = logging.getLogger(__name__)
 
@@ -43,14 +43,21 @@ class LabelmapMergeGraph:
     dynamically-queried supervoxel members.
     """
         
-    def __init__(self, table_path, primary_uuid=None, debug_export_dir=None):
+    def __init__(self, table, primary_uuid=None, debug_export_dir=None):
         self.rwlock = ReadWriteLock()
         self.primary_uuid = primary_uuid
         self.debug_export_dir = debug_export_dir
         if debug_export_dir:
             os.makedirs(debug_export_dir, exist_ok=True)
             
-        self.merge_table_df = load_merge_table(table_path, normalize=True)
+        if isinstance(table, str):
+            self.merge_table_df = load_merge_table(table, normalize=True)
+        else:
+            self.merge_table_df = table
+
+        assert isinstance(self.merge_table_df, pd.DataFrame)
+        assert list(self.merge_table_df.columns)[:9] == list(dict(MERGE_TABLE_DTYPE).keys())[:9]
+        
         self._mapping_versions = {}
         
         # Supervoxels retrieved from DVID are cached in this member.
