@@ -27,6 +27,7 @@ requirements:
     - requests
     - flask >=1.0
     - numpy
+    - h5py
     - pandas
     - vigra
     - nifty

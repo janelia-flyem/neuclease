@@ -2,6 +2,7 @@ import os
 import csv
 import logging
 
+import h5py
 import numpy as np
 import pandas as pd
 
@@ -309,5 +310,62 @@ def apply_mappings(supervoxels, mappings):
         df[name] = mapper.apply(df.index.values, allow_unmapped=True)
 
     return df
+
+def load_supervoxel_sizes(h5_path):
+    """
+    Load the stored supervoxel size table from hdf5 and return the result as a pd.Series, with sv as the index.
+    
+    h5_path: A file with two datasets: sv_ids and sv_sizes
+    """
+    with h5py.File(h5_path, 'r') as f:
+        sv_sizes = pd.Series(index=f['sv_ids'][:], data=f['sv_sizes'][:])
+    sv_sizes.name = 'voxel_count'
+    sv_sizes.index.name = 'sv'
+
+    logger.info(f"Volume contains {len(sv_sizes)} supervoxels and {sv_sizes.values.sum()/1e12:.1f} Teravoxels in total")    
+
+    # Sorting by supervoxel ID may give better performance during merges later
+    sv_sizes.sort_index(inplace=True)
+    return sv_sizes
+
+def compute_body_sizes(sv_sizes, mapping):
+    """
+    Given a Series of supervoxel sizes and an sv-to-body mapping,
+    compute the size of each body in the mapping.
+    
+    Any supervoxels in the mapping that are missing from sv_sizes will be ignored.
+    
+    Returns: Series, indexed by body.
+    """
+    if isinstance(sv_sizes, str):
+        logger.info("Loading supervoxel sizes")
+        assert os.path.splitext(sv_sizes)[1] == '.h5'
+        sv_sizes = load_supervoxel_sizes(sv_sizes)
+    
+    if isinstance(mapping, str):
+        logger.info("Loading mapping")
+        mapping = load_mapping(mapping)
+    
+    assert isinstance(sv_sizes, pd.Series)
+    assert isinstance(mapping, pd.Series)
+    
+    assert sv_sizes.index.dtype == np.uint64
+    
+    sv_sizes = sv_sizes.astype(np.uint64)
+    mapper = LabelMapper(sv_sizes.index.values, sv_sizes.values)
+
+    # Just drop SVs that we don't have sizes for.
+    logger.info("Dropping unknown supervoxels")
+    mapping = mapping.loc[mapping.index.isin(sv_sizes.index)]
+
+    logger.info("Applying sizes to mapping")
+    df = pd.DataFrame({'body': mapping})
+    df['voxel_count'] = mapper.apply(mapping.index.values)
+
+    logger.info("Aggregating sizes by body")
+    body_sizes = df.groupby('body').sum()['voxel_count']
+    return body_sizes.sort_values(ascending=False)
+
+
 
 
