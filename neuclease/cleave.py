@@ -8,6 +8,8 @@ from dvidutils import LabelMapper
 
 from .util import connected_components
 
+CLEAVE_METHODS = ('seeded-watershed', 'agglomerative-clustering', 'echo-seeds')
+
 CleaveResults = namedtuple("CleaveResults", "node_ids output_labels disconnected_components contains_unlabeled_components")
 def cleave(edges, edge_weights, seeds_dict, node_ids=None, method='seeded-watershed'):
     """
@@ -31,7 +33,7 @@ def cleave(edges, edge_weights, seeds_dict, node_ids=None, method='seeded-waters
             The complete list of node IDs in the graph.
         
         method:
-            Either 'seeded-watershed' or 'agglomerative-clustering'
+            One of: 'seeded-watershed', 'agglomerative-clustering', 'echo-seeds'
 
     Returns:
     
@@ -62,7 +64,7 @@ def cleave(edges, edge_weights, seeds_dict, node_ids=None, method='seeded-waters
     assert node_ids.dtype in (np.uint32, np.uint64)
     assert node_ids.ndim == 1
 
-    assert method in ('seeded-watershed', 'agglomerative-clustering')
+    assert method in CLEAVE_METHODS
 
     # Relabel node ids consecutively
     cons_node_ids = np.arange(len(node_ids), dtype=np.uint32)
@@ -95,6 +97,8 @@ def cleave(edges, edge_weights, seeds_dict, node_ids=None, method='seeded-waters
         output_labels, disconnected_components, contains_unlabeled_components = agglomerative_clustering(cons_edges, edge_weights, seed_labels)
     elif method == 'seeded-watershed':
         output_labels, disconnected_components, contains_unlabeled_components = edge_weighted_watershed(cons_edges, edge_weights, seed_labels)
+    elif method == 'echo-seeds':
+        output_labels, disconnected_components, contains_unlabeled_components = echo_seeds(cons_edges, seed_labels)
         
     return CleaveResults(node_ids, output_labels, disconnected_components, contains_unlabeled_components)
     
@@ -308,22 +312,53 @@ def edge_weighted_watershed(cleaned_edges, edge_weights, seed_labels):
     assert seed_labels.ndim == 1
     assert cleaned_edges.max() < len(seed_labels)
     
+    # Run the watershed
     g = nifty.graph.UndirectedGraph(len(seed_labels))
     g.insertEdges(cleaned_edges)
     output_labels = nifty.graph.edgeWeightedWatershedsSegmentation(g, seed_labels, edge_weights)
+    assert len(output_labels) == len(seed_labels)
     contains_unlabeled_components = not output_labels.all()
+    disconnected_components = _find_disconnected_components(cleaned_edges, output_labels)
+    return output_labels, disconnected_components, contains_unlabeled_components
 
+
+def echo_seeds(cleaned_edges, seed_labels):
+    """
+    A dummy 'cleave' stand-in that merely echoes the seeds back,
+    with correctly reported disconnected_components.
+    """
+    output_labels = seed_labels # echo seeds input
+    disconnected_components = _find_disconnected_components(cleaned_edges, output_labels)
+    contains_unlabeled_components = not output_labels.all()
+    return output_labels, disconnected_components, contains_unlabeled_components
+
+
+def _find_disconnected_components(cleaned_edges, output_labels):
+    """
+    Given a graph defined by cleaned_edges and a node labeling in output_labels,
+    Check if any output labels are split among discontiguous groups,
+    and return the set of output label IDs for such objects.
+    """
+    # Figure out which edges were 'cut' (endpoints got different labels)
+    # and which were preserved
     mapper = LabelMapper(np.arange(output_labels.shape[0], dtype=np.uint32), output_labels)
     labeled_edges = mapper.apply(cleaned_edges)
     preserved_edges = cleaned_edges[labeled_edges[:,0] == labeled_edges[:,1]]
     
+    # Compute CC on the graph WITHOUT cut edges (keep only preserved edges)
     component_labels = connected_components(preserved_edges, len(output_labels))
-    assert len(component_labels) == len(output_labels) == len(seed_labels)
+    assert len(component_labels) == len(output_labels)
+    
+    # Align node output labels to their connected component labels
     cc_df = pd.DataFrame({'label': output_labels, 'cc': component_labels})
+    
+    # How many unique connected component labels are associated with each output label?
     cc_counts = cc_df.groupby('label').nunique()['cc']
+
+    # Any output labels that map to multiple CC labels are 'disconnected components' in the output.
     disconnected_cc_counts = cc_counts[cc_counts > 1]
     disconnected_components = set(disconnected_cc_counts.index) - set([0])
     
-    return output_labels, disconnected_components, contains_unlabeled_components
-    
-    
+    return disconnected_components
+
+
