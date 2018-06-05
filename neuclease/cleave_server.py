@@ -37,16 +37,17 @@ def main(debug_mode=False):
 
     parser = argparse.ArgumentParser()
     parser.add_argument('-p', '--port', default=5555, type=int)
+    parser.add_argument('--merge-table', required=True)
+    parser.add_argument('--primary-dvid-server', required=True)
+
     parser.add_argument('--log-dir', required=False)
     parser.add_argument('--debug-export-dir', required=False, help="For debugging only. Enables export of certain intermediate results.")
-    parser.add_argument('--merge-table', required=True)
     parser.add_argument('--mapping-file', required=False)
     parser.add_argument('--split-mapping', required=False)
-    parser.add_argument('--primary-dvid-server')
     parser.add_argument('--primary-uuid', required=False,
                         help="If provided, do not update the internal cached merge table mapping except for the given UUID. "
                              "(Prioritizes speed of the primary UUID over all others.)")
-    parser.add_argument('--primary-labelmap-instance')
+    parser.add_argument('--primary-labelmap-instance', required=False)
     parser.add_argument('--suspend-before-launch', action='store_true',
                         help="After loading the merge graph, suspend the process before launching the server, and await a SIGCONT. "
                              "Allows you to ALMOST hot-swap a running cleave server. (You can load the new merge graph before killing the old server).")
