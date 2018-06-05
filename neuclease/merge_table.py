@@ -65,7 +65,12 @@ def load_merge_table(path, mapping=None, normalize=True, set_multiindex=False, s
     if ext == '.npy':
         merge_table_df = load_ffn_merge_table(path, normalize, sort_by)
     elif ext == '.csv':
-        merge_table_df = load_celis_csv(path, normalize, sort_by)
+        with open(path, 'r') as f:
+            header = f.readline()
+            if len(header) == 6:
+                merge_table_df = load_celis_csv(path, normalize, sort_by)
+            else:
+                merge_table_df = load_ffn_merge_table(path, normalize, sort_by)
 
     if scores_only:
         merge_table_df = merge_table_df[['id_a', 'id_b', 'score']].copy()
@@ -117,11 +122,8 @@ def load_celis_csv(csv_path, normalize=True, sort_by=None):
         ['id_a', 'id_b', 'xa', 'ya', 'za', 'xb', 'yb', 'zb', 'score']
     """
     assert os.path.splitext(csv_path)[1] == '.csv'
-    with open(csv_path, 'r') as csv_file:
-        # Is there a header?
-        has_header = csv.Sniffer().has_header(csv_file.read(1024))
-        if not has_header:
-            raise RuntimeError(f"{csv_path} has no header row")
+    if read_csv_header(csv_path) is None:
+        raise RuntimeError(f"{csv_path} has no header row")
 
     df = pd.read_csv(csv_path, header=0, usecols=['segment_a,segment_b,score,x,y,z'], engine='c')
     df = df[['segment_a', 'segment_b', 'x', 'y', 'z', 'x', 'y', 'z', 'score']]
@@ -138,7 +140,7 @@ def load_celis_csv(csv_path, normalize=True, sort_by=None):
     return df
 
 
-def load_ffn_merge_table(npy_path, normalize=True, sort_by=None):
+def load_ffn_merge_table(path, normalize=True, sort_by=None):
     """
     Load the FFN merge table from the given .npy file,
     and return it as a DataFrame.
@@ -151,9 +153,28 @@ def load_ffn_merge_table(npy_path, normalize=True, sort_by=None):
     Returns a DataFrame with columns:
         ['id_a', 'id_b', 'xa', 'ya', 'za', 'xb', 'yb', 'zb', 'score']
     """
-    assert os.path.splitext(npy_path)[1] == '.npy'
-    merge_table = np.load(npy_path)
-    assert merge_table.dtype == MERGE_TABLE_DTYPE
+    ext = os.path.splitext(path)[1]
+    assert ext in ('.npy', '.csv'), f"Invalid merge table file extension: {ext}"
+
+    if ext == '.npy':
+        merge_table = np.load(path)
+        assert merge_table.dtype == MERGE_TABLE_DTYPE
+    elif ext == '.csv':
+        header = read_csv_header(path)
+        if not header:
+            raise RuntimeError(f"Can't load merge table. CSV has no header: {path}")
+        
+        if len(header) == len(MERGE_TABLE_DTYPE):
+            assert header == [name for (name, _type) in MERGE_TABLE_DTYPE]
+            merge_table_df = pd.read_csv(path, dtype=dict(MERGE_TABLE_DTYPE))
+            merge_table = merge_table_df.to_records(index=False)
+        elif len(header) == len(MAPPED_MERGE_TABLE_DTYPE):
+            assert header == [name for (name, _type) in MAPPED_MERGE_TABLE_DTYPE]
+            merge_table_df = pd.read_csv(path, dtype=dict(MAPPED_MERGE_TABLE_DTYPE))
+            del merge_table_df['body']
+            merge_table = merge_table_df.to_records(index=False)
+        else:
+            raise RuntimeError("CSV file is not a merge table.  (Wrong column set/order.)")
     
     if normalize:
         merge_table = normalize_merge_table(merge_table)
@@ -263,6 +284,7 @@ def normalize_merge_table(merge_table, drop_duplicate_edges=True, sort=None):
     
     return merge_table
 
+
 def apply_mappings(supervoxels, mappings):
     assert isinstance(mappings, dict)
     df = pd.DataFrame(index=supervoxels.astype(np.uint64, copy=False))
@@ -276,3 +298,19 @@ def apply_mappings(supervoxels, mappings):
         df[name] = mapper.apply(df.index.values, allow_unmapped=True)
 
     return df
+
+
+def read_csv_header(csv_path):
+    """
+    Open the CSV file at the given path and return it's header column names as a list.
+    If it has no header (as determined by csv.Sniffer), return None.
+    """
+    with open(csv_path, 'r') as csv_file:
+        # Is there a header?
+        has_header = csv.Sniffer().has_header(csv_file.read(1024))
+        if not has_header:
+            return None
+        csv_file.seek(0)
+        rows = iter(csv.reader(csv_file))
+        header = next(rows)
+        return header
