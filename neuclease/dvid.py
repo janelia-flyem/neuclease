@@ -58,7 +58,31 @@ def fetch_supervoxels_for_body(server, uuid, labelmap_instance, body_id, user=No
     url = f'http://{server}/api/node/{uuid}/{labelmap_instance}/supervoxels/{body_id}'
     r = default_dvid_session().get(url, params=query_params)
     r.raise_for_status()
-    return r.json()
+    supervoxels = np.array(r.json(), np.uint64)
+    supervoxels.sort()
+    return supervoxels
+
+
+@sanitize_server_arg
+def fetch_supervoxel_sizes_for_body(server, uuid, labelmap_instance, body_id, user=None):
+    """
+    Return the sizes of all supervoxels in a body 
+    """
+    supervoxels = fetch_supervoxels_for_body(server, uuid, labelmap_instance, body_id, user)
+    
+    query_params = {}
+    if user:
+        query_params['u'] = user
+
+    url = f'http://{server}/api/node/{uuid}/{labelmap_instance}/sizes?supervoxels=true'
+    r = default_dvid_session().get(url, params=query_params, json=supervoxels.tolist())
+    r.raise_for_status()
+    sizes = np.array(r.json(), np.uint32)
+    
+    series = pd.Series(data=sizes, index=supervoxels)
+    series.index.name = 'sv'
+    series.name = 'size'
+    return series
 
 
 @sanitize_server_arg
