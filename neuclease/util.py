@@ -107,6 +107,7 @@ def connected_components(edges, num_nodes):
 
     else:
         g = nx.Graph()
+        g.add_nodes_from(range(num_nodes))
         g.add_edges_from(edges)
 
         cc_labels = np.zeros((num_nodes,), np.uint32)
