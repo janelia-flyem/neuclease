@@ -61,6 +61,7 @@ def cleave_server_setup(labelmap_setup):
     server_proc.send_signal(signal.SIGTERM)
     server_proc.wait(2.0)
 
+
 def test_simple_request(cleave_server_setup):
     """
     Make a trivial request for a cleave.
@@ -104,6 +105,7 @@ def test_fetch_log(cleave_server_setup):
 
     assert 'INFO' in r.content.decode()
 
+
 def test_body_edge_table(cleave_server_setup):
     dvid_server, dvid_port, dvid_repo, port = cleave_server_setup
 
@@ -123,6 +125,49 @@ def test_body_edge_table(cleave_server_setup):
     lines = r.content.decode().rstrip().split('\n')
     assert lines[0] == 'id_a,id_b,xa,ya,za,xb,yb,zb,score,body'
     assert len(lines) == 5, '\n' +  '\n'.join(lines)
+
+
+def test_change_default_method(cleave_server_setup):
+    """
+    Change the default cleave method via the /set-default-params endpoint.
+    Uses the test cleave 'algorithm' (echo-seeds) and sends a cleave request to verify that it worked.
+    Changes the default method BACK after the test is run, so other unit tests won't break.
+    """
+    dvid_server, dvid_port, dvid_repo, port = cleave_server_setup
+    
+    r = requests.post(f'http://127.0.0.1:{port}/set-default-params?method=echo-seeds')
+    r.raise_for_status()
+    assert r.json() == { "method": "echo-seeds" }
+    
+    try:
+        data = { "user": "bergs",
+                 "body-id": 1,
+                 "port": dvid_port,
+                 "seeds": {"1": [1], "2": [5]},
+                 "server": dvid_server,
+                 "uuid": dvid_repo,
+                 "segmentation-instance": "segmentation",
+                 "mesh-instance": "segmentation_meshes_tars" }
+    
+        r = requests.post(f'http://127.0.0.1:{port}/compute-cleave', json=data)
+        try:
+            r.raise_for_status()
+        except requests.RequestException:
+            sys.stderr.write(r.content.decode() + '\n')
+            raise
+
+        # Since we switched to the 'echo-seeds' method,
+        # the assignments merely match the seeds.
+        assignments = r.json()["assignments"]
+        assert assignments["1"] == [1]
+        assert assignments["2"] == [5]
+
+    finally:
+        # Change the default method BACK after the test is run, so other unit tests won't break.
+        r = requests.post(f'http://127.0.0.1:{port}/set-default-params?method=seeded-watershed')
+        r.raise_for_status()
+        assert r.json() == { "method": "seeded-watershed" }
+
 
 if __name__ == "__main__":
     pytest.main(['-s', '--tb=native', '--pyargs', 'neuclease.tests.test_server'])

@@ -23,6 +23,7 @@ from .util import Timer
 
 # Globals
 MERGE_GRAPH = None
+DEFAULT_METHOD = "seeded-watershed"
 LOGFILE = None # Will be set in __main__, below
 logger = logging.getLogger(__name__)
 app = Flask(__name__)
@@ -159,6 +160,7 @@ def compute_cleave():
             "4": [234, 235, 236],
         },
 
+        "method": "seeded-watershed",
         "user": "bergs",
         "server": "emdata2.int.janelia.org",
         "port": 8700,
@@ -205,7 +207,7 @@ def _run_cleave(data):
     global MERGE_TABLE
 
     user = data.get("user", "unknown")
-    method = data.get("method", "seeded-watershed")
+    method = data.get("method", DEFAULT_METHOD)
     body_id = data["body-id"]
     seeds = { int(k): v for k,v in data["seeds"].items() }
     server = data["server"] + ':' + str(data["port"])
@@ -286,6 +288,7 @@ def _run_cleave(data):
     body_logger.info("Sending cleave results")
     return ( cleave_response, HTTPStatus.OK )
 
+
 @app.route('/body-edge-table', methods=['POST'])
 def body_edge_table():
     """
@@ -322,3 +325,16 @@ def body_edge_table():
     response = StringIO()
     subset_df.to_csv(response, index=False, header=True)
     return response.getvalue()
+
+
+@app.route('/set-default-params', methods=['POST'])
+def set_default_params():
+    global DEFAULT_METHOD
+    DEFAULT_METHOD = request.args.get('method', DEFAULT_METHOD)
+    
+    defaults = {
+        "method": DEFAULT_METHOD
+    }
+    
+    return (jsonify(defaults), HTTPStatus.OK)
+
