@@ -18,7 +18,7 @@ from flask import Flask, request, abort, redirect, url_for, jsonify, Response, m
 
 from .logging_setup import init_logging, log_exceptions, PrefixedLogger
 from .merge_graph import  LabelmapMergeGraph
-from .cleave import cleave
+from .cleave import cleave, InvalidCleaveMethodError
 from .util import Timer
 
 # Globals
@@ -262,13 +262,20 @@ def _run_cleave(data):
         cleave_response.setdefault("errors", []).append(msg)
         return cleave_response, HTTPStatus.PRECONDITION_FAILED # code 412
 
-    # Perform the computation
-    with Timer() as timer:
-        results = cleave(edges, weights, seeds, supervoxels, method=method)
+    try:
+        # Perform the computation
+        with Timer() as timer:
+            results = cleave(edges, weights, seeds, supervoxels, method=method)
+    except InvalidCleaveMethodError as ex:
+        body_logger.error(str(ex))
+        body_logger.info("Responding with error BAD_REQUEST.")
+        cleave_response.setdefault("errors", []).append(str(ex))
+        return cleave_response, HTTPStatus.BAD_REQUEST # code 400
+        
     body_logger.info(f"Computing cleave took {timer.timedelta}")
 
     # Convert assignments to JSON
-    df = pd.DataFrame({'node': results.node_ids, 'label': results.output_labels})
+    df = pd.DataFrame({'node': supervoxels, 'label': results.output_labels})
     df.sort_values('node', inplace=True)
     for label, group in df.groupby('label'):
         cleave_response["assignments"][str(label)] = group['node'].tolist()

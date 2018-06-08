@@ -8,15 +8,33 @@ from dvidutils import LabelMapper
 
 from .util import connected_components
 
-CLEAVE_METHODS = ('seeded-watershed', 'agglomerative-clustering', 'echo-seeds')
+class InvalidCleaveMethodError(Exception):
+    pass
 
-CleaveResults = namedtuple("CleaveResults", "node_ids output_labels disconnected_components contains_unlabeled_components")
-def cleave(edges, edge_weights, seeds_dict, node_ids=None, method='seeded-watershed'):
+def get_cleave_method(method_string):
+    """
+    Given the name of a cleave method algorithm, return the function to
+    call for that algorithm, along with a bool indicating whether or not
+    the algorithm expects valid node sizes as input.
+    
+    Returns (func, requires_sizes)
+    """
+    if method_string == 'seeded-watershed':
+        return edge_weighted_watershed, False
+    if method_string == 'agglomerative-clustering':
+        return agglomerative_clustering, False
+    if method_string == 'agglomerative-clustering-with-ward':
+        return agglomerative_clustering, True
+    if method_string == 'echo-seeds':
+        return echo_seeds, False
+    
+    raise RuntimeError(f"Invalid cleave method name: {method_string}")
+
+
+CleaveResults = namedtuple("CleaveResults", "output_labels disconnected_components contains_unlabeled_components")
+def cleave(edges, edge_weights, seeds_dict, node_ids, node_sizes=None, method='seeded-watershed'):
     """
     Cleave the graph with the given edges and edge weights.
-    If node_ids is given, it must contain a superset of the ids given in edges.
-    Extra ids in node_ids (i.e. not mentioned in 'edges') will be included
-    in the results as disconnected components.
     
     Args:
         
@@ -30,7 +48,9 @@ def cleave(edges, edge_weights, seeds_dict, node_ids=None, method='seeded-waters
             dict, { seed_class : [node_id, node_id, ...] }
         
         node_ids:
-            The complete list of node IDs in the graph.
+            The complete list of node IDs in the graph. Must contain a superset of the ids given in edges.
+            Extra ids in node_ids (i.e. not mentioned in 'edges') will be included
+            in the results as disconnected components.
         
         method:
             One of: 'seeded-watershed', 'agglomerative-clustering', 'echo-seeds'
@@ -56,16 +76,15 @@ def cleave(edges, edge_weights, seeds_dict, node_ids=None, method='seeded-waters
                 and thus not labeled during agglomeration. False otherwise.
         
     """
-    if node_ids is None:
-        node_ids = pd.unique(edges.flat)
-        node_ids.sort()
-    
     assert isinstance(node_ids, np.ndarray)
     assert node_ids.dtype in (np.uint32, np.uint64)
     assert node_ids.ndim == 1
+    assert node_sizes is None or node_sizes.shape == node_ids.shape
 
-    assert method in CLEAVE_METHODS
-
+    cleave_func, requires_sizes = get_cleave_method(method)
+    assert not requires_sizes or node_sizes is not None, \
+        f"The specified cleave method ({method}) requires node sizes but none were provided."
+    
     # Relabel node ids consecutively
     cons_node_ids = np.arange(len(node_ids), dtype=np.uint32)
     mapper = LabelMapper(node_ids, cons_node_ids)
@@ -79,7 +98,7 @@ def cleave(edges, edge_weights, seeds_dict, node_ids=None, method='seeded-waters
     
     if len(edges) == 0:
         # No edges: Return empty results (just seeds)
-        return CleaveResults(node_ids, seed_labels, set(seeds_dict.keys()), True)
+        return CleaveResults(seed_labels, set(seeds_dict.keys()), True)
 
     # Clean the edges (normalized form, no duplicates, no loops)
     edges.sort(axis=1)
@@ -93,17 +112,12 @@ def cleave(edges, edge_weights, seeds_dict, node_ids=None, method='seeded-waters
     cons_edges = mapper.apply(edges)
     assert cons_edges.dtype == np.uint32
 
-    if method == 'agglomerative-clustering':
-        output_labels, disconnected_components, contains_unlabeled_components = agglomerative_clustering(cons_edges, edge_weights, seed_labels)
-    elif method == 'seeded-watershed':
-        output_labels, disconnected_components, contains_unlabeled_components = edge_weighted_watershed(cons_edges, edge_weights, seed_labels)
-    elif method == 'echo-seeds':
-        output_labels, disconnected_components, contains_unlabeled_components = echo_seeds(cons_edges, seed_labels)
-        
-    return CleaveResults(node_ids, output_labels, disconnected_components, contains_unlabeled_components)
-    
-    
-def agglomerative_clustering(cleaned_edges, edge_weights, seed_labels, num_classes=None):
+    cleave_results = cleave_func(cons_edges, edge_weights, seed_labels, node_sizes)
+    assert isinstance(cleave_results, CleaveResults)
+    return cleave_results
+
+
+def agglomerative_clustering(cleaned_edges, edge_weights, seed_labels, node_sizes=None, num_classes=None):
     """
     Run vigra.graphs.agglomerativeClustering() on the given graph with N nodes and E edges.
     The graph node IDs must be consecutive, starting with zero, dtype=np.uint32
@@ -265,10 +279,10 @@ def agglomerative_clustering(cleaned_edges, edge_weights, seed_labels, num_class
     mapper = LabelMapper(agg_values, seed_values)
     mapper.apply_inplace(output_labels)
     
-    return output_labels, disconnected_components, contains_unlabeled_components
+    return CleaveResults(output_labels, disconnected_components, contains_unlabeled_components)
 
 
-def edge_weighted_watershed(cleaned_edges, edge_weights, seed_labels):
+def edge_weighted_watershed(cleaned_edges, edge_weights, seed_labels, _node_sizes=None):
     """
     Run nifty.graph.edgeWeightedWatershedsSegmentation() on the given graph with N nodes and E edges.
     The graph node IDs must be consecutive, starting with zero, dtype=np.uint32
@@ -319,10 +333,10 @@ def edge_weighted_watershed(cleaned_edges, edge_weights, seed_labels):
     assert len(output_labels) == len(seed_labels)
     contains_unlabeled_components = not output_labels.all()
     disconnected_components = _find_disconnected_components(cleaned_edges, output_labels)
-    return output_labels, disconnected_components, contains_unlabeled_components
+    return CleaveResults(output_labels, disconnected_components, contains_unlabeled_components)
 
 
-def echo_seeds(cleaned_edges, seed_labels):
+def echo_seeds(cleaned_edges, _edge_weights, seed_labels, _node_sizes):
     """
     A dummy 'cleave' stand-in that merely echoes the seeds back,
     with correctly reported disconnected_components.
@@ -330,7 +344,7 @@ def echo_seeds(cleaned_edges, seed_labels):
     output_labels = seed_labels # echo seeds input
     disconnected_components = _find_disconnected_components(cleaned_edges, output_labels)
     contains_unlabeled_components = not output_labels.all()
-    return output_labels, disconnected_components, contains_unlabeled_components
+    return CleaveResults(output_labels, disconnected_components, contains_unlabeled_components)
 
 
 def _find_disconnected_components(cleaned_edges, output_labels):

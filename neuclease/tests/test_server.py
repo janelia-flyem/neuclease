@@ -3,6 +3,7 @@ import sys
 import time
 import signal
 import logging
+import functools
 import subprocess
 
 import pytest
@@ -10,6 +11,7 @@ import requests
 
 import neuclease
 
+from neuclease.tests.conftest import TEST_DATA_DIR
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -19,6 +21,18 @@ logger.addHandler(logging.StreamHandler(sys.stdout))
 ## These tests rely on the global setupfunction 'labelmap_setup',
 ## defined in conftest.py and used here via pytest magic
 ##
+
+def show_request_exceptions(f):
+    @functools.wraps(f)
+    def wrapper(*args, **kwargs):
+        try:
+            return f(*args, **kwargs)
+        except requests.RequestException as ex:
+            r = ex.response
+            sys.stderr.write(r.content.decode() + '\n')
+            sys.stderr.write(f"See server log in {TEST_DATA_DIR}\n")
+            raise
+    return wrapper
 
 @pytest.fixture(scope="module")
 def cleave_server_setup(labelmap_setup):
@@ -33,7 +47,8 @@ def cleave_server_setup(labelmap_setup):
                                     "--debug-export-dir", os.path.dirname(merge_table_path),
                                     "--merge-table", merge_table_path,
                                     "--primary-dvid-server", dvid_server,
-                                    "--primary-labelmap-instance", "segmentation"])
+                                    "--primary-labelmap-instance", "segmentation",
+                                    f"--log-dir={TEST_DATA_DIR}"])
 
     # Give the server time to initialize
     max_tries = 10
@@ -62,6 +77,7 @@ def cleave_server_setup(labelmap_setup):
     server_proc.wait(2.0)
 
 
+@show_request_exceptions
 def test_simple_request(cleave_server_setup):
     """
     Make a trivial request for a cleave.
@@ -78,11 +94,7 @@ def test_simple_request(cleave_server_setup):
              "mesh-instance": "segmentation_meshes_tars" }
 
     r = requests.post(f'http://127.0.0.1:{port}/compute-cleave', json=data)
-    try:
-        r.raise_for_status()
-    except requests.RequestException:
-        sys.stderr.write(r.content.decode() + '\n')
-        raise
+    r.raise_for_status()
 
     # There's a weak edge between 3 and 4. See conftest.init_labelmap_nodes().
     assignments = r.json()["assignments"]
@@ -90,6 +102,7 @@ def test_simple_request(cleave_server_setup):
     assert assignments["2"] == [4,5]
             
 
+@show_request_exceptions
 def test_fetch_log(cleave_server_setup):
     """
     Trival test to make sure the default page returns the log file.
@@ -97,15 +110,12 @@ def test_fetch_log(cleave_server_setup):
     _dvid_server, _dvid_port, _dvid_repo, port = cleave_server_setup
 
     r = requests.get(f'http://127.0.0.1:{port}')
-    try:
-        r.raise_for_status()
-    except requests.RequestException:
-        sys.stderr.write(r.content.decode() + '\n')
-        raise
+    r.raise_for_status()
 
     assert 'INFO' in r.content.decode()
 
 
+@show_request_exceptions
 def test_body_edge_table(cleave_server_setup):
     dvid_server, dvid_port, dvid_repo, port = cleave_server_setup
 
@@ -116,17 +126,14 @@ def test_body_edge_table(cleave_server_setup):
              "segmentation-instance": "segmentation" }
 
     r = requests.post(f'http://127.0.0.1:{port}/body-edge-table', json=data)
-    try:
-        r.raise_for_status()
-    except requests.RequestException:
-        sys.stderr.write(r.content.decode() + '\n')
-        raise
+    r.raise_for_status()
 
     lines = r.content.decode().rstrip().split('\n')
     assert lines[0] == 'id_a,id_b,xa,ya,za,xb,yb,zb,score,body'
     assert len(lines) == 5, '\n' +  '\n'.join(lines)
 
 
+@show_request_exceptions
 def test_change_default_method(cleave_server_setup):
     """
     Change the default cleave method via the /set-default-params endpoint.
@@ -150,11 +157,7 @@ def test_change_default_method(cleave_server_setup):
                  "mesh-instance": "segmentation_meshes_tars" }
     
         r = requests.post(f'http://127.0.0.1:{port}/compute-cleave', json=data)
-        try:
-            r.raise_for_status()
-        except requests.RequestException:
-            sys.stderr.write(r.content.decode() + '\n')
-            raise
+        r.raise_for_status()
 
         # Since we switched to the 'echo-seeds' method,
         # the assignments merely match the seeds.
