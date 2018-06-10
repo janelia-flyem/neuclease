@@ -51,11 +51,12 @@ def copy_splits(src_supervoxels, src_info, dest_info):
             first_coord_zyx = extract_first_rle_coord(rle_payload)
             dest_sv = fetch_label_for_coordinate(*dest_info, first_coord_zyx, supervoxels=True)
             split_sv, remain_sv = split_supervoxel(*dest_info, dest_sv, rle_payload)
-        except BaseException as ex:
-            raise RuntimeError(f"Error copying SV {src_sv} (#{i})") from ex
+            split_info = SplitCopyInfo(src_sv, dest_sv, split_sv, remain_sv)
+            copy_infos.append(split_info)
+        except Exception as ex:
+            with tqdm.external_write_mode():
+                logger.error(f"Error copying SV {src_sv} (#{i}): {ex}")
 
-        split_info = SplitCopyInfo(src_sv, dest_sv, split_sv, remain_sv)
-        copy_infos.append(split_info)
     return copy_infos
 
 
