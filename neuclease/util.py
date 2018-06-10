@@ -56,9 +56,10 @@ def csv_has_header(csv_path):
 def read_csv_col(csv_path, col=0, dtype=np.uint64):
     int(col) # must be an int
     header = None
-    if csv_has_header:
+    if csv_has_header(csv_path):
         header = 0
-    return pd.read_csv(csv_path, header=header, usecols=[col], names=['foo'], dtype=np.uint64)['foo']
+    return pd.read_csv(csv_path, header=header, usecols=[col], names=['foo'], dtype=dtype)['foo']
+
 
 _graph_tool_available = None
 def graph_tool_available():
