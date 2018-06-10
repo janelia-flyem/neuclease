@@ -284,6 +284,17 @@ def normalize_merge_table(merge_table, drop_duplicate_edges=True, sort=None):
     
     return merge_table
 
+def normalize_recarray_inplace(table, ref_col_a, ref_col_b, columns_a, columns_b):
+    columns_a = list(columns_a)
+    columns_b = list(columns_b)
+    
+    assert ref_col_a in columns_a
+    assert ref_col_b in columns_b
+    
+    swap_rows = (table[ref_col_a] > table[ref_col_b])
+    for col_a, col_b in zip(columns_a, columns_b):
+        swap_cols(table, swap_rows, col_a, col_b)
+
 
 def apply_mappings(supervoxels, mappings):
     assert isinstance(mappings, dict)
