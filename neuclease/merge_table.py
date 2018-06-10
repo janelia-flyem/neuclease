@@ -7,7 +7,7 @@ import pandas as pd
 
 from dvidutils import LabelMapper
 
-from .util import Timer
+from .util import Timer, read_csv_header
 
 logger = logging.getLogger(__name__)
 
@@ -300,17 +300,3 @@ def apply_mappings(supervoxels, mappings):
     return df
 
 
-def read_csv_header(csv_path):
-    """
-    Open the CSV file at the given path and return it's header column names as a list.
-    If it has no header (as determined by csv.Sniffer), return None.
-    """
-    with open(csv_path, 'r') as csv_file:
-        # Is there a header?
-        has_header = csv.Sniffer().has_header(csv_file.read(1024))
-        if not has_header:
-            return None
-        csv_file.seek(0)
-        rows = iter(csv.reader(csv_file))
-        header = next(rows)
-        return header

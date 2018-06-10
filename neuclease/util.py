@@ -20,6 +20,7 @@ def Timer(msg=None, logger=None):
     if msg:
         logger.info(msg + f' took {result.timedelta}')
 
+
 class _TimerResult(object):
     def __init__(self):
         self.start = time.time()
@@ -36,7 +37,12 @@ class _TimerResult(object):
     def timedelta(self):
         return timedelta(seconds=self.seconds)
 
-def csv_has_header(csv_path):
+
+def read_csv_header(csv_path):
+    """
+    Open the CSV file at the given path and return it's header column names as a list.
+    If it has no header (as determined by csv.Sniffer), return None.
+    """
     with open(csv_path, 'r') as csv_file:
         first_line = csv_file.readline()
         csv_file.seek(0)
@@ -51,7 +57,17 @@ def csv_has_header(csv_path):
             has_header = csv.Sniffer().has_header(csv_file.read(1024))
             csv_file.seek(0)
 
-    return has_header
+        if not has_header:
+            return None
+    
+        rows = iter(csv.reader(csv_file))
+        header = next(rows)
+        return header
+
+
+def csv_has_header(csv_path):
+    return (read_csv_header(csv_path) is not None)
+
 
 def read_csv_col(csv_path, col=0, dtype=np.uint64):
     int(col) # must be an int
