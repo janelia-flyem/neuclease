@@ -97,6 +97,36 @@ def fetch_label_for_coordinate(server, uuid, instance, coordinate_zyx, supervoxe
 
 
 @sanitize_server_arg
+def fetch_sparsevol_rles(server, uuid, instance, label, supervoxels=False, scale=0):
+    session = default_dvid_session()
+    supervoxels = str(bool(supervoxels)).lower() # to lowercase string
+    url = f'http://{server}/api/node/{uuid}/{instance}/sparsevol/{label}?supervoxels={supervoxels}&scale={scale}'
+    r = session.get(url)
+    r.raise_for_status()
+    return r.content
+
+
+def extract_first_rle_coord(rle_payload_bytes):
+    """
+    Given a binary RLE payload as returned by the /sparsevol endpoint,
+    extract the first coordinate in the RLE.
+    
+    Args:
+        rle_payload_bytes:
+            Bytes. Must be in DVID's "Legacy RLEs" format.
+
+    Useful for sampling label value under a given RLE geometry
+    (assuming all of the points in the RLE share the same label).
+    """
+    assert (len(rle_payload_bytes) - 3*4) % (4*4) == 0, \
+        "Payload does not appear to be an RLE payload as defined by DVID's 'Legacy RLE' format."
+    rles = np.frombuffer(rle_payload_bytes, dtype=np.uint32)[3:]
+    rles = rles.reshape(-1, 4)
+    first_coord_xyz = rles[0, :3]
+    first_coord_zyx = first_coord_xyz[::-1]
+    return first_coord_zyx
+
+@sanitize_server_arg
 def split_supervoxel(server, uuid, instance, supervoxel, rle_payload_bytes):
     """
     Split the given supervoxel according to the provided RLE payload, as specified in DVID's split-supervoxel docs.
