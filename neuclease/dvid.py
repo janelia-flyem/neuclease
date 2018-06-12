@@ -190,3 +190,27 @@ def fetch_mutation_id(server, uuid, labelmap_instance, body_id):
     r.raise_for_status()
     return r.json()["mutation id"]
 
+
+@sanitize_server_arg
+def compute_changed_bodies(server, uuid_a, uuid_b, instance):
+    """
+    Returns the list of all bodies whose supervoxels changed
+    between uuid_a and uuid_b.
+    This includes bodies that were changed, added, or removed completely.
+    """
+    mapping_a = fetch_mappings(server, uuid_a, instance)
+    mapping_b = fetch_mappings(server, uuid_b, instance)
+    
+    assert mapping_a.name == 'body'
+    assert mapping_b.name == 'body'
+    
+    mapping_a = pd.DataFrame(mapping_a)
+    mapping_b = pd.DataFrame(mapping_b)
+    
+    logger.info("Aligning mappings")
+    df = mapping_a.merge(mapping_b, 'outer', left_index=True, right_index=True, suffixes=['_a', '_b'], copy=False)
+
+    changed_df = df.query('body_a != body_b')
+    changed_bodies = np.unique(changed_df.values.astype(np.uint64))
+    return changed_bodies
+
