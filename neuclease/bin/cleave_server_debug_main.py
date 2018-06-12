@@ -9,12 +9,17 @@ def main():
         _debug_mode = True
         import os
         log_dir = os.path.dirname(neuclease.__file__) + '/../logs'
-        sys.argv += ["--merge-table", "/magnetic/workspace/neuclease/tiny-merge-table.npy",
-                     "--mapping-file", "/magnetic/workspace/neuclease/tiny-mapping.npy",
-                     "--primary-dvid-server", "emdata3:8900",
-                     "--primary-uuid", "017a",
-                     "--primary-labelmap-instance", "segmentation",
+        sys.argv += [#"--merge-table", "/magnetic/workspace/neuclease/tiny-merge-table.npy",
+                     #"--mapping-file", "/magnetic/workspace/neuclease/tiny-mapping.npy",
+                     #"--primary-dvid-server", "emdata3:8900",
+                     #"--primary-uuid", "017a",
+                     #"--primary-labelmap-instance", "segmentation",
                      #"--suspend-before-launch",
+
+                     "--merge-table", "/tmp/merge-table-5812998448.csv",
+                     "--primary-dvid-server", "emdata1:8900",
+                     "--primary-uuid", "642cfed9e8704d0b83ccca2ee3688528",
+                     "--primary-labelmap-instance", "segmentation",
                      "--log-dir", log_dir]
 
     neuclease.cleave_server.main(_debug_mode)
