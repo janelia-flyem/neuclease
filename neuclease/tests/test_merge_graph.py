@@ -4,6 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 
+from neuclease.dvid import DvidInstanceInfo
 from neuclease.merge_graph import LabelmapMergeGraph
 from neuclease.merge_table import load_merge_table, MAPPED_MERGE_TABLE_DTYPE
 
@@ -14,19 +15,21 @@ from neuclease.merge_table import load_merge_table, MAPPED_MERGE_TABLE_DTYPE
 
 def test_fetch_supervoxels_for_body(labelmap_setup):
     dvid_server, dvid_repo, merge_table_path, mapping_path, _supervoxel_vol = labelmap_setup
+    instance_info = DvidInstanceInfo(dvid_server, dvid_repo, 'segmentation')
     
     merge_graph = LabelmapMergeGraph(merge_table_path)
     merge_graph.apply_mapping(mapping_path)
-    _mut_id, supervoxels = merge_graph.fetch_supervoxels_for_body(dvid_server, dvid_repo, 'segmentation', 1)
+    _mut_id, supervoxels = merge_graph.fetch_supervoxels_for_body(instance_info, 1)
     assert (sorted(supervoxels) == [1,2,3,4,5])
 
 
 def test_fetch_and_apply_mapping(labelmap_setup):
     dvid_server, dvid_repo, merge_table_path, _mapping_path, _supervoxel_vol = labelmap_setup
+    instance_info = DvidInstanceInfo(dvid_server, dvid_repo, 'segmentation')
     
     # Don't give mapping, ensure it's loaded from dvid.
     merge_graph = LabelmapMergeGraph(merge_table_path)
-    merge_graph.fetch_and_apply_mapping(dvid_server, dvid_repo, 'segmentation')
+    merge_graph.fetch_and_apply_mapping(instance_info)
     assert (merge_graph.merge_table_df['body'] == 1).all()
 
 
@@ -37,6 +40,8 @@ def _test_extract_rows(labelmap_setup, force_dirty_mapping):
     or a "dirty" mapping (in which the body column is not correct beforehand).
     """
     dvid_server, dvid_repo, merge_table_path, mapping_path, _supervoxel_vol = labelmap_setup
+    instance_info = DvidInstanceInfo(dvid_server, dvid_repo, 'segmentation')
+
     orig_merge_table = load_merge_table(merge_table_path, mapping_path, normalize=True)
     
     merge_graph = LabelmapMergeGraph(merge_table_path)
@@ -51,7 +56,7 @@ def _test_extract_rows(labelmap_setup, force_dirty_mapping):
     # We should be able to repeat this with the same results
     # (Make sure the cache is repopulated correctly.)
     def _extract():
-        subset_df, dvid_supervoxels = merge_graph.extract_rows(dvid_server, dvid_repo, 'segmentation', 1)
+        subset_df, dvid_supervoxels = merge_graph.extract_rows(instance_info, 1)
         assert (dvid_supervoxels == [1,2,3,4,5]).all()
         assert (orig_merge_table == subset_df).all().all(), \
             f"Original merge table doesn't match fetched:\n{orig_merge_table}\n\n{subset_df}\n"
@@ -75,13 +80,13 @@ def _test_extract_rows(labelmap_setup, force_dirty_mapping):
         merge_graph.merge_table_df['body'].values[0:2] = np.uint64(0)
         merge_graph._mapping_versions.clear()
 
-    subset_df, dvid_supervoxels = merge_graph.extract_rows(dvid_server, uuid, 'segmentation', 1)
+    subset_df, dvid_supervoxels = merge_graph.extract_rows((dvid_server, uuid, 'segmentation'), 1)
     assert (dvid_supervoxels == [1,2,3]).all()
     cleaved_svs = set([4,5])
     assert (subset_df == orig_merge_table.query('id_a not in @cleaved_svs and id_b not in @cleaved_svs')).all().all()
 
     # Check the other body
-    subset_df, dvid_supervoxels = merge_graph.extract_rows(dvid_server, uuid, 'segmentation', cleaved_body)
+    subset_df, dvid_supervoxels = merge_graph.extract_rows((dvid_server, uuid, 'segmentation'), cleaved_body)
 
     # Checking one body or the other shouldn't invalidate the rest of the body column!
     assert (merge_graph.merge_table_df.iloc[:2]['body'] == 1).all()
@@ -147,7 +152,7 @@ def test_append_edges_for_split_supervoxels(labelmap_setup, parent_sv_handling):
         f"Merge table started with wrong dtype: \n{table_dtype}\nExpected:\n{MAPPED_MERGE_TABLE_DTYPE}"
 
     # Append edges for split supervoxels.
-    merge_graph.append_edges_for_split_supervoxels(split_mapping, dvid_server, uuid, 'segmentation', parent_sv_handling)
+    merge_graph.append_edges_for_split_supervoxels(split_mapping, (dvid_server, uuid, 'segmentation'), parent_sv_handling)
 
     table_dtype = merge_graph.merge_table_df.to_records(index=False).dtype
     assert merge_graph.merge_table_df.to_records(index=False).dtype == MAPPED_MERGE_TABLE_DTYPE, \
@@ -184,7 +189,7 @@ def test_append_edges_for_split_supervoxels_with_bad_edges(labelmap_setup, paren
     # That edges should not be included in the appended results 
     edge_row = merge_graph.merge_table_df.query('id_a == 3').index
     merge_graph.merge_table_df.loc[edge_row, 'xa'] = np.uint32(0)
-    bad_edges = merge_graph.append_edges_for_split_supervoxels(split_mapping, dvid_server, uuid, 'segmentation', parent_sv_handling)
+    bad_edges = merge_graph.append_edges_for_split_supervoxels(split_mapping, (dvid_server, uuid, 'segmentation'), parent_sv_handling)
     assert len(bad_edges) == 1
     
     if parent_sv_handling == 'drop':
@@ -204,6 +209,8 @@ def test_extract_rows_multithreaded(labelmap_setup):
     Make sure the extract_rows() can be used from multiple threads without deadlocking.
     """
     dvid_server, dvid_repo, merge_table_path, mapping_path, _supervoxel_vol = labelmap_setup
+    instance_info = DvidInstanceInfo(dvid_server, dvid_repo, 'segmentation')
+
     orig_merge_table = load_merge_table(merge_table_path, mapping_path, normalize=True)
      
     merge_graph = LabelmapMergeGraph(merge_table_path)
@@ -217,7 +224,7 @@ def test_extract_rows_multithreaded(labelmap_setup):
                 merge_graph._mapping_versions.clear()
 
         # Extraction should still work.
-        subset_df, dvid_supervoxels = merge_graph.extract_rows(dvid_server, dvid_repo, 'segmentation', 1)
+        subset_df, dvid_supervoxels = merge_graph.extract_rows(instance_info, 1)
         assert (dvid_supervoxels == [1,2,3,4,5]).all()
         assert (orig_merge_table == subset_df).all().all(), f"Original merge table doesn't match fetched:\n{orig_merge_table}\n\n{subset_df}\n"
 

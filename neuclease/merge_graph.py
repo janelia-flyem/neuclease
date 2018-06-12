@@ -14,6 +14,7 @@ from .merge_table import MERGE_TABLE_DTYPE, load_edge_csv, load_mapping, load_me
 
 _logger = logging.getLogger(__name__)
 
+
 @contextmanager
 def dummy_lock():
     """
@@ -21,6 +22,7 @@ def dummy_lock():
     Useful for code that expects a lock, but you don't actually need a lock.
     """
     yield
+
 
 def uuids_match(uuid1, uuid2):
     """
@@ -34,6 +36,7 @@ def uuids_match(uuid1, uuid2):
     
     uuid2 = uuid2[:len(uuid1)]
     return (uuid2 == uuid1)
+
 
 class LabelmapMergeGraph:
     """
@@ -77,7 +80,7 @@ class LabelmapMergeGraph:
         apply_mapping_to_mergetable(self.merge_table_df, mapping)
         
 
-    def append_edges_for_split_supervoxels(self, split_mapping, server, uuid, instance, parent_sv_handling='unmap'):
+    def append_edges_for_split_supervoxels(self, split_mapping, instance_info, parent_sv_handling='unmap'):
         """
         Append edges to the merge table for the given split supervoxels (do not remove edges for their parents).
         
@@ -127,10 +130,10 @@ class LabelmapMergeGraph:
                 sv_a = sv_b = 0
 
                 if not (coord_a == (0,0,0)).all():
-                    sv_a = fetch_label_for_coordinate(server, uuid, instance, coord_a, supervoxels=True)
+                    sv_a = fetch_label_for_coordinate(instance_info, coord_a, supervoxels=True)
 
                 if not (coord_b == (0,0,0)).all():
-                    sv_b = fetch_label_for_coordinate(server, uuid, instance, coord_b, supervoxels=True)
+                    sv_b = fetch_label_for_coordinate(instance_info, coord_b, supervoxels=True)
 
                 # If either coordinate returns a non-sensical point, then
                 # the provided split mapping does not match the currently stored labels.
@@ -165,7 +168,7 @@ class LabelmapMergeGraph:
         return bad_edges
 
 
-    def fetch_and_apply_mapping(self, server, uuid, labelmap_instance, split_mapping=None):
+    def fetch_and_apply_mapping(self, instance_info, split_mapping=None):
         if isinstance(split_mapping, str):
             split_mapping = load_edge_csv(split_mapping)
 
@@ -173,21 +176,26 @@ class LabelmapMergeGraph:
         if split_mapping is not None:
             split_sv_parents = set(split_mapping[:,1])
 
-        mapping = fetch_mappings(server, uuid, labelmap_instance, include_identities=True, retired_supervoxels=split_sv_parents)
+        mapping = fetch_mappings(instance_info, include_identities=True, retired_supervoxels=split_sv_parents)
         apply_mapping_to_mergetable(self.merge_table_df, mapping)
 
 
-    def fetch_supervoxels_for_body(self, dvid_server, uuid, labelmap_instance, body_id, logger=_logger):
+    def fetch_supervoxels_for_body(self, instance_info, body_id, logger=_logger):
         """
         Fetch the supervoxels for the given body from DVID.
         The results are cached internally, according to the body's current mutation id.
         
+        Args:
+            instance_info: tuple of (server, uuid, instance)
+            body_id: uint64
+        
         Returns:
             (mutation id, supervoxels)
         """
-        mut_id = fetch_mutation_id(dvid_server, uuid, labelmap_instance, body_id)
+        mut_id = fetch_mutation_id(instance_info, body_id)
+        dvid_server, uuid, instance = instance_info
 
-        key = (dvid_server, uuid, labelmap_instance, body_id)
+        key = (dvid_server, uuid, instance, body_id)
         key_lock = self.get_key_lock(*key)
 
         # Use a lock to avoid requesting the supervoxels from DVID in-parallel,
@@ -200,7 +208,7 @@ class LabelmapMergeGraph:
                     return mut_id, supervoxels # Cache is up-to-date
             
             with Timer() as timer:
-                supervoxels = fetch_supervoxels_for_body(dvid_server, uuid, labelmap_instance, body_id)
+                supervoxels = fetch_supervoxels_for_body(instance_info, body_id)
                 supervoxels = np.asarray(supervoxels, np.uint64)
                 supervoxels.sort()
 
@@ -212,16 +220,17 @@ class LabelmapMergeGraph:
         return mut_id, supervoxels
 
 
-    def extract_rows(self, dvid_server, uuid, labelmap_instance, body_id, logger=None):
+    def extract_rows(self, instance_info, body_id, logger=None):
         """
         Determine which supervoxels belong to the given body,
         and extract all edges involving those supervoxels (and only those supervoxels).
         """
+        dvid_server, uuid, instance = instance_info
+        
         body_id = np.uint64(body_id)
         if logger is None:
             logger = _logger
-        
-        mut_id, dvid_supervoxels = self.fetch_supervoxels_for_body(dvid_server, uuid, labelmap_instance, body_id, logger)
+        mut_id, dvid_supervoxels = self.fetch_supervoxels_for_body(instance_info, body_id, logger)
 
         # Are we allowed to update the merge table 'body' column?
         permit_write = (self.primary_uuid is None or uuids_match(uuid, self.primary_uuid))
@@ -230,14 +239,14 @@ class LabelmapMergeGraph:
         # (The first thread to enter will take a while to apply the body mapping, but the rest will be fast.)
         # Use a body-specific lock.  If we're not permitted to write, use a dummy lock (permit parallel computation).
         if permit_write:
-            key_lock = self.get_key_lock(dvid_server, uuid, labelmap_instance, body_id)
+            key_lock = self.get_key_lock(dvid_server, uuid, instance, body_id)
         else:
             key_lock = dummy_lock()
 
         with key_lock:
             with self.rwlock.context(write=False):
                 try:
-                    mapping_is_in_sync = (self._mapping_versions[body_id] == (dvid_server, uuid, labelmap_instance, mut_id))
+                    mapping_is_in_sync = (self._mapping_versions[body_id] == (dvid_server, uuid, instance, mut_id))
                 except KeyError:
                     mapping_is_in_sync = False
     
@@ -252,7 +261,7 @@ class LabelmapMergeGraph:
     
                 # Maybe the mapping isn't in sync, but the supervoxels match anyway...
                 if svs_from_table.shape == dvid_supervoxels.shape and (svs_from_table == dvid_supervoxels).all():
-                    self._mapping_versions[body_id] = (dvid_server, uuid, labelmap_instance, mut_id)
+                    self._mapping_versions[body_id] = (dvid_server, uuid, instance, mut_id)
                     return subset_df, dvid_supervoxels
     
             # If we get this far, our mapping is out-of-sync with DVID's agglomeration.
@@ -290,7 +299,7 @@ class LabelmapMergeGraph:
                         if prev_body in self._mapping_versions:
                             del self._mapping_versions[prev_body]
     
-                    self._mapping_versions[body_id] = (dvid_server, uuid, labelmap_instance, mut_id)
+                    self._mapping_versions[body_id] = (dvid_server, uuid, instance, mut_id)
                     self.merge_table_df.loc[body_positions_index, 'body'] = np.uint64(0)
                     self.merge_table_df.loc[subset_df.index, 'body'] = body_id
 
@@ -304,8 +313,9 @@ class LabelmapMergeGraph:
 
                 return subset_df, dvid_supervoxels
 
-    def get_key_lock(self, dvid_server, uuid, labelmap_instance, body_id):
-        key = (dvid_server, uuid, labelmap_instance, body_id)
+    
+    def get_key_lock(self, dvid_server, uuid, instance, body_id):
+        key = (dvid_server, uuid, instance, body_id)
         with self._sv_cache_main_lock:
             key_lock = self._sv_cache_key_locks[key]
         return key_lock

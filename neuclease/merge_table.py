@@ -367,5 +367,3 @@ def compute_body_sizes(sv_sizes, mapping):
     return body_sizes.sort_values(ascending=False)
 
 
-
-

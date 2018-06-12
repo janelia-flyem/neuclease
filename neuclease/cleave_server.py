@@ -19,6 +19,7 @@ from flask import Flask, request, abort, redirect, url_for, jsonify, Response, m
 from .logging_setup import init_logging, log_exceptions, PrefixedLogger
 from .merge_graph import  LabelmapMergeGraph
 from .cleave import cleave, InvalidCleaveMethodError
+from .dvid import DvidInstanceInfo
 from .util import Timer
 
 # Globals
@@ -83,10 +84,8 @@ def main(debug_mode=False):
             if not args.primary_dvid_server or not args.primary_uuid or not args.primary_labelmap_instance:
                 raise RuntimeError("Can't append split supervoxel edges without all primary server/uuid/instance info")
             with Timer(f"Appending split supervoxel edges for supervoxels in {args.split_mapping}", logger):
-                bad_edges = MERGE_GRAPH.append_edges_for_split_supervoxels( args.split_mapping,
-                                                                            args.primary_dvid_server,
-                                                                            args.primary_uuid,
-                                                                            args.primary_labelmap_instance )
+                primary_instance_info = DvidInstanceInfo(args.primary_dvid_server, args.primary_uuid, args.primary_labelmap_instance)
+                bad_edges = MERGE_GRAPH.append_edges_for_split_supervoxels( args.split_mapping, primary_instance_info ) 
 
                 if len(bad_edges) > 0:
                     split_mapping_name = os.path.split(args.split_mapping)[1]
@@ -218,6 +217,8 @@ def _run_cleave(data):
     if not server.startswith('http://'):
         server = 'http://' + server
 
+    instance_info = DvidInstanceInfo(server, uuid, segmentation_instance)
+
     # Remove empty seed classes (if any)
     for label in list(seeds.keys()):
         if len(seeds[label]) == 0:
@@ -238,7 +239,7 @@ def _run_cleave(data):
     # Extract this body's edges from the complete merge graph
     with Timer() as timer:
         try:
-            df, supervoxels = MERGE_GRAPH.extract_rows(server, uuid, segmentation_instance, body_id, body_logger)
+            df, supervoxels = MERGE_GRAPH.extract_rows(instance_info, body_id, body_logger)
         except requests.HTTPError as ex:
             status_name = str(HTTPStatus(ex.response.status_code)).split('.')[1]
             if ex.response.status_code == HTTPStatus.NOT_FOUND:
@@ -316,10 +317,12 @@ def body_edge_table():
     if not server.startswith('http://'):
         server = 'http://' + server
 
+    instance_info = DvidInstanceInfo(server, uuid, segmentation_instance)
+
     body_logger.info("Recevied body-edge-table request")
 
     try:
-        subset_df, _supervoxels = MERGE_GRAPH.extract_rows(server, uuid, segmentation_instance, body_id, body_logger)
+        subset_df, _supervoxels = MERGE_GRAPH.extract_rows(instance_info, body_id, body_logger)
     except requests.HTTPError as ex:
         status_name = str(HTTPStatus(ex.response.status_code)).split('.')[1]
         if ex.response.status_code == HTTPStatus.NOT_FOUND:

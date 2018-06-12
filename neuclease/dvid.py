@@ -3,6 +3,7 @@ import logging
 import threading
 import functools
 from io import BytesIO
+from collections import namedtuple
 
 import requests
 
@@ -15,6 +16,8 @@ DEFAULT_DVID_SESSIONS = {}
 DEFAULT_APPNAME = "neuclease"
 
 logger = logging.getLogger(__name__)
+
+DvidInstanceInfo = namedtuple("DvidInstanceInfo", "server uuid instance")
 
 def default_dvid_session(appname=None):
     """
@@ -36,26 +39,29 @@ def default_dvid_session(appname=None):
 
     return s
 
-def sanitize_server_arg(f):
+def sanitize_server(f):
     """
-    Decorator for functions whose first arg is 'server'.
-    If the server begins with 'http://', that prefix is stripped from the argument.
+    Decorator for functions whose first arg is a DvidInstanceInfo (or similar tuple).
+    If the server address begins with 'http://', that prefix is stripped from it.
     """
     @functools.wraps(f)
-    def wrapper(server, *args, **kwargs):
+    def wrapper(instance_info, *args, **kwargs):
+        server, uuid, instance = instance_info
         if server.startswith('http://'):
             server = server[len('http://'):]
-        return f(server, *args, **kwargs)
+            instance_info = DvidInstanceInfo(server, uuid, instance)
+        return f(instance_info, *args, **kwargs)
     return wrapper
 
 
-@sanitize_server_arg
-def fetch_supervoxels_for_body(server, uuid, labelmap_instance, body_id, user=None):
+@sanitize_server
+def fetch_supervoxels_for_body(instance_info, body_id, user=None):
+    server, uuid, instance = instance_info
     query_params = {}
     if user:
         query_params['u'] = user
 
-    url = f'http://{server}/api/node/{uuid}/{labelmap_instance}/supervoxels/{body_id}'
+    url = f'http://{server}/api/node/{uuid}/{instance}/supervoxels/{body_id}'
     r = default_dvid_session().get(url, params=query_params)
     r.raise_for_status()
     supervoxels = np.array(r.json(), np.uint64)
@@ -63,18 +69,19 @@ def fetch_supervoxels_for_body(server, uuid, labelmap_instance, body_id, user=No
     return supervoxels
 
 
-@sanitize_server_arg
-def fetch_supervoxel_sizes_for_body(server, uuid, labelmap_instance, body_id, user=None):
+@sanitize_server
+def fetch_supervoxel_sizes_for_body(instance_info, body_id, user=None):
     """
     Return the sizes of all supervoxels in a body 
     """
-    supervoxels = fetch_supervoxels_for_body(server, uuid, labelmap_instance, body_id, user)
+    server, uuid, instance = instance_info
+    supervoxels = fetch_supervoxels_for_body(instance_info, body_id, user)
     
     query_params = {}
     if user:
         query_params['u'] = user
 
-    url = f'http://{server}/api/node/{uuid}/{labelmap_instance}/sizes?supervoxels=true'
+    url = f'http://{server}/api/node/{uuid}/{instance}/sizes?supervoxels=true'
     r = default_dvid_session().get(url, params=query_params, json=supervoxels.tolist())
     r.raise_for_status()
     sizes = np.array(r.json(), np.uint32)
@@ -85,8 +92,9 @@ def fetch_supervoxel_sizes_for_body(server, uuid, labelmap_instance, body_id, us
     return series
 
 
-@sanitize_server_arg
-def fetch_label_for_coordinate(server, uuid, instance, coordinate_zyx, supervoxels=False):
+@sanitize_server
+def fetch_label_for_coordinate(instance_info, coordinate_zyx, supervoxels=False):
+    server, uuid, instance = instance_info
     session = default_dvid_session()
     coord_xyz = np.array(coordinate_zyx)[::-1]
     coord_str = '_'.join(map(str, coord_xyz))
@@ -96,8 +104,9 @@ def fetch_label_for_coordinate(server, uuid, instance, coordinate_zyx, supervoxe
     return np.uint64(r.json()["Label"])
 
 
-@sanitize_server_arg
-def fetch_sparsevol_rles(server, uuid, instance, label, supervoxels=False, scale=0):
+@sanitize_server
+def fetch_sparsevol_rles(instance_info, label, supervoxels=False, scale=0):
+    server, uuid, instance = instance_info
     session = default_dvid_session()
     supervoxels = str(bool(supervoxels)).lower() # to lowercase string
     url = f'http://{server}/api/node/{uuid}/{instance}/sparsevol/{label}?supervoxels={supervoxels}&scale={scale}'
@@ -126,14 +135,15 @@ def extract_first_rle_coord(rle_payload_bytes):
     first_coord_zyx = first_coord_xyz[::-1]
     return first_coord_zyx
 
-@sanitize_server_arg
-def split_supervoxel(server, uuid, instance, supervoxel, rle_payload_bytes):
+@sanitize_server
+def split_supervoxel(instance_info, supervoxel, rle_payload_bytes):
     """
     Split the given supervoxel according to the provided RLE payload, as specified in DVID's split-supervoxel docs.
     
     Returns:
         The two new IDs resulting from the split: (split_sv_id, remaining_sv_id)
     """
+    server, uuid, instance = instance_info
     session = default_dvid_session()
     r = session.post(f'http://{server}/api/node/{uuid}/{instance}/split-supervoxel/{supervoxel}', data=rle_payload_bytes)
     r.raise_for_status()   
@@ -142,8 +152,8 @@ def split_supervoxel(server, uuid, instance, supervoxel, rle_payload_bytes):
     return (results["SplitSupervoxel"], results["RemainSupervoxel"] )
 
 
-@sanitize_server_arg
-def fetch_mappings(server, uuid, labelmap_instance, include_identities=True, retired_supervoxels=[]):
+@sanitize_server
+def fetch_mappings(instance_info, include_identities=True, retired_supervoxels=[]):
     """
     Fetch the complete sv-to-label mapping table from DVID and return it as a pandas Series (indexed by sv).
     
@@ -158,10 +168,11 @@ def fetch_mappings(server, uuid, labelmap_instance, include_identities=True, ret
     Returns:
         pd.Series(index=sv, data=body)
     """
+    server, uuid, instance = instance_info
     session = default_dvid_session()
     
     # This takes ~30 seconds so it's nice to log it.
-    uri = f"http://{server}/api/node/{uuid}/{labelmap_instance}/mappings"
+    uri = f"http://{server}/api/node/{uuid}/{instance}/mappings"
     with Timer(f"Fetching {uri}", logger):
         r = session.get(uri)
         r.raise_for_status()
@@ -183,23 +194,25 @@ def fetch_mappings(server, uuid, labelmap_instance, include_identities=True, ret
     return df['body']
 
 
-@sanitize_server_arg
-def fetch_mutation_id(server, uuid, labelmap_instance, body_id):
+@sanitize_server
+def fetch_mutation_id(instance_info, body_id):
+    server, uuid, instance = instance_info
     session = default_dvid_session()
-    r = session.get(f'http://{server}/api/node/{uuid}/{labelmap_instance}/lastmod/{body_id}')
+    r = session.get(f'http://{server}/api/node/{uuid}/{instance}/lastmod/{body_id}')
     r.raise_for_status()
     return r.json()["mutation id"]
 
 
-@sanitize_server_arg
-def compute_changed_bodies(server, uuid_a, uuid_b, instance):
+def compute_changed_bodies(instance_info_a, instance_info_b):
     """
     Returns the list of all bodies whose supervoxels changed
     between uuid_a and uuid_b.
     This includes bodies that were changed, added, or removed completely.
     """
-    mapping_a = fetch_mappings(server, uuid_a, instance)
-    mapping_b = fetch_mappings(server, uuid_b, instance)
+    instance_info_a
+    
+    mapping_a = fetch_mappings(instance_info_a)
+    mapping_b = fetch_mappings(instance_info_b)
     
     assert mapping_a.name == 'body'
     assert mapping_b.name == 'body'

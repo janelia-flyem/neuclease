@@ -67,7 +67,7 @@ def cleave_server_setup(labelmap_setup):
         if os.path.exists(logfile):
             with open(logfile, 'r') as f:
                 log_contents = f.read()
-            log_tail = '\n'.join(log_contents.split('\n')[-100:])
+            log_tail = '\n'.join(log_contents.split('\n')[-20:])
             msg += "Log tail:\n" + log_tail
         raise RuntimeError(msg)
 
