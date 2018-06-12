@@ -95,6 +95,28 @@ def read_ting_split_info(ting_split_result_log, uuid='194db260e1ee4edcbda0b592bf
     return all_svs
 
 
+def affected_bodies(src_supervoxels, src_info, dest_info, bodies=None):
+    """
+    Given a set of source supervoxels on one server, figure out which bodies they touch on a destination server.
+
+    Note: Assumes that each supervoxel does not span across multiple bodies.
+
+    Note: This function isn't used above.  It's here as a useful debugging function.
+    """
+    bodies = bodies or set()
+    for i, src_sv in enumerate(tqdm(src_supervoxels)):
+        try:
+            rle_payload = fetch_sparsevol_rles(*src_info, src_sv, supervoxels=True)
+            first_coord_zyx = extract_first_rle_coord(rle_payload)
+            dest_body = fetch_label_for_coordinate(*dest_info, first_coord_zyx, supervoxels=False)
+            bodies.add(dest_body)
+        except Exception as ex:
+            with tqdm.external_write_mode():
+                print(f"Error reading body for SV {src_sv} (#{i}): {ex}")
+
+    return bodies
+
+
 if __name__ == "__main__":
     DEBUG = False
     if DEBUG:
