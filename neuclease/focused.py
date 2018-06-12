@@ -84,8 +84,8 @@ def compute_focused_paths( instance_info,
         merge_table_df['body_a'] = mapper.apply(merge_table_df['id_a'].values, allow_unmapped=True)
         merge_table_df['body_b'] = mapper.apply(merge_table_df['id_b'].values, allow_unmapped=True)
 
-    with Timer("Reading importances", logger):
-        if isinstance(important_bodies, str):
+    if isinstance(important_bodies, str):
+        with Timer("Reading importances", logger):
             important_bodies = read_csv_col(important_bodies).values
         important_bodies = pd.Index(important_bodies, dtype=np.uint64)
 
@@ -97,7 +97,7 @@ def compute_focused_paths( instance_info,
         size_before = len(merge_table_df)
         merge_table_df.query('(body_a != body_b) and not (important_a and important_b)', inplace=True)
         size_after = len(merge_table_df)
-        logger.info(f"Discarded {size_before - size_after} edges")
+        logger.info(f"Discarded {size_before - size_after} edges, ended with {len(merge_table_df)} edges")
 
     edges = merge_table_df[['id_a', 'id_b']].values
     assert edges.dtype == np.uint64
@@ -116,22 +116,35 @@ def find_all_paths(edges, original_mapping, important_bodies, max_depth=10, stop
     """
     Returns a dict of { start_sv: VertexPath }
     """
+    # graph_tool doesn't have full support np.uint64
+    edges = edges.astype(np.int64, order='C')
+    
     with Timer("Loading into gt.Graph", logger):
         import graph_tool as gt
         g = gt.Graph(directed=False)
-        sv_pmap = g.add_edge_list( edges, hashed=True )
+        sv_pmap = g.add_edge_list(edges, hashed=True)
 
     # Mappings from Graph vertices (which are consecutive) to SV ids and vice-versa
     v_to_sv = sv_pmap.get_array().astype(np.uint64)
     sv_to_v = pd.Series(index=v_to_sv, data=np.arange(len(v_to_sv), dtype=np.uint32))
 
     with Timer("Mapping SV importances"):
-        sv_importances = pd.DataFrame(original_mapping)
-        sv_importances['v'] = sv_to_v.loc[original_mapping.index]
-        sv_importances['important'] = original_mapping.index.isin(important_bodies)
+        # Select the rows of the mapping that are actually mentioned in the merge graph.
+        mapping_subset = original_mapping.loc[v_to_sv]
         
-        important_svs = sv_importances[sv_importances['important']].index
-        important_verts = pd.Index(sv_importances[sv_importances['important']]['v'])
+        sv_importances = pd.DataFrame({'body': mapping_subset})
+        sv_importances['v'] = sv_to_v.loc[mapping_subset.index]
+        sv_importances['important'] = mapping_subset.isin(important_bodies)
+
+        # Drop unimportant
+        sv_importances = sv_importances[sv_importances['important']]
+        
+        important_svs = sv_importances.index
+        important_verts = pd.Index(sv_importances['v'])
+
+        # Remove svs that aren't mentioned in the merge graph
+        important_svs = important_svs.intersection(sv_to_v.index)
+        important_verts = important_verts.intersection(sv_to_v)
 
     if stop_after_endpoint_num is None:
         stop_after_endpoint_num = len(important_svs)
