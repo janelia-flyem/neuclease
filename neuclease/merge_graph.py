@@ -117,11 +117,13 @@ class LabelmapMergeGraph:
                 coord_a = row[['za', 'ya', 'xa']].values[0]
                 coord_b = row[['zb', 'yb', 'xb']].values[0]
                 
-                if (coord_a == (0,0,0)).all() or (coord_b == (0,0,0)).all():
-                    assert False, "FIXME"
-                
-                sv_a = fetch_label_for_coordinate(server, uuid, instance, coord_a, supervoxels=True)
-                sv_b = fetch_label_for_coordinate(server, uuid, instance, coord_b, supervoxels=True)
+                sv_a = sv_b = 0
+
+                if not (coord_a == (0,0,0)).all():
+                    sv_a = fetch_label_for_coordinate(server, uuid, instance, coord_a, supervoxels=True)
+
+                if not (coord_b == (0,0,0)).all():
+                    sv_b = fetch_label_for_coordinate(server, uuid, instance, coord_b, supervoxels=True)
 
                 # If either coordinate returns a non-sensical point, then
                 # the provided split mapping does not match the currently stored labels.
