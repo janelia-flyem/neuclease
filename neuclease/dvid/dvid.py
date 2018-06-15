@@ -10,7 +10,7 @@ import requests
 import numpy as np
 import pandas as pd
 
-from .util import Timer
+from ..util import Timer
 
 DEFAULT_DVID_SESSIONS = {}
 DEFAULT_APPNAME = "neuclease"
