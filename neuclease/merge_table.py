@@ -1,6 +1,9 @@
 import os
 import csv
+import json
 import logging
+
+from tqdm import tqdm
 
 import h5py
 import numpy as np
@@ -9,6 +12,7 @@ import pandas as pd
 from dvidutils import LabelMapper
 
 from .util import Timer, read_csv_header
+from .dvid import fetch_mappings
 
 logger = logging.getLogger(__name__)
 
@@ -289,6 +293,8 @@ def normalize_recarray_inplace(table, ref_col_a, ref_col_b, columns_a, columns_b
     columns_a = list(columns_a)
     columns_b = list(columns_b)
     
+    assert len(columns_a) == len(columns_b)
+    
     assert ref_col_a in columns_a
     assert ref_col_b in columns_b
     
@@ -310,6 +316,7 @@ def apply_mappings(supervoxels, mappings):
         df[name] = mapper.apply(df.index.values, allow_unmapped=True)
 
     return df
+
 
 def load_supervoxel_sizes(h5_path):
     """
@@ -366,4 +373,89 @@ def compute_body_sizes(sv_sizes, mapping):
     body_sizes = df.groupby('body').sum()['voxel_count']
     return body_sizes.sort_values(ascending=False)
 
+
+def extract_important_merges(speculative_merge_tables, important_bodies, body_mapping=None, mapping_instance_info=None, drop_duplicate_body_pairs=False):
+    assert (body_mapping is None) ^ (mapping_instance_info is None), \
+        "You must set either body_mapping or mapping_instance_info (but not both)"
+
+    if mapping_instance_info is not None:
+        body_mapping = fetch_mappings(mapping_instance_info)
+
+    assert isinstance(body_mapping, pd.Series)
+    mapper = LabelMapper(body_mapping.index.values, body_mapping.values)
+
+    # pd.Index is faster than builtin set for large sets
+    important_bodies = pd.Index(important_bodies)
+    
+    results = []
+    for spec_merge_table_df in tqdm(speculative_merge_tables):
+        logger.info(f"Processing table with {len(spec_merge_table_df)} rows")
+
+        with Timer("Applying mapping", logger):
+            spec_merge_table_df['body_a'] = mapper.apply(spec_merge_table_df['id_a'].values, allow_unmapped=True)
+            spec_merge_table_df['body_b'] = mapper.apply(spec_merge_table_df['id_b'].values, allow_unmapped=True)
+
+        with Timer("Dropping identity merges", logger):
+            orig_size = len(spec_merge_table_df)
+            spec_merge_table_df.query('body_a != body_b', inplace=True)
+            logger.info(f"Dropped {orig_size-len(spec_merge_table_df)}/{orig_size} edges.")
+
+        with Timer("Normalizing edges", logger):
+            # Normalize for body ID, not SV ID
+            # (This involves a lot of copying, but you've got plenty of RAM, right?)
+            a_cols = list(filter(lambda s: s[-1] == 'a', spec_merge_table_df.columns))
+            b_cols = list(filter(lambda s: s[-1] == 'b', spec_merge_table_df.columns))
+            spec_merge_table = spec_merge_table_df.to_records(index=False)
+            normalize_recarray_inplace(spec_merge_table, 'body_a', 'body_b', a_cols, b_cols)
+            spec_merge_table_df = pd.DataFrame(spec_merge_table)
+
+        with Timer("Filtering edges", logger):
+            q = 'body_a in @important_bodies and body_b in @important_bodies'
+            orig_len = len(spec_merge_table_df)
+            spec_merge_table_df = spec_merge_table_df.query(q, inplace=True)
+            logger.info(f"Filtered out {orig_len - len(spec_merge_table_df)} non-important edges.")
+
+        if drop_duplicate_body_pairs:
+            with Timer("Dropping duplicate body pairs", logger):
+                orig_len = len(spec_merge_table_df)
+                spec_merge_table_df.drop_duplicates(['body_a', 'body_b'], inplace=True)
+                logger.info(f"Dropped {orig_len - len(spec_merge_table_df)} duplicate body pairs")
+
+        results.append(spec_merge_table_df)
+    
+    return results
+
+
+def generate_focused_assignment(merge_table, output_path=None):
+    tasks = []
+    for row in merge_table.itertuples():
+        coord_a = list(map(int, [row.xa, row.ya, row.za]))
+        coord_b = list(map(int, [row.xb, row.yb, row.zb]))
+        task = { "task type": "body merge",
+                 "supervoxel ID 1": int(row.id_a), "supervoxel point 1": coord_a,
+                 "supervoxel ID 2": int(row.id_b), "supervoxel point 2": coord_b }
+        tasks.append(task)
+        
+    assignment = { "file type": "Neu3 task list",
+                   "file version": 1,
+                   "task list": tasks }
+    if output_path:
+        with open(output_path, 'w') as f:
+            json.dump(assignment, f, indent=2)
+    return assignment
+
+
+def generate_assignments(merge_table, approximate_assignment_size, output_dir, prefix='assignment-'):
+    total_size = len(merge_table)
+    num_assignments = max(1, total_size // approximate_assignment_size)
+    assignment_size = total_size // num_assignments
+
+    partitions = list(range(0, assignment_size*num_assignments, assignment_size))
+    if partitions[-1] < total_size:
+        partitions.append( total_size )
+
+    os.makedirs(output_dir, exist_ok=True)
+    for i, (start, stop) in tqdm(enumerate(zip(partitions[:-1], partitions[1:])), total=len(partitions)-1):
+        output_path = output_dir + f'/{prefix}{i:03d}.json'
+        generate_focused_assignment(merge_table.iloc[start:stop], output_path)
 
