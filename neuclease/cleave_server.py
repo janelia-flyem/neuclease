@@ -75,16 +75,17 @@ def main(debug_mode=False):
             sys.stderr.write(f"Merge table not found: {args.merge_table}\n")
             sys.exit(-1)
 
+        primary_instance_info = DvidInstanceInfo(args.primary_dvid_server, args.primary_uuid, args.primary_labelmap_instance)
+
         print("Loading merge table...")
         with Timer(f"Loading merge table from: {args.merge_table}", logger):
-            MERGE_GRAPH = LabelmapMergeGraph(args.merge_table, args.primary_uuid, args.debug_export_dir)
+            MERGE_GRAPH = LabelmapMergeGraph(args.merge_table, primary_instance_info.uuid, args.debug_export_dir)
 
         # Apply splits first
         if args.split_mapping:
-            if not args.primary_dvid_server or not args.primary_uuid or not args.primary_labelmap_instance:
+            if not primary_instance_info.server or not primary_instance_info.uuid or not primary_instance_info.instance:
                 raise RuntimeError("Can't append split supervoxel edges without all primary server/uuid/instance info")
             with Timer(f"Appending split supervoxel edges for supervoxels in {args.split_mapping}", logger):
-                primary_instance_info = DvidInstanceInfo(args.primary_dvid_server, args.primary_uuid, args.primary_labelmap_instance)
                 bad_edges = MERGE_GRAPH.append_edges_for_split_supervoxels( args.split_mapping, primary_instance_info ) 
 
                 if len(bad_edges) > 0:
@@ -98,8 +99,8 @@ def main(debug_mode=False):
         # Apply mapping (after splits), either from file or from DVID.
         if args.mapping_file:
             MERGE_GRAPH.apply_mapping(args.mapping_file)
-        elif args.primary_dvid_server and args.primary_uuid and args.primary_labelmap_instance:
-            MERGE_GRAPH.fetch_and_apply_mapping(args.primary_dvid_server, args.primary_uuid, args.primary_labelmap_instance, args.split_mapping)
+        elif primary_instance_info.server and primary_instance_info.uuid and primary_instance_info.instance:
+            MERGE_GRAPH.fetch_and_apply_mapping(primary_instance_info, args.split_mapping)
 
         if args.suspend_before_launch:
             pid = os.getpid()
