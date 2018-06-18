@@ -336,6 +336,35 @@ def body_edge_table():
     subset_df.to_csv(response, index=False, header=True)
     return response.getvalue()
 
+@app.route('/debug', methods=['POST'])
+def debug():
+    """
+    Endpoint for posting arbitrary messages to be written into the cleave server log.
+    """
+    global logger
+    global MERGE_TABLE
+    
+    # Must be json-parseable
+    debug_data = copy.copy(request.json)
+    user = debug_data.setdefault("user", "unknown")
+    if "seeds" in debug_data:
+        debug_data["seeds"] = dict(sorted((k, sorted(v)) for (k,v) in debug_data["seeds"].items()))
+        for k in debug_data["seeds"]:
+            num_seeds = len(debug_data["seeds"][k])
+            if num_seeds > 100:
+                debug_data["seeds"][k] = f"too many to show in log (N={len(num_seeds)})"
+    
+    debug_logger = logger
+    if "body-id" in debug_data:
+        body_id = debug_data["body-id"]
+        debug_logger = PrefixedLogger(logger, f"User {user}: Body {body_id}: ")
+    else:
+        debug_logger = PrefixedLogger(logger, f"User {user}: ")
+
+    debug_string = json.dumps(debug_data, sort_keys=True)
+    debug_logger.info(f"Client debug: {debug_string}")
+
+    return (debug_string, HTTPStatus.OK)
 
 @app.route('/set-default-params', methods=['POST'])
 def set_default_params():

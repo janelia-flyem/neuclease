@@ -172,5 +172,26 @@ def test_change_default_method(cleave_server_setup):
         assert r.json() == { "method": "seeded-watershed" }
 
 
+@show_request_exceptions
+def test_debug_endpoint(cleave_server_setup):
+    dvid_server, dvid_port, dvid_repo, port = cleave_server_setup
+    
+    data = { "user": "bergs",
+             "body-id": 1,
+             "port": dvid_port,
+             "seeds": {"1": [1], "2": [5]},
+             "server": dvid_server,
+             "uuid": dvid_repo,
+             "segmentation-instance": "segmentation",
+             "mesh-instance": "segmentation_meshes_tars",
+             "comment": "This is a comment." }
+
+    r = requests.post(f'http://127.0.0.1:{port}/debug', json=data)
+    r.raise_for_status()
+    
+    # Echoes the request back to you (and logs it)
+    assert r.json() == data
+
+
 if __name__ == "__main__":
     pytest.main(['-s', '--tb=native', '--pyargs', 'neuclease.tests.test_server'])
