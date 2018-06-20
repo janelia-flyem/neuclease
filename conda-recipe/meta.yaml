@@ -29,6 +29,7 @@ requirements:
     - numpy
     - h5py
     - pandas
+    - numba
     - vigra
     - nifty
     - dvidutils
