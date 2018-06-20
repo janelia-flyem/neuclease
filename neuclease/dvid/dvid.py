@@ -1,7 +1,10 @@
+import json
 import getpass
 import logging
+import getpass
 import threading
 import functools
+from datetime import datetime
 from io import BytesIO
 from collections import namedtuple
 
@@ -11,7 +14,7 @@ import numpy as np
 import pandas as pd
 from numba import jit
 
-from ..util import Timer
+from ..util import Timer, uuids_match
 
 DEFAULT_DVID_SESSIONS = {}
 DEFAULT_APPNAME = "neuclease"
@@ -42,17 +45,29 @@ def default_dvid_session(appname=None):
 
 def sanitize_server(f):
     """
-    Decorator for functions whose first arg is a DvidInstanceInfo (or similar tuple).
+    Decorator for functions whose first arg is either a string or a DvidInstanceInfo (or similar tuple).
     If the server address begins with 'http://', that prefix is stripped from it.
     """
     @functools.wraps(f)
     def wrapper(instance_info, *args, **kwargs):
-        server, uuid, instance = instance_info
-        if server.startswith('http://'):
-            server = server[len('http://'):]
-            instance_info = DvidInstanceInfo(server, uuid, instance)
+        if isinstance(instance_info, str):
+            if instance_info.startswith('http://'):
+                instance_info = instance_info[len('http://'):]
+        else:
+            server, uuid, instance = instance_info
+            if server.startswith('http://'):
+                server = server[len('http://'):]
+                instance_info = DvidInstanceInfo(server, uuid, instance)
+
         return f(instance_info, *args, **kwargs)
     return wrapper
+
+
+def fetch_generic_json(url):
+    session = default_dvid_session()
+    r = session.get(url)
+    r.raise_for_status()
+    return r.json()
 
 
 @sanitize_server
@@ -199,10 +214,8 @@ def fetch_mappings(instance_info, include_identities=True, retired_supervoxels=[
 @sanitize_server
 def fetch_mutation_id(instance_info, body_id):
     server, uuid, instance = instance_info
-    session = default_dvid_session()
-    r = session.get(f'http://{server}/api/node/{uuid}/{instance}/lastmod/{body_id}')
-    r.raise_for_status()
-    return r.json()["mutation id"]
+    response = fetch_generic_json(f'http://{server}/api/node/{uuid}/{instance}/lastmod/{body_id}')
+    return response["mutation id"]
 
 
 @sanitize_server
@@ -346,4 +359,110 @@ def compute_changed_bodies(instance_info_a, instance_info_b):
     changed_df = df.query('body_a != body_b')
     changed_bodies = np.unique(changed_df.values.astype(np.uint64))
     return changed_bodies
+
+
+@sanitize_server
+def fetch_server_info(server):
+    return fetch_generic_json(f'http://{server}/api/server/info')
+
+
+@sanitize_server
+def fetch_full_instance_info(instance_info):
+    """
+    Returns the full JSON instance info from DVID
+    """
+    server, uuid, instance = instance_info
+    return fetch_generic_json(f'http://{server}/api/node/{uuid}/{instance}/info')
+    
+    
+@sanitize_server
+def read_kafka_messages(instance_info, group_id=None, consumer_timeout=2.0, dag_filter='leaf-only', action_filter=None, return_format='json-values'):
+    """
+    Read the stream of available Kafka messages for the given DVID instance,
+    and optionally filter them by UUID or Action.
+    
+    Args:
+        instance_info:
+            (server, uuid, instance)
+        
+        group_id:
+            Kafka group ID to use when reading.  If not given, a new one is created.
+        
+        consumer_timeout:
+            Seconds to timeout (after which we assume we've read all messages).
+        
+        dag_filter:
+            How to filter out messages based on the UUID.
+            One of:
+            - 'leaf-only' (only messages whose uuid matches the provided instance_info),
+            - 'leaf-and-parents' (only messages matching the given instance_info uuid or its ancestors), or
+            - 'all' (no filtering by UUID).
+
+        action_filter:
+            A list of actions to use as a filter for the returned messages.
+            For example, if action_filter=['split', 'split-complete'],
+            all messages with other actions will be filtered out.
+
+        return_format:
+            Either 'records' (return list of kafka ConsumerRecord objects),
+            or 'json-values' (return list of parsed JSON structures from each record.value)
+    """
+    from kafka import KafkaConsumer
+    server, uuid, instance = instance_info
+    
+    assert dag_filter in ('leaf-only', 'leaf-and-parents', 'all')
+    assert return_format in ('records', 'json-values')
+
+    if group_id is None:
+        # Choose a unique 'group_id' to use
+        group_id = getpass.getuser() + '-' + datetime.now().isoformat()
+    
+    server_info = fetch_server_info(instance_info[0])
+    kafka_server = server_info["Kafka Servers"]
+
+    full_instance_info = fetch_full_instance_info(instance_info)
+    data_uuid = full_instance_info["Base"]["DataUUID"]
+    repo_uuid = full_instance_info["Base"]["RepoUUID"]
+
+    consumer = KafkaConsumer( bootstrap_servers=[kafka_server],
+                              group_id=group_id,
+                              enable_auto_commit=False,
+                              auto_offset_reset='earliest',
+                              consumer_timeout_ms=int(consumer_timeout * 1000))
+
+    consumer.subscribe([f'dvidrepo-{repo_uuid}-data-{data_uuid}'])
+
+    logger.info(f"Reading kafka messages from {kafka_server} for {server} / {uuid} / {instance}")
+    with Timer() as timer:
+        # Read all messages (until consumer timeout)
+        records = list(consumer)
+    logger.info(f"Reading {len(records)} kafka messages took {timer.seconds} seconds")
+
+    values = [json.loads(msg.value) for msg in records]
+    records_and_values = zip(records, values)
+
+    if dag_filter == 'leaf-only':
+        records_and_values = filter(lambda r_v: uuids_match(r_v[1]["UUID"], uuid), records_and_values)
+    elif dag_filter == 'leaf-and-parents':
+        raise NotImplementedError("FIXME")
+    elif dag_filter == 'all':
+        pass
+    else:
+        assert False
+
+    if action_filter is not None:
+        if isinstance(action_filter, str):
+            action_filter = [action_filter]
+        action_filter = set(action_filter)
+        records_and_values = filter(lambda r_v: r_v[1]["Action"] in action_filter, records_and_values)
+        
+    records, values = zip(*records_and_values)
+
+    if return_format == 'records':
+        return records
+    elif return_format == 'json-values':
+        return values
+    else:
+        assert False
+
 
