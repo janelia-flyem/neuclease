@@ -427,6 +427,28 @@ def extract_important_merges(speculative_merge_tables, important_bodies, body_ma
 
 
 def generate_focused_assignment(merge_table, output_path=None):
+    """
+    Generate a single focused-proofreading assignment from the given table of proposed edges.
+    
+    Args:
+        merge_table:
+            pd.DataFrame with at least the following columns:
+            ['id_a', 'xa', 'ya', 'za', 'id_b', 'xb', 'yb', 'zb']
+        
+        output_path:
+            If provided, the assignment is written as JSON to the given path.
+    
+    Returns:
+        The assignment data as Python object, ready for JSON serialization.
+    """
+    if isinstance(merge_table, np.ndarray):
+        merge_table = pd.DataFrame(merge_table)
+    
+    assert isinstance(merge_table, pd.DataFrame)
+    REQUIRED_COLUMNS = ['id_a', 'xa', 'ya', 'za', 'id_b', 'xb', 'yb', 'zb']
+    assert set(merge_table.columns).issuperset( REQUIRED_COLUMNS ), \
+        "Table does not have the required columns to generate a focused proofreading assignment"
+    
     tasks = []
     for row in merge_table.itertuples():
         coord_a = list(map(int, [row.xa, row.ya, row.za]))
@@ -446,6 +468,26 @@ def generate_focused_assignment(merge_table, output_path=None):
 
 
 def generate_assignments(merge_table, approximate_assignment_size, output_dir, prefix='assignment-'):
+    """
+    Generate a set of focused-proofreading assignments from the given table of proposed edges.
+    
+    Args:
+        merge_table:
+            pd.DataFrame with at least the following columns:
+            ['id_a', 'xa', 'ya', 'za', 'id_b', 'xb', 'yb', 'zb']
+
+        approximate_assignment_size:
+            Split the table into roughly equal-sized assignments of this size.
+        
+        output_dir:
+            Where to dump the generated assignment files.
+        
+        prefix:
+            Assignment files will be named {prefix}{N}.json, where N is the assignment number.
+    """
+    if isinstance(merge_table, np.ndarray):
+        merge_table = pd.DataFrame(merge_table)
+
     total_size = len(merge_table)
     num_assignments = max(1, total_size // approximate_assignment_size)
     assignment_size = total_size // num_assignments
