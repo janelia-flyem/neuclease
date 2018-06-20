@@ -38,6 +38,21 @@ class _TimerResult(object):
         return timedelta(seconds=self.seconds)
 
 
+def uuids_match(uuid1, uuid2):
+    """
+    Return True if the two uuids are the equivalent.
+    
+    >>> assert uuids_match('abcd', 'abcdef') == True
+    >>> assert uuids_match('abc9', 'abcdef') == False
+    """
+    assert uuid1 and uuid2, "Empty UUID"
+    if len(uuid1) > len(uuid2):
+        uuid1, uuid2 = uuid2, uuid1
+    
+    uuid2 = uuid2[:len(uuid1)]
+    return (uuid2 == uuid1)
+
+
 def read_csv_header(csv_path):
     """
     Open the CSV file at the given path and return it's header column names as a list.

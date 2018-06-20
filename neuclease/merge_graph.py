@@ -7,7 +7,7 @@ from contextlib import contextmanager
 import numpy as np
 import pandas as pd
 
-from .util import Timer
+from .util import Timer, uuids_match
 from .rwlock import ReadWriteLock
 from .dvid import fetch_supervoxels_for_body, fetch_label_for_coordinate, fetch_mappings, fetch_mutation_id
 from .merge_table import MERGE_TABLE_DTYPE, load_edge_csv, load_mapping, load_merge_table, normalize_merge_table, apply_mapping_to_mergetable
@@ -22,20 +22,6 @@ def dummy_lock():
     Useful for code that expects a lock, but you don't actually need a lock.
     """
     yield
-
-
-def uuids_match(uuid1, uuid2):
-    """
-    Return True if the two uuids are the equivalent.
-    
-    >>> assert uuids_match('abcd', 'abcdef') == True
-    >>> assert uuids_match('abc9', 'abcdef') == False
-    """
-    if len(uuid1) > len(uuid2):
-        uuid1, uuid2 = uuid2, uuid1
-    
-    uuid2 = uuid2[:len(uuid1)]
-    return (uuid2 == uuid1)
 
 
 class LabelmapMergeGraph:
