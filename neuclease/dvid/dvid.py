@@ -57,7 +57,7 @@ def sanitize_server(f):
             server, uuid, instance = instance_info
             if server.startswith('http://'):
                 server = server[len('http://'):]
-                instance_info = DvidInstanceInfo(server, uuid, instance)
+            instance_info = DvidInstanceInfo(server, uuid, instance)
 
         return f(instance_info, *args, **kwargs)
     return wrapper
@@ -84,6 +84,26 @@ def fetch_supervoxels_for_body(instance_info, body_id, user=None):
     supervoxels.sort()
     return supervoxels
 
+
+@sanitize_server
+def fetch_body_size(instance_info, body_id, supervoxels=False):
+    server, uuid, instance = instance_info
+    supervoxels = str(bool(supervoxels)).lower()
+    url = f'http://{server}/api/node/{uuid}/{instance}/size/{body_id}?supervoxels={supervoxels}'
+    response = fetch_generic_json(url)
+    return response['voxels']
+
+@sanitize_server
+def fetch_body_sizes(instance_info, body_ids, supervoxels=False):
+    server, uuid, instance = instance_info
+    if isinstance(body_ids, np.ndarray):
+        body_ids = body_ids.tolist()
+    supervoxels = str(bool(supervoxels)).lower()
+
+    url = f'http://{server}/api/node/{uuid}/{instance}/sizes?supervoxels={supervoxels}'
+    r = default_dvid_session().get(url, json=body_ids)
+    r.raise_for_status()
+    return r.json()
 
 @sanitize_server
 def fetch_supervoxel_sizes_for_body(instance_info, body_id, user=None):
