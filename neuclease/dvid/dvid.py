@@ -151,10 +151,10 @@ def fetch_sparsevol_rles(instance_info, label, supervoxels=False, scale=0):
     return r.content
 
 
-def extract_first_rle_coord(rle_payload_bytes):
+def extract_rle_size_and_first_coord(rle_payload_bytes):
     """
     Given a binary RLE payload as returned by the /sparsevol endpoint,
-    extract the first coordinate in the RLE.
+    extract the count of voxels in the RLE and the first coordinate in the RLE. 
     
     Args:
         rle_payload_bytes:
@@ -162,6 +162,9 @@ def extract_first_rle_coord(rle_payload_bytes):
 
     Useful for sampling label value under a given RLE geometry
     (assuming all of the points in the RLE share the same label).
+    
+    Returns:
+        voxel_count, coord_zyx
     """
     assert (len(rle_payload_bytes) - 3*4) % (4*4) == 0, \
         "Payload does not appear to be an RLE payload as defined by DVID's 'Legacy RLE' format."
@@ -169,7 +172,9 @@ def extract_first_rle_coord(rle_payload_bytes):
     rles = rles.reshape(-1, 4)
     first_coord_xyz = rles[0, :3]
     first_coord_zyx = first_coord_xyz[::-1]
-    return first_coord_zyx
+
+    voxel_count = rles[:, 3].sum()
+    return voxel_count, first_coord_zyx
 
 
 @sanitize_server
