@@ -63,9 +63,9 @@ def sanitize_server(f):
     return wrapper
 
 
-def fetch_generic_json(url):
+def fetch_generic_json(url, json=None):
     session = default_dvid_session()
-    r = session.get(url)
+    r = session.get(url, json=json)
     r.raise_for_status()
     return r.json()
 
@@ -93,11 +93,11 @@ def fetch_body_size(instance_info, body_id, supervoxels=False):
     response = fetch_generic_json(url)
     return response['voxels']
 
+
 @sanitize_server
 def fetch_body_sizes(instance_info, body_ids, supervoxels=False):
     server, uuid, instance = instance_info
-    if isinstance(body_ids, np.ndarray):
-        body_ids = body_ids.tolist()
+    body_ids = list(map(int, body_ids))
     supervoxels = str(bool(supervoxels)).lower()
 
     url = f'http://{server}/api/node/{uuid}/{instance}/sizes?supervoxels={supervoxels}'
@@ -192,6 +192,14 @@ def split_supervoxel(instance_info, supervoxel, rle_payload_bytes):
     
     results = r.json()
     return (results["SplitSupervoxel"], results["RemainSupervoxel"] )
+
+
+@sanitize_server
+def fetch_mapping(instance_info, supervoxel_ids):
+    server, uuid, instance = instance_info
+    supervoxel_ids = list(map(int, supervoxel_ids))
+    body_ids = fetch_generic_json(f'http://{server}/api/node/{uuid}/{instance}/mapping', json=supervoxel_ids)
+    return body_ids
 
 
 @sanitize_server
