@@ -469,7 +469,7 @@ def read_kafka_messages(instance_info, group_id=None, consumer_timeout=2.0, dag_
             One of:
             - 'leaf-only' (only messages whose uuid matches the provided instance_info),
             - 'leaf-and-parents' (only messages matching the given instance_info uuid or its ancestors), or
-            - 'all' (no filtering by UUID).
+            - None (no filtering by UUID).
 
         action_filter:
             A list of actions to use as a filter for the returned messages.
@@ -483,7 +483,7 @@ def read_kafka_messages(instance_info, group_id=None, consumer_timeout=2.0, dag_
     from kafka import KafkaConsumer
     server, uuid, instance = instance_info
     
-    assert dag_filter in ('leaf-only', 'leaf-and-parents', 'all')
+    assert dag_filter in ('leaf-only', 'leaf-and-parents', None)
     assert return_format in ('records', 'json-values')
 
     if group_id is None:
@@ -518,7 +518,7 @@ def read_kafka_messages(instance_info, group_id=None, consumer_timeout=2.0, dag_
         records_and_values = filter(lambda r_v: uuids_match(r_v[1]["UUID"], uuid), records_and_values)
     elif dag_filter == 'leaf-and-parents':
         raise NotImplementedError("FIXME")
-    elif dag_filter == 'all':
+    elif dag_filter is None:
         pass
     else:
         assert False
