@@ -32,7 +32,7 @@ requirements:
     - numba
     - vigra
     - nifty
-    - libdvid
+    - libdvid-cpp
     - dvidutils
     - tqdm
     - kafka-python

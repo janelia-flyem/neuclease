@@ -405,7 +405,7 @@ def compute_changed_bodies(instance_info_a, instance_info_b):
     df = mapping_a.merge(mapping_b, 'outer', left_index=True, right_index=True, suffixes=['_a', '_b'], copy=False)
 
     changed_df = df.query('body_a != body_b')
-    changed_df.fillna(0)
+    changed_df.fillna(0, inplace=True)
     changed_bodies = np.unique(changed_df.values.astype(np.uint64))
     if changed_bodies[0] == 0:
         changed_bodies = changed_bodies[1:]
