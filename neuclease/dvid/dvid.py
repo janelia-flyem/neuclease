@@ -539,3 +539,13 @@ def read_kafka_messages(instance_info, group_id=None, consumer_timeout=2.0, dag_
         assert False
 
 
+@sanitize_server
+def perform_cleave(instance_info, body_id, supervoxel_ids):
+    server, uuid, instance = instance_info
+    supervoxel_ids = list(map(int, supervoxel_ids))
+
+    r = requests.post(f'http://{server}/api/node/{uuid}/{instance}/cleave/{body_id}', json=supervoxel_ids)
+    r.raise_for_status()
+    cleaved_body = r.json()["CleavedLabel"]
+    return cleaved_body
+
