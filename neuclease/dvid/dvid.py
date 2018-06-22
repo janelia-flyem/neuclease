@@ -74,6 +74,24 @@ def fetch_generic_json(url, json=None):
 
 
 @sanitize_server
+def fetch_key(instance_info, key, as_json=False):
+    server, uuid, instance = instance_info
+    session = default_dvid_session()
+    r = session.get(f'http://{server}/api/node/{uuid}/{instance}/key/{key}')
+    r.raise_for_status()
+    if as_json:
+        return r.json()
+    return r.content
+
+@sanitize_server
+def post_key(instance_info, key, data):
+    server, uuid, instance = instance_info
+    session = default_dvid_session()
+    r = session.post(f'http://{server}/api/node/{uuid}/{instance}/key/{key}', data=data)
+    r.raise_for_status()
+    
+
+@sanitize_server
 def fetch_supervoxels_for_body(instance_info, body_id, user=None):
     server, uuid, instance = instance_info
     query_params = {}
