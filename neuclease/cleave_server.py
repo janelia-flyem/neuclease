@@ -289,7 +289,8 @@ def _run_cleave(data):
         cleave_response["warnings"].append(msg)
 
     if results.contains_unlabeled_components:
-        msg = "Cleave result is not complete."
+        num_unlabeled = len(cleave_response["assignments"]["0"])
+        msg = f"Cleave result is not complete. {num_unlabeled} supervoxels remain unassigned."
         body_logger.error(msg)
         body_logger.warning(msg)
         cleave_response["warnings"].append(msg)
