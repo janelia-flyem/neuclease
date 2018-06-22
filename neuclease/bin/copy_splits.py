@@ -5,12 +5,14 @@ from collections import namedtuple
 
 from tqdm import tqdm
 
+import requests
 import numpy as np
 import pandas as pd
 
-from neuclease.dvid import (default_dvid_session, fetch_label_for_coordinate, fetch_sparsevol_rles, split_supervoxel,
-                            fetch_body_size, fetch_body_sizes, extract_rle_size_and_first_coord, read_kafka_messages)
+from neuclease.dvid import (fetch_label_for_coordinate, fetch_sparsevol_rles, split_supervoxel, fetch_mapping,
+                            generate_sample_coordinate, fetch_body_size, fetch_body_sizes, extract_rle_size_and_first_coord, read_kafka_messages)
 from neuclease.util import read_csv_col
+from neuclease.dvid.dvid import perform_cleave
 
 logger = logging.getLogger(__name__)
 
@@ -110,20 +112,24 @@ def copy_splits(src_supervoxels, src_info, dest_info):
     copy_infos = []
     for i, src_sv in enumerate(tqdm(src_supervoxels)):
         try:
-            rle_payload = fetch_sparsevol_rles(src_info, src_sv, supervoxels=True)
-            rle_size, first_coord_zyx = extract_rle_size_and_first_coord(rle_payload)
+            src_sv_size = fetch_body_size(src_info, src_sv, supervoxels=True)
+            first_coord_zyx = generate_sample_coordinate(src_info, src_sv, supervoxels=True)
             dest_sv = fetch_label_for_coordinate(dest_info, first_coord_zyx, supervoxels=True)
             dest_sv_size = fetch_body_size(dest_info, dest_sv, supervoxels=True)
             
-            if rle_size == dest_sv_size:
+            if src_sv_size == dest_sv_size:
                 with tqdm.external_write_mode():
                     logger.info(f"SV {src_sv} (#{i}) appears to be already copied at the destination, where it has ID {dest_sv}. Skipping.")
-                    split_info = SplitCopyInfo(src_sv, dest_sv, 0, dest_sv)
-            elif rle_size > dest_sv_size:
+                    split_info = SplitCopyInfo(src_sv, dest_sv, dest_sv, 0)
+            elif src_sv_size > dest_sv_size:
                 with tqdm.external_write_mode():
-                    logger.error(f"Refusing to copy SV {src_sv} (#{i}): It is too big for the destionation supervoxel (SV {dest_sv})!")
+                    logger.error(f"Refusing to copy SV {src_sv} (#{i}): It is too big for the destination supervoxel (SV {dest_sv})!")
                     split_info = SplitCopyInfo(src_sv, dest_sv, 0, 0)
             else:
+                # Fetch RLEs and apply to destination
+                rle_payload = fetch_sparsevol_rles(src_info, src_sv, supervoxels=True)
+                rle_size, first_coord_zyx = extract_rle_size_and_first_coord(rle_payload)
+                assert rle_size == src_sv_size                
                 split_sv, remain_sv = split_supervoxel(dest_info, dest_sv, rle_payload)
                 split_info = SplitCopyInfo(src_sv, dest_sv, split_sv, remain_sv)
         except Exception as ex:
@@ -135,6 +141,94 @@ def copy_splits(src_supervoxels, src_info, dest_info):
 
     return copy_infos
 
+
+def copy_to_scratch(src_info, dest_info, coords_xyz):
+    """
+    Determine a list of supervoxels from the given src instance by sampling it at the given coordinates.
+    Then copy the supervoxels from source to destination.
+    
+    If any coordinates fell on duplicate supervoxels, they are dropped from the output.
+    
+    Returns:
+        (coords_xyz, copy_infos), where copy_infos is a list of SplitCopyInfo tuples
+    """
+    logger.info("Sampling coordinates")
+    src_svs = []
+    for coord_xyz in tqdm(coords_xyz):
+        coord_zyx = coord_xyz[::-1]
+        src_sv = fetch_label_for_coordinate(src_info, coord_zyx, supervoxels=True)
+        src_svs.append(src_sv)
+
+    df = pd.DataFrame(coords_xyz, columns=list('xyz'))
+    df['sv'] = src_svs
+    df.drop_duplicates(['sv'], inplace=True)
+
+    logger.info("Copying RLEs")
+    copy_infos = copy_splits(df['sv'].values, src_info, dest_info)
+
+    return df[['x', 'y', 'z']].values, copy_infos
+    
+
+def cleave_supervoxels_as_isolated_bodies(instance_info, sv_ids):
+    """
+    Separate the given supervoxels from their enclosing bodies by
+    cleaving them out as their own independent, single-supervoxel bodies.
+    """
+    logger.info("Fetching mapping for each SV")
+    body_ids = fetch_mapping(instance_info, sv_ids)
+
+    logger.info("Performing cleaves")
+    cleaved_ids = []
+    for sv_id, body_id in tqdm(list(zip(sv_ids, body_ids))):
+        try:
+            cleaved_body = perform_cleave(instance_info, body_id, [sv_id])
+        except requests.RequestException as ex:
+            if 'cannot cleave all supervoxels from the label' in ex.response.content.decode():
+                # Body has only one supervoxel to begin with
+                cleaved_body = body_id
+            else:
+                sys.stderr.write(ex.response.content.decode())
+                raise
+
+        cleaved_ids.append( cleaved_body )
+    
+    return list(zip(sv_ids, body_ids, cleaved_ids))
+
+
+def thursday_madness(coords_csv):
+    """
+    I used this function to copy splits from the production server
+    to a scratch server in the final stages of our phase-0.2 work.
+    
+    Samples a set of coordinates from the production server to determine
+    a set of supervoxels to copy over to the scratch server, and prepares
+    them for split assignments by cleaving them away from their parent bodies.
+    """
+    handler = logging.StreamHandler(sys.stdout)
+    logger.setLevel(logging.INFO)
+    logging.getLogger().addHandler(handler)
+
+    coords_xyz = pd.read_csv(coords_csv, header=None, names=['x', 'y', 'z'], dtype=np.int32).values
+    production_info = ('emdata3:8900', '25dc', 'segmentation')
+    scratch_info = ('emdata2:8700', '029b834695bb457eb0cf43b848ae3461', 'segmentation')
+    
+    coords_xyz, copy_infos = copy_to_scratch(production_info, scratch_info, coords_xyz)
+    scratch_split_svs = np.array([info.split_sv for info in copy_infos])
+    cleave_info = cleave_supervoxels_as_isolated_bodies( scratch_info, scratch_split_svs )
+
+    logger.info("Preparing output CSV")    
+    table = []
+    for coord_xyz, copy_info, cleave_info in zip(coords_xyz, copy_infos, cleave_info):
+        x, y, z = coord_xyz
+        production_sv = copy_info.src_sv
+        scratch_sv = cleave_info[0]
+        scratch_body = cleave_info[1]
+        scratch_cleaved_body = cleave_info[2]
+        table.append( (x,y,z,production_sv,scratch_sv,scratch_body,scratch_cleaved_body) )
+    
+    df = pd.DataFrame(table, columns=['x','y','z','production_sv','scratch_sv','scratch_body','scratch_cleaved_body'])
+    df.to_csv('/tmp/thursday-02-cleanup-split-table.csv', index=False)
+    logger.info("DONE!")
 
 # def read_ting_split_info(ting_split_result_log, ting_uuid='194db260e1ee4edcbda0b592bf40d926'):
 #     """
@@ -212,7 +306,7 @@ def copy_splits(src_supervoxels, src_info, dest_info):
 # 
 #     return bodies
 
-
+ 
 if __name__ == "__main__":
     DEBUG = False
     if DEBUG:
@@ -221,27 +315,27 @@ if __name__ == "__main__":
         #sys.argv += ["HEAD-focused-finish02-src-split-svs.csv"]
         #sys.argv += ['emdata2:8700', '4c4f3cbb51a042d88b7403eb8347d1d6', 'segmentation']
         #sys.argv += ['emdata2:8700', '2b7f805c6eef46e4bd63e028f5ec55e6', 'segmentation']
- 
+  
 #         # HB splits
 #         sys.argv += ['--results-output-log=hb-e09c-split-copy-results-log.csv']
 #         sys.argv += ["--src-supervoxels-from-kafka"]
 #         sys.argv += ['emdata2:8700', 'e09c', 'segmentation']
 #         sys.argv += ['emdata3:8900', '25dcdb44cd934376999d93f1aa4d4b5f', 'segmentation']
- 
+  
 #         # Erika unagglomerated SV splits, but performed as body splits:
 #         sys.argv += ['--results-output-log=unagglo-8189-split-copy-results-log.csv']
 #         sys.argv += ["--src-supervoxels-from-kafka"]
 #         sys.argv += ['emdata2:8700', '8189', 'segmentation']
 #         sys.argv += ['emdata3:8900', '25dcdb44cd934376999d93f1aa4d4b5f', 'segmentation']
-
+ 
 #         # Erika unagglomerated SV splits, but performed as body splits:
 #         sys.argv += ['--results-output-log=unagglo-8940-split-copy-results-log.csv']
 #         sys.argv += ["--src-supervoxels-from-kafka"]
 #         sys.argv += ['emdata2:8700', '8940', 'segmentation']
 #         sys.argv += ['emdata3:8900', '25dcdb44cd934376999d93f1aa4d4b5f', 'segmentation']
-
+ 
     #copy_splits([5812995723, 5812995725], ['emdata2:8700', 'e09c', 'segmentation'], ['emdata3:8900', '25dcdb44cd934376999d93f1aa4d4b5f', 'segmentation'])
-
+ 
     main()
 
     
