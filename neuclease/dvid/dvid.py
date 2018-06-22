@@ -252,7 +252,7 @@ def fetch_mutation_id(instance_info, body_id):
 
 
 @sanitize_server
-def fetch_sparsevol_coarse(instance_info, body_id):
+def fetch_sparsevol_coarse(instance_info, body_id, supervoxels=False):
     """
     Return the 'coarse sparsevol' representation of a given body.
     This is similar to the sparsevol representation at scale=6,
@@ -268,8 +268,9 @@ def fetch_sparsevol_coarse(instance_info, body_id):
         ]
     """
     server, uuid, instance = instance_info
+    supervoxels = str(bool(supervoxels)).lower()
     session = default_dvid_session()
-    r = session.get(f'{server}/api/node/{uuid}/{instance}/sparsevol-coarse/{body_id}')
+    r = session.get(f'http://{server}/api/node/{uuid}/{instance}/sparsevol-coarse/{body_id}?supervoxels={supervoxels}')
     r.raise_for_status()
     
     return parse_rle_response( r.content )
