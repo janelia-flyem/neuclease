@@ -1,5 +1,4 @@
 import json
-import getpass
 import logging
 import getpass
 import threading
@@ -14,6 +13,8 @@ import numpy as np
 import pandas as pd
 from numba import jit
 
+from libdvid import DVIDNodeService
+
 from ..util import Timer, uuids_match
 
 DEFAULT_DVID_SESSIONS = {}
@@ -22,6 +23,7 @@ DEFAULT_APPNAME = "neuclease"
 logger = logging.getLogger(__name__)
 
 DvidInstanceInfo = namedtuple("DvidInstanceInfo", "server uuid instance")
+
 
 def default_dvid_session(appname=None):
     """
@@ -42,6 +44,7 @@ def default_dvid_session(appname=None):
         DEFAULT_DVID_SESSIONS[(appname, thread_id)] = s
 
     return s
+
 
 def sanitize_server(f):
     """
@@ -104,6 +107,7 @@ def fetch_body_sizes(instance_info, body_ids, supervoxels=False):
     r = default_dvid_session().get(url, json=body_ids)
     r.raise_for_status()
     return r.json()
+
 
 @sanitize_server
 def fetch_supervoxel_sizes_for_body(instance_info, body_id, user=None):
@@ -276,6 +280,16 @@ def fetch_sparsevol_coarse(instance_info, body_id, supervoxels=False):
     return parse_rle_response( r.content )
 
 
+def fetch_sparsevol(instance_info, label, supervoxels=False, scale=0):
+    """
+    Return coordinates of all voxels in the given body/supervoxel at the given scale.
+
+    Note: At scale 0, this will be a LOT of data for any reasonably large body.
+          Use with caution.
+    """
+    rles = fetch_sparsevol_rles(instance_info, label, supervoxels, scale)
+    return parse_rle_response(rles)
+
 def parse_rle_response(response_bytes):
     """
     Parse a (legacy) RLE response from DVID, used by various endpoints
@@ -407,8 +421,30 @@ def fetch_full_instance_info(instance_info):
     """
     server, uuid, instance = instance_info
     return fetch_generic_json(f'http://{server}/api/node/{uuid}/{instance}/info')
+
+@sanitize_server
+def generate_sample_coordinate(instance_info, body_id, supervoxels=False):
+    """
+    Return an arbitrary coordinate that lies within the given body.
+    Usually faster than fetching all the RLEs.
+    """
+    server, uuid, instance = instance_info
     
+    # FIXME: I'm using sparsevol instead of sparsevol-coarse due to an apparent bug in DVID at the moment
+    SCALE = 2
+    coarse_block_coords = fetch_sparsevol(instance_info, body_id, supervoxels, scale=SCALE)
+    first_block_coord = (2**SCALE) * np.array(coarse_block_coords[0]) // 64 * 64
     
+    ns = DVIDNodeService(server, uuid)
+    first_block = ns.get_labelarray_blocks3D( instance, (64,64,64), first_block_coord, supervoxels=supervoxels )
+    nonzero_coords = np.transpose((first_block == body_id).nonzero())
+    if len(nonzero_coords) == 0:
+        term = {False: 'body', True: 'supervoxel'}[supervoxels]
+        raise RuntimeError(f"The sparsevol-coarse info for this {term} ({body_id}) "
+                           "appears to be out-of-sync with the scale-0 segmentation.")
+
+    return first_block_coord + nonzero_coords[0]
+
 @sanitize_server
 def read_kafka_messages(instance_info, group_id=None, consumer_timeout=2.0, dag_filter='leaf-only', action_filter=None, return_format='json-values'):
     """
