@@ -5,6 +5,7 @@ import threading
 import functools
 from datetime import datetime
 from io import BytesIO
+from itertools import starmap
 from collections import namedtuple
 
 import requests
@@ -308,6 +309,7 @@ def fetch_sparsevol(instance_info, label, supervoxels=False, scale=0):
     rles = fetch_sparsevol_rles(instance_info, label, supervoxels, scale)
     return parse_rle_response(rles)
 
+
 def parse_rle_response(response_bytes):
     """
     Parse a (legacy) RLE response from DVID, used by various endpoints
@@ -443,6 +445,7 @@ def fetch_full_instance_info(instance_info):
     server, uuid, instance = instance_info
     return fetch_generic_json(f'http://{server}/api/node/{uuid}/{instance}/info')
 
+
 @sanitize_server
 def generate_sample_coordinate(instance_info, body_id, supervoxels=False):
     """
@@ -465,6 +468,7 @@ def generate_sample_coordinate(instance_info, body_id, supervoxels=False):
                            "appears to be out-of-sync with the scale-0 segmentation.")
 
     return first_block_coord + nonzero_coords[0]
+
 
 @sanitize_server
 def read_kafka_messages(instance_info, group_id=None, consumer_timeout=2.0, dag_filter='leaf-only', action_filter=None, return_format='json-values'):
@@ -529,7 +533,7 @@ def read_kafka_messages(instance_info, group_id=None, consumer_timeout=2.0, dag_
         records = list(consumer)
     logger.info(f"Reading {len(records)} kafka messages took {timer.seconds} seconds")
 
-    values = [json.loads(msg.value) for msg in records]
+    values = [json.loads(rec.value) for rec in records]
     records_and_values = zip(records, values)
 
     if dag_filter == 'leaf-only':
@@ -562,8 +566,206 @@ def perform_cleave(instance_info, body_id, supervoxel_ids):
     server, uuid, instance = instance_info
     supervoxel_ids = list(map(int, supervoxel_ids))
 
-    r = requests.post(f'http://{server}/api/node/{uuid}/{instance}/cleave/{body_id}', json=supervoxel_ids)
+    session = default_dvid_session()
+    r = session.post(f'http://{server}/api/node/{uuid}/{instance}/cleave/{body_id}', json=supervoxel_ids)
     r.raise_for_status()
     cleaved_body = r.json()["CleavedLabel"]
     return cleaved_body
 
+
+SplitEvent = namedtuple("SplitEvent", "mutid old remain split")
+
+@sanitize_server
+def fetch_supervoxel_splits(instance_info):
+    """
+    Fetch the /supervoxel-splits info for the given instance.
+    
+    Args:
+        instance_info:
+            server, uuid, instance
+        
+        Returns an dict of { uuid: event_list }, where event_list is a list of SplitEvent tuples.
+        The UUIDs in the dict appear in the same order that DVID provides them in the response.
+        According to the docs, they appear in reverse-chronological order, starting with the
+        requested UUID and moving toward the repo root UUID.
+    """
+    # From the DVID docs:
+    #
+    # GET <api URL>/node/<UUID>/<data name>/supervoxel-splits
+    #
+    #     Returns JSON for all supervoxel splits that have occured up to this version of the
+    #     labelmap instance.  The returned JSON is of format:
+    # 
+    #         [
+    #             "abc123",
+    #             [[<mutid>, <old>, <remain>, <split>],
+    #             [<mutid>, <old>, <remain>, <split>],
+    #             [<mutid>, <old>, <remain>, <split>]],
+    #             "bcd234",
+    #             [[<mutid>, <old>, <remain>, <split>],
+    #             [<mutid>, <old>, <remain>, <split>],
+    #             [<mutid>, <old>, <remain>, <split>]]
+    #         ]
+    #     
+    #     The UUID examples above, "abc123" and "bcd234", would be full UUID strings and are in order
+    #     of proximity to the given UUID.  So the first UUID would be the version of interest, then
+    #     its parent, and so on.
+
+    server, uuid, instance = instance_info
+    session = default_dvid_session()
+    r = session.get(f'http://{server}/api/node/{uuid}/{instance}/supervoxel-splits')
+    r.raise_for_status()
+
+    events = {}
+    
+    # Iterate in chunks of 2
+    for uuid, event_list in zip(*2*[iter(r.json())]):
+        assert isinstance(uuid, str)
+        assert isinstance(event_list, list)
+        events[uuid] = list(starmap(SplitEvent, event_list))
+ 
+    return events
+
+
+def split_events_to_graph(events):
+    """
+    Load the split events into an annotated networkx.DiGraph, where each node is a supervoxel ID.
+    The node annotations are: 'uuid' and 'mutid', indicating the uuid and mutation id at
+    the time the supervoxel was CREATED.
+    
+    Args:
+        events: dict as returned by fetch_supervoxel_splits()
+    
+    Returns:
+        nx.DiGraph, which will be a tree
+    """
+    import networkx as nx
+    
+    g = nx.DiGraph()
+
+    for uuid, event_list in events.items():
+        for (mutid, old, remain, split) in event_list:
+            g.add_edge(old, remain)
+            g.add_edge(old, split)
+            if 'uuid' not in g.node[old]:
+                # If the old ID is not a product of a split event, we don't know when it was created.
+                # (Presumably, it originates from the root UUID, but for old servers the /split-supervoxels
+                # endpoint is not comprehensive all the way to the root node.)
+                g.node[old]['uuid'] = '<unknown>'
+                g.node[old][mutid] = -1
+
+            g.node[remain]['uuid'] = uuid
+            g.node[split]['uuid'] = uuid
+            g.node[remain]['mutid'] = mutid
+            g.node[split]['mutid'] = mutid
+    
+    return g
+
+
+def find_root(g, start):
+    """
+    Find the root node in a tree, given as a nx.DiGraph,
+    tracing up the tree starting with the given start node.
+    """
+    parents = [start]
+    while parents:
+        root = parents[0]
+        parents = g.predecessors(parents[0])
+    return root
+
+
+def extract_split_tree(events, sv_id):
+    """
+    Construct a nx.DiGraph from the given list of SplitEvents,
+    exract the particular tree (a subgraph) that contains the given supervoxel ID.
+    """
+    import networkx as nx
+    if isinstance(events, dict):
+        g = split_events_to_graph(events)
+    elif isinstance(events, nx.DiGraph):
+        g = events
+    else:
+        raise RuntimeError(f"Unexpected input type: {type(events)}")
+    
+    root = find_root(g, sv_id)
+    tree_nodes = {root} | nx.descendants(g, root)
+    tree = g.subgraph(tree_nodes)
+    return tree
+
+
+def tree_to_dict(tree, root, display_fn=str, _d=None):
+    """
+    Convert the given tree (nx.DiGraph) into a dict,
+    suitable for display via the asciitree module.
+    
+    Args:
+        tree:
+            nx.DiGraph
+        root:
+            Where to start in the tree (ancestors of this node will be ignored)
+        display_fn:
+            Callback used to convert node values into strings, which are used as the dict keys.
+        _d:
+            Internal use only.
+    """
+    if _d is None:
+        _d = {}
+    d_desc = _d[display_fn(root)] = {}
+    for n in sorted(tree.successors(root)):
+        tree_to_dict(tree, n, display_fn, _d=d_desc)
+    return _d
+
+
+def render_split_tree(tree, root=None, uuid_len=4):
+    """
+    Render the given split tree as ascii text.
+    
+    Requires the 'asciitree' module (conda install -c conda-forge asciitree)
+    
+    Args:
+        tree:
+            nx.DiGraph with 'uuid' annotations (as returned by extract_split_tree())
+        root:
+            Node to use as the root of the tree for display purposes.
+            If None, root will be searched for.
+        uuid_len:
+            How many characters of the uuid to print for each node in the tree.
+            Set to 0 to disable UUID display.
+    
+    Returns:
+        str
+        Example:
+            >>> events = fetch_supervoxel_splits(('emdata3:8900', '52f9', 'segmentation'))
+            >>> tree = extract_split_tree(events, 677527463)
+            >>> print(render_split_tree(tree))
+            677527463 (<unknown>)
+             +-- 5813042205 (25dc)
+             +-- 5813042206 (25dc)
+                 +-- 5813042207 (25dc)
+                 +-- 5813042208 (25dc)
+    """
+    root = root or find_root(tree, tree.nodes()[0])
+
+    display_fn = str
+    if uuid_len > 0:
+        def display_fn(n):
+            uuid = tree.node[n]['uuid']
+            if uuid != '<unknown>':
+                uuid = uuid[:uuid_len]
+            return f"{n} ({uuid})"
+
+    d = tree_to_dict(tree, root, display_fn)
+
+    from asciitree import LeftAligned
+    return LeftAligned()(d)
+
+
+def fetch_and_render_split_tree(instance_info, sv_id):
+    """
+    Fetch all split supervoxel provenance data from DVID and then
+    extract the provenance tree containing the given supervoxel.
+    Then render it as a string to be displayed on the console.
+    """
+    events = fetch_supervoxel_splits(instance_info)
+    tree = extract_split_tree(events, sv_id)
+    return render_split_tree(tree)

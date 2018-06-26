@@ -36,6 +36,8 @@ requirements:
     - dvidutils
     - tqdm
     - kafka-python
+    - networkx
+    - asciitree
     #- graph-tool  <-- Optional dependency. Install to your own conda env if desired (but check the license).
 
 test:
