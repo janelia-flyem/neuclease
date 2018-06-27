@@ -613,7 +613,7 @@ def fetch_and_parse_dag(server, repo_uuid):
     
     # Add graph nodes (with node info from the json as the nx node attributes)
     for version_id, node_info in node_infos.items():
-        g.add_node(node_info["UUID"], node_info)
+        g.add_node(node_info["UUID"], **node_info)
         
     # Add edges from each parent to all children
     for version_id, node_info in node_infos.items():
