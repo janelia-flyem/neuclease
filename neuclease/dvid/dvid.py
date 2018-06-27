@@ -9,6 +9,7 @@ from itertools import starmap
 from collections import namedtuple
 
 import requests
+import networkx as nx
 
 import numpy as np
 import pandas as pd
@@ -438,6 +439,11 @@ def fetch_server_info(server):
 
 
 @sanitize_server
+def fetch_repo_info(server, uuid):
+    return fetch_generic_json(f'http://{server}/api/repo/{uuid}/info')
+    
+
+@sanitize_server
 def fetch_full_instance_info(instance_info):
     """
     Returns the full JSON instance info from DVID
@@ -538,8 +544,21 @@ def read_kafka_messages(instance_info, group_id=None, consumer_timeout=2.0, dag_
 
     if dag_filter == 'leaf-only':
         records_and_values = filter(lambda r_v: uuids_match(r_v[1]["UUID"], uuid), records_and_values)
+
     elif dag_filter == 'leaf-and-parents':
-        raise NotImplementedError("FIXME")
+        # Load DAG structure as nx.DiGraph
+        dag = fetch_and_parse_dag(server, repo_uuid)
+        
+        # Determine full name of leaf uuid, for proper set membership
+        matching_uuids = list(filter(lambda u: uuids_match(u, uuid), dag.nodes()))
+        assert matching_uuids != 0, f"DAG does not contain uuid: {uuid}"
+        assert len(matching_uuids) == 1, f"More than one UUID in the server DAG matches the leaf uuid: {uuid}"
+        full_uuid = matching_uuids[0]
+        
+        # Filter based on set of leaf-and-parents
+        leaf_and_parents = {full_uuid} | nx.ancestors(dag, uuid)
+        records_and_values = filter(lambda r_v: r_v[1]["UUID"] in leaf_and_parents, records_and_values)
+        
     elif dag_filter is None:
         pass
     else:
@@ -566,6 +585,44 @@ def read_kafka_messages(instance_info, group_id=None, consumer_timeout=2.0, dag_
         return values
     else:
         assert False
+
+
+@sanitize_server
+def fetch_and_parse_dag(server, repo_uuid):
+    """
+    Read the /repo/info for the given repo UUID
+    and extract the DAG structure from it.
+
+    Return the DAG as a nx.DiGraph, whose nodes' attribute
+    dicts contain the fields from the DAG json data.
+    """
+    repo_info = fetch_repo_info(server, repo_uuid)
+
+    # The JSON response is a little weird.
+    # The DAG nodes are given as a dict with uuids as keys,
+    # but to define the DAG structure, parents and children are
+    # referred to by their integer 'VersionID' (not their UUID).
+
+    # Let's start by creating an easy lookup from VersionID -> node info
+    node_infos = {}
+    for node_info in repo_info["DAG"]["Nodes"].values():
+        version_id = node_info["VersionID"]
+        node_infos[version_id] = node_info
+        
+    g = nx.DiGraph()
+    
+    # Add graph nodes (with node info from the json as the nx node attributes)
+    for version_id, node_info in node_infos.items():
+        g.add_node(node_info["UUID"], node_info)
+        
+    # Add edges from each parent to all children
+    for version_id, node_info in node_infos.items():
+        parent_uuid = node_info["UUID"]
+        for child_version_id in node_info["Children"]:
+            child_uuid = node_infos[child_version_id]["UUID"]
+            g.add_edge(parent_uuid, child_uuid)
+
+    return g
 
 
 @sanitize_server
@@ -646,8 +703,6 @@ def split_events_to_graph(events):
     Returns:
         nx.DiGraph, which will be a tree
     """
-    import networkx as nx
-    
     g = nx.DiGraph()
 
     for uuid, event_list in events.items():
@@ -686,7 +741,6 @@ def extract_split_tree(events, sv_id):
     Construct a nx.DiGraph from the given list of SplitEvents,
     exract the particular tree (a subgraph) that contains the given supervoxel ID.
     """
-    import networkx as nx
     if isinstance(events, dict):
         g = split_events_to_graph(events)
     elif isinstance(events, nx.DiGraph):
