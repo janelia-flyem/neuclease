@@ -85,11 +85,23 @@ def csv_has_header(csv_path):
 
 
 def read_csv_col(csv_path, col=0, dtype=np.uint64):
+    """
+    Read a single column from a CSV file as a pd.Series.
+    """
     int(col) # must be an int
-    header = None
-    if csv_has_header(csv_path):
-        header = 0
-    return pd.read_csv(csv_path, header=header, usecols=[col], names=['foo'], dtype=dtype)['foo']
+    header_names = read_csv_header(csv_path)
+    if header_names:
+        header_row = 0
+        names = [header_names[col]]
+    else:
+        header_row = None
+        names = ['noname']
+
+    s = pd.read_csv(csv_path, header=header_row, usecols=[col], names=names, dtype=dtype)[names[0]]
+    
+    if header_row is None:
+        s.name = None
+    return s
 
 
 _graph_tool_available = None
@@ -110,7 +122,7 @@ def graph_tool_available():
             _graph_tool_available = False
     return _graph_tool_available
 
-def connected_components(edges, num_nodes):
+def connected_components(edges, num_nodes, _lib=None):
     """
     Run connected components on the graph encoded by 'edges' and num_nodes.
     The graph vertex IDs must be CONSECUTIVE.
@@ -122,13 +134,16 @@ def connected_components(edges, num_nodes):
         Integer, max_node+1.
         (Allows for graphs which contain nodes that are not referenced in 'edges'.)
     
+    _lib:
+        Do not use.  (Used for testing.)
+    
     Returns:
         ndarray of shape (num_nodes,), labeled by component index from 0..C
     
     Note: Uses graph-tool if it's installed; otherwise uses networkx (slower).
     """
 
-    if graph_tool_available():
+    if (graph_tool_available() or _lib == 'gt') and _lib != 'nx':
         import graph_tool as gt
         from graph_tool.topology import label_components
         g = gt.Graph(directed=False)
