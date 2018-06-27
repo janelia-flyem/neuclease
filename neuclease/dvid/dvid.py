@@ -652,6 +652,15 @@ def fetch_supervoxel_splits(instance_info):
         The UUIDs in the dict appear in the same order that DVID provides them in the response.
         According to the docs, they appear in reverse-chronological order, starting with the
         requested UUID and moving toward the repo root UUID.
+
+    WARNING:
+        The /supervoxel-splits endpoint was implemented relatively recently.  It is incapable
+        of returning split events for supervoxels that were split before that endpoint was
+        implemented and released.  On older server, the results returned by this function may
+        be incomplete, since older UUIDs predate the /supervoxel-splits endpoint support.
+        However the equivalent information can be extracted from the Kafka log, albeit
+        somewhat more slowly.  See fetch_supervoxel_splits_from_kafka()
+
     """
     # From the DVID docs:
     #
@@ -688,6 +697,42 @@ def fetch_supervoxel_splits(instance_info):
         assert isinstance(event_list, list)
         events[uuid] = list(starmap(SplitEvent, event_list))
  
+    return events
+
+@sanitize_server
+def fetch_supervoxel_splits_from_kafka(instance_info):
+    """
+    Read the kafka log for the given instance and return a log of
+    all supervoxel split events, partitioned by UUID.
+    
+    This reproduces the output of fetch_supervoxel_splits(),
+    but uses the kafka log instead of the DVID /supervoxel-splits endpoint.
+    See the warning in that function's docstring for an explanation of why
+    this function may give better results (although it is slower).
+
+    To return all supervoxel splits, this function parses both 'split'
+    and 'split-supervoxel' kafka messages.
+    """
+    msgs = read_kafka_messages(instance_info, action_filter=['split', 'split-supervoxel'], dag_filter='leaf-and-parents')
+    
+    # Supervoxels can be split via either /split or /split-supervoxel.
+    # We need to parse them both.
+    body_split_msgs = list(filter(lambda msg: msg['Action'] == 'split', msgs))
+    sv_split_msgs = list(filter(lambda msg: msg['Action'] == 'split-supervoxel', msgs))
+
+    events = {}
+    for msg in body_split_msgs:
+        if msg["SVSplits"] is None:
+            logger.error(f"SVSplits is null for body {msg['Target']}")
+            continue
+        for old_sv, split_info in msg["SVSplits"].items():
+            event = SplitEvent(msg["MutationID"], old_sv, split_info["Split"], split_info["Remain"])
+            events.setdefault(msg["UUID"], []).append( event )
+
+    for msg in sv_split_msgs:
+        event = SplitEvent( msg["MutationID"], msg["Supervoxel"], msg["SplitSupervoxel"], msg["RemainSupervoxel"] )
+        events.setdefault(msg["UUID"], []).append( event )
+    
     return events
 
 
