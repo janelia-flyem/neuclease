@@ -777,7 +777,7 @@ def find_root(g, start):
     parents = [start]
     while parents:
         root = parents[0]
-        parents = g.predecessors(parents[0])
+        parents = list(g.predecessors(parents[0]))
     return root
 
 
@@ -785,6 +785,18 @@ def extract_split_tree(events, sv_id):
     """
     Construct a nx.DiGraph from the given list of SplitEvents,
     exract the particular tree (a subgraph) that contains the given supervoxel ID.
+    
+    Args:
+        events:
+            Either a nx.DiGraph containing all split event trees of interest (so, a forest),
+            or a dict of SplitEvent tuples from which a DiGraph forest can be constructed.
+            
+        sv_id:
+            The tree containing this supervoxel ID will be extracted.
+            The ID does not necessarily need to be the roof node of it's split tree.
+    
+    Returns:
+        nx.DiGraph -- A subgraph of the forest passed in.
     """
     if isinstance(events, dict):
         g = split_events_to_graph(events)
@@ -792,6 +804,9 @@ def extract_split_tree(events, sv_id):
         g = events
     else:
         raise RuntimeError(f"Unexpected input type: {type(events)}")
+    
+    if sv_id not in g.nodes():
+        raise RuntimeError(f"Supervoxel {sv_id} is not referenced in the given split events.")
     
     root = find_root(g, sv_id)
     tree_nodes = {root} | nx.descendants(g, root)
@@ -850,7 +865,7 @@ def render_split_tree(tree, root=None, uuid_len=4):
                  +-- 5813042207 (25dc)
                  +-- 5813042208 (25dc)
     """
-    root = root or find_root(tree, tree.nodes()[0])
+    root = root or find_root(tree, next(iter(tree.nodes())))
 
     display_fn = str
     if uuid_len > 0:
@@ -875,3 +890,33 @@ def fetch_and_render_split_tree(instance_info, sv_id):
     events = fetch_supervoxel_splits(instance_info)
     tree = extract_split_tree(events, sv_id)
     return render_split_tree(tree)
+
+
+def fetch_and_render_split_trees(instance_info, sv_ids):
+    """
+    For each of the given supervoxels, produces an ascii-renderered split
+    tree showing all of its ancestors,descendents, siblings, etc.
+
+    Supervoxels that have never been involved in splits will be skipped,
+    and no corresponding tree is returned.
+    
+    Note: If two supervoxels in the list have a common parent,
+    the tree will be returned twice.
+    
+    TODO: It would be nice if this were smarter about eliminating
+          duplicates in such cases.
+    
+    Returns:
+        dict of { sv_id : str }
+    """
+    sv_ids = set(sv_ids)
+    events = fetch_supervoxel_splits(instance_info)
+    event_forest = split_events_to_graph(events)
+    all_split_ids = set(event_forest.nodes())
+    
+    rendered_trees = {}
+    for sv_id in sv_ids:
+        if sv_id in all_split_ids:
+            tree = extract_split_tree(event_forest, sv_id)
+            rendered_trees[sv_id] = render_split_tree(tree)
+    return rendered_trees
