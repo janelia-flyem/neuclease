@@ -1,6 +1,7 @@
 import os
 import logging
 import threading
+from itertools import chain
 from collections import defaultdict
 from contextlib import contextmanager
 
@@ -9,7 +10,7 @@ import pandas as pd
 
 from .util import Timer, uuids_match
 from .rwlock import ReadWriteLock
-from .dvid import fetch_supervoxels_for_body, fetch_label_for_coordinate, fetch_mappings, fetch_mutation_id
+from .dvid import fetch_supervoxels_for_body, fetch_label_for_coordinate, fetch_mappings, fetch_mutation_id, fetch_supervoxel_splits, fetch_supervoxel_splits_from_kafka
 from .merge_table import MERGE_TABLE_DTYPE, load_edge_csv, load_mapping, load_merge_table, normalize_merge_table, apply_mapping_to_mergetable
 
 _logger = logging.getLogger(__name__)
@@ -66,14 +67,11 @@ class LabelmapMergeGraph:
         apply_mapping_to_mergetable(self.merge_table_df, mapping)
         
 
-    def append_edges_for_split_supervoxels(self, split_mapping, instance_info, parent_sv_handling='unmap'):
+    def append_edges_for_split_supervoxels(self, instance_info, parent_sv_handling='unmap', read_from='kafka'):
         """
         Append edges to the merge table for the given split supervoxels (do not remove edges for their parents).
         
         Args:
-            split_mapping:
-                A mapping (2-column numpy array) of [[child, parent], [child,parent],...] or a path from which it can be loaded.
-            
             server, uuid, instance:
                 Identifies a DVID labelmap instance from which new supervoxel IDs
                 can be queried via points in the DVID labelmap volume.
@@ -83,20 +81,36 @@ class LabelmapMergeGraph:
                     - 'drop': Delete the edges that referred to the parent split IDs
                     - 'keep': Keep the edges that referred to the parent split IDs
                     - 'unmap': Keep the edges that referred to the parent split IDs, but reset their 'body' column to 0.
+            
+            read_from:
+                What source to read split events from.  Either 'dvid' or 'kafka'.
+                The 'dvid' option is faster (and doesn't balk if no Kafka server is found),
+                but some of our older DVID servers have not recorded all of their splits
+                to the internal mutation log, and so only kafka is a reliable source of split
+                information in such cases.
+            
         Returns:
             If any edges could not be preserved because the queried point in DVID does not seem to be a split child,
             a DataFrame of such edges is returned.
         """
         assert parent_sv_handling in ('keep', 'drop', 'unmap')
-        if isinstance(split_mapping, str):
-            split_mapping = load_edge_csv(split_mapping)
+        assert read_from in ('dvid', 'kafka')
+        
+        if read_from == 'dvid':
+            split_events = fetch_supervoxel_splits(instance_info)
+        elif read_from == 'kafka':
+            split_events = fetch_supervoxel_splits_from_kafka(instance_info)
 
-        assert np.unique(split_mapping[:,0]).shape[0] == split_mapping.shape[0], \
-            "Split mapping should be given as [[child, parent],...], not [parent, child] (and every child should have only one parent)."
+        all_split_events = np.array(list(chain(*split_events.values())))
+        
+        # Each event is [mutid, old, remain, split]
+        old_ids = all_split_events[:, 1]
+        remain_ids = all_split_events[:, 2]
+        split_ids = all_split_events[:, 3]
 
         # First extract relevant rows for faster queries below
-        children = set(split_mapping[:,0])
-        _parents = set(split_mapping[:,1])
+        _parents = set(old_ids)
+        children = set(remain_ids) | set(split_ids)
         parent_rows_df = self.merge_table_df.query('id_a in @_parents or id_b in @_parents').copy()
         assert parent_rows_df.columns[:2].tolist() == ['id_a', 'id_b']
         

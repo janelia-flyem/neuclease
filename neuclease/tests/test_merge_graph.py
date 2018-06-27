@@ -128,10 +128,8 @@ def _setup_test_append_edges_for_split(labelmap_setup, branch_name):
     split_response = r.json()
     split_sv = split_response["SplitSupervoxel"]
     remainder_sv = split_response["RemainSupervoxel"]
-    split_mapping = np.array([[split_sv, 3],
-                              [remainder_sv, 3]], np.uint64)
 
-    return uuid, split_mapping, split_sv, remainder_sv
+    return uuid, split_sv, remainder_sv
 
 
 @pytest.fixture(params=('drop', 'keep', 'unmap'))#, ids=('drop', 'keep', 'unmap'))
@@ -140,7 +138,7 @@ def parent_sv_handling(request):
 
 def test_append_edges_for_split_supervoxels(labelmap_setup, parent_sv_handling):
     dvid_server, _dvid_repo, merge_table_path, mapping_path, _supervoxel_vol = labelmap_setup
-    uuid, split_mapping, split_sv, remainder_sv = \
+    uuid, split_sv, remainder_sv = \
         _setup_test_append_edges_for_split(labelmap_setup, f'split-test-{parent_sv_handling}')
     
     merge_graph = LabelmapMergeGraph(merge_table_path)
@@ -152,7 +150,7 @@ def test_append_edges_for_split_supervoxels(labelmap_setup, parent_sv_handling):
         f"Merge table started with wrong dtype: \n{table_dtype}\nExpected:\n{MAPPED_MERGE_TABLE_DTYPE}"
 
     # Append edges for split supervoxels.
-    merge_graph.append_edges_for_split_supervoxels(split_mapping, (dvid_server, uuid, 'segmentation'), parent_sv_handling)
+    merge_graph.append_edges_for_split_supervoxels((dvid_server, uuid, 'segmentation'), parent_sv_handling, read_from='dvid')
 
     table_dtype = merge_graph.merge_table_df.to_records(index=False).dtype
     assert merge_graph.merge_table_df.to_records(index=False).dtype == MAPPED_MERGE_TABLE_DTYPE, \
@@ -178,7 +176,7 @@ def test_append_edges_for_split_supervoxels(labelmap_setup, parent_sv_handling):
 
 def test_append_edges_for_split_supervoxels_with_bad_edges(labelmap_setup, parent_sv_handling):
     dvid_server, _dvid_repo, merge_table_path, mapping_path, _supervoxel_vol = labelmap_setup
-    uuid, split_mapping, split_sv, _remainder_sv = \
+    uuid, split_sv, _remainder_sv = \
         _setup_test_append_edges_for_split(labelmap_setup, f'split-bad-edge-test-{parent_sv_handling}')
 
     merge_graph = LabelmapMergeGraph(merge_table_path)
@@ -189,7 +187,7 @@ def test_append_edges_for_split_supervoxels_with_bad_edges(labelmap_setup, paren
     # That edges should not be included in the appended results 
     edge_row = merge_graph.merge_table_df.query('id_a == 3').index
     merge_graph.merge_table_df.loc[edge_row, 'xa'] = np.uint32(0)
-    bad_edges = merge_graph.append_edges_for_split_supervoxels(split_mapping, (dvid_server, uuid, 'segmentation'), parent_sv_handling)
+    bad_edges = merge_graph.append_edges_for_split_supervoxels((dvid_server, uuid, 'segmentation'), parent_sv_handling, read_from='dvid')
     assert len(bad_edges) == 1
     
     if parent_sv_handling == 'drop':
