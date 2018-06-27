@@ -550,8 +550,15 @@ def read_kafka_messages(instance_info, group_id=None, consumer_timeout=2.0, dag_
             action_filter = [action_filter]
         action_filter = set(action_filter)
         records_and_values = filter(lambda r_v: r_v[1]["Action"] in action_filter, records_and_values)
-        
-    records, values = zip(*records_and_values)
+    
+    # Evaluate
+    records_and_values = list(records_and_values)
+    
+    # Unzip
+    if records_and_values:
+        records, values = zip(*records_and_values)
+    else:
+        records = values = []
 
     if return_format == 'records':
         return records
