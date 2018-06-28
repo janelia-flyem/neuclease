@@ -276,6 +276,8 @@ def fetch_mappings(instance_info, include_identities=True, retired_supervoxels=[
 
     df.set_index('sv', inplace=True)
 
+    assert df.index.dtype == np.uint64
+    assert df['body'].dtype == np.uint64
     return df['body']
 
 
@@ -944,12 +946,25 @@ def fetch_and_render_split_trees(instance_info, sv_ids, split_source='dvid'):
     return rendered_trees
 
 
-def fetch_split_supervoxel_sizes(instance_info, split_source='kafka'):
+def fetch_split_supervoxel_sizes(instance_info, include_retired=False, split_source='kafka'):
     """
     Fetch the list of all current split supervoxel fragments from DVID or Kafka,
     then fetch the sizes of each of those supervoxels.
     
-    Returns a pd.Series, indexed by SV ID.
+    Args:
+        instance_info:
+            server, uuid, instance
+        
+        include_retired:
+            If True, include 'retired' supervoxel IDs in the result.
+            They will have a size of 0.
+        
+        split_source:
+            Where to pull split events from.
+            Either 'kafka' (slower) or 'dvid' (some servers return incomplete histories).
+    
+    Returns:
+        pd.Series, indexed by SV ID
     """
     split_events = fetch_supervoxel_splits(instance_info, split_source)
     split_tables = list(map(lambda t: np.asarray(t, np.uint64), split_events.values()))
@@ -960,14 +975,26 @@ def fetch_split_supervoxel_sizes(instance_info, split_source='kafka'):
     split_fragment_svs = split_table[:, SplitEvent._fields.index('split')]
 
     leaf_fragment_svs = (set(remain_fragment_svs) | set(split_fragment_svs)) - set(parent_svs)
-    
+    leaf_fragment_svs = np.fromiter(leaf_fragment_svs, np.uint64)
+        
     with Timer(f"Fetching sizes for {len(leaf_fragment_svs)} split supervoxels", logger):
         sizes = fetch_sizes(instance_info, leaf_fragment_svs, supervoxels=True)
+        sizes = np.array(sizes, np.uint32)
 
     sv_sizes = pd.Series(data=sizes, index=leaf_fragment_svs)
     sv_sizes.name = 'size'
     sv_sizes.index.name = 'sv'
     sv_sizes.sort_index(inplace=True)
+
+    if include_retired:
+        retired_sv_sizes = pd.Series(data=np.uint32(0), index=parent_svs)
+        retired_sv_sizes.name = 'size'
+        retired_sv_sizes.index.name = 'sv'
+        retired_sv_sizes.sort_index(inplace=True)
+        sv_sizes = pd.concat((sv_sizes, retired_sv_sizes))
+        
+    assert sv_sizes.index.dtype == np.uint64
+    assert sv_sizes.dtype == np.uint32
     return sv_sizes
 
 
