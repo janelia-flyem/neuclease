@@ -1,4 +1,5 @@
 
+import os
 import json
 import logging
 import getpass
@@ -44,13 +45,14 @@ def default_dvid_session(appname=None):
     # Technically, request sessions are not threadsafe,
     # so we keep one for each thread.
     thread_id = threading.current_thread().ident
+    pid = os.getpid()
     try:
-        s = DEFAULT_DVID_SESSIONS[(appname, thread_id)]
+        s = DEFAULT_DVID_SESSIONS[(appname, thread_id, pid)]
     except KeyError:
         s = requests.Session()
         s.params = { 'u': getpass.getuser(),
                      'app': appname }
-        DEFAULT_DVID_SESSIONS[(appname, thread_id)] = s
+        DEFAULT_DVID_SESSIONS[(appname, thread_id, pid)] = s
 
     return s
 
