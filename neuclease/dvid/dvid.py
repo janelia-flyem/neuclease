@@ -1013,6 +1013,7 @@ def fetch_labelindex(instance_info, label, format='protobuf'): # @ReservedAssign
 
     session = default_dvid_session()
     r = session.get(f'http://{server}/api/node/{uuid}/{instance}/index/{label}')
+    r.raise_for_status()
     labelindex = LabelIndex()
     labelindex.ParseFromString(r.content)
 
