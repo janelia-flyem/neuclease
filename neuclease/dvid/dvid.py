@@ -1,3 +1,4 @@
+
 import json
 import logging
 import getpass
@@ -32,7 +33,6 @@ DEFAULT_APPNAME = "neuclease"
 logger = logging.getLogger(__name__)
 
 DvidInstanceInfo = namedtuple("DvidInstanceInfo", "server uuid instance")
-
 
 def default_dvid_session(appname=None):
     """
@@ -116,24 +116,28 @@ def fetch_supervoxels_for_body(instance_info, body_id, user=None):
 
 
 @sanitize_server
-def fetch_body_size(instance_info, body_id, supervoxels=False):
+def fetch_size(instance_info, label_id, supervoxels=False):
     server, uuid, instance = instance_info
     supervoxels = str(bool(supervoxels)).lower()
-    url = f'http://{server}/api/node/{uuid}/{instance}/size/{body_id}?supervoxels={supervoxels}'
+    url = f'http://{server}/api/node/{uuid}/{instance}/size/{label_id}?supervoxels={supervoxels}'
     response = fetch_generic_json(url)
     return response['voxels']
 
+# Deprecated name
+fetch_body_size = fetch_size
+
 
 @sanitize_server
-def fetch_body_sizes(instance_info, body_ids, supervoxels=False):
+def fetch_sizes(instance_info, label_ids, supervoxels=False):
     server, uuid, instance = instance_info
-    body_ids = list(map(int, body_ids))
+    label_ids = list(map(int, label_ids))
     supervoxels = str(bool(supervoxels)).lower()
 
     url = f'http://{server}/api/node/{uuid}/{instance}/sizes?supervoxels={supervoxels}'
-    r = default_dvid_session().get(url, json=body_ids)
-    r.raise_for_status()
-    return r.json()
+    return fetch_generic_json(url, label_ids)
+
+# Deprecated name
+fetch_body_sizes = fetch_sizes
 
 
 @sanitize_server
@@ -283,9 +287,9 @@ def fetch_mutation_id(instance_info, body_id):
 
 
 @sanitize_server
-def fetch_sparsevol_coarse(instance_info, body_id, supervoxels=False):
+def fetch_sparsevol_coarse(instance_info, label_id, supervoxels=False):
     """
-    Return the 'coarse sparsevol' representation of a given body.
+    Return the 'coarse sparsevol' representation of a given body/supervoxel.
     This is similar to the sparsevol representation at scale=6,
     EXCEPT that it is generated from the label index, so no blocks
     are lost from downsampling.
@@ -301,7 +305,7 @@ def fetch_sparsevol_coarse(instance_info, body_id, supervoxels=False):
     server, uuid, instance = instance_info
     supervoxels = str(bool(supervoxels)).lower()
     session = default_dvid_session()
-    r = session.get(f'http://{server}/api/node/{uuid}/{instance}/sparsevol-coarse/{body_id}?supervoxels={supervoxels}')
+    r = session.get(f'http://{server}/api/node/{uuid}/{instance}/sparsevol-coarse/{label_id}?supervoxels={supervoxels}')
     r.raise_for_status()
     
     return parse_rle_response( r.content )
@@ -460,7 +464,7 @@ def fetch_full_instance_info(instance_info):
 
 
 @sanitize_server
-def generate_sample_coordinate(instance_info, body_id, supervoxels=False):
+def generate_sample_coordinate(instance_info, label_id, supervoxels=False):
     """
     Return an arbitrary coordinate that lies within the given body.
     Usually faster than fetching all the RLEs.
@@ -469,15 +473,15 @@ def generate_sample_coordinate(instance_info, body_id, supervoxels=False):
     
     # FIXME: I'm using sparsevol instead of sparsevol-coarse due to an apparent bug in DVID at the moment
     SCALE = 2
-    coarse_block_coords = fetch_sparsevol(instance_info, body_id, supervoxels, scale=SCALE)
+    coarse_block_coords = fetch_sparsevol(instance_info, label_id, supervoxels, scale=SCALE)
     first_block_coord = (2**SCALE) * np.array(coarse_block_coords[0]) // 64 * 64
     
     ns = DVIDNodeService(server, uuid)
     first_block = ns.get_labelarray_blocks3D( instance, (64,64,64), first_block_coord, supervoxels=supervoxels )
-    nonzero_coords = np.transpose((first_block == body_id).nonzero())
+    nonzero_coords = np.transpose((first_block == label_id).nonzero())
     if len(nonzero_coords) == 0:
-        term = {False: 'body', True: 'supervoxel'}[supervoxels]
-        raise RuntimeError(f"The sparsevol-coarse info for this {term} ({body_id}) "
+        label_type = {False: 'body', True: 'supervoxel'}[supervoxels]
+        raise RuntimeError(f"The sparsevol-coarse info for this {label_type} ({label_id}) "
                            "appears to be out-of-sync with the scale-0 segmentation.")
 
     return first_block_coord + nonzero_coords[0]
@@ -647,7 +651,16 @@ def perform_cleave(instance_info, body_id, supervoxel_ids):
 SplitEvent = namedtuple("SplitEvent", "mutid old remain split")
 
 @sanitize_server
-def fetch_supervoxel_splits(instance_info):
+def fetch_supervoxel_splits(instance_info, source='dvid'):
+    assert source in ('dvid', 'kafka')
+    if source == 'dvid':
+        return fetch_supervoxel_splits_from_dvid(instance_info)
+    if source == 'kafka':
+        return fetch_supervoxel_splits_from_kafka(instance_info)
+    assert False
+
+@sanitize_server
+def fetch_supervoxel_splits_from_dvid(instance_info):
     """
     Fetch the /supervoxel-splits info for the given instance.
     
@@ -712,7 +725,7 @@ def fetch_supervoxel_splits_from_kafka(instance_info):
     Read the kafka log for the given instance and return a log of
     all supervoxel split events, partitioned by UUID.
     
-    This reproduces the output of fetch_supervoxel_splits(),
+    This produces the same output as fetch_supervoxel_splits_from_dvid(),
     but uses the kafka log instead of the DVID /supervoxel-splits endpoint.
     See the warning in that function's docstring for an explanation of why
     this function may give better results (although it is slower).
@@ -888,18 +901,18 @@ def render_split_tree(tree, root=None, uuid_len=4):
     return LeftAligned()(d)
 
 
-def fetch_and_render_split_tree(instance_info, sv_id):
+def fetch_and_render_split_tree(instance_info, sv_id, split_source='dvid'):
     """
     Fetch all split supervoxel provenance data from DVID and then
     extract the provenance tree containing the given supervoxel.
     Then render it as a string to be displayed on the console.
     """
-    events = fetch_supervoxel_splits(instance_info)
+    events = fetch_supervoxel_splits(instance_info, split_source)
     tree = extract_split_tree(events, sv_id)
     return render_split_tree(tree)
 
 
-def fetch_and_render_split_trees(instance_info, sv_ids):
+def fetch_and_render_split_trees(instance_info, sv_ids, split_source='dvid'):
     """
     For each of the given supervoxels, produces an ascii-renderered split
     tree showing all of its ancestors,descendents, siblings, etc.
@@ -917,7 +930,7 @@ def fetch_and_render_split_trees(instance_info, sv_ids):
         dict of { sv_id : str }
     """
     sv_ids = set(sv_ids)
-    events = fetch_supervoxel_splits(instance_info)
+    events = fetch_supervoxel_splits(instance_info, split_source)
     event_forest = split_events_to_graph(events)
     all_split_ids = set(event_forest.nodes())
     
