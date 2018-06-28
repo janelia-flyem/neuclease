@@ -7,7 +7,7 @@
 ACTIVATE=/groups/flyem/proj/cluster/miniforge/bin/activate
 source $ACTIVATE flyem
 
-# emdata3:8900 -- 367efccd08e44dea9397fb5fef306eaa
+# emdata3:8900 -- 55ce82b0567b4987960652a169f9b7ff
 # Run this on emdata3 to produce a cleave server on emdata3:5551
 
 nohup neuclease_cleave_server \
@@ -15,7 +15,7 @@ nohup neuclease_cleave_server \
   --log-dir /nrs/flyem/bergs/neuclease-logs/production-emdata3-8900 \
   --merge-table /nrs/flyem/bergs/final-agglo-fixsplit-patched/final_patched_20180426_merge_table.npy \
   --primary-dvid-server emdata3:8900 \
-  --primary-uuid 367efccd08e44dea9397fb5fef306eaa \
+  --primary-uuid 55ce82b0567b4987960652a169f9b7ff \
   --primary-labelmap-instance segmentation \
   --split-mapping /nrs/flyem/bergs/final-agglo-fixsplit-patched/split-lineage-9ec0b3.csv \
   &
