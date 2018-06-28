@@ -284,6 +284,30 @@ def fetch_mappings(instance_info, include_identities=True, retired_supervoxels=[
 
 
 @sanitize_server
+def fetch_complete_mappings(instance_info, split_source='dvid'):
+    """
+    Fetch the complete mapping from DVID for all agglomerated bodies,
+    including 'identity' mappings (for agglomerated bodies only)
+    and taking split supervoxels into account.
+    
+    Like fetch_mappings() above, but fetches the retired supervoxel
+    list for you (which is unnecessarily slow if you've already got it handy).
+
+    Returns:
+        pd.Series(index=sv, data=body)
+    """
+    split_events = fetch_supervoxel_splits(instance_info, split_source)
+    split_tables = list(map(lambda t: np.asarray(t, np.uint64), split_events.values()))
+    if split_tables:
+        split_table = np.concatenate(split_tables)
+        retired_svs = split_table[:, SplitEvent._fields.index('old')]
+    else:
+        retired_svs = []
+
+    return fetch_mappings(instance_info, True, retired_svs)
+
+
+@sanitize_server
 def fetch_mutation_id(instance_info, body_id):
     server, uuid, instance = instance_info
     response = fetch_generic_json(f'http://{server}/api/node/{uuid}/{instance}/lastmod/{body_id}')
