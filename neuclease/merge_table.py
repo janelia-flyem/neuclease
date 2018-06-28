@@ -322,7 +322,12 @@ def load_supervoxel_sizes(h5_path):
     """
     Load the stored supervoxel size table from hdf5 and return the result as a pd.Series, with sv as the index.
     
-    h5_path: A file with two datasets: sv_ids and sv_sizes
+    Args:
+        h5_path:
+            A file with two datasets: sv_ids and sv_sizes
+    
+    Returns:
+        pd.Series, indexed by supervoxel ID
     """
     with h5py.File(h5_path, 'r') as f:
         sv_sizes = pd.Series(index=f['sv_ids'][:], data=f['sv_sizes'][:])

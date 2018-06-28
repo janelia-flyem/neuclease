@@ -659,6 +659,7 @@ def fetch_supervoxel_splits(instance_info, source='dvid'):
         return fetch_supervoxel_splits_from_kafka(instance_info)
     assert False
 
+
 @sanitize_server
 def fetch_supervoxel_splits_from_dvid(instance_info):
     """
@@ -667,8 +668,9 @@ def fetch_supervoxel_splits_from_dvid(instance_info):
     Args:
         instance_info:
             server, uuid, instance
-        
-        Returns an dict of { uuid: event_list }, where event_list is a list of SplitEvent tuples.
+
+    Returns:
+        Dict of { uuid: event_list }, where event_list is a list of SplitEvent tuples.
         The UUIDs in the dict appear in the same order that DVID provides them in the response.
         According to the docs, they appear in reverse-chronological order, starting with the
         requested UUID and moving toward the repo root UUID.
@@ -940,6 +942,33 @@ def fetch_and_render_split_trees(instance_info, sv_ids, split_source='dvid'):
             tree = extract_split_tree(event_forest, sv_id)
             rendered_trees[sv_id] = render_split_tree(tree)
     return rendered_trees
+
+
+def fetch_split_supervoxel_sizes(instance_info, split_source='kafka'):
+    """
+    Fetch the list of all current split supervoxel fragments from DVID or Kafka,
+    then fetch the sizes of each of those supervoxels.
+    
+    Returns a pd.Series, indexed by SV ID.
+    """
+    split_events = fetch_supervoxel_splits(instance_info, split_source)
+    split_tables = list(map(lambda t: np.asarray(t, np.uint64), split_events.values()))
+    split_table = np.concatenate(split_tables)
+
+    parent_svs = split_table[:, SplitEvent._fields.index('old')]
+    remain_fragment_svs = split_table[:, SplitEvent._fields.index('remain')]
+    split_fragment_svs = split_table[:, SplitEvent._fields.index('split')]
+
+    leaf_fragment_svs = (set(remain_fragment_svs) | set(split_fragment_svs)) - set(parent_svs)
+    
+    with Timer(f"Fetching sizes for {len(leaf_fragment_svs)} split supervoxels", logger):
+        sizes = fetch_sizes(instance_info, leaf_fragment_svs, supervoxels=True)
+
+    sv_sizes = pd.Series(data=sizes, index=leaf_fragment_svs)
+    sv_sizes.name = 'size'
+    sv_sizes.index.name = 'sv'
+    sv_sizes.sort_index(inplace=True)
+    return sv_sizes
 
 
 @sanitize_server
