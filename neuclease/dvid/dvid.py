@@ -567,7 +567,7 @@ def read_kafka_messages(instance_info, group_id=None, consumer_timeout=2.0, dag_
         full_uuid = matching_uuids[0]
         
         # Filter based on set of leaf-and-parents
-        leaf_and_parents = {full_uuid} | nx.ancestors(dag, uuid)
+        leaf_and_parents = {full_uuid} | nx.ancestors(dag, full_uuid)
         records_and_values = filter(lambda r_v: r_v[1]["UUID"] in leaf_and_parents, records_and_values)
         
     elif dag_filter is None:
