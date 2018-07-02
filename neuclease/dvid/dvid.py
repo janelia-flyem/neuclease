@@ -797,8 +797,8 @@ def fetch_supervoxel_splits_from_kafka(instance_info):
         if msg["SVSplits"] is None:
             logger.error(f"SVSplits is null for body {msg['Target']}")
             continue
-        for old_sv, split_info in msg["SVSplits"].items():
-            event = SplitEvent(msg["MutationID"], old_sv, split_info["Split"], split_info["Remain"])
+        for old_sv_str, split_info in msg["SVSplits"].items():
+            event = SplitEvent(msg["MutationID"], int(old_sv_str), split_info["Split"], split_info["Remain"])
             events.setdefault(msg["UUID"], []).append( event )
 
     for msg in sv_split_msgs:
