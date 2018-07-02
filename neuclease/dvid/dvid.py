@@ -1088,7 +1088,7 @@ def convert_labelindex_to_pandas(labelindex):
     
     blocks_df = pd.DataFrame( all_coords, columns=['z', 'y', 'x'] )
     blocks_df['sv'] = all_svs
-    blocks_df['counts'] = all_counts
+    blocks_df['count'] = all_counts
     
     return PandasLabelIndex( blocks_df,
                              labelindex.label,
@@ -1124,7 +1124,7 @@ def decode_labelindex_block(encoded_block):
     
     
     NOTE: The encoded coordinates from DVID are in 'block coordinate space',
-          not 'voxel cooridinate space', but we nonetheless return
+          not 'voxel coordinate space', but we nonetheless return
           VOXEL coordinates, not block coordinates.
           (That is, we multiply the block coordinates by 64.)
     """
