@@ -246,11 +246,22 @@ def copy_to_scratch_from_coordinates(coords_csv, production_info, scratch_info, 
 
 
 
-
-
 if __name__ == "__main__":
     main()
 
+# if __name__ == "__main__":
+#     import os
+#     import neuclease
+#     os.chdir(os.path.split(neuclease.__file__)[0] + '/..')
+# 
+#     handler = logging.StreamHandler(sys.stdout)
+#     logger.setLevel(logging.INFO)
+#     logging.getLogger().addHandler(handler)
+# 
+#     production_info = ('emdata3:8900', '662edcb44e69481ea529d89904b5ef9b', 'segmentation')
+#     scratch_info = ('emdata2:8700', 'c0b02e6a5b55451d938ee3510615a2a6', 'segmentation')
+# 
+#     copy_splits([5813043275, 5813043927, 5813043928], production_info, scratch_info)
 
 #if __name__ == "__main__":
 #     production_info = ('emdata3:8900', '275df4022f674852a15bf88514747ead', 'segmentation')
