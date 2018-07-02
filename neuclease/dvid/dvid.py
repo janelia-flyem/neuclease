@@ -772,7 +772,7 @@ def fetch_supervoxel_splits_from_dvid(instance_info):
     return events
 
 @sanitize_server
-def fetch_supervoxel_splits_from_kafka(instance_info):
+def fetch_supervoxel_splits_from_kafka(instance_info, actions=['split', 'split-supervoxel']):
     """
     Read the kafka log for the given instance and return a log of
     all supervoxel split events, partitioned by UUID.
@@ -784,8 +784,14 @@ def fetch_supervoxel_splits_from_kafka(instance_info):
 
     To return all supervoxel splits, this function parses both 'split'
     and 'split-supervoxel' kafka messages.
+    
+    As a debugging feature, you can opt to select splits of only one
+    type by specifying which actions to filter with.
     """
-    msgs = read_kafka_messages(instance_info, action_filter=['split', 'split-supervoxel'], dag_filter='leaf-and-parents')
+    assert not (set(actions) - set(['split', 'split-supervoxel'])), \
+        f"Invalid actions: {actions}"
+    
+    msgs = read_kafka_messages(instance_info, action_filter=actions, dag_filter='leaf-and-parents')
     
     # Supervoxels can be split via either /split or /split-supervoxel.
     # We need to parse them both.
