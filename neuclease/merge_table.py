@@ -261,8 +261,9 @@ def normalize_merge_table(merge_table, drop_duplicate_edges=True, sort=None):
     without regard to any of the other columns (e.g. two rows with
     identical edges but different scores are still considered duplicates).
     """
-    assert merge_table.dtype.names[:9] == [name for name, _t in MERGE_TABLE_DTYPE], \
-        f"Table has wrong dtype: {merge_table.dtype}"
+    expected_dtype_names = tuple(name for name, _t in MERGE_TABLE_DTYPE)
+    assert merge_table.dtype.names[:9] == expected_dtype_names, \
+        f"Table has wrong dtype: {merge_table.dtype.names[:9]}\nExpected: {expected_dtype_names}"
 
     # Group the A coords and the B coords so they can be swapped together
     grouped_dtype = [('id_a', '<u8'),
@@ -270,6 +271,8 @@ def normalize_merge_table(merge_table, drop_duplicate_edges=True, sort=None):
                      ('loc_a', [('xa', '<u4'), ('ya', '<u4'), ('za', '<u4')]),
                      ('loc_b', [('xb', '<u4'), ('yb', '<u4'), ('zb', '<u4')]),
                      ('score', '<f4')]
+
+    grouped_dtype += list((k,v[0]) for k,v in merge_table.dtype.fields.items())[9:]
 
     swap_rows = merge_table['id_a'] > merge_table['id_b']
     merge_table_grouped = merge_table.view(grouped_dtype)
