@@ -1020,17 +1020,8 @@ def fetch_split_supervoxel_sizes(instance_info, include_retired=False, split_sou
     Returns:
         pd.Series, indexed by SV ID
     """
-    split_events = fetch_supervoxel_splits(instance_info, split_source)
-    split_tables = list(map(lambda t: np.asarray(t, np.uint64), split_events.values()))
-    split_table = np.concatenate(split_tables)
+    leaf_fragment_svs, retired_svs = fetch_supervoxel_fragments(instance_info, split_source)
 
-    parent_svs = split_table[:, SplitEvent._fields.index('old')]
-    remain_fragment_svs = split_table[:, SplitEvent._fields.index('remain')]
-    split_fragment_svs = split_table[:, SplitEvent._fields.index('split')]
-
-    leaf_fragment_svs = (set(remain_fragment_svs) | set(split_fragment_svs)) - set(parent_svs)
-    leaf_fragment_svs = np.fromiter(leaf_fragment_svs, np.uint64)
-        
     with Timer(f"Fetching sizes for {len(leaf_fragment_svs)} split supervoxels", logger):
         sizes = fetch_sizes(instance_info, leaf_fragment_svs, supervoxels=True)
         sizes = np.array(sizes, np.uint32)
@@ -1041,7 +1032,7 @@ def fetch_split_supervoxel_sizes(instance_info, include_retired=False, split_sou
     sv_sizes.sort_index(inplace=True)
 
     if include_retired:
-        retired_sv_sizes = pd.Series(data=np.uint32(0), index=parent_svs)
+        retired_sv_sizes = pd.Series(data=np.uint32(0), index=retired_svs)
         retired_sv_sizes.name = 'size'
         retired_sv_sizes.index.name = 'sv'
         retired_sv_sizes.sort_index(inplace=True)
@@ -1050,6 +1041,38 @@ def fetch_split_supervoxel_sizes(instance_info, include_retired=False, split_sou
     assert sv_sizes.index.dtype == np.uint64
     assert sv_sizes.dtype == np.uint32
     return sv_sizes
+
+
+def fetch_supervoxel_fragments(instance_info, split_source='kafka'):
+    """
+    Fetch the list of all supervoxels that have been split and their resulting fragments.
+    
+    Args:
+        instance_info:
+            server, uuid, instance
+        
+        split_source:
+            Where to pull split events from.
+            Either 'kafka' (slower) or 'dvid' (some servers return incomplete histories).
+    
+    Returns:
+        (leaf_fragment_svs, retired_svs)
+        where leaf_fragment_svs is the list of all supervoxel fragments that still exist in the instance,
+        and retired_svs is the list of all supervoxels that have ever been split in the instance.
+        
+    """
+    split_events = fetch_supervoxel_splits(instance_info, split_source)
+    split_tables = list(map(lambda t: np.asarray(t, np.uint64), split_events.values()))
+    split_table = np.concatenate(split_tables)
+
+    retired_svs = split_table[:, SplitEvent._fields.index('old')]
+    remain_fragment_svs = split_table[:, SplitEvent._fields.index('remain')]
+    split_fragment_svs = split_table[:, SplitEvent._fields.index('split')]
+
+    leaf_fragment_svs = (set(remain_fragment_svs) | set(split_fragment_svs)) - set(retired_svs)
+    leaf_fragment_svs = np.fromiter(leaf_fragment_svs, np.uint64)
+    
+    return (leaf_fragment_svs, retired_svs)
 
 
 @sanitize_server
