@@ -262,7 +262,7 @@ def fetch_mapping(instance_info, supervoxel_ids):
 
 
 @sanitize_server
-def fetch_mappings(instance_info, include_identities=True, retired_supervoxels=[]):
+def fetch_mappings(instance_info, include_identities=True, retired_supervoxels=[], include_retired=False):
     """
     Fetch the complete sv-to-label mapping table from DVID and return it as a pandas Series (indexed by sv).
     
@@ -273,12 +273,16 @@ def fetch_mappings(instance_info, include_identities=True, retired_supervoxels=[
         retired_supervoxels:
             A set of supervoxels NOT to automatically add as identity mappings,
             e.g. due to the fact that they were split.
+        
+        include_retired:
+            If True, add row for retired supervoxels, which map to body 0.
     
     Returns:
         pd.Series(index=sv, data=body)
     """
     server, uuid, instance = instance_info
     session = default_dvid_session()
+    retired_supervoxels = set(retired_supervoxels)
     
     # This takes ~30 seconds so it's nice to log it.
     uri = f"http://{server}/api/node/{uuid}/{instance}/mappings"
@@ -289,14 +293,26 @@ def fetch_mappings(instance_info, include_identities=True, retired_supervoxels=[
     with Timer(f"Parsing mapping", logger), BytesIO(r.content) as f:
         df = pd.read_csv(f, sep=' ', header=None, names=['sv', 'body'], engine='c', dtype=np.uint64)
 
+    
+    parts = [df]
+
     if include_identities:
         with Timer(f"Appending missing identity-mappings", logger), BytesIO(r.content) as f:
-            missing_idents = set(df['body']) - set(df['sv']) - set(retired_supervoxels)
+            missing_idents = set(df['body']) - set(df['sv']) - retired_supervoxels
             missing_idents = np.fromiter(missing_idents, np.uint64)
             missing_idents.sort()
             
             idents_df = pd.DataFrame({'sv': missing_idents, 'body': missing_idents})
-            df = pd.concat((df, idents_df), ignore_index=True)
+            parts.append(idents_df)
+
+    if include_retired:
+        retired_svs = np.fromiter(retired_supervoxels, np.uint64)
+        retired_svs.sort()
+        retired_df = pd.DataFrame({'sv': retired_svs, 'body': np.uint64(0)})
+        parts.append(retired_df)
+
+    if len(parts) > 1:
+        df = pd.concat(parts, ignore_index=True)
 
     df.set_index('sv', inplace=True)
 
@@ -326,7 +342,7 @@ def fetch_complete_mappings(instance_info, split_source='dvid'):
     else:
         retired_svs = []
 
-    return fetch_mappings(instance_info, True, retired_svs)
+    return fetch_mappings(instance_info, True, retired_svs, True)
 
 
 @sanitize_server
