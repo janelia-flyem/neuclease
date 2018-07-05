@@ -322,7 +322,7 @@ def fetch_mappings(instance_info, include_identities=True, retired_supervoxels=[
 
 
 @sanitize_server
-def fetch_complete_mappings(instance_info, split_source='dvid'):
+def fetch_complete_mappings(instance_info, split_source='dvid', include_retired=False):
     """
     Fetch the complete mapping from DVID for all agglomerated bodies,
     including 'identity' mappings (for agglomerated bodies only)
@@ -342,7 +342,7 @@ def fetch_complete_mappings(instance_info, split_source='dvid'):
     else:
         retired_svs = []
 
-    return fetch_mappings(instance_info, True, retired_svs, True)
+    return fetch_mappings(instance_info, True, retired_svs, include_retired)
 
 
 @sanitize_server
