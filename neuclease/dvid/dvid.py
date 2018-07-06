@@ -569,21 +569,20 @@ def generate_sample_coordinate(instance_info, label_id, supervoxels=False):
 
 
 @sanitize_server
-def read_kafka_messages(instance_info, group_id=None, consumer_timeout=2.0, dag_filter='leaf-only', action_filter=None, return_format='json-values'):
+def read_kafka_messages(instance_info, action_filter=None, dag_filter='leaf-and-parents', return_format='json-values', group_id=None, consumer_timeout=2.0):
     """
     Read the stream of available Kafka messages for the given DVID instance,
     and optionally filter them by UUID or Action.
-    
+
     Args:
         instance_info:
             (server, uuid, instance)
         
-        group_id:
-            Kafka group ID to use when reading.  If not given, a new one is created.
-        
-        consumer_timeout:
-            Seconds to timeout (after which we assume we've read all messages).
-        
+        action_filter:
+            A list of actions to use as a filter for the returned messages.
+            For example, if action_filter=['split', 'split-complete'],
+            all messages with other actions will be filtered out.
+
         dag_filter:
             How to filter out messages based on the UUID.
             One of:
@@ -591,14 +590,17 @@ def read_kafka_messages(instance_info, group_id=None, consumer_timeout=2.0, dag_
             - 'leaf-and-parents' (only messages matching the given instance_info uuid or its ancestors), or
             - None (no filtering by UUID).
 
-        action_filter:
-            A list of actions to use as a filter for the returned messages.
-            For example, if action_filter=['split', 'split-complete'],
-            all messages with other actions will be filtered out.
-
         return_format:
             Either 'records' (return list of kafka ConsumerRecord objects),
             or 'json-values' (return list of parsed JSON structures from each record.value)
+
+        group_id:
+            Kafka group ID to use when reading.  If not given, a new one is created.
+            (FIXME: Frequently creating new group IDs like this is probably not best-practice, but it works for now.)
+        
+        consumer_timeout:
+            Seconds to timeout (after which we assume we've read all messages).
+        
     """
     from kafka import KafkaConsumer
     server, uuid, instance = instance_info
@@ -608,6 +610,7 @@ def read_kafka_messages(instance_info, group_id=None, consumer_timeout=2.0, dag_
 
     if group_id is None:
         # Choose a unique 'group_id' to use
+        # FIXME: Frequently creating new group IDs like this is probably not best-practice, but it works for now.
         group_id = getpass.getuser() + '-' + datetime.now().isoformat()
     
     server_info = fetch_server_info(instance_info[0])

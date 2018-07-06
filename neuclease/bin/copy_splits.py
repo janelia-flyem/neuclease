@@ -78,7 +78,7 @@ def read_src_supervoxels_from_kafka(src_instance_info, types=['body', 'supervoxe
         Array of supervoxel IDs, all of which were created in the source node and still exist.
     """
     logger.info("Reading messages from kafka")
-    messages = read_kafka_messages(src_instance_info)
+    messages = read_kafka_messages(src_instance_info, dag_filter='leaf-only')
     body_split_msgs = filter(lambda msg: msg["Action"] == 'split', messages)
     sv_split_msgs = filter(lambda msg: msg["Action"] == 'split-supervoxel', messages)
 
