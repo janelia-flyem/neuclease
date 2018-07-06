@@ -82,6 +82,21 @@ def fetch_generic_json(url, json=None):
     r.raise_for_status()
     return r.json()
 
+
+@sanitize_server
+def fetch_keyvalue(instance_info, key, as_json=False):
+    server, uuid, instance = instance_info
+
+    url = f'http://{server}/api/node/{uuid}/{instance}/key/{key}'
+    session = default_dvid_session()
+    r = session.get(url)
+    r.raise_for_status()
+    
+    if as_json:
+        return r.json()
+    return r.content
+    
+
 @sanitize_server
 def create_branch(server, uuid, branch_name, note=None, custom_uuid=None):
     """
