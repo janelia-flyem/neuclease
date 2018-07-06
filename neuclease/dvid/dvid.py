@@ -1093,6 +1093,10 @@ def fetch_supervoxel_fragments(instance_info, split_source='kafka'):
         
     """
     split_events = fetch_supervoxel_splits(instance_info, split_source)
+    if len(split_events) == 0:
+        # No splits on this node
+        return (np.array([], np.uint64), np.array([], np.uint64))
+    
     split_tables = list(map(lambda t: np.asarray(t, np.uint64), split_events.values()))
     split_table = np.concatenate(split_tables)
 
