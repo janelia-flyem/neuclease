@@ -46,7 +46,8 @@ def cleave_server_setup(labelmap_setup):
                                     "--port", cleave_server_port,
                                     "--debug-export-dir", os.path.dirname(merge_table_path),
                                     "--merge-table", merge_table_path,
-                                    "--primary-dvid-server", dvid_server,
+                                    "--primary-dvid-server", f"{dvid_server}:{dvid_port}",
+                                    "--primary-uuid", dvid_repo,
                                     "--primary-labelmap-instance", "segmentation",
                                     f"--log-dir={TEST_DATA_DIR}"])
 

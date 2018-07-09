@@ -19,7 +19,7 @@ from flask import Flask, request, abort, redirect, url_for, jsonify, Response, m
 from .logging_setup import init_logging, log_exceptions, PrefixedLogger
 from .merge_graph import  LabelmapMergeGraph
 from .cleave import cleave, InvalidCleaveMethodError
-from .dvid import DvidInstanceInfo
+from .dvid import DvidInstanceInfo, KafkaReadError
 from .util import Timer
 
 # Globals
@@ -45,10 +45,9 @@ def main(debug_mode=False):
     parser.add_argument('--log-dir', required=False)
     parser.add_argument('--debug-export-dir', required=False, help="For debugging only. Enables export of certain intermediate results.")
     parser.add_argument('--mapping-file', required=False)
-    parser.add_argument('--split-mapping', required=False)
     parser.add_argument('--primary-uuid', required=False,
-                        help="If provided, do not update the internal cached merge table mapping except for the given UUID. "
-                             "(Prioritizes speed of the primary UUID over all others.)")
+                        help="Do not update the internal cached merge table mapping except for the given UUID. "
+                             "(Prioritizes speed of the primary UUID over all others.)  Also, the merge graph is updated with split supervoxels for the given UUID.")
     parser.add_argument('--primary-labelmap-instance', required=False)
     parser.add_argument('--suspend-before-launch', action='store_true',
                         help="After loading the merge graph, suspend the process before launching the server, and await a SIGCONT. "
@@ -82,15 +81,16 @@ def main(debug_mode=False):
             MERGE_GRAPH = LabelmapMergeGraph(args.merge_table, primary_instance_info.uuid, args.debug_export_dir)
 
         # Apply splits first
-        if args.split_mapping:
-            if not primary_instance_info.server or not primary_instance_info.uuid or not primary_instance_info.instance:
-                raise RuntimeError("Can't append split supervoxel edges without all primary server/uuid/instance info")
-            with Timer(f"Appending split supervoxel edges for supervoxels in {args.split_mapping}", logger):
-                bad_edges = MERGE_GRAPH.append_edges_for_split_supervoxels( args.split_mapping, primary_instance_info ) 
+        if all(primary_instance_info):
+            with Timer(f"Appending split supervoxel edges for supervoxels in", logger):
+                bad_edges = []
+                try:
+                    bad_edges = MERGE_GRAPH.append_edges_for_split_supervoxels( primary_instance_info, read_from='kafka' )
+                except KafkaReadError:
+                    bad_edges = MERGE_GRAPH.append_edges_for_split_supervoxels( primary_instance_info, read_from='dvid' )
 
                 if len(bad_edges) > 0:
-                    split_mapping_name = os.path.split(args.split_mapping)[1]
-                    bad_edges_name = os.path.splitext(split_mapping_name)[0] + '-BAD-EDGES.csv'
+                    bad_edges_name = f'BAD-SPLIT-EDGES-{args.primary_uuid[:4]}.csv'
                     bad_edges_filepath = args.log_dir + '/' + bad_edges_name
                     bad_edges.to_csv(bad_edges_filepath, index=False, header=True)
                     logger.error(f"Some edges belonging to split supervoxels could not be preserved, due to {len(bad_edges)} bad representative points.")
@@ -99,8 +99,8 @@ def main(debug_mode=False):
         # Apply mapping (after splits), either from file or from DVID.
         if args.mapping_file:
             MERGE_GRAPH.apply_mapping(args.mapping_file)
-        elif primary_instance_info.server and primary_instance_info.uuid and primary_instance_info.instance:
-            MERGE_GRAPH.fetch_and_apply_mapping(primary_instance_info, args.split_mapping)
+        elif all(primary_instance_info):
+            MERGE_GRAPH.fetch_and_apply_mapping(primary_instance_info)
 
         if args.suspend_before_launch:
             pid = os.getpid()

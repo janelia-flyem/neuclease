@@ -10,7 +10,7 @@ import pandas as pd
 
 from .util import Timer, uuids_match
 from .rwlock import ReadWriteLock
-from .dvid import fetch_supervoxels_for_body, fetch_label_for_coordinate, fetch_mappings, fetch_mutation_id, fetch_supervoxel_splits, fetch_supervoxel_splits_from_kafka
+from .dvid import fetch_supervoxels_for_body, fetch_label_for_coordinate, fetch_complete_mappings, fetch_mutation_id, fetch_supervoxel_splits, fetch_supervoxel_splits_from_kafka
 from .merge_table import MERGE_TABLE_DTYPE, load_edge_csv, load_mapping, load_merge_table, normalize_merge_table, apply_mapping_to_mergetable
 
 _logger = logging.getLogger(__name__)
@@ -171,15 +171,8 @@ class LabelmapMergeGraph:
         return bad_edges
 
 
-    def fetch_and_apply_mapping(self, instance_info, split_mapping=None):
-        if isinstance(split_mapping, str):
-            split_mapping = load_edge_csv(split_mapping)
-
-        split_sv_parents = []
-        if split_mapping is not None:
-            split_sv_parents = set(split_mapping[:,1])
-
-        mapping = fetch_mappings(instance_info, include_identities=True, retired_supervoxels=split_sv_parents)
+    def fetch_and_apply_mapping(self, instance_info):
+        mapping = fetch_complete_mappings(instance_info, 'kafka', include_retired=True)
         apply_mapping_to_mergetable(self.merge_table_df, mapping)
 
 

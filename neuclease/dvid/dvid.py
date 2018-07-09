@@ -337,7 +337,7 @@ def fetch_mappings(instance_info, include_identities=True, retired_supervoxels=[
 
 
 @sanitize_server
-def fetch_complete_mappings(instance_info, split_source='dvid', include_retired=False):
+def fetch_complete_mappings(instance_info, split_source='kafka', include_retired=False):
     """
     Fetch the complete mapping from DVID for all agglomerated bodies,
     including 'identity' mappings (for agglomerated bodies only)
@@ -568,6 +568,9 @@ def generate_sample_coordinate(instance_info, label_id, supervoxels=False):
     return first_block_coord + nonzero_coords[0]
 
 
+class KafkaReadError(RuntimeError):
+    pass
+
 @sanitize_server
 def read_kafka_messages(instance_info, action_filter=None, dag_filter='leaf-and-parents', return_format='json-values', group_id=None, consumer_timeout=2.0):
     """
@@ -613,7 +616,11 @@ def read_kafka_messages(instance_info, action_filter=None, dag_filter='leaf-and-
         # FIXME: Frequently creating new group IDs like this is probably not best-practice, but it works for now.
         group_id = getpass.getuser() + '-' + datetime.now().isoformat()
     
-    server_info = fetch_server_info(instance_info[0])
+    server_info = fetch_server_info(server)
+
+    if "Kafka Servers" not in server_info or not server_info["Kafka Servers"]:
+        raise KafkaReadError(f"DVID server ({server}) does not list a kafka server")
+
     kafka_server = server_info["Kafka Servers"]
 
     full_instance_info = fetch_full_instance_info(instance_info)
@@ -735,12 +742,25 @@ def perform_cleave(instance_info, body_id, supervoxel_ids):
 SplitEvent = namedtuple("SplitEvent", "mutid old remain split")
 
 @sanitize_server
-def fetch_supervoxel_splits(instance_info, source='dvid'):
+def fetch_supervoxel_splits(instance_info, source='kafka'):
+    """
+    Fetch supervoxel split events from dvid or kafka.
+    (See fetch_supervoxel_splits_from_dvid() for details.)
+    
+    Note: If source='kafka', but no kafka server is found, 'dvid' is used as a fallback
+    """
     assert source in ('dvid', 'kafka')
+
+    if source == 'kafka':
+        try:
+            return fetch_supervoxel_splits_from_kafka(instance_info)
+        except KafkaReadError:
+            # Fallback to reading DVID
+            source = 'dvid'
+
     if source == 'dvid':
         return fetch_supervoxel_splits_from_dvid(instance_info)
-    if source == 'kafka':
-        return fetch_supervoxel_splits_from_kafka(instance_info)
+
     assert False
 
 
@@ -993,7 +1013,7 @@ def render_split_tree(tree, root=None, uuid_len=4):
     return LeftAligned()(d)
 
 
-def fetch_and_render_split_tree(instance_info, sv_id, split_source='dvid'):
+def fetch_and_render_split_tree(instance_info, sv_id, split_source='kafka'):
     """
     Fetch all split supervoxel provenance data from DVID and then
     extract the provenance tree containing the given supervoxel.
@@ -1004,7 +1024,7 @@ def fetch_and_render_split_tree(instance_info, sv_id, split_source='dvid'):
     return render_split_tree(tree)
 
 
-def fetch_and_render_split_trees(instance_info, sv_ids, split_source='dvid'):
+def fetch_and_render_split_trees(instance_info, sv_ids, split_source='kafka'):
     """
     For each of the given supervoxels, produces an ascii-renderered split
     tree showing all of its ancestors,descendents, siblings, etc.
