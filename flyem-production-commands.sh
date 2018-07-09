@@ -7,7 +7,7 @@
 ACTIVATE=/groups/flyem/proj/cluster/miniforge/bin/activate
 source $ACTIVATE flyem
 
-# emdata3:8900 -- 55ce82b0567b4987960652a169f9b7ff
+# emdata3:8900 -- 2053c1a64f254961874d91407e7301e3
 # Run this on emdata3 to produce a cleave server on emdata3:5551
 
 nohup neuclease_cleave_server \
@@ -15,9 +15,21 @@ nohup neuclease_cleave_server \
   --log-dir /nrs/flyem/bergs/neuclease-logs/production-emdata3-8900 \
   --merge-table /nrs/flyem/bergs/final-agglo-fixsplit-patched/final_patched_20180426_merge_table.npy \
   --primary-dvid-server emdata3:8900 \
-  --primary-uuid 55ce82b0567b4987960652a169f9b7ff \
+  --primary-uuid 2053c1a64f254961874d91407e7301e3 \
   --primary-labelmap-instance segmentation \
-  --split-mapping /nrs/flyem/bergs/final-agglo-fixsplit-patched/split-lineage-9ec0b3.csv \
+  &
+##
+
+##
+## DEVELOPMENT (port 5552), just for cleaner logs.
+##
+nohup neuclease_cleave_server \
+  -p 5552 \
+  --log-dir /nrs/flyem/bergs/neuclease-logs/development-emdata3-8900 \
+  --merge-table /nrs/flyem/bergs/final-agglo-fixsplit-patched/final_patched_20180426_merge_table.npy \
+  --primary-dvid-server emdata3:8900 \
+  --primary-uuid 2053c1a64f254961874d91407e7301e3 \
+  --primary-labelmap-instance segmentation \
   &
 ##
 
@@ -33,6 +45,5 @@ nohup neuclease_cleave_server \
   --primary-dvid-server emdata1:8900 \
   --primary-uuid ${PRACTICE_PARENT_UUID} \
   --primary-labelmap-instance segmentation \
-  --split-mapping /nrs/flyem/bergs/final-agglo-fixsplit-patched/split-lineage-017ad.csv \
   &
 ##
