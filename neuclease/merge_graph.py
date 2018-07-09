@@ -102,6 +102,10 @@ class LabelmapMergeGraph:
             split_events = fetch_supervoxel_splits_from_kafka(instance_info)
 
         all_split_events = np.array(list(chain(*split_events.values())))
+        if len(all_split_events) == 0:
+            # No split events at all: Return empty dataframe
+            bad_edges = self.merge_table_df.iloc[:0]
+            return bad_edges
         
         # Each event is [mutid, old, remain, split]
         old_ids = all_split_events[:, 1]
