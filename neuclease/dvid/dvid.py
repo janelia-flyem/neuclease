@@ -216,6 +216,24 @@ def create_labelmap_instance(instance_info, tags=[], block_size=64, voxel_size=8
                            voxel_units=voxel_units, type_specific_settings=type_specific_settings )
     
 
+def create_tarsupervoxel_instance(instance_info, sync_instance, tags=[]):
+    """
+    Create a tarsupervoxel instance and sync it to a labelmap instance.
+    """
+    create_instance(instance_info, "tarsupervoxels", versioned=False, tags=tags)
+    post_tarsupervoxel_sync(instance_info, sync_instance)
+
+
+@sanitize_server
+def post_tarsupervoxel_sync(instance_info, sync_instance, replace=False):
+    server, uuid, instance = instance_info
+    session = default_dvid_session()
+    r = session.post(f'http://{server}/api/node/{uuid}/{instance}/sync',
+                     params={ "replace": str(bool(replace)).lower() },
+                     json={ "sync": sync_instance } )
+    r.raise_for_status()
+
+
 @sanitize_server
 def create_branch(server, uuid, branch_name, note=None, custom_uuid=None):
     """
