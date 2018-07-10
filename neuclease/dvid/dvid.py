@@ -4,10 +4,11 @@ import logging
 import getpass
 import threading
 import functools
+
 from datetime import datetime
 from io import BytesIO
 from itertools import starmap
-from collections import namedtuple
+from collections import namedtuple, Iterable
 
 import requests
 import networkx as nx
@@ -83,18 +84,128 @@ def fetch_generic_json(url, json=None):
     return r.json()
 
 
-@sanitize_server
-def fetch_keyvalue(instance_info, key, as_json=False):
-    server, uuid, instance = instance_info
+INSTANCE_TYPENAMES = """\
+annotation
+float32blk
+googlevoxels
+imagetile
+keyvalue
+labelarray
+labelblk
+labelgraph
+labelmap
+labelsz
+labelvol
+multichan16
+rgba8blk
+roi
+tarsupervoxels
+uint16blk
+uint32blk
+uint64blk
+uint8blk
+""".split()
 
-    url = f'http://{server}/api/node/{uuid}/{instance}/key/{key}'
-    session = default_dvid_session()
-    r = session.get(url)
-    r.raise_for_status()
+
+@sanitize_server
+def create_instance(instance_info, typename, versioned=True, compression=None, tags=[], type_specific_settings={}):
+    """
+    Create a data instance of the given type.
     
-    if as_json:
-        return r.json()
-    return r.content
+    typename:
+        Valid instance names are listed in INSTANCE_TYPENAMES
+    
+    versioned:
+        Whether or not the instance should be versioned.
+
+    tags:
+        Optional 'tags' to initialize the instance with, e.g. "type=meshes".
+    
+    Returns:
+        True if the instance was newly created, False if it already existed.
+
+    """
+    server, uuid, instance = instance_info
+    assert typename in INSTANCE_TYPENAMES, f"Unknown typename: {typename}"
+
+    settings = {}
+    settings["dataname"] = instance
+    settings["typename"] = typename
+
+    if not versioned:
+        settings["versioned"] = 'false'
+    
+    if typename == 'tarsupervoxels':
+        # Will DVID return an error for us in these cases?
+        # If so, we can remove these asserts...
+        assert not versioned, "Instances of tarsupervoxels must be unversioned"
+        assert compression is None, "Compression not supported for tarsupervoxels"
+
+    if compression is not None:
+        assert compression in ('none', 'snappy', 'lz4', 'gzip') # jpeg is also supported, but then we need to parse e.g. jpeg:80
+        settings["Compression"] = compression
+    
+    if tags:
+        settings["Tags"] = ','.join(tags)
+    
+    settings.update(type_specific_settings)
+    
+    r = requests.post(f"http://{server}/api/repo/{uuid}/instance", json=settings)
+    r.raise_for_status()
+
+
+def create_voxel_instance(instance_info, typename, versioned=True, compression=None, tags=[],
+                          block_size=64, voxel_size=8.0, voxel_units='nanometers', background=None,
+                          type_specific_settings={}):
+    """
+    Create an instance of a voxel datatype.
+    """
+    assert typename in ("uint8blk", "uint16blk", "uint32blk", "uint64blk", "float32blk", "labelblk", "labelarray", "labelmap")
+
+    if not isinstance(Iterable, block_size):
+        block_size = 3*(block_size,)
+
+    if not isinstance(Iterable, voxel_size):
+        voxel_size = 3*(voxel_size,)
+
+    block_size_str = ','.join(map(str, block_size))
+    voxel_size_str = ','.join(map(str, voxel_size))
+
+    type_specific_settings = dict(type_specific_settings)
+    type_specific_settings["BlockSize"] = block_size_str
+    type_specific_settings["VoxelSize"] = voxel_size_str
+    type_specific_settings["VoxelUnits"] = voxel_units
+    
+    if background is not None:
+        assert typename in ("uint8blk", "uint16blk", "uint32blk", "uint64blk", "float32blk"), \
+            "Background value is only valid for block-based instance types."
+        type_specific_settings["Background"] = background
+    
+    create_instance(instance_info, typename, versioned, compression, tags, type_specific_settings)
+
+
+def create_labelmap_instance(instance_info, tags=[], block_size=64, voxel_size=8.0,
+                             voxel_units='nanometers', enable_index=True, max_scale=0):
+    """
+    Create a labelmap instance.
+
+    Args:
+        enable_index:
+            Whether or not to support indexing on this label instance
+            Should usually be True, except for benchmarking purposes.
+        
+        max_scale:
+            The maximum downres level of this labelmap instance.
+        
+        Other args passed directly to create_voxel_instance().
+    """
+    type_specific_settings = {
+        "IndexedLabels": str(enable_index).lower(),
+        "CountLabels": str(enable_index).lower(),
+        "MaxDownresLevel": str(max_scale)
+    }
+    create_voxel_instance( instance_info, tags=tags, block_size=block_size, voxel_size=voxel_size,
+                           voxel_units=voxel_units, type_specific_settings=type_specific_settings )
     
 
 @sanitize_server
@@ -130,6 +241,7 @@ def fetch_key(instance_info, key, as_json=False):
     if as_json:
         return r.json()
     return r.content
+
 
 @sanitize_server
 def post_key(instance_info, key, data):
