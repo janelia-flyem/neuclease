@@ -258,6 +258,7 @@ def create_branch(server, uuid, branch_name, note=None, custom_uuid=None):
     r.raise_for_status()
     return r.json()["child"]
 
+
 @sanitize_server
 def fetch_key(instance_info, key, as_json=False):
     server, uuid, instance = instance_info
@@ -878,6 +879,30 @@ def perform_cleave(instance_info, body_id, supervoxel_ids):
 
 
 SplitEvent = namedtuple("SplitEvent", "mutid old remain split")
+
+@sanitize_server
+def post_merge(instance_info, main_label, other_labels):
+    """
+    Merges multiple bodies together.
+    
+    Args:
+        instance_info:
+            server, uuid, instance
+        main_label:
+            The label whose ID will be kept by the merged body
+        other_labels:
+            List of labels to merge into the main_label
+    """
+    server, uuid, instance = instance_info
+    main_label = int(main_label)
+    other_labels = list(map(int, other_labels))
+    
+    content = [main_label] + other_labels
+    
+    session = default_dvid_session()
+    r = session.post(f'http://{server}/api/node/{uuid}/{instance}/merge', json=content)
+    r.raise_for_status()
+    
 
 @sanitize_server
 def fetch_supervoxel_splits(instance_info, source='kafka'):
