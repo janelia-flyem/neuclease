@@ -118,6 +118,14 @@ def create_instance(instance_info, typename, versioned=True, compression=None, t
     versioned:
         Whether or not the instance should be versioned.
 
+    compression:
+        Which compression DVID should use when storing the data in the instance.
+        Different instance types support different compression options.
+        Typical choices are: ['none', 'snappy', 'lz4', 'gzip'].
+        
+        Note: Here, the string 'none' means "use no compression",
+              whereas a Python None value means "Let DVID choose a default compression type".
+
     tags:
         Optional 'tags' to initialize the instance with, e.g. "type=meshes".
     
@@ -139,7 +147,7 @@ def create_instance(instance_info, typename, versioned=True, compression=None, t
         # Will DVID return an error for us in these cases?
         # If so, we can remove these asserts...
         assert not versioned, "Instances of tarsupervoxels must be unversioned"
-        assert compression is None, "Compression not supported for tarsupervoxels"
+        assert compression in (None, 'none'), "Compression not supported for tarsupervoxels"
 
     if compression is not None:
         assert compression in ('none', 'snappy', 'lz4', 'gzip') # jpeg is also supported, but then we need to parse e.g. jpeg:80
