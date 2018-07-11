@@ -73,7 +73,22 @@ def sanitize_server(f):
                 server = server[len('http://'):]
             instance_info = DvidInstanceInfo(server, uuid, instance)
 
-        return f(instance_info, *args, **kwargs)
+        try:
+            return f(instance_info, *args, **kwargs)
+        except requests.HTTPError as ex:
+            # If the error response had content (and it's not super-long),
+            # show that in the traceback, too.  DVID error messages are often helpful.
+            if ( not hasattr(ex, 'response_content_appended')
+                 and ex.response is not None
+                 and ex.response.content
+                 and len(ex.response.content) <= 200 ):
+                
+                msg = str(ex.args[0]) + "\n" + ex.response.content.decode('utf-8')
+                new_ex = requests.HTTPError(msg, *args[1:])
+                new_ex.response_content_appended = True
+                raise new_ex from ex
+            else:
+                raise
     return wrapper
 
 
