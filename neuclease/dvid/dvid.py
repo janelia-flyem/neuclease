@@ -231,11 +231,16 @@ def create_labelmap_instance(instance_info, tags=[], block_size=64, voxel_size=8
                            voxel_units=voxel_units, type_specific_settings=type_specific_settings )
     
 
-def create_tarsupervoxel_instance(instance_info, sync_instance, tags=[]):
+def create_tarsupervoxel_instance(instance_info, sync_instance, extension, tags=[]):
     """
     Create a tarsupervoxel instance and sync it to a labelmap instance.
     """
-    create_instance(instance_info, "tarsupervoxels", versioned=False, tags=tags)
+    if extension[0] == '.':
+        extension = extension[1:]
+
+    create_instance(instance_info, "tarsupervoxels", versioned=False, tags=tags,
+                    type_specific_settings={"Extension": extension})
+    
     post_tarsupervoxel_sync(instance_info, sync_instance)
 
 
