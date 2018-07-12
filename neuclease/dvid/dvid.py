@@ -1341,7 +1341,7 @@ def fetch_labelindex(instance_info, label, format='protobuf'): # @ReservedAssign
         return convert_labelindex_to_pandas(labelindex)
 
 
-PandasLabelIndex = namedtuple("PandasLabelIndex", "blocks_df label last_mutid last_mod_time last_mod_user")
+PandasLabelIndex = namedtuple("PandasLabelIndex", "blocks label last_mutid last_mod_time last_mod_user")
 def convert_labelindex_to_pandas(labelindex):
     """
     Convert a protobuf LabelIndex object into a PandasLabelIndex tuple,
@@ -1352,7 +1352,7 @@ def convert_labelindex_to_pandas(labelindex):
             Instance of neuclease.dvid.labelops_pb2.LabelIndex, as returned by fetch_labelindex()
     
     Returns:
-        PandasLabelIndex (a namedtuple), in which the `blocks_df` member is a pd.DataFrame
+        PandasLabelIndex (a namedtuple), in which the `blocks` member is a pd.DataFrame
         with the following columns: ['z', 'y', 'x', 'sv', 'count'].
         Note that the block coordinates are given in VOXEL units.
         That is, all coordinates in the table are multiples ofo 64.
@@ -1364,7 +1364,7 @@ def convert_labelindex_to_pandas(labelindex):
     block_counts = []
     block_coords = []
     
-    # Convert each blocks' data into arrays
+    # Convert each block's data into arrays
     for coord_zyx, sv_counts in zip(coords_zyx, labelindex.blocks.values()):
         svs = np.fromiter(sv_counts.counts.keys(), np.uint64, count=len(sv_counts.counts))
         counts = np.fromiter(sv_counts.counts.values(), np.uint32, count=len(sv_counts.counts))
