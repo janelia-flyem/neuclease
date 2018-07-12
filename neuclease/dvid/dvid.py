@@ -466,33 +466,41 @@ def fetch_mappings(instance_info, include_identities=True, retired_supervoxels=[
 
     with Timer(f"Parsing mapping", logger), BytesIO(r.content) as f:
         df = pd.read_csv(f, sep=' ', header=None, names=['sv', 'body'], engine='c', dtype=np.uint64)
-
+        base_mapping = df.values
     
-    parts = [df]
+    parts = [base_mapping]
 
     if include_identities:
         with Timer(f"Appending missing identity-mappings", logger), BytesIO(r.content) as f:
             missing_idents = set(df['body']) - set(df['sv']) - retired_supervoxels
             missing_idents = np.fromiter(missing_idents, np.uint64)
-            missing_idents.sort()
-            
-            idents_df = pd.DataFrame({'sv': missing_idents, 'body': missing_idents})
-            parts.append(idents_df)
+            ident_mapping = np.array((missing_idents, missing_idents)).transpose()
+            parts.append(ident_mapping)
 
     if include_retired:
         retired_svs = np.fromiter(retired_supervoxels, np.uint64)
-        retired_svs.sort()
-        retired_df = pd.DataFrame({'sv': retired_svs, 'body': np.uint64(0)})
-        parts.append(retired_df)
+        retired_mapping = np.zeros((len(retired_svs), 2), np.uint64)
+        retired_mapping[:, 0] = retired_svs
+        parts.append(retired_mapping)
 
     if len(parts) > 1:
-        df = pd.concat(parts, ignore_index=True)
+        full_mapping = pd.concat(parts, ignore_index=True)
+    else:
+        full_mapping = parts[0]
 
-    df.set_index('sv', inplace=True)
+    full_mapping = np.asarray(full_mapping, order='C')
+    
+    # View as 1D buffer of structured dtype to sort in-place.
+    mapping_view = memoryview(full_mapping.reshape(-1))
+    np.frombuffer(mapping_view, dtype=(np.uint64, 2)).sort()
 
-    assert df.index.dtype == np.uint64
-    assert df['body'].dtype == np.uint64
-    return df['body']
+    s = pd.Series(index=full_mapping[:,0], data=full_mapping[:,1])
+    s.index.name = 'sv'
+    s.name = 'body'
+
+    assert s.index.dtype == np.uint64
+    assert s.dtype == np.uint64
+    return s
 
 
 @sanitize_server
