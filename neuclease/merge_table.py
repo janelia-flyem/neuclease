@@ -12,7 +12,7 @@ import pandas as pd
 from dvidutils import LabelMapper
 
 from .util import Timer, read_csv_header
-from .dvid import fetch_mappings
+from .dvid import fetch_complete_mappings
 
 logger = logging.getLogger(__name__)
 
@@ -388,7 +388,7 @@ def extract_important_merges(speculative_merge_tables, important_bodies, body_ma
         "You must set either body_mapping or mapping_instance_info (but not both)"
 
     if mapping_instance_info is not None:
-        body_mapping = fetch_mappings(mapping_instance_info)
+        body_mapping = fetch_complete_mappings(mapping_instance_info)
 
     assert isinstance(body_mapping, pd.Series)
     mapper = LabelMapper(body_mapping.index.values, body_mapping.values)

@@ -436,27 +436,29 @@ def fetch_mapping(instance_info, supervoxel_ids):
 
 
 @sanitize_server
-def fetch_mappings(instance_info, include_identities=True, retired_supervoxels=[], include_retired=False):
+def fetch_mappings(instance_info, as_array=False):
     """
-    Fetch the complete sv-to-label mapping table from DVID and return it as a pandas Series (indexed by sv).
+    Fetch the complete sv-to-label in-memory mapping table
+    from DVID and return it as a numpy array or a pandas Series (indexed by sv).
+    (This takes 30-60 seconds for a hemibrain-sized volume.)
+    
+    NOTE: This returns the 'raw' mapping from DVID, which is usually not useful on its own.
+          DVID does not store entries for 'identity' mappings, and it sometimes includes
+          entries for supervoxels that have already been 'retired' due to splits.
+
+          See fetch_complete_mappings(), which compensates for these issues.
     
     Args:
-        include_identities:
-            If True, add rows for identity mappings (which are not included in DVID's response).
-        
-        retired_supervoxels:
-            A set of supervoxels NOT to automatically add as identity mappings,
-            e.g. due to the fact that they were split.
-        
-        include_retired:
-            If True, add row for retired supervoxels, which map to body 0.
+        as_array:
+            If True, return the mapping as an array with shape (N,2),
+            where supervoxel is the first column and body is the second.
+            Otherwise, return a  pd.Series
     
     Returns:
-        pd.Series(index=sv, data=body)
+        pd.Series(index=sv, data=body), unless as_array is True
     """
     server, uuid, instance = instance_info
     session = default_dvid_session()
-    retired_supervoxels = set(retired_supervoxels)
     
     # This takes ~30 seconds so it's nice to log it.
     uri = f"http://{server}/api/node/{uuid}/{instance}/mappings"
@@ -466,41 +468,15 @@ def fetch_mappings(instance_info, include_identities=True, retired_supervoxels=[
 
     with Timer(f"Parsing mapping", logger), BytesIO(r.content) as f:
         df = pd.read_csv(f, sep=' ', header=None, names=['sv', 'body'], engine='c', dtype=np.uint64)
-        base_mapping = df.values
+
+    if as_array:
+        return df.values
+
+    df.set_index('sv', inplace=True)
     
-    parts = [base_mapping]
-
-    if include_identities:
-        with Timer(f"Appending missing identity-mappings", logger), BytesIO(r.content) as f:
-            missing_idents = set(df['body']) - set(df['sv']) - retired_supervoxels
-            missing_idents = np.fromiter(missing_idents, np.uint64)
-            ident_mapping = np.array((missing_idents, missing_idents)).transpose()
-            parts.append(ident_mapping)
-
-    if include_retired:
-        retired_svs = np.fromiter(retired_supervoxels, np.uint64)
-        retired_mapping = np.zeros((len(retired_svs), 2), np.uint64)
-        retired_mapping[:, 0] = retired_svs
-        parts.append(retired_mapping)
-
-    if len(parts) > 1:
-        full_mapping = pd.concat(parts, ignore_index=True)
-    else:
-        full_mapping = parts[0]
-
-    full_mapping = np.asarray(full_mapping, order='C')
-    
-    # View as 1D buffer of structured dtype to sort in-place.
-    mapping_view = memoryview(full_mapping.reshape(-1))
-    np.frombuffer(mapping_view, dtype=(np.uint64, 2)).sort()
-
-    s = pd.Series(index=full_mapping[:,0], data=full_mapping[:,1])
-    s.index.name = 'sv'
-    s.name = 'body'
-
-    assert s.index.dtype == np.uint64
-    assert s.dtype == np.uint64
-    return s
+    assert df.index.dtype == np.uint64
+    assert df['body'].dtype == np.uint64
+    return df['body']
 
 
 @sanitize_server
@@ -508,10 +484,27 @@ def fetch_complete_mappings(instance_info, split_source='kafka', include_retired
     """
     Fetch the complete mapping from DVID for all agglomerated bodies,
     including 'identity' mappings (for agglomerated bodies only)
-    and taking split supervoxels into account.
+    and taking split supervoxels into account (discard them, or map them to 0).
     
-    Like fetch_mappings() above, but fetches the retired supervoxel
-    list for you (which is unnecessarily slow if you've already got it handy).
+    This is similar to fetch_mappings() above, but compensates for the incomplete
+    mapping from DVID due to identity rows, and filters out retired supervoxels.
+    
+    (This function takes ~2 minutes to run on the hemibrain volume.)
+    
+    Note: Single-supervoxel bodies are not necessarily included in this mapping.
+          Any supervoxel IDs missing from the results of this function should be
+          considered as implicitly mapped to themselves.
+    
+    Args:
+        instance_info:
+            server, uuid, instance
+        
+        split_source:
+            Either 'dvid', 'kafka'.
+            Required for properly filtering out 'retired' supervoxel IDs.
+        
+        include_retired:
+            If True, include rows for 'retired' supervoxels, which all map to 0.
 
     Returns:
         pd.Series(index=sv, data=body)
@@ -521,10 +514,55 @@ def fetch_complete_mappings(instance_info, split_source='kafka', include_retired
     if split_tables:
         split_table = np.concatenate(split_tables)
         retired_svs = split_table[:, SplitEvent._fields.index('old')]
+        retired_svs = set(retired_svs)
     else:
-        retired_svs = []
+        retired_svs = set()
 
-    return fetch_mappings(instance_info, True, retired_svs, include_retired)
+    # Fetch base mapping
+    base_mapping = fetch_mappings(instance_info, as_array=True)
+    base_svs = base_mapping[:,0]
+    base_bodies = base_mapping[:,1]
+
+    # Augment with identity rows, which aren't included in the base.
+    with Timer(f"Constructing missing identity-mappings", logger):
+        missing_idents = set(base_bodies) - set(base_svs) - retired_svs
+        missing_idents = np.fromiter(missing_idents, np.uint64)
+        missing_idents_mapping = np.array((missing_idents, missing_idents)).transpose()
+
+    parts = [base_mapping, missing_idents_mapping]
+
+    # Optionally include 'retired' supervoxels -- mapped to 0
+    if include_retired:
+        retired_svs_array = np.fromiter(retired_svs, np.uint64)
+        retired_mapping = np.zeros((len(retired_svs_array), 2), np.uint64)
+        retired_mapping[:, 0] = retired_svs_array
+        parts.append(retired_mapping)
+
+    # Combine into a single table
+    if len(parts) > 1:
+        full_mapping = np.concatenate(parts)
+    else:
+        full_mapping = parts[0]
+
+    full_mapping = np.asarray(full_mapping, order='C')
+    
+    # View as 1D buffer of structured dtype to sort in-place.
+    # (Sorted index is more efficient with speed and RAM in pandas)
+    mapping_view = memoryview(full_mapping.reshape(-1))
+    np.frombuffer(mapping_view, dtype=[('sv', np.uint64), ('body', np.uint64)]).sort()
+
+    # Construct pd.Series for fast querying
+    s = pd.Series(index=full_mapping[:,0], data=full_mapping[:,1])
+    s.index.name = 'sv'
+    s.name = 'body'
+    
+    # Drop all rows with retired supervoxels.
+    # Someday, this will be unnecessary, but our current production server includes such rows.
+    s.drop(retired_svs, inplace=True, errors='ignore')
+
+    assert s.index.dtype == np.uint64
+    assert s.dtype == np.uint64
+    return s
 
 
 @sanitize_server

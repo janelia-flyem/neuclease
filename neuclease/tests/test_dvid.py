@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 
 from neuclease.dvid import (sanitize_server, DvidInstanceInfo, fetch_supervoxels_for_body, fetch_supervoxel_sizes_for_body,
-                            fetch_label_for_coordinate, fetch_mappings, fetch_mutation_id)
+                            fetch_label_for_coordinate, fetch_mappings, fetch_complete_mappings, fetch_mutation_id)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -65,13 +65,27 @@ def test_fetch_label_for_coordinate(labelmap_setup):
 
 def test_fetch_mappings(labelmap_setup):
     """
-    Very BASIC test for the wrapper function for the /mappings DVID API.
-    Note: This doesn't test the options related to automatic identity mappings.
+    Test the wrapper function for the /mappings DVID API.
     """
     dvid_server, dvid_repo, _merge_table_path, _mapping_path, _supervoxel_vol = labelmap_setup
     instance_info = DvidInstanceInfo(dvid_server, dvid_repo, 'segmentation')
     
     mapping = fetch_mappings(instance_info)
+    assert isinstance(mapping, pd.Series)
+    assert mapping.index.name == 'sv'
+    assert mapping.name == 'body'
+    assert (sorted(mapping.index) == [2,3,4,5]) # Does not include 'identity' row for SV 1. See docstring.
+    assert (mapping == 1).all() # see initialization in conftest.py
+
+def test_fetch_complete_mappings(labelmap_setup):
+    """
+    Very BASIC test for fetch_complete_mappings().
+    Does not verify features related to split supervoxels
+    """
+    dvid_server, dvid_repo, _merge_table_path, _mapping_path, _supervoxel_vol = labelmap_setup
+    instance_info = DvidInstanceInfo(dvid_server, dvid_repo, 'segmentation')
+    
+    mapping = fetch_complete_mappings(instance_info)
     assert isinstance(mapping, pd.Series)
     assert mapping.index.name == 'sv'
     assert mapping.name == 'body'
