@@ -8,7 +8,8 @@ setup( name='neuclease',
        package_data={},
        entry_points={
           'console_scripts': [
-              'neuclease_cleave_server = neuclease.bin.cleave_server_main'
+              'neuclease_cleave_server = neuclease.bin.cleave_server_main:main',
+              'adjust_focused_points = neuclease.bin.adjust_focused_points:main'
           ]
        }
      )
