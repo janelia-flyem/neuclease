@@ -19,7 +19,7 @@ from numba import jit
 
 from libdvid import DVIDNodeService
 
-from ..util import Timer, uuids_match
+from ..util import Timer, uuids_match, round_box, extract_subvol
 
 # The labelops_pb2 file was generated with the following commands:
 # $ cd neuclease/dvid
@@ -29,6 +29,7 @@ from .labelops_pb2 import LabelIndex
 
 
 DEFAULT_DVID_SESSIONS = {}
+DEFAULT_DVID_NODE_SERVICES = {}
 DEFAULT_APPNAME = "neuclease"
 
 logger = logging.getLogger(__name__)
@@ -56,6 +57,20 @@ def default_dvid_session(appname=None):
 
     return s
 
+def default_node_service(server, uuid, appname=None):
+    if appname is None:
+        appname = DEFAULT_APPNAME
+
+    # One per thread/process
+    thread_id = threading.current_thread().ident
+    pid = os.getpid()
+
+    try:
+        ns = DEFAULT_DVID_NODE_SERVICES[(appname, thread_id, pid, server, uuid)]
+    except KeyError:
+        ns = DVIDNodeService(server, str(uuid), getpass.getuser(), appname)
+
+    return ns
 
 def sanitize_server(f):
     """
@@ -788,7 +803,7 @@ def generate_sample_coordinate(instance_info, label_id, supervoxels=False):
     coarse_block_coords = fetch_sparsevol(instance_info, label_id, supervoxels, scale=SCALE)
     first_block_coord = (2**SCALE) * np.array(coarse_block_coords[0]) // 64 * 64
     
-    ns = DVIDNodeService(server, uuid)
+    ns = default_node_service(server, uuid)
     first_block = ns.get_labelarray_blocks3D( instance, (64,64,64), first_block_coord, supervoxels=supervoxels )
     nonzero_coords = np.transpose((first_block == label_id).nonzero())
     if len(nonzero_coords) == 0:
@@ -797,6 +812,49 @@ def generate_sample_coordinate(instance_info, label_id, supervoxels=False):
                            "appears to be out-of-sync with the scale-0 segmentation.")
 
     return first_block_coord + nonzero_coords[0]
+
+
+@sanitize_server
+def fetch_labelarray_voxels(instance_info, box, scale=0, throttle=False, supervoxels=False):
+    """
+    Fetch a volume of voxels from the given instance.
+    
+    Args:
+        instance_info:
+            server, uuid, instance
+        
+        box:
+            The bounds of the volume to fetch in the coordinate system for the requested scale.
+            Given as a pair of coordinates (start, stop), e.g. [(0,0,0), (10,20,30)].
+            The box need not be block-aligned, but the request to DVID will be block aligned
+            to 64px boundaries, and the retrieved volume will be truncated as needed before
+            it is returned.
+        
+        scale:
+            Which downsampling scale to fetch from
+        
+        throttle:
+            If True, passed via the query string to DVID, in which case DVID might return a '503' error
+            if the server is too busy to service the request.
+            It is your responsibility to catch DVIDExceptions in that case.
+        
+        supervoxels:
+            If True, request supervoxel data from the given labelmap instance.
+    
+    Returns:
+        ndarray, with shape == (box[1] - box[0])
+    """
+    server, uuid, instance = instance_info
+    ns = default_node_service(server, uuid)
+
+    # Labelarray data can be fetched very efficiently if the request is block-aligned
+    # So, block-align the request no matter what.
+    aligned_box = round_box(box, 64, 'out')
+    aligned_shape = aligned_box[1] - aligned_box[0]
+    aligned_volume = ns.get_labelarray_blocks3D( instance, aligned_shape, aligned_box[0], throttle, scale, supervoxels )
+    
+    requested_box_within_aligned = box - aligned_box[0]
+    return extract_subvol(aligned_volume, requested_box_within_aligned )
 
 
 class KafkaReadError(RuntimeError):

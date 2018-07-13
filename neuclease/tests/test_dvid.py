@@ -9,7 +9,8 @@ import numpy as np
 import pandas as pd
 
 from neuclease.dvid import (sanitize_server, DvidInstanceInfo, fetch_supervoxels_for_body, fetch_supervoxel_sizes_for_body,
-                            fetch_label_for_coordinate, fetch_mappings, fetch_complete_mappings, fetch_mutation_id)
+                            fetch_label_for_coordinate, fetch_mappings, fetch_complete_mappings, fetch_mutation_id,
+                            generate_sample_coordinate, fetch_labelarray_voxels)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -100,6 +101,27 @@ def test_fetch_mutation_id(labelmap_setup):
     mut_id = fetch_mutation_id(instance_info, 1)
     assert isinstance(mut_id, int)
 
+
+def test_generate_sample_coordinate(labelmap_setup):
+    dvid_server, dvid_repo, _merge_table_path, _mapping_path, _supervoxel_vol = labelmap_setup
+    instance_info = DvidInstanceInfo(dvid_server, dvid_repo, 'segmentation')
+
+    coord_zyx = generate_sample_coordinate(instance_info, 1)
+    assert (coord_zyx == [0,0,0]).all()
+
+    coord_zyx = generate_sample_coordinate(instance_info, 2, supervoxels=True)
+    assert (coord_zyx == [0,0,3]).all()
+
+
+def test_fetch_labelarray_voxels(labelmap_setup):
+    dvid_server, dvid_repo, _merge_table_path, _mapping_path, supervoxel_vol = labelmap_setup
+    instance_info = DvidInstanceInfo(dvid_server, dvid_repo, 'segmentation')
+
+    voxels = fetch_labelarray_voxels(instance_info, [(0,0,0), supervoxel_vol.shape], supervoxels=True)
+    assert (voxels == supervoxel_vol).all()
+    
+    voxels = fetch_labelarray_voxels(instance_info, [(0,0,0), supervoxel_vol.shape], supervoxels=False)
+    assert (voxels == 1).all()
 
 if __name__ == "__main__":
     pytest.main(['-s', '--tb=native', '--pyargs', 'neuclease.tests.test_dvid'])

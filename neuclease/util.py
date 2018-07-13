@@ -4,6 +4,7 @@ import logging
 import warnings
 import contextlib
 from datetime import timedelta
+from itertools import starmap
 
 import numpy as np
 import pandas as pd
@@ -102,6 +103,56 @@ def read_csv_col(csv_path, col=0, dtype=np.uint64):
     if header_row is None:
         s.name = None
     return s
+
+
+def extract_subvol(array, box):
+    """
+    Extract a subarray according to the given box.
+    """
+    return array[box_to_slicing(*box)]
+
+
+def box_to_slicing(start, stop):
+    """
+    For the given bounding box (start, stop),
+    return the corresponding slicing tuple.
+
+    Example:
+    
+        >>> assert bb_to_slicing([1,2,3], [4,5,6]) == np.s_[1:4, 2:5, 3:6]
+    """
+    return tuple( starmap( slice, zip(start, stop) ) )
+
+
+def round_coord(coord, grid_spacing, how):
+    """
+    Round the given coordinate up or down to the nearest grid position.
+    """
+    assert how in ('down', 'up')
+    if how == 'down':
+        return (coord // grid_spacing) * grid_spacing
+    if how == 'up':
+        return ((coord + grid_spacing - 1) // grid_spacing) * grid_spacing
+
+
+def round_box(box, grid_spacing, how='out'):
+    """
+    Expand/shrink the given box out to align it to a grid.
+
+    box: (start, stop)
+    grid_spacing: int or shape
+    how: One of ['out', 'in', 'down', 'up'].
+         Determines which direction the box corners are moved.
+    """
+    directions = { 'out':  ('down', 'up'),
+                   'in':   ('up', 'down'),
+                   'down': ('down', 'down'),
+                   'up':   ('up', 'up') }
+
+    box = np.asarray(box)
+    assert how in directions.keys()
+    return np.array( [ round_coord(box[0], grid_spacing, directions[how][0]),
+                       round_coord(box[1], grid_spacing, directions[how][1]) ] )
 
 
 _graph_tool_available = None
