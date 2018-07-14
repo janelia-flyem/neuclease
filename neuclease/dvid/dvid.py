@@ -1312,13 +1312,14 @@ def render_split_tree(tree, root=None, uuid_len=4):
     """
     root = root or find_root(tree, next(iter(tree.nodes())))
 
-    display_fn = str
-    if uuid_len > 0:
-        def display_fn(n):
-            uuid = tree.node[n]['uuid']
-            if uuid != '<unknown>':
-                uuid = uuid[:uuid_len]
-            return f"{n} ({uuid})"
+    def display_fn(n):
+        uuid = tree.node[n]['uuid']
+        if uuid != '<unknown>':
+            uuid = uuid[:uuid_len]
+        return f"{n} ({uuid})"
+
+    if uuid_len == 0:
+        display_fn = str
 
     d = tree_to_dict(tree, root, display_fn)
 
