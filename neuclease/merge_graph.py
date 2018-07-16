@@ -33,13 +33,15 @@ class LabelmapMergeGraph:
     dynamically-queried supervoxel members.
     """
         
-    def __init__(self, table, primary_uuid=None, debug_export_dir=None):
+    def __init__(self, table, primary_uuid=None, debug_export_dir=None, no_kafka=False):
         self.rwlock = ReadWriteLock()
         self.primary_uuid = primary_uuid
         self.debug_export_dir = debug_export_dir
         if debug_export_dir:
             os.makedirs(debug_export_dir, exist_ok=True)
-            
+
+        self.no_kafka = no_kafka
+
         if isinstance(table, str):
             self.merge_table_df = load_merge_table(table, normalize=True)
         else:
@@ -172,7 +174,11 @@ class LabelmapMergeGraph:
 
 
     def fetch_and_apply_mapping(self, instance_info):
-        mapping = fetch_complete_mappings(instance_info, include_retired=True)
+        # For testing purposes, we have a special means of avoiding kafkas
+        kafka_msgs = None
+        if self.no_kafka:
+            kafka_msgs = []
+        mapping = fetch_complete_mappings(instance_info, include_retired=True, kafka_msgs=kafka_msgs)
         apply_mapping_to_mergetable(self.merge_table_df, mapping)
 
 

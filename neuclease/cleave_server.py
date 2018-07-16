@@ -52,6 +52,7 @@ def main(debug_mode=False):
     parser.add_argument('--suspend-before-launch', action='store_true',
                         help="After loading the merge graph, suspend the process before launching the server, and await a SIGCONT. "
                              "Allows you to ALMOST hot-swap a running cleave server. (You can load the new merge graph before killing the old server).")
+    parser.add_argument('--testing', action='store_true')
     args = parser.parse_args()
 
     # This check is to ensure that this initialization is only run once,
@@ -78,7 +79,7 @@ def main(debug_mode=False):
 
         print("Loading merge table...")
         with Timer(f"Loading merge table from: {args.merge_table}", logger):
-            MERGE_GRAPH = LabelmapMergeGraph(args.merge_table, primary_instance_info.uuid, args.debug_export_dir)
+            MERGE_GRAPH = LabelmapMergeGraph(args.merge_table, primary_instance_info.uuid, args.debug_export_dir, no_kafka=args.testing)
 
         # Apply splits first
         if all(primary_instance_info):

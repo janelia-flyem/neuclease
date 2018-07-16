@@ -49,6 +49,7 @@ def cleave_server_setup(labelmap_setup):
                                     "--primary-dvid-server", f"{dvid_server}:{dvid_port}",
                                     "--primary-uuid", dvid_repo,
                                     "--primary-labelmap-instance", "segmentation",
+                                    "--testing",
                                     f"--log-dir={TEST_DATA_DIR}"])
 
     # Give the server time to initialize

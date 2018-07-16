@@ -28,7 +28,7 @@ def test_fetch_and_apply_mapping(labelmap_setup):
     instance_info = DvidInstanceInfo(dvid_server, dvid_repo, 'segmentation')
     
     # Don't give mapping, ensure it's loaded from dvid.
-    merge_graph = LabelmapMergeGraph(merge_table_path)
+    merge_graph = LabelmapMergeGraph(merge_table_path, no_kafka=True)
     merge_graph.fetch_and_apply_mapping(instance_info)
     assert (merge_graph.merge_table_df['body'] == 1).all()
 
