@@ -809,6 +809,24 @@ def fetch_full_instance_info(instance_info):
     return fetch_generic_json(f'http://{server}/api/node/{uuid}/{instance}/info')
 
 
+def fetch_volume_box(instance_info):
+    """
+    Return the volume extents for the given instance as a box.
+    
+    Returns:
+        np.ndarray [(z0,y0,x0), (z1,y1,x1)]
+    
+    Notes:
+        - Returns *box*, shape=(box[1] - box[0])
+        - Returns ZYX order
+    """
+    info = fetch_full_instance_info(instance_info)
+    box_xyz = np.array((info["Extended"]["MinPoint"], info["Extended"]["MaxPoint"]))
+    box_xyz[1] += 1
+    
+    box_zyx = box_xyz[:,::-1]
+    return box_zyx
+
 @sanitize_server
 def generate_sample_coordinate(instance_info, label_id, supervoxels=False):
     """
