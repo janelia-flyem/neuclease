@@ -172,7 +172,7 @@ class LabelmapMergeGraph:
 
 
     def fetch_and_apply_mapping(self, instance_info):
-        mapping = fetch_complete_mappings(instance_info, 'kafka', include_retired=True)
+        mapping = fetch_complete_mappings(instance_info, include_retired=True)
         apply_mapping_to_mergetable(self.merge_table_df, mapping)
 
 

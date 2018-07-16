@@ -86,7 +86,7 @@ def test_fetch_complete_mappings(labelmap_setup):
     dvid_server, dvid_repo, _merge_table_path, _mapping_path, _supervoxel_vol = labelmap_setup
     instance_info = DvidInstanceInfo(dvid_server, dvid_repo, 'segmentation')
     
-    mapping = fetch_complete_mappings(instance_info)
+    mapping = fetch_complete_mappings(instance_info, kafka_msgs=[])
     assert isinstance(mapping, pd.Series)
     assert mapping.index.name == 'sv'
     assert mapping.name == 'body'

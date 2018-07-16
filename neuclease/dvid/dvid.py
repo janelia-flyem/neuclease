@@ -521,7 +521,7 @@ def fetch_mappings(instance_info, as_array=False):
 
 
 @sanitize_server
-def fetch_complete_mappings(instance_info, split_source='kafka', include_retired=False):
+def fetch_complete_mappings(instance_info, include_retired=False, kafka_msgs=None):
     """
     Fetch the complete mapping from DVID for all agglomerated bodies,
     including 'identity' mappings (for agglomerated bodies only)
@@ -540,17 +540,16 @@ def fetch_complete_mappings(instance_info, split_source='kafka', include_retired
         instance_info:
             server, uuid, instance
         
-        split_source:
-            Either 'dvid', 'kafka'.
-            Required for properly filtering out 'retired' supervoxel IDs.
-        
         include_retired:
             If True, include rows for 'retired' supervoxels, which all map to 0.
 
     Returns:
         pd.Series(index=sv, data=body)
     """
-    split_events = fetch_supervoxel_splits(instance_info, split_source)
+    # Read complete kafka log; we need both split and cleave info
+    if kafka_msgs is None:
+        kafka_msgs = read_kafka_messages(instance_info)
+    split_events = fetch_supervoxel_splits_from_kafka(instance_info, kafka_msgs=kafka_msgs)
     split_tables = list(map(lambda t: np.asarray(t, np.uint64), split_events.values()))
     if split_tables:
         split_table = np.concatenate(split_tables)
@@ -559,6 +558,16 @@ def fetch_complete_mappings(instance_info, split_source='kafka', include_retired
     else:
         retired_svs = set()
 
+    def extract_cleave_fragments():
+        for msg in kafka_msgs:
+            if msg["Action"] == "cleave":
+                yield msg["CleavedLabel"]
+
+    # Cleave fragment IDs (i.e. bodies that were created via a cleave)
+    # should not be included in the set of 'identity' rows.
+    # (These IDs are guaranteed to be disjoint from supervoxel IDs.)
+    cleave_fragments = set(extract_cleave_fragments())
+
     # Fetch base mapping
     base_mapping = fetch_mappings(instance_info, as_array=True)
     base_svs = base_mapping[:,0]
@@ -566,7 +575,7 @@ def fetch_complete_mappings(instance_info, split_source='kafka', include_retired
 
     # Augment with identity rows, which aren't included in the base.
     with Timer(f"Constructing missing identity-mappings", logger):
-        missing_idents = set(base_bodies) - set(base_svs) - retired_svs
+        missing_idents = set(base_bodies) - set(base_svs) - retired_svs - cleave_fragments
         missing_idents = np.fromiter(missing_idents, np.uint64)
         missing_idents_mapping = np.array((missing_idents, missing_idents)).transpose()
 
@@ -594,12 +603,16 @@ def fetch_complete_mappings(instance_info, split_source='kafka', include_retired
 
     # Construct pd.Series for fast querying
     s = pd.Series(index=full_mapping[:,0], data=full_mapping[:,1])
-    s.index.name = 'sv'
-    s.name = 'body'
     
     # Drop all rows with retired supervoxels.
-    # Someday, this will be unnecessary, but our current production server includes such rows.
     s.drop(retired_svs, inplace=True, errors='ignore')
+    
+    # Reload index to ensure most RAM-efficient implementation.
+    # (This seems to make a big difference in RAM usage!)
+    s.index = s.index.values
+
+    s.index.name = 'sv'
+    s.name = 'body'
 
     assert s.index.dtype == np.uint64
     assert s.dtype == np.uint64
@@ -1089,7 +1102,7 @@ def fetch_supervoxel_splits_from_dvid(instance_info):
     Returns:
         Dict of { uuid: event_list }, where event_list is a list of SplitEvent tuples.
         The UUIDs in the dict appear in the same order that DVID provides them in the response.
-        According to the docs, they appear in reverse-chronological order, starting with the
+        According to the docs, they appear in REVERSE-CHRONOLOGICAL order, starting with the
         requested UUID and moving toward the repo root UUID.
 
     WARNING:
@@ -1139,7 +1152,7 @@ def fetch_supervoxel_splits_from_dvid(instance_info):
     return events
 
 @sanitize_server
-def fetch_supervoxel_splits_from_kafka(instance_info, actions=['split', 'split-supervoxel']):
+def fetch_supervoxel_splits_from_kafka(instance_info, actions=['split', 'split-supervoxel'], kafka_msgs=None):
     """
     Read the kafka log for the given instance and return a log of
     all supervoxel split events, partitioned by UUID.
@@ -1154,11 +1167,33 @@ def fetch_supervoxel_splits_from_kafka(instance_info, actions=['split', 'split-s
     
     As a debugging feature, you can opt to select splits of only one
     type by specifying which actions to filter with.
+    
+    Args:
+        instance_info:
+            server, uuid, instance
+        
+        actions:
+            Supervoxels can become split in two ways: body ("arbitrary") splits, and supervoxel splits.
+            Normally you don't care how it was split, so you'll want the complete log,
+            but as a debuggin feature you can optionally select only one type or the other via this parameter.
+        
+        kafka_msgs:
+            The first step of this function is to fetch the kafka log, but if you've already downloaded it,
+            you can provide it here.  Should be a list of parsed JSON structures.
+
+    Returns:
+        Dict of { uuid: event_list }, where event_list is a list of SplitEvent tuples.
+        The UUIDs in the dict appear in CHRONOLOGICAL order (from the kafka log),
+        which is the opposite ordering from fetch_supervoxel_splits_from_dvid().
+
     """
     assert not (set(actions) - set(['split', 'split-supervoxel'])), \
         f"Invalid actions: {actions}"
     
-    msgs = read_kafka_messages(instance_info, action_filter=actions, dag_filter='leaf-and-parents')
+    if kafka_msgs is None:
+        msgs = read_kafka_messages(instance_info, action_filter=actions, dag_filter='leaf-and-parents')
+    else:
+        msgs = list(filter(lambda msg: msg["Action"] in actions, kafka_msgs))
     
     # Supervoxels can be split via either /split or /split-supervoxel.
     # We need to parse them both.
