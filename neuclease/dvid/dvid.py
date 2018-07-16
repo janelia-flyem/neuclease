@@ -142,26 +142,30 @@ def create_instance(instance_info, typename, versioned=True, compression=None, t
     """
     Create a data instance of the given type.
     
-    typename:
-        Valid instance names are listed in INSTANCE_TYPENAMES
-    
-    versioned:
-        Whether or not the instance should be versioned.
+    Note:
+        Some datatypes, such as labelmap or tarsupervoxels, have their own creation functions below,
+        which are more convenient than calling this function directly.
 
-    compression:
-        Which compression DVID should use when storing the data in the instance.
-        Different instance types support different compression options.
-        Typical choices are: ['none', 'snappy', 'lz4', 'gzip'].
+    Args:
+        typename:
+            Valid instance names are listed in INSTANCE_TYPENAMES
         
-        Note: Here, the string 'none' means "use no compression",
-              whereas a Python None value means "Let DVID choose a default compression type".
-
-    tags:
-        Optional 'tags' to initialize the instance with, e.g. "type=meshes".
+        versioned:
+            Whether or not the instance should be versioned.
     
-    Returns:
-        True if the instance was newly created, False if it already existed.
-
+        compression:
+            Which compression DVID should use when storing the data in the instance.
+            Different instance types support different compression options.
+            Typical choices are: ['none', 'snappy', 'lz4', 'gzip'].
+            
+            Note: Here, the string 'none' means "use no compression",
+                  whereas a Python None value means "Let DVID choose a default compression type".
+    
+        tags:
+            Optional 'tags' to initialize the instance with, e.g. "type=meshes".
+            
+        type_specific_settings:
+            Additional datatype-specific settings to send in the JSON body.
     """
     server, uuid, instance = instance_info
     assert typename in INSTANCE_TYPENAMES, f"Unknown typename: {typename}"
@@ -196,7 +200,9 @@ def create_voxel_instance(instance_info, typename, versioned=True, compression=N
                           block_size=64, voxel_size=8.0, voxel_units='nanometers', background=None,
                           type_specific_settings={}):
     """
-    Create an instance of a voxel datatype.
+    Generic function ot create an instance of one of the voxel datatypes, such as uint8blk or labelmap.
+    
+    Note: For labelmap instances in particular, it's more convenient to call create_labelmap_instance().
     """
     assert typename in ("uint8blk", "uint16blk", "uint32blk", "uint64blk", "float32blk", "labelblk", "labelarray", "labelmap")
 
