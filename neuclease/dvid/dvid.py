@@ -715,6 +715,57 @@ def parse_rle_response(response_bytes):
     return dense_coords
 
 
+@sanitize_server
+def fetch_roi(instance_info, format='ranges'): # @ReservedAssignment
+    """
+    Fetch an ROI from dvid.
+    Note: This function returns coordinates (or masks, etc.) at SCALE 5.
+    
+    Args:
+        format:
+            Determines the format of the return value, as described below.
+            Either 'ranges', 'coords' or 'mask'.
+
+        Returns:
+            If 'ranges':
+                np.ndarray, [[Z,Y,X0,X1], [Z,Y,X0,X1], ...]
+                Return the RLE block ranges as received from DVID.
+
+            If 'coords':
+                np.ndarray, [[Z,Y,X], [Z,Y,X], ...]
+                Expand the ranges into a list of ROI-block coordinates.
+
+            If 'mask':
+                (mask, mask_box)
+                Return a binary mask of the ROI, where each voxel represents one DVID block.
+                The mask will be cropped to the bounding box of the ROI,
+                and the bounding box is also returned.
+    """
+    assert format in ('coords', 'ranges', 'mask')
+    server, uuid, instance = instance_info
+    rle_ranges = fetch_generic_json(f'http://{server}/api/node/{uuid}/{instance}/roi')
+    rle_ranges = np.asarray(rle_ranges, np.int32, order='C')
+    assert rle_ranges.shape[1] == 4
+    
+    if format == 'ranges':
+        return rle_ranges
+
+    coords = runlength_decode_from_ranges(rle_ranges)
+    if format == 'coords':
+        return coords
+
+    if format == 'mask':
+        mask_box = np.array([coords.min(axis=0), 1+coords.max(axis=0)])
+        mask_shape = mask_box[1] - mask_box[0]
+
+        coords -= mask_box[0]
+        mask = np.zeros(mask_shape, bool)
+        mask[tuple(coords.transpose())] = True
+        return mask, mask_box
+
+    assert False, "Shouldn't get here."
+
+
 @jit("i4[:,:](i4[:,::1],i4[::1])", nopython=True) # See note about signature, below.
 def runlength_decode_from_lengths(rle_start_coords_zyx, rle_lengths):
     """
@@ -750,18 +801,56 @@ def runlength_decode_from_lengths(rle_start_coords_zyx, rle_lengths):
         
             TypeError: No matching definition for argument type(s) readonly array(int32, 2d, A), readonly array(int32, 1d, C)
     """
-    # Numba doesn't allow us to use empty lists at all,
-    # so we have to initialize this list with a dummy row,
-    # which we'll omit in the return value
-    coords = [0,0,0]
+    coords = []
     for i in range(len(rle_start_coords_zyx)):
         (z, y, x0) = rle_start_coords_zyx[i]
         length = rle_lengths[i]
         for x in range(x0, x0+length):
             coords.extend([z,y,x])
 
-    coords = np.array(coords, np.int32).reshape((-1,3))
-    return coords[1:, :] # omit dummy row (see above)
+    return np.array(coords, np.int32).reshape((-1,3))
+
+
+@jit("i4[:,:](i4[:,::1])", nopython=True) # See note about signature, below.
+def runlength_decode_from_ranges(rle_array_zyx):
+    """
+    Used for parsing the result of DVID's /roi endpoint.
+    
+    Given an array of run-length encodings in the form:
+        
+        [[Z,Y,X1,X2],
+         [Z,Y,X1,X2],
+         [Z,Y,X1,X2],
+         ...
+        ]
+        
+    Return an array of coordinates of the form:
+
+        [[Z,Y,X],
+         [Z,Y,X],
+         [Z,Y,X],
+         ...
+        ]
+
+    Note: The interval [X1,X2] is INCLUSIVE, following DVID conventions, not Python conventions.
+
+    Note about Signature:
+    
+        Due to an apparent numba bug, it is dangerous to pass non-contiguous arrays to this function.
+        (It returns incorrect results.)
+        
+        Therefore, the signature is explicitly written above to require contiguous arrays (e.g. i4[:,::1]),
+        If you attempt to pass a non-contiguous array, you'll see an error like this:
+        
+            TypeError: No matching definition for argument type(s) readonly array(int32, 2d, A)
+    """
+    coords = []
+    for i in range(len(rle_array_zyx)):
+        (z, y, x1, x2) = rle_array_zyx[i]
+        for x in range(x1,x2+1):
+            coords.extend([z,y,x])
+
+    return np.array(coords, np.int32).reshape((-1,3))
 
 
 def compute_changed_bodies(instance_info_a, instance_info_b):
