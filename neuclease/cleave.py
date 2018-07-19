@@ -98,7 +98,7 @@ def cleave(edges, edge_weights, seeds_dict, node_ids, node_sizes=None, method='s
     
     if len(edges) == 0:
         # No edges: Return empty results (just seeds)
-        return CleaveResults(seed_labels, set(seeds_dict.keys()), True)
+        return CleaveResults(seed_labels, set(seeds_dict.keys()), not seed_labels.all())
 
     # Clean the edges (normalized form, no duplicates, no loops)
     edges.sort(axis=1)

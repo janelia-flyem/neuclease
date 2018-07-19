@@ -167,9 +167,9 @@ def test_stability(cleave_method):
 def test_empty_cleave(cleave_method):
     # Simple graph (a line of 10 adjacent nodes)
     node_ids = 10*np.arange(10, dtype=np.uint64)
-    edges = np.zeros((0,2), dtype=np.uint64)
     
-    # Edges are uniform, except the middle edge, which is more costly
+    # No edges
+    edges = np.zeros((0,2), dtype=np.uint64)
     edge_weights = np.zeros((0,2), dtype=np.float32)
 
     # Seeds at both ends
@@ -182,6 +182,28 @@ def test_empty_cleave(cleave_method):
     assert disconnected_components == set(seeds_dict.keys())
     assert contains_unlabeled_components
     assert (output_labels == [1,0,0,0,0,0,0,0,0,2]).all()
+
+
+def test_empty_cleave_complete_seeds(cleave_method):
+    """
+    Test proper outputs of "empty cleave' (i.e. no edges in the graph)
+    when all nodes have been manually seeded.
+    """
+    # Trivial graph: 2 nodes, no edges
+    node_ids = np.asarray([10,20], np.uint64)
+    edges = np.zeros((0,2), dtype=np.uint64)
+    edge_weights = np.zeros((0,2), dtype=np.float32)
+
+    # Both nodes seeded
+    seeds_dict = { 1: [10], 2: [20] }
+    
+    cleave_results = cleave(edges, edge_weights, seeds_dict, node_ids, method=cleave_method)
+    assert isinstance(cleave_results, CleaveResults)
+    output_labels, disconnected_components, contains_unlabeled_components = cleave_results
+    
+    assert disconnected_components == set(seeds_dict.keys())
+    assert not contains_unlabeled_components
+    assert (output_labels == [1,2]).all()
 
 
 def test_echo_seeds():
