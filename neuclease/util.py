@@ -51,6 +51,27 @@ def uuids_match(uuid1, uuid2):
     return (uuid1[:n] == uuid2[:n])
 
 
+def chunkify_table(table, approx_chunk_len):
+    """
+    Generator.
+    Break the given array into chunks of approximately the given size.
+    
+    FIXME: This leaves the last chunk with all 'leftovers' if the chunk
+           size doesn't divide cleanly.  Would be better to more evenly
+           distribute them.
+    """
+    total_len = len(table)
+    num_chunks = max(1, total_len // approx_chunk_len)
+    chunk_len = total_len // num_chunks
+
+    partitions = list(range(0, chunk_len*num_chunks, chunk_len))
+    if partitions[-1] < total_len:
+        partitions.append( total_len )
+
+    for (start, stop) in zip(partitions[:-1], partitions[1:]):
+        yield table[start:stop]
+
+
 def read_csv_header(csv_path):
     """
     Open the CSV file at the given path and return it's header column names as a list.
