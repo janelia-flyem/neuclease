@@ -1102,6 +1102,38 @@ def read_kafka_messages(instance_info, action_filter=None, dag_filter='leaf-and-
 
 
 @sanitize_server
+def expand_uuid(server, uuid, repo_uuid=None):
+    """
+    Given an abbreviated uuid, find the matching uuid
+    on the server and return the complete uuid.
+    
+    Args:
+        server:
+            dvid server
+        uuid:
+            Abbreviated uuid, e.g. `662edc`
+        repo_uuid:
+            The repo in which to search for the complete uuid.
+            If not provided, the abbreviated uuid itself is used.
+        
+    Returns:
+        Complete uuid, e.g. `662edcb44e69481ea529d89904b5ef9b`
+    """
+    repo_uuid = repo_uuid or uuid
+    repo_info = fetch_repo_info(server, repo_uuid)
+    full_uuids = repo_info["DAG"]["Nodes"].keys()
+    
+    matching_uuids = list(filter(lambda full_uuid: uuids_match(uuid, full_uuid), full_uuids))
+    if len(matching_uuids) == 0:
+        raise RuntimeError(f"No matching uuid for '{uuid}'")
+    
+    if len(matching_uuids) > 1:
+        raise RuntimeError(f"Multiple ({len(matching_uuids)}) uuids match '{uuid}': {matching_uuids}")
+
+    return matching_uuids[0]
+
+
+@sanitize_server
 def fetch_and_parse_dag(server, repo_uuid):
     """
     Read the /repo/info for the given repo UUID
