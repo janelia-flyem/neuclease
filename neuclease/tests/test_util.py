@@ -8,7 +8,14 @@ from neuclease.util import uuids_match, read_csv_header, read_csv_col, connected
 def test_uuids_match():
     assert uuids_match('abcd', 'abcdef') == True
     assert uuids_match('abc9', 'abcdef') == False
+    assert uuids_match('abcdef', 'abcd') == True
+    assert uuids_match('abcdef', 'abc9') == False
+    
+    with pytest.raises(AssertionError):
+        uuids_match('', 'abc')        
 
+    with pytest.raises(AssertionError):
+        uuids_match('abc', '')        
 
 def test_read_csv_header():
     tmpfile = tempfile.NamedTemporaryFile(mode='w', suffix='.csv', prefix='test_read_csv_header')
