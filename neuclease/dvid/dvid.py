@@ -1246,6 +1246,8 @@ def fetch_supervoxel_splits_from_dvid(instance_info):
         The UUIDs in the dict appear in the same order that DVID provides them in the response.
         According to the docs, they appear in REVERSE-CHRONOLOGICAL order, starting with the
         requested UUID and moving toward the repo root UUID.
+        
+        FIXME: It would be simpler to return a pd.DataFrame, with a column for UUID.
 
     WARNING:
         The /supervoxel-splits endpoint was implemented relatively recently.  It is incapable
@@ -1368,7 +1370,7 @@ def split_events_to_graph(events):
         events: dict as returned by fetch_supervoxel_splits()
     
     Returns:
-        nx.DiGraph, which will be a tree
+        nx.DiGraph, which will consist of trees (i.e. a forest)
     """
     g = nx.DiGraph()
 
@@ -1604,7 +1606,7 @@ def fetch_supervoxel_fragments(instance_info, split_source='kafka'):
         (leaf_fragment_svs, retired_svs)
         where leaf_fragment_svs is the list of all supervoxel fragments that still exist in the instance,
         and retired_svs is the list of all supervoxels that have ever been split in the instance.
-        
+        Note that these do not constitute a mapping.
     """
     split_events = fetch_supervoxel_splits(instance_info, split_source)
     if len(split_events) == 0:
@@ -1622,6 +1624,49 @@ def fetch_supervoxel_fragments(instance_info, split_source='kafka'):
     leaf_fragment_svs = np.fromiter(leaf_fragment_svs, np.uint64)
     
     return (leaf_fragment_svs, retired_svs)
+
+
+def split_events_to_mapping(split_events, leaves_only=False):
+    """
+    Convert the given split_events,
+    into a mapping, from all split fragment supervoxel IDs to their ROOT supervoxel ID,
+    i.e. the supervoxel from which they came originally.
+
+    Args:
+        split_events:
+            As produced by fetch_supervoxel_splits()
+
+        leaves_only:
+            If True, do not include intermediate supervoxels in the mapping;
+            only include fragment IDs that have not been further split,
+            i.e. they still exist in the volume.
+    
+    Returns:
+        pd.Series, where index is fragment ID, data is root ID.
+    """
+    if len(split_events) == 0:
+        return np.zeros((0,2), np.uint64)
+    
+    split_tables = list(map(lambda t: np.asarray(t, np.uint64), split_events.values()))
+    split_table = np.concatenate(split_tables)
+
+    old_svs = split_table[:, SplitEvent._fields.index('old')]
+    remain_fragment_svs = split_table[:, SplitEvent._fields.index('remain')]
+    split_fragment_svs = split_table[:, SplitEvent._fields.index('split')]
+
+    if leaves_only:
+        leaf_fragment_svs = (set(remain_fragment_svs) | set(split_fragment_svs)) - set(old_svs)
+        fragment_svs = np.fromiter(leaf_fragment_svs, np.uint64)
+    else:
+        fragment_svs = np.concatenate((remain_fragment_svs, split_fragment_svs))
+        
+    g = split_events_to_graph(split_events)
+    root_svs = np.fromiter(map(lambda sv: find_root(g, sv), fragment_svs), np.uint64, len(fragment_svs))
+
+    mapping = pd.Series(index=fragment_svs, data=root_svs)
+    mapping.index.name = 'fragment_sv'
+    mapping.name = 'root_sv'
+    return mapping
 
 
 @sanitize_server
