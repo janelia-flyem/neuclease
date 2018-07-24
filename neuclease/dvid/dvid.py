@@ -1075,11 +1075,8 @@ def read_kafka_messages(instance_info, action_filter=None, dag_filter='leaf-and-
         # Filter based on set of leaf-and-parents
         leaf_and_parents = {full_uuid} | nx.ancestors(dag, full_uuid)
         records_and_values = filter(lambda r_v: r_v[1]["UUID"] in leaf_and_parents, records_and_values)
-        
-    elif dag_filter is None:
-        pass
     else:
-        assert False
+        assert dag_filter is None, f"Invalid choice for dag_filter: {dag_filter}"
 
     if action_filter is not None:
         if isinstance(action_filter, str):
