@@ -206,10 +206,10 @@ def create_voxel_instance(instance_info, typename, versioned=True, compression=N
     """
     assert typename in ("uint8blk", "uint16blk", "uint32blk", "uint64blk", "float32blk", "labelblk", "labelarray", "labelmap")
 
-    if not isinstance(Iterable, block_size):
+    if not isinstance(block_size, Iterable):
         block_size = 3*(block_size,)
 
-    if not isinstance(Iterable, voxel_size):
+    if not isinstance(voxel_size, Iterable):
         voxel_size = 3*(voxel_size,)
 
     block_size_str = ','.join(map(str, block_size))
@@ -243,14 +243,10 @@ def create_labelmap_instance(instance_info, tags=[], block_size=64, voxel_size=8
         
         Other args passed directly to create_voxel_instance().
     """
-    type_specific_settings = {
-        "IndexedLabels": str(enable_index).lower(),
-        "CountLabels": str(enable_index).lower(),
-        "MaxDownresLevel": str(max_scale)
-    }
-    create_voxel_instance( instance_info, tags=tags, block_size=block_size, voxel_size=voxel_size,
-                           voxel_units=voxel_units, type_specific_settings=type_specific_settings )
-    
+    type_specific_settings = { "IndexedLabels": str(enable_index).lower(), "CountLabels": str(enable_index).lower(), "MaxDownresLevel": str(max_scale) }
+    create_voxel_instance( instance_info, 'labelmap', tags=tags, block_size=block_size, voxel_size=voxel_size,
+                       voxel_units=voxel_units, type_specific_settings=type_specific_settings )
+
 
 def create_tarsupervoxel_instance(instance_info, sync_instance, extension, tags=[]):
     """
@@ -737,7 +733,7 @@ def fetch_roi(instance_info, format='ranges'): # @ReservedAssignment
 
             If 'mask':
                 (mask, mask_box)
-                Return a binary mask of the ROI, where each voxel represents one DVID block.
+                Return a binary mask of the ROI, where each voxel represents one ROI block (scale 5).
                 The mask will be cropped to the bounding box of the ROI,
                 and the bounding box is also returned.
     """
