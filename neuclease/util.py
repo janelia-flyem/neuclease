@@ -1,5 +1,6 @@
 import csv
 import time
+import json
 import logging
 import warnings
 import contextlib
@@ -171,6 +172,27 @@ def round_box(box, grid_spacing, how='out'):
     assert how in directions.keys()
     return np.array( [ round_coord(box[0], grid_spacing, directions[how][0]),
                        round_coord(box[1], grid_spacing, directions[how][1]) ] )
+
+
+
+class NumpyConvertingEncoder(json.JSONEncoder):
+    """
+    Encoder that converts numpy arrays and scalars
+    into their pure-python counterparts.
+    
+    (No attempt is made to preserve bit-width information.)
+    
+    Usage:
+    
+        >>> d = {"a": np.arange(3, dtype=np.uint32)}
+        >>> json.dumps(d, cls=NumpyConvertingEncoder)
+        '{"a": [0, 1, 2]}'
+    """
+    def default(self, o):
+        if isinstance(o, (np.ndarray, np.number)):
+            return o.tolist()
+        return super().default(o)
+
 
 
 _graph_tool_available = None
