@@ -34,6 +34,9 @@ def post_merges(instance_info, sv_merges):
     # Extract bodies in connected groups
     flagged_merge_sets = []
     for body_set in nx.connected_components(g):
+        if len(body_set) == 1:
+            continue # sv_merges might contain self-loops, which are no-ops.
+        
         body_list = list(body_set)
         sizes = fetch_sizes(instance_info, body_list)
         merge_df = pd.DataFrame(sizes, columns=['size'], index=body_list)
