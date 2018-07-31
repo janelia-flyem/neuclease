@@ -3,12 +3,12 @@ import pandas as pd
 import networkx as nx
 from neuclease.dvid import fetch_mapping, fetch_sizes, post_merge
 
-def post_merges(instance_info, sv_merges):
+def batch_merge(instance_info, sv_merges):
     """
     Given a list of SV pairs to merge, map the SVs to their
-    corresponding bodies, and then issue the minimum number
-    merge commands to DVID, grouping "chained" merges together
-    as needed.
+    corresponding bodies, and then merge their bodies via
+    the minimum number merge commands to DVID, grouping 
+    "chained" merges together into a single merge command.
     
     Args:
         instance_info:
@@ -17,10 +17,14 @@ def post_merges(instance_info, sv_merges):
             list/array of supervoxel pairs to merge
 
     Returns:
-        If any merged sets contained multple named bodies whose names did not match,
-        the merge is posted anyway, but a list of such merge sets is returned.
+        It's suspicious when two bodies with different names are merged.
+        When we detect a merge set with multiple unique names, the merge
+        is posted anyway, but the list of those suspicious merge sets is
+        returned.
     """
     sv_merges = np.asarray(sv_merges)
+    assert sv_merges.ndim == 2 and sv_merges.shape[1] == 2
+
     bodies_a = fetch_mapping(instance_info, sv_merges[:,0])
     bodies_b = fetch_mapping(instance_info, sv_merges[:,1])
 
@@ -29,7 +33,7 @@ def post_merges(instance_info, sv_merges):
     
     # Build graph of bodies to merge
     g = nx.Graph()
-    g.add_edges_from(zip(bodies_a, bodies_b))
+    g.add_edges_from( zip(bodies_a, bodies_b) )
     
     # Extract bodies in connected groups
     flagged_merge_sets = []
@@ -38,25 +42,23 @@ def post_merges(instance_info, sv_merges):
             continue # sv_merges might contain self-loops, which are no-ops.
         
         body_list = list(body_set)
-        sizes = fetch_sizes(instance_info, body_list)
-        merge_df = pd.DataFrame(sizes, columns=['size'], index=body_list)
-        
-        # FIXME: How do I fetch body names?
-        merge_df['name'] = ''
-        
-        rows_with_name = merge_df.query(" name != '' ")    
-        if len(rows_with_name) == 0:
-            # No names; choose biggest body
-            main_body = merge_df['size'].idxmax()
-        else:
-            # Choose biggest NAMED body
-            main_body = rows_with_name['size'].idxmax()
+        body_df = pd.DataFrame(index=body_list)
+        body_df['size'] = fetch_sizes(instance_info, body_list)
+        body_df['name'] = '' # FIXME: How do I fetch body names?
 
-            # Are there multiple names in this set?
-            if rows_with_name['name'].nunique() > 1:
+        # If no named bodies, choose the biggest overall.
+        # Otherwise, choose the biggest body that has a name.
+        named_body_df = body_df.query(" name != '' ")
+        if len(named_body_df) == 0:
+            main_body = body_df['size'].idxmax()
+        else:
+            main_body = named_body_df['size'].idxmax()
+
+            # Are there multiple names in this set? Flag it.
+            if named_body_df['name'].nunique() > 1:
                 flagged_merge_sets.append(body_set)
     
-        # Send to DVID
+        # Send merge group to DVID
         other_bodies = body_set - {main_body}
         post_merge(instance_info, main_body, list(other_bodies))
         
@@ -76,4 +78,4 @@ if __name__ == "__main__":
                  [8,9]]
 
     instance_info = ('emdata3:8900', '7e52', 'segmentation')
-    flagged_sets = post_merges(instance_info, sv_merges)
+    flagged_sets = batch_merge(instance_info, sv_merges)
