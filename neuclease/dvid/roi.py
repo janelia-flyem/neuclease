@@ -1,7 +1,10 @@
+import json
 import numpy as np
 
+from ..util import NumpyConvertingEncoder
 from . import dvid_api_wrapper, fetch_generic_json
 from .rle import runlength_decode_from_ranges
+
 
 @dvid_api_wrapper
 def fetch_roi(server, uuid, instance, format='ranges', *, session=None): # @ReservedAssignment
@@ -75,4 +78,31 @@ def fetch_roi(server, uuid, instance, format='ranges', *, session=None): # @Rese
 
     assert False, "Shouldn't get here."
 
+
+@dvid_api_wrapper
+def post_roi(server, uuid, instance, roi_ranges, *, session):
+    """
+    Post a set of RLE ranges to DVID as an ROI.
+    The ranges must be provided in SCALE-5 coordinates.
+    
+    For generating RLE ranges from a list of coordiantes, see:
+        neuclease.dvid.rle.runlength_encode_to_ranges()
+
+    Args:
+        server:
+            dvid server, e.g. 'emdata3:8900'
+        
+        uuid:
+            dvid uuid, e.g. 'abc9'
+        
+        instance:
+            dvid ROI instance name, e.g. 'antenna-lobe'
+            
+        ranges:
+            list or ndarray of ranges, specified in SCALE-5 coordinates:
+            [[Z,Y,X0,X1], [Z,Y,X0,X1], ...]
+    """
+    encoded_ranges = json.dumps(roi_ranges, cls=NumpyConvertingEncoder)
+    r = session.post(f'http://{server}/api/node/{uuid}/{instance}/roi', data=encoded_ranges)
+    r.raise_for_status()
 

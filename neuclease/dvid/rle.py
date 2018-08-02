@@ -74,6 +74,90 @@ def parse_rle_response(response_bytes):
     return dense_coords
 
 
+def runlength_encode_to_ranges(coord_list_zyx, assume_sorted=False):
+    """
+    Given an array of coordinates in the form:
+        
+        [[Z,Y,X],
+         [Z,Y,X],
+         [Z,Y,X],
+         ...
+        ]
+        
+    Return an array of run-length encodings of the form:
+    
+        [[Z,Y,X1,X2],
+         [Z,Y,X1,X2],
+         [Z,Y,X1,X2],
+         ...
+        ]
+    
+    Note: The interval [X1,X2] is INCLUSIVE, following DVID conventions, not Python conventions.
+    
+    Args:
+        coord_list_zyx:
+            Array of shape (N,3)
+        
+        assume_sorted:
+            If True, the provided coordinates are assumed to be pre-sorted in Z-Y-X order.
+            Otherwise, this function sorts them before the RLEs are computed.
+    
+    Timing notes:
+        The FIB-25 'seven_column_roi' consists of 927971 block indices.
+        On that ROI, this function takes 1.65 seconds, but with numba installed,
+        it takes 35 ms (after ~400 ms warmup).
+        So, JIT speedup is ~45x.
+    """
+    if len(coord_list_zyx) == 0:
+        return np.ndarray( (0,4), np.int64 )
+
+    coord_list_zyx = np.asarray(coord_list_zyx)
+    assert coord_list_zyx.ndim == 2
+    assert coord_list_zyx.shape[1] == 3
+    
+    if not assume_sorted:
+        sorting_ind = np.lexsort(coord_list_zyx.transpose()[::-1])
+        coord_list_zyx = coord_list_zyx[sorting_ind]
+
+    return _runlength_encode_to_ranges(coord_list_zyx)
+
+
+@jit(nopython=True)
+def _runlength_encode_to_ranges(coord_list_zyx):
+    """
+    Helper function for runlength_encode(), above.
+    
+    coord_list_zyx:
+        Array of shape (N,3), of form [[Z,Y,X], [Z,Y,X], ...],
+        pre-sorted in Z-Y-X order.  Duplicates permitted.
+    """
+    # Numba doesn't allow us to use empty lists at all,
+    # so we have to initialize this list with a dummy row,
+    # which we'll omit in the return value
+    runs = [0,0,0,0]
+    
+    # Start the first run
+    (prev_z, prev_y, prev_x) = current_run_start = coord_list_zyx[0]
+    
+    for i in range(1, len(coord_list_zyx)):
+        (z,y,x) = coord = coord_list_zyx[i]
+
+        # If necessary, end the current run and start a new one
+        # (Also, support duplicate coords without breaking the current run.)
+        if (z != prev_z) or (y != prev_y) or (x not in (prev_x, 1+prev_x)):
+            runs += list(current_run_start) + [prev_x]
+            current_run_start = coord
+
+        (prev_z, prev_y, prev_x) = (z,y,x)
+
+    # End the last run
+    runs += list(current_run_start) + [prev_x]
+
+    # Return as 2D array
+    runs = np.array(runs).reshape((-1,4))
+    return runs[1:, :] # omit dummy row (see above)
+
+
 @jit("i4[:,:](i4[:,::1],i4[::1])", nopython=True) # See note about signature, below.
 def runlength_decode_from_lengths(rle_start_coords_zyx, rle_lengths):
     """
