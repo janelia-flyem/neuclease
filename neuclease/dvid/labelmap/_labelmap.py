@@ -4,9 +4,11 @@ from io import BytesIO
 import numpy as np
 import pandas as pd
 
+from libdvid import DVIDNodeService
+
 from ...util import Timer, round_box, extract_subvol
 
-from .. import dvid_api_wrapper, default_dvid_session, default_node_service, fetch_generic_json
+from .. import dvid_api_wrapper, default_dvid_session, fetch_generic_json
 from ..repo import create_voxel_instance
 from ..node import fetch_full_instance_info
 from ..kafka import read_kafka_messages
@@ -387,14 +389,13 @@ def generate_sample_coordinate(server, uuid, instance, label_id, supervoxels=Fal
     Return an arbitrary coordinate that lies within the given body.
     Usually faster than fetching all the RLEs.
     """
-   
     # FIXME: I'm using sparsevol instead of sparsevol-coarse due to an apparent bug in DVID at the moment
     SCALE = 2
     coarse_block_coords = fetch_sparsevol(server, uuid, instance, label_id, supervoxels, scale=SCALE)
     first_block_coord = (2**SCALE) * np.array(coarse_block_coords[0]) // 64 * 64
+    first_block_box = (first_block_coord, first_block_coord + 64)
     
-    ns = default_node_service(server, uuid)
-    first_block = ns.get_labelarray_blocks3D( instance, (64,64,64), first_block_coord, supervoxels=supervoxels )
+    first_block = fetch_labelarray_voxels(server, uuid, instance, first_block_box, supervoxels=supervoxels)
     nonzero_coords = np.transpose((first_block == label_id).nonzero())
     if len(nonzero_coords) == 0:
         label_type = {False: 'body', True: 'supervoxel'}[supervoxels]
@@ -440,13 +441,32 @@ def fetch_labelarray_voxels(server, uuid, instance, box, scale=0, throttle=False
     Returns:
         ndarray, with shape == (box[1] - box[0])
     """
-    ns = default_node_service(server, uuid)
+    session = default_dvid_session()
 
     # Labelarray data can be fetched very efficiently if the request is block-aligned
     # So, block-align the request no matter what.
     aligned_box = round_box(box, 64, 'out')
     aligned_shape = aligned_box[1] - aligned_box[0]
-    aligned_volume = ns.get_labelarray_blocks3D( instance, aligned_shape, aligned_box[0], throttle, scale, supervoxels )
+
+    shape_str = '_'.join(map(str, aligned_shape[::-1]))
+    offset_str = '_'.join(map(str, aligned_box[0, ::-1]))
+    
+    params = {}
+    params['compression'] = 'blocks'
+
+    # We don't bother adding these to the query string if we
+    # don't have to, just to avoid cluttering the http logs.
+    if scale:
+        params['scale'] = scale
+    if throttle:
+        params['throttle'] = str(bool(throttle)).lower()
+    if supervoxels:
+        params['supervoxels'] = str(bool(supervoxels)).lower()
+
+    r = session.get(f'http://{server}/api/node/{uuid}/{instance}/blocks/{shape_str}/{offset_str}', params=params)
+    r.raise_for_status()
+    
+    aligned_volume = DVIDNodeService.inflate_labelarray_blocks3D_from_raw(r.content, aligned_shape, aligned_box[0])
     
     requested_box_within_aligned = box - aligned_box[0]
     return extract_subvol(aligned_volume, requested_box_within_aligned )
