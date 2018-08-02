@@ -1,15 +1,15 @@
-from . import sanitize_server, default_dvid_session, fetch_generic_json
+from . import dvid_api_wrapper, default_dvid_session, fetch_generic_json
 
-@sanitize_server
-def fetch_full_instance_info(instance_info):
+@dvid_api_wrapper
+def fetch_full_instance_info(server, uuid, instance):
+    #FIXME: Rename this function to 'fetch_info' or maybe 'fetch_instance_info'
     """
     Returns the full JSON instance info from DVID
     """
-    server, uuid, instance = instance_info
     return fetch_generic_json(f'http://{server}/api/node/{uuid}/{instance}/info')
 
 
-@sanitize_server
+@dvid_api_wrapper
 def create_branch(server, uuid, branch_name, note=None, custom_uuid=None):
     """
     Create a branch from the given UUID with the given new branch name.

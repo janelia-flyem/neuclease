@@ -1,6 +1,6 @@
-from . import sanitize_server, fetch_generic_json
+from . import dvid_api_wrapper, fetch_generic_json
 
-@sanitize_server
+@dvid_api_wrapper
 def fetch_server_info(server):
     return fetch_generic_json(f'http://{server}/api/server/info')
 

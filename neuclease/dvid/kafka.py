@@ -6,7 +6,7 @@ from datetime import datetime
 import networkx as nx
 
 from ..util import uuids_match, Timer
-from . import sanitize_server
+from . import dvid_api_wrapper
 from .server import fetch_server_info
 from .repo import fetch_and_parse_dag
 from .node import fetch_full_instance_info
@@ -16,15 +16,21 @@ logger = logging.getLogger(__name__)
 class KafkaReadError(RuntimeError):
     pass
 
-@sanitize_server
-def read_kafka_messages(instance_info, action_filter=None, dag_filter='leaf-and-parents', return_format='json-values', group_id=None, consumer_timeout=2.0):
+@dvid_api_wrapper
+def read_kafka_messages(server, uuid, instance, action_filter=None, dag_filter='leaf-and-parents', return_format='json-values', group_id=None, consumer_timeout=2.0):
     """
     Read the stream of available Kafka messages for the given DVID instance,
     and optionally filter them by UUID or Action.
 
     Args:
-        instance_info:
-            (server, uuid, instance)
+        server:
+            dvid server, e.g. 'emdata3:8900'
+        
+        uuid:
+            dvid node, e.g. 'a9f2'
+        
+        instance:
+            dvid instance name, e.g. 'segmentation'
         
         action_filter:
             A list of actions to use as a filter for the returned messages.
@@ -34,8 +40,8 @@ def read_kafka_messages(instance_info, action_filter=None, dag_filter='leaf-and-
         dag_filter:
             How to filter out messages based on the UUID.
             One of:
-            - 'leaf-only' (only messages whose uuid matches the provided instance_info),
-            - 'leaf-and-parents' (only messages matching the given instance_info uuid or its ancestors), or
+            - 'leaf-only' (only messages whose uuid matches the one provided),
+            - 'leaf-and-parents' (only messages matching the given uuid or its ancestors), or
             - None (no filtering by UUID).
 
         return_format:
@@ -51,7 +57,6 @@ def read_kafka_messages(instance_info, action_filter=None, dag_filter='leaf-and-
         
     """
     from kafka import KafkaConsumer
-    server, uuid, instance = instance_info
     
     assert dag_filter in ('leaf-only', 'leaf-and-parents', None)
     assert return_format in ('records', 'json-values')
@@ -68,7 +73,7 @@ def read_kafka_messages(instance_info, action_filter=None, dag_filter='leaf-and-
 
     kafka_server = server_info["Kafka Servers"]
 
-    full_instance_info = fetch_full_instance_info(instance_info)
+    full_instance_info = fetch_full_instance_info(server, uuid, instance)
     data_uuid = full_instance_info["Base"]["DataUUID"]
     repo_uuid = full_instance_info["Base"]["RepoUUID"]
 

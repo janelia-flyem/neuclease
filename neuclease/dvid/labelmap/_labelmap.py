@@ -6,7 +6,7 @@ import pandas as pd
 
 from ...util import Timer, round_box, extract_subvol
 
-from .. import sanitize_server, default_dvid_session, default_node_service, fetch_generic_json
+from .. import dvid_api_wrapper, default_dvid_session, default_node_service, fetch_generic_json
 from ..repo import create_voxel_instance
 from ..node import fetch_full_instance_info
 from ..kafka import read_kafka_messages
@@ -16,7 +16,7 @@ from ._split import SplitEvent, fetch_supervoxel_splits_from_kafka
 
 logger = logging.getLogger(__name__)
 
-def create_labelmap_instance(instance_info, tags=[], block_size=64, voxel_size=8.0,
+def create_labelmap_instance(server, uuid, instance, tags=[], block_size=64, voxel_size=8.0,
                              voxel_units='nanometers', enable_index=True, max_scale=0):
     """
     Create a labelmap instance.
@@ -32,14 +32,13 @@ def create_labelmap_instance(instance_info, tags=[], block_size=64, voxel_size=8
         Other args passed directly to create_voxel_instance().
     """
     type_specific_settings = { "IndexedLabels": str(enable_index).lower(), "CountLabels": str(enable_index).lower(), "MaxDownresLevel": str(max_scale) }
-    create_voxel_instance( instance_info, 'labelmap', tags=tags, block_size=block_size, voxel_size=voxel_size,
+    create_voxel_instance( server, uuid, instance, 'labelmap', tags=tags, block_size=block_size, voxel_size=voxel_size,
                        voxel_units=voxel_units, type_specific_settings=type_specific_settings )
 
 
 
-@sanitize_server
-def fetch_supervoxels_for_body(instance_info, body_id, user=None):
-    server, uuid, instance = instance_info
+@dvid_api_wrapper
+def fetch_supervoxels_for_body(server, uuid, instance, body_id, user=None):
     query_params = {}
     if user:
         query_params['u'] = user
@@ -52,9 +51,8 @@ def fetch_supervoxels_for_body(instance_info, body_id, user=None):
     return supervoxels
 
 
-@sanitize_server
-def fetch_size(instance_info, label_id, supervoxels=False):
-    server, uuid, instance = instance_info
+@dvid_api_wrapper
+def fetch_size(server, uuid, instance, label_id, supervoxels=False):
     supervoxels = str(bool(supervoxels)).lower()
     url = f'http://{server}/api/node/{uuid}/{instance}/size/{label_id}?supervoxels={supervoxels}'
     response = fetch_generic_json(url)
@@ -64,9 +62,8 @@ def fetch_size(instance_info, label_id, supervoxels=False):
 fetch_body_size = fetch_size
 
 
-@sanitize_server
-def fetch_sizes(instance_info, label_ids, supervoxels=False):
-    server, uuid, instance = instance_info
+@dvid_api_wrapper
+def fetch_sizes(server, uuid, instance, label_ids, supervoxels=False):
     label_ids = list(map(int, label_ids))
     supervoxels = str(bool(supervoxels)).lower()
 
@@ -77,13 +74,12 @@ def fetch_sizes(instance_info, label_ids, supervoxels=False):
 fetch_body_sizes = fetch_sizes
 
 
-@sanitize_server
-def fetch_supervoxel_sizes_for_body(instance_info, body_id, user=None):
+@dvid_api_wrapper
+def fetch_supervoxel_sizes_for_body(server, uuid, instance, body_id, user=None):
     """
     Return the sizes of all supervoxels in a body 
     """
-    server, uuid, instance = instance_info
-    supervoxels = fetch_supervoxels_for_body(instance_info, body_id, user)
+    supervoxels = fetch_supervoxels_for_body(server, uuid, instance, body_id, user)
     
     query_params = {}
     if user:
@@ -100,9 +96,8 @@ def fetch_supervoxel_sizes_for_body(instance_info, body_id, user=None):
     return series
 
 
-@sanitize_server
-def fetch_label_for_coordinate(instance_info, coordinate_zyx, supervoxels=False):
-    server, uuid, instance = instance_info
+@dvid_api_wrapper
+def fetch_label_for_coordinate(server, uuid, instance, coordinate_zyx, supervoxels=False):
     session = default_dvid_session()
     coord_xyz = np.array(coordinate_zyx)[::-1]
     coord_str = '_'.join(map(str, coord_xyz))
@@ -112,9 +107,8 @@ def fetch_label_for_coordinate(instance_info, coordinate_zyx, supervoxels=False)
     return np.uint64(r.json()["Label"])
 
 
-@sanitize_server
-def fetch_sparsevol_rles(instance_info, label, supervoxels=False, scale=0):
-    server, uuid, instance = instance_info
+@dvid_api_wrapper
+def fetch_sparsevol_rles(server, uuid, instance, label, supervoxels=False, scale=0):
     session = default_dvid_session()
     supervoxels = str(bool(supervoxels)).lower() # to lowercase string
     url = f'http://{server}/api/node/{uuid}/{instance}/sparsevol/{label}?supervoxels={supervoxels}&scale={scale}'
@@ -123,15 +117,14 @@ def fetch_sparsevol_rles(instance_info, label, supervoxels=False, scale=0):
     return r.content
 
 
-@sanitize_server
-def split_supervoxel(instance_info, supervoxel, rle_payload_bytes):
+@dvid_api_wrapper
+def split_supervoxel(server, uuid, instance, supervoxel, rle_payload_bytes):
     """
     Split the given supervoxel according to the provided RLE payload, as specified in DVID's split-supervoxel docs.
     
     Returns:
         The two new IDs resulting from the split: (split_sv_id, remaining_sv_id)
     """
-    server, uuid, instance = instance_info
     session = default_dvid_session()
     r = session.post(f'http://{server}/api/node/{uuid}/{instance}/split-supervoxel/{supervoxel}', data=rle_payload_bytes)
     r.raise_for_status()
@@ -140,16 +133,15 @@ def split_supervoxel(instance_info, supervoxel, rle_payload_bytes):
     return (results["SplitSupervoxel"], results["RemainSupervoxel"] )
 
 
-@sanitize_server
-def fetch_mapping(instance_info, supervoxel_ids):
-    server, uuid, instance = instance_info
+@dvid_api_wrapper
+def fetch_mapping(server, uuid, instance, supervoxel_ids):
     supervoxel_ids = list(map(int, supervoxel_ids))
     body_ids = fetch_generic_json(f'http://{server}/api/node/{uuid}/{instance}/mapping', json=supervoxel_ids)
     return body_ids
 
 
-@sanitize_server
-def fetch_mappings(instance_info, as_array=False):
+@dvid_api_wrapper
+def fetch_mappings(server, uuid, instance, as_array=False):
     """
     Fetch the complete sv-to-label in-memory mapping table
     from DVID and return it as a numpy array or a pandas Series (indexed by sv).
@@ -170,7 +162,6 @@ def fetch_mappings(instance_info, as_array=False):
     Returns:
         pd.Series(index=sv, data=body), unless as_array is True
     """
-    server, uuid, instance = instance_info
     session = default_dvid_session()
     
     # This takes ~30 seconds so it's nice to log it.
@@ -192,8 +183,8 @@ def fetch_mappings(instance_info, as_array=False):
     return df['body']
 
 
-@sanitize_server
-def fetch_complete_mappings(instance_info, include_retired=False, kafka_msgs=None):
+@dvid_api_wrapper
+def fetch_complete_mappings(server, uuid, instance, include_retired=False, kafka_msgs=None):
     """
     Fetch the complete mapping from DVID for all agglomerated bodies,
     including 'identity' mappings (for agglomerated bodies only)
@@ -209,8 +200,14 @@ def fetch_complete_mappings(instance_info, include_retired=False, kafka_msgs=Non
           considered as implicitly mapped to themselves.
     
     Args:
-        instance_info:
-            server, uuid, instance
+        server:
+            dvid server, e.g. 'emdata3:8900'
+        
+        uuid:
+            dvid uuid, e.g. 'abc9'
+        
+        instance:
+            dvid instance name, e.g. 'segmentation'
         
         include_retired:
             If True, include rows for 'retired' supervoxels, which all map to 0.
@@ -220,8 +217,8 @@ def fetch_complete_mappings(instance_info, include_retired=False, kafka_msgs=Non
     """
     # Read complete kafka log; we need both split and cleave info
     if kafka_msgs is None:
-        kafka_msgs = read_kafka_messages(instance_info)
-    split_events = fetch_supervoxel_splits_from_kafka(instance_info, kafka_msgs=kafka_msgs)
+        kafka_msgs = read_kafka_messages(server, uuid, instance)
+    split_events = fetch_supervoxel_splits_from_kafka(server, uuid, instance, kafka_msgs=kafka_msgs)
     split_tables = list(map(lambda t: np.asarray(t, np.uint64), split_events.values()))
     if split_tables:
         split_table = np.concatenate(split_tables)
@@ -241,7 +238,7 @@ def fetch_complete_mappings(instance_info, include_retired=False, kafka_msgs=Non
     cleave_fragments = set(extract_cleave_fragments())
 
     # Fetch base mapping
-    base_mapping = fetch_mappings(instance_info, as_array=True)
+    base_mapping = fetch_mappings(server, uuid, instance, as_array=True)
     base_svs = base_mapping[:,0]
     base_bodies = base_mapping[:,1]
 
@@ -291,15 +288,14 @@ def fetch_complete_mappings(instance_info, include_retired=False, kafka_msgs=Non
     return s
 
 
-@sanitize_server
-def fetch_mutation_id(instance_info, body_id):
-    server, uuid, instance = instance_info
+@dvid_api_wrapper
+def fetch_mutation_id(server, uuid, instance, body_id):
     response = fetch_generic_json(f'http://{server}/api/node/{uuid}/{instance}/lastmod/{body_id}')
     return response["mutation id"]
 
 
-@sanitize_server
-def fetch_sparsevol_coarse(instance_info, label_id, supervoxels=False):
+@dvid_api_wrapper
+def fetch_sparsevol_coarse(server, uuid, instance, label_id, supervoxels=False):
     """
     Return the 'coarse sparsevol' representation of a given body/supervoxel.
     This is similar to the sparsevol representation at scale=6,
@@ -314,7 +310,6 @@ def fetch_sparsevol_coarse(instance_info, label_id, supervoxels=False):
          ...
         ]
     """
-    server, uuid, instance = instance_info
     supervoxels = str(bool(supervoxels)).lower()
     session = default_dvid_session()
     r = session.get(f'http://{server}/api/node/{uuid}/{instance}/sparsevol-coarse/{label_id}?supervoxels={supervoxels}')
@@ -323,14 +318,14 @@ def fetch_sparsevol_coarse(instance_info, label_id, supervoxels=False):
     return parse_rle_response( r.content )
 
 
-def fetch_sparsevol(instance_info, label, supervoxels=False, scale=0):
+def fetch_sparsevol(server, uuid, instance, label, supervoxels=False, scale=0):
     """
     Return coordinates of all voxels in the given body/supervoxel at the given scale.
 
     Note: At scale 0, this will be a LOT of data for any reasonably large body.
           Use with caution.
     """
-    rles = fetch_sparsevol_rles(instance_info, label, supervoxels, scale)
+    rles = fetch_sparsevol_rles(server, uuid, instance, label, supervoxels, scale)
     return parse_rle_response(rles)
 
 
@@ -339,9 +334,16 @@ def compute_changed_bodies(instance_info_a, instance_info_b):
     Returns the list of all bodies whose supervoxels changed
     between uuid_a and uuid_b.
     This includes bodies that were changed, added, or removed completely.
+    
+    Args:
+        instance_info_a:
+            (server, uuid, instance)
+
+        instance_info_b:
+            (server, uuid, instance)
     """
-    mapping_a = fetch_mappings(instance_info_a)
-    mapping_b = fetch_mappings(instance_info_b)
+    mapping_a = fetch_mappings(*instance_info_a)
+    mapping_b = fetch_mappings(*instance_info_b)
     
     assert mapping_a.name == 'body'
     assert mapping_b.name == 'body'
@@ -360,7 +362,7 @@ def compute_changed_bodies(instance_info_a, instance_info_b):
     return changed_bodies
 
 
-def fetch_volume_box(instance_info):
+def fetch_volume_box(server, uuid, instance):
     """
     Return the volume extents for the given instance as a box.
     
@@ -371,7 +373,7 @@ def fetch_volume_box(instance_info):
         - Returns *box*, shape=(box[1] - box[0])
         - Returns ZYX order
     """
-    info = fetch_full_instance_info(instance_info)
+    info = fetch_full_instance_info(server, uuid, instance)
     box_xyz = np.array((info["Extended"]["MinPoint"], info["Extended"]["MaxPoint"]))
     box_xyz[1] += 1
     
@@ -379,17 +381,16 @@ def fetch_volume_box(instance_info):
     return box_zyx
 
 
-@sanitize_server
-def generate_sample_coordinate(instance_info, label_id, supervoxels=False):
+@dvid_api_wrapper
+def generate_sample_coordinate(server, uuid, instance, label_id, supervoxels=False):
     """
     Return an arbitrary coordinate that lies within the given body.
     Usually faster than fetching all the RLEs.
     """
-    server, uuid, instance = instance_info
-    
+   
     # FIXME: I'm using sparsevol instead of sparsevol-coarse due to an apparent bug in DVID at the moment
     SCALE = 2
-    coarse_block_coords = fetch_sparsevol(instance_info, label_id, supervoxels, scale=SCALE)
+    coarse_block_coords = fetch_sparsevol(server, uuid, instance, label_id, supervoxels, scale=SCALE)
     first_block_coord = (2**SCALE) * np.array(coarse_block_coords[0]) // 64 * 64
     
     ns = default_node_service(server, uuid)
@@ -403,15 +404,21 @@ def generate_sample_coordinate(instance_info, label_id, supervoxels=False):
     return first_block_coord + nonzero_coords[0]
 
 
-@sanitize_server
-def fetch_labelarray_voxels(instance_info, box, scale=0, throttle=False, supervoxels=False):
+@dvid_api_wrapper
+def fetch_labelarray_voxels(server, uuid, instance, box, scale=0, throttle=False, supervoxels=False):
     """
     Fetch a volume of voxels from the given instance.
     
     Args:
-        instance_info:
-            server, uuid, instance
+        server:
+            dvid server, e.g. 'emdata3:8900'
         
+        uuid:
+            dvid uuid, e.g. 'abc9'
+        
+        instance:
+            dvid instance name, e.g. 'segmentation'
+
         box:
             The bounds of the volume to fetch in the coordinate system for the requested scale.
             Given as a pair of coordinates (start, stop), e.g. [(0,0,0), (10,20,30)].
@@ -433,7 +440,6 @@ def fetch_labelarray_voxels(instance_info, box, scale=0, throttle=False, supervo
     Returns:
         ndarray, with shape == (box[1] - box[0])
     """
-    server, uuid, instance = instance_info
     ns = default_node_service(server, uuid)
 
     # Labelarray data can be fetched very efficiently if the request is block-aligned
@@ -446,9 +452,8 @@ def fetch_labelarray_voxels(instance_info, box, scale=0, throttle=False, supervo
     return extract_subvol(aligned_volume, requested_box_within_aligned )
 
 
-@sanitize_server
-def perform_cleave(instance_info, body_id, supervoxel_ids):
-    server, uuid, instance = instance_info
+@dvid_api_wrapper
+def perform_cleave(server, uuid, instance, body_id, supervoxel_ids):
     supervoxel_ids = list(map(int, supervoxel_ids))
 
     session = default_dvid_session()
@@ -458,20 +463,27 @@ def perform_cleave(instance_info, body_id, supervoxel_ids):
     return cleaved_body
 
 
-@sanitize_server
-def post_merge(instance_info, main_label, other_labels):
+@dvid_api_wrapper
+def post_merge(server, uuid, instance, main_label, other_labels):
     """
     Merges multiple bodies together.
     
     Args:
-        instance_info:
-            server, uuid, instance
+        server:
+            dvid server, e.g. 'emdata3:8900'
+        
+        uuid:
+            dvid uuid, e.g. 'abc9'
+        
+        instance:
+            dvid instance name, e.g. 'segmentation'
+
         main_label:
             The label whose ID will be kept by the merged body
+
         other_labels:
             List of labels to merge into the main_label
     """
-    server, uuid, instance = instance_info
     main_label = int(main_label)
     other_labels = list(map(int, other_labels))
     

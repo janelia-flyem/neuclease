@@ -4,7 +4,7 @@ import requests
 import networkx as nx
 
 from ..util import uuids_match
-from . import sanitize_server, fetch_generic_json
+from . import dvid_api_wrapper, fetch_generic_json
 
 INSTANCE_TYPENAMES = """\
 annotation
@@ -28,12 +28,12 @@ uint64blk
 uint8blk
 """.split()
 
-@sanitize_server
+@dvid_api_wrapper
 def fetch_repo_info(server, uuid):
     return fetch_generic_json(f'http://{server}/api/repo/{uuid}/info')
     
 
-@sanitize_server
+@dvid_api_wrapper
 def expand_uuid(server, uuid, repo_uuid=None):
     """
     Given an abbreviated uuid, find the matching uuid
@@ -65,8 +65,8 @@ def expand_uuid(server, uuid, repo_uuid=None):
     return matching_uuids[0]
 
 
-@sanitize_server
-def create_instance(instance_info, typename, versioned=True, compression=None, tags=[], type_specific_settings={}):
+@dvid_api_wrapper
+def create_instance(server, uuid, instance, typename, versioned=True, compression=None, tags=[], type_specific_settings={}):
     """
     Create a data instance of the given type.
     
@@ -95,7 +95,6 @@ def create_instance(instance_info, typename, versioned=True, compression=None, t
         type_specific_settings:
             Additional datatype-specific settings to send in the JSON body.
     """
-    server, uuid, instance = instance_info
     assert typename in INSTANCE_TYPENAMES, f"Unknown typename: {typename}"
 
     settings = {}
@@ -124,7 +123,7 @@ def create_instance(instance_info, typename, versioned=True, compression=None, t
     r.raise_for_status()
 
 
-def create_voxel_instance(instance_info, typename, versioned=True, compression=None, tags=[],
+def create_voxel_instance(server, uuid, instance, typename, versioned=True, compression=None, tags=[],
                           block_size=64, voxel_size=8.0, voxel_units='nanometers', background=None,
                           type_specific_settings={}):
     """
@@ -153,10 +152,10 @@ def create_voxel_instance(instance_info, typename, versioned=True, compression=N
             "Background value is only valid for block-based instance types."
         type_specific_settings["Background"] = background
     
-    create_instance(instance_info, typename, versioned, compression, tags, type_specific_settings)
+    create_instance(server, uuid, instance, typename, versioned, compression, tags, type_specific_settings)
 
 
-@sanitize_server
+@dvid_api_wrapper
 def fetch_and_parse_dag(server, repo_uuid):
     """
     Read the /repo/info for the given repo UUID

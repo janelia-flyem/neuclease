@@ -7,15 +7,15 @@ import pandas as pd
 import networkx as nx
 
 from ...util import Timer
-from .. import sanitize_server, default_dvid_session
+from .. import dvid_api_wrapper, default_dvid_session
 from ..kafka import KafkaReadError, read_kafka_messages
 
 logger = logging.getLogger(__name__)
 
 SplitEvent = namedtuple("SplitEvent", "mutid old remain split")
 
-@sanitize_server
-def fetch_supervoxel_splits(instance_info, source='kafka'):
+@dvid_api_wrapper
+def fetch_supervoxel_splits(server, uuid, instance, source='kafka'):
     """
     Fetch supervoxel split events from dvid or kafka.
     (See fetch_supervoxel_splits_from_dvid() for details.)
@@ -26,25 +26,31 @@ def fetch_supervoxel_splits(instance_info, source='kafka'):
 
     if source == 'kafka':
         try:
-            return fetch_supervoxel_splits_from_kafka(instance_info)
+            return fetch_supervoxel_splits_from_kafka(server, uuid, instance)
         except KafkaReadError:
             # Fallback to reading DVID
             source = 'dvid'
 
     if source == 'dvid':
-        return fetch_supervoxel_splits_from_dvid(instance_info)
+        return fetch_supervoxel_splits_from_dvid(server, uuid, instance)
 
     assert False
 
 
-@sanitize_server
-def fetch_supervoxel_splits_from_dvid(instance_info):
+@dvid_api_wrapper
+def fetch_supervoxel_splits_from_dvid(server, uuid, instance):
     """
     Fetch the /supervoxel-splits info for the given instance.
     
     Args:
-        instance_info:
-            server, uuid, instance
+        server:
+            dvid server, e.g. 'emdata3:8900'
+        
+        uuid:
+            dvid uuid, e.g. 'abc9'
+        
+        instance:
+            dvid instance name, e.g. 'segmentation'
 
     Returns:
         Dict of { uuid: event_list }, where event_list is a list of SplitEvent tuples.
@@ -85,7 +91,6 @@ def fetch_supervoxel_splits_from_dvid(instance_info):
     #     of proximity to the given UUID.  So the first UUID would be the version of interest, then
     #     its parent, and so on.
 
-    server, uuid, instance = instance_info
     session = default_dvid_session()
     r = session.get(f'http://{server}/api/node/{uuid}/{instance}/supervoxel-splits')
     r.raise_for_status()
@@ -100,8 +105,8 @@ def fetch_supervoxel_splits_from_dvid(instance_info):
  
     return events
 
-@sanitize_server
-def fetch_supervoxel_splits_from_kafka(instance_info, actions=['split', 'split-supervoxel'], kafka_msgs=None):
+@dvid_api_wrapper
+def fetch_supervoxel_splits_from_kafka(server, uuid, instance, actions=['split', 'split-supervoxel'], kafka_msgs=None):
     """
     Read the kafka log for the given instance and return a log of
     all supervoxel split events, partitioned by UUID.
@@ -118,8 +123,14 @@ def fetch_supervoxel_splits_from_kafka(instance_info, actions=['split', 'split-s
     type by specifying which actions to filter with.
     
     Args:
-        instance_info:
-            server, uuid, instance
+        server:
+            dvid server, e.g. 'emdata3:8900'
+        
+        uuid:
+            dvid uuid, e.g. 'abc9'
+        
+        instance:
+            dvid instance name, e.g. 'segmentation'
         
         actions:
             Supervoxels can become split in two ways: body ("arbitrary") splits, and supervoxel splits.
@@ -140,7 +151,7 @@ def fetch_supervoxel_splits_from_kafka(instance_info, actions=['split', 'split-s
         f"Invalid actions: {actions}"
     
     if kafka_msgs is None:
-        msgs = read_kafka_messages(instance_info, action_filter=actions, dag_filter='leaf-and-parents')
+        msgs = read_kafka_messages(server, uuid, instance, action_filter=actions, dag_filter='leaf-and-parents')
     else:
         msgs = list(filter(lambda msg: msg["Action"] in actions, kafka_msgs))
     
@@ -311,18 +322,18 @@ def render_split_tree(tree, root=None, uuid_len=4):
     return LeftAligned()(d)
 
 
-def fetch_and_render_split_tree(instance_info, sv_id, split_source='kafka'):
+def fetch_and_render_split_tree(server, uuid, instance, sv_id, split_source='kafka'):
     """
     Fetch all split supervoxel provenance data from DVID and then
     extract the provenance tree containing the given supervoxel.
     Then render it as a string to be displayed on the console.
     """
-    events = fetch_supervoxel_splits(instance_info, split_source)
+    events = fetch_supervoxel_splits(server, uuid, instance, split_source)
     tree = extract_split_tree(events, sv_id)
     return render_split_tree(tree)
 
 
-def fetch_and_render_split_trees(instance_info, sv_ids, split_source='kafka'):
+def fetch_and_render_split_trees(server, uuid, instance, sv_ids, split_source='kafka'):
     """
     For each of the given supervoxels, produces an ascii-renderered split
     tree showing all of its ancestors,descendents, siblings, etc.
@@ -340,7 +351,7 @@ def fetch_and_render_split_trees(instance_info, sv_ids, split_source='kafka'):
         dict of { sv_id : str }
     """
     sv_ids = set(sv_ids)
-    events = fetch_supervoxel_splits(instance_info, split_source)
+    events = fetch_supervoxel_splits(server, uuid, instance, split_source)
     event_forest = split_events_to_graph(events)
     all_split_ids = set(event_forest.nodes())
     
@@ -352,14 +363,20 @@ def fetch_and_render_split_trees(instance_info, sv_ids, split_source='kafka'):
     return rendered_trees
 
 
-def fetch_split_supervoxel_sizes(instance_info, include_retired=False, split_source='kafka'):
+def fetch_split_supervoxel_sizes(server, uuid, instance, include_retired=False, split_source='kafka'):
     """
     Fetch the list of all current split supervoxel fragments from DVID or Kafka,
     then fetch the sizes of each of those supervoxels.
     
     Args:
-        instance_info:
-            server, uuid, instance
+        server:
+            dvid server, e.g. 'emdata3:8900'
+        
+        uuid:
+            dvid uuid, e.g. 'abc9'
+        
+        instance:
+            dvid instance name, e.g. 'segmentation'
         
         include_retired:
             If True, include 'retired' supervoxel IDs in the result.
@@ -375,10 +392,10 @@ def fetch_split_supervoxel_sizes(instance_info, include_retired=False, split_sou
     # Local import to break circular import
     from . import fetch_sizes
     
-    leaf_fragment_svs, retired_svs = fetch_supervoxel_fragments(instance_info, split_source)
+    leaf_fragment_svs, retired_svs = fetch_supervoxel_fragments(server, uuid, instance, split_source)
 
     with Timer(f"Fetching sizes for {len(leaf_fragment_svs)} split supervoxels", logger):
-        sizes = fetch_sizes(instance_info, leaf_fragment_svs, supervoxels=True)
+        sizes = fetch_sizes(server, uuid, instance, leaf_fragment_svs, supervoxels=True)
         sizes = np.array(sizes, np.uint32)
 
     sv_sizes = pd.Series(data=sizes, index=leaf_fragment_svs)
@@ -398,13 +415,19 @@ def fetch_split_supervoxel_sizes(instance_info, include_retired=False, split_sou
     return sv_sizes
 
 
-def fetch_supervoxel_fragments(instance_info, split_source='kafka'):
+def fetch_supervoxel_fragments(server, uuid, instance, split_source='kafka'):
     """
     Fetch the list of all supervoxels that have been split and their resulting fragments.
     
     Args:
-        instance_info:
-            server, uuid, instance
+        server:
+            dvid server, e.g. 'emdata3:8900'
+        
+        uuid:
+            dvid uuid, e.g. 'abc9'
+        
+        instance:
+            dvid instance name, e.g. 'segmentation'
         
         split_source:
             Where to pull split events from.
@@ -416,7 +439,7 @@ def fetch_supervoxel_fragments(instance_info, split_source='kafka'):
         and retired_svs is the list of all supervoxels that have ever been split in the instance.
         Note that these do not constitute a mapping.
     """
-    split_events = fetch_supervoxel_splits(instance_info, split_source)
+    split_events = fetch_supervoxel_splits(server, uuid, instance, split_source)
     if len(split_events) == 0:
         # No splits on this node
         return (np.array([], np.uint64), np.array([], np.uint64))

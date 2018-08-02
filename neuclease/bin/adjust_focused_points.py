@@ -51,7 +51,7 @@ def main():
     with open(args.assignment_json, 'r') as f:
         assignment_data = json.load(f)
 
-    new_assignment_data = adjust_focused_points(instance_info, assignment_data)
+    new_assignment_data = adjust_focused_points(*instance_info, assignment_data)
 
     with open(args.output, 'w') as f:
         json.dump(new_assignment_data, f, indent=2)
@@ -59,7 +59,7 @@ def main():
     logger.info(f"Done. Wrote to {args.output}")
 
 
-def adjust_focused_points(instance_info, assignment_json_data, search_radius=64, show_progress=True):
+def adjust_focused_points(server, uuid, instance, assignment_json_data, search_radius=64, show_progress=True):
     new_assignment_data = copy.deepcopy(assignment_json_data)
     new_tasks = new_assignment_data["task list"]
 
@@ -70,7 +70,7 @@ def adjust_focused_points(instance_info, assignment_json_data, search_radius=64,
         coord_1 = np.array(task["supervoxel point 1"])
         coord_2 = np.array(task["supervoxel point 2"])
         
-        body_1, body_2 = fetch_mapping(instance_info, [sv_1, sv_2])
+        body_1, body_2 = fetch_mapping(server, uuid, instance, [sv_1, sv_2])
         
         avg_coord = (coord_1 + coord_2) // 2
         
@@ -78,7 +78,7 @@ def adjust_focused_points(instance_info, assignment_json_data, search_radius=64,
                     avg_coord + search_radius )
 
         box_zyx = np.array(box_xyz)[:,::-1]
-        seg_vol = fetch_labelarray_voxels(instance_info, box_zyx)
+        seg_vol = fetch_labelarray_voxels(server, uuid, instance, box_zyx)
         
         adjusted_coords_zyx = find_best_plane(seg_vol, body_1, body_2)
         adjusted_coords_zyx = np.array(adjusted_coords_zyx)

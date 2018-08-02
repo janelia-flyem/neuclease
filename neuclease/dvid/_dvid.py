@@ -50,24 +50,22 @@ def default_node_service(server, uuid, appname=None):
     return ns
 
 
-def sanitize_server(f):
+def dvid_api_wrapper(f):
     """
-    Decorator for functions whose first arg is either a string or a DvidInstanceInfo (or similar tuple).
-    If the server address begins with 'http://', that prefix is stripped from it.
+    Decorator for functions whose first arg is a dvid server address, and calls DVID via the requests module.
+    - If the server address begins with 'http://', that prefix is stripped from it.
+    - If an requests.HTTPError is raised, the response body (if any) is also included in the exception text.
+      (DVID error responses often includes useful information in the response body,
+      but requests doesn't show that by default.)
     """
     @functools.wraps(f)
-    def wrapper(instance_info, *args, **kwargs):
-        if isinstance(instance_info, str):
-            if instance_info.startswith('http://'):
-                instance_info = instance_info[len('http://'):]
-        else:
-            server, uuid, instance = instance_info
-            if server.startswith('http://'):
-                server = server[len('http://'):]
-            instance_info = DvidInstanceInfo(server, uuid, instance)
+    def wrapper(server, *args, **kwargs):
+        assert isinstance(server, str)
+        if server.startswith('http://'):
+            server = server[len('http://'):]
 
         try:
-            return f(instance_info, *args, **kwargs)
+            return f(server, *args, **kwargs)
         except requests.HTTPError as ex:
             # If the error response had content (and it's not super-long),
             # show that in the traceback, too.  DVID error messages are often helpful.
