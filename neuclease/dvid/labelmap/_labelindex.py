@@ -6,6 +6,7 @@ from numba import jit
 
 from .. import dvid_api_wrapper
 
+# FIXME: This is out-of-date. Does this module still work? It needs a test.
 # The labelops_pb2 file was generated with the following commands:
 # $ cd neuclease/dvid
 # $ protoc --python_out=. labelops.proto

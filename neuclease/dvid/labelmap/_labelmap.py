@@ -467,7 +467,7 @@ def fetch_labelarray_voxels(server, uuid, instance, box, scale=0, throttle=False
     requested_box_within_aligned = box - aligned_box[0]
     return extract_subvol(aligned_volume, requested_box_within_aligned )
 
-
+# FIXME: rename this function post_cleave and write a test
 @dvid_api_wrapper
 def perform_cleave(server, uuid, instance, body_id, supervoxel_ids, *, session=None):
     supervoxel_ids = list(map(int, supervoxel_ids))
