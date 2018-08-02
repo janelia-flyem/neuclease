@@ -10,6 +10,15 @@ def fetch_roi(server, uuid, instance, format='ranges', *, session=None): # @Rese
     Note: This function returns coordinates (or masks, etc.) at SCALE 5.
     
     Args:
+        server:
+            dvid server, e.g. 'emdata3:8900'
+        
+        uuid:
+            dvid uuid, e.g. 'abc9'
+        
+        instance:
+            dvid ROI instance name, e.g. 'antenna-lobe'
+        
         format:
             Determines the format of the return value, as described below.
             Either 'ranges', 'coords' or 'mask'.
@@ -32,8 +41,22 @@ def fetch_roi(server, uuid, instance, format='ranges', *, session=None): # @Rese
     assert format in ('coords', 'ranges', 'mask')
     rle_ranges = fetch_generic_json(f'http://{server}/api/node/{uuid}/{instance}/roi', session=session)
     rle_ranges = np.asarray(rle_ranges, np.int32, order='C')
-    assert rle_ranges.shape[1] == 4
+
+    # Special cases for empty ROI
+    if len(rle_ranges) == 0:
+        if format == 'ranges':
+            return np.ndarray( (0,4), np.int32 )
     
+        if format == 'coords':
+            return np.ndarray( (0,3), np.int32 )
+        
+        if format == 'mask':
+            mask_box = np.array([[0,0,0], [0,0,0]], np.int32)
+            mask = np.ndarray( (0,0,0), np.int32 )
+            return mask, mask_box
+        assert False, "Shouldn't get here"
+            
+    assert rle_ranges.shape[1] == 4    
     if format == 'ranges':
         return rle_ranges
 
