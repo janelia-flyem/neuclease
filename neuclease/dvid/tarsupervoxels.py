@@ -1,7 +1,9 @@
-from . import dvid_api_wrapper, default_dvid_session
+import requests
+from . import dvid_api_wrapper
 from .repo import create_instance
 
-def create_tarsupervoxel_instance(server, uuid, instance, sync_instance, extension, tags=[]):
+@dvid_api_wrapper
+def create_tarsupervoxel_instance(server, uuid, instance, sync_instance, extension, tags=[], *, session=None):
     """
     Create a tarsupervoxel instance and sync it to a labelmap instance.
     """
@@ -9,14 +11,13 @@ def create_tarsupervoxel_instance(server, uuid, instance, sync_instance, extensi
         extension = extension[1:]
 
     create_instance(server, uuid, instance, "tarsupervoxels", versioned=False, tags=tags,
-                    type_specific_settings={"Extension": extension})
+                    type_specific_settings={"Extension": extension}, session=session)
     
-    post_tarsupervoxel_sync(server, uuid, instance, sync_instance)
+    post_tarsupervoxel_sync(server, uuid, instance, sync_instance, session=session)
 
 
 @dvid_api_wrapper
-def post_tarsupervoxel_sync(server, uuid, instance, sync_instance, replace=False):
-    session = default_dvid_session()
+def post_tarsupervoxel_sync(server, uuid, instance, sync_instance, replace=False, *, session=None):
     r = session.post(f'http://{server}/api/node/{uuid}/{instance}/sync',
                      params={ "replace": str(bool(replace)).lower() },
                      json={ "sync": sync_instance } )
@@ -24,7 +25,7 @@ def post_tarsupervoxel_sync(server, uuid, instance, sync_instance, replace=False
 
 
 @dvid_api_wrapper
-def fetch_tarfile(server, uuid, instance, body_id, output=None):
+def fetch_tarfile(server, uuid, instance, body_id, output=None, *, session=None):
     """
     Fetch a .tar file from a tarsupervoxels instance for the given body,
     and save it to bytes, a file object, or a file path.
@@ -52,11 +53,11 @@ def fetch_tarfile(server, uuid, instance, body_id, output=None):
         in which case the tarfile bytes are returned.
     """
     url = f'http://{server}/api/node/{uuid}/{instance}/tarfile/{body_id}'
-    return fetch_file(url, output)
+    return fetch_file(url, output, session=session)
 
 
 # FIXME: Put this in util
-def fetch_file(url, output=None, chunksize=2**10):
+def fetch_file(url, output=None, chunksize=2**10, *, session=None):
     """
     Fetch a file from the given endpoint,
     and save it to bytes, a file object, or a file path.
@@ -77,8 +78,7 @@ def fetch_file(url, output=None, chunksize=2**10):
         None, unless no output file object/path is provided,
         in which case the fetched bytes are returned.
     """
-    session = default_dvid_session()
-
+    session = session or requests.Session()
     with session.get(url, stream=True) as r:
         r.raise_for_status()
 

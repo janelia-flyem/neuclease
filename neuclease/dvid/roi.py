@@ -4,7 +4,7 @@ from . import dvid_api_wrapper, fetch_generic_json
 from .rle import runlength_decode_from_ranges
 
 @dvid_api_wrapper
-def fetch_roi(server, uuid, instance, format='ranges'): # @ReservedAssignment
+def fetch_roi(server, uuid, instance, format='ranges', *, session=None): # @ReservedAssignment
     """
     Fetch an ROI from dvid.
     Note: This function returns coordinates (or masks, etc.) at SCALE 5.
@@ -30,7 +30,7 @@ def fetch_roi(server, uuid, instance, format='ranges'): # @ReservedAssignment
                 and the bounding box is also returned.
     """
     assert format in ('coords', 'ranges', 'mask')
-    rle_ranges = fetch_generic_json(f'http://{server}/api/node/{uuid}/{instance}/roi')
+    rle_ranges = fetch_generic_json(f'http://{server}/api/node/{uuid}/{instance}/roi', session=session)
     rle_ranges = np.asarray(rle_ranges, np.int32, order='C')
     assert rle_ranges.shape[1] == 4
     

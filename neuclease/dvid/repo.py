@@ -1,6 +1,5 @@
 from collections import Iterable
 
-import requests
 import networkx as nx
 
 from ..util import uuids_match
@@ -29,12 +28,12 @@ uint8blk
 """.split()
 
 @dvid_api_wrapper
-def fetch_repo_info(server, uuid):
-    return fetch_generic_json(f'http://{server}/api/repo/{uuid}/info')
+def fetch_repo_info(server, uuid, *, session=None):
+    return fetch_generic_json(f'http://{server}/api/repo/{uuid}/info', session=session)
     
 
 @dvid_api_wrapper
-def expand_uuid(server, uuid, repo_uuid=None):
+def expand_uuid(server, uuid, repo_uuid=None, *, session=None):
     """
     Given an abbreviated uuid, find the matching uuid
     on the server and return the complete uuid.
@@ -52,7 +51,7 @@ def expand_uuid(server, uuid, repo_uuid=None):
         Complete uuid, e.g. `662edcb44e69481ea529d89904b5ef9b`
     """
     repo_uuid = repo_uuid or uuid
-    repo_info = fetch_repo_info(server, repo_uuid)
+    repo_info = fetch_repo_info(server, repo_uuid, session=session)
     full_uuids = repo_info["DAG"]["Nodes"].keys()
     
     matching_uuids = list(filter(lambda full_uuid: uuids_match(uuid, full_uuid), full_uuids))
@@ -66,7 +65,7 @@ def expand_uuid(server, uuid, repo_uuid=None):
 
 
 @dvid_api_wrapper
-def create_instance(server, uuid, instance, typename, versioned=True, compression=None, tags=[], type_specific_settings={}):
+def create_instance(server, uuid, instance, typename, versioned=True, compression=None, tags=[], type_specific_settings={}, *, session=None):
     """
     Create a data instance of the given type.
     
@@ -119,13 +118,13 @@ def create_instance(server, uuid, instance, typename, versioned=True, compressio
     
     settings.update(type_specific_settings)
     
-    r = requests.post(f"http://{server}/api/repo/{uuid}/instance", json=settings)
+    r = session.post(f"http://{server}/api/repo/{uuid}/instance", json=settings)
     r.raise_for_status()
 
-
+@dvid_api_wrapper
 def create_voxel_instance(server, uuid, instance, typename, versioned=True, compression=None, tags=[],
                           block_size=64, voxel_size=8.0, voxel_units='nanometers', background=None,
-                          type_specific_settings={}):
+                          type_specific_settings={}, *, session=None):
     """
     Generic function ot create an instance of one of the voxel datatypes, such as uint8blk or labelmap.
     
@@ -152,11 +151,12 @@ def create_voxel_instance(server, uuid, instance, typename, versioned=True, comp
             "Background value is only valid for block-based instance types."
         type_specific_settings["Background"] = background
     
-    create_instance(server, uuid, instance, typename, versioned, compression, tags, type_specific_settings)
+    create_instance(server, uuid, instance, typename, versioned, compression, tags, type_specific_settings, session=session)
 
 
 @dvid_api_wrapper
-def fetch_and_parse_dag(server, repo_uuid):
+def fetch_and_parse_dag(server, repo_uuid, *, session=None):
+    # FIXME: Better name would be 'fetch_repo_dag'
     """
     Read the /repo/info for the given repo UUID
     and extract the DAG structure from it.
@@ -164,7 +164,7 @@ def fetch_and_parse_dag(server, repo_uuid):
     Return the DAG as a nx.DiGraph, whose nodes' attribute
     dicts contain the fields from the DAG json data.
     """
-    repo_info = fetch_repo_info(server, repo_uuid)
+    repo_info = fetch_repo_info(server, repo_uuid, session=session)
 
     # The JSON response is a little weird.
     # The DAG nodes are given as a dict with uuids as keys,

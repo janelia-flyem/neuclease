@@ -17,7 +17,7 @@ class KafkaReadError(RuntimeError):
     pass
 
 @dvid_api_wrapper
-def read_kafka_messages(server, uuid, instance, action_filter=None, dag_filter='leaf-and-parents', return_format='json-values', group_id=None, consumer_timeout=2.0):
+def read_kafka_messages(server, uuid, instance, action_filter=None, dag_filter='leaf-and-parents', return_format='json-values', group_id=None, consumer_timeout=2.0, *, session=None):
     """
     Read the stream of available Kafka messages for the given DVID instance,
     and optionally filter them by UUID or Action.
@@ -66,14 +66,14 @@ def read_kafka_messages(server, uuid, instance, action_filter=None, dag_filter='
         # FIXME: Frequently creating new group IDs like this is probably not best-practice, but it works for now.
         group_id = getpass.getuser() + '-' + datetime.now().isoformat()
     
-    server_info = fetch_server_info(server)
+    server_info = fetch_server_info(server, session=session)
 
     if "Kafka Servers" not in server_info or not server_info["Kafka Servers"]:
         raise KafkaReadError(f"DVID server ({server}) does not list a kafka server")
 
     kafka_server = server_info["Kafka Servers"]
 
-    full_instance_info = fetch_full_instance_info(server, uuid, instance)
+    full_instance_info = fetch_full_instance_info(server, uuid, instance, session=session)
     data_uuid = full_instance_info["Base"]["DataUUID"]
     repo_uuid = full_instance_info["Base"]["RepoUUID"]
 
@@ -99,7 +99,7 @@ def read_kafka_messages(server, uuid, instance, action_filter=None, dag_filter='
 
     elif dag_filter == 'leaf-and-parents':
         # Load DAG structure as nx.DiGraph
-        dag = fetch_and_parse_dag(server, repo_uuid)
+        dag = fetch_and_parse_dag(server, repo_uuid, session=session)
         
         # Determine full name of leaf uuid, for proper set membership
         matching_uuids = list(filter(lambda u: uuids_match(u, uuid), dag.nodes()))

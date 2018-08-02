@@ -1,5 +1,6 @@
 import os
 import getpass
+import inspect
 import functools
 import threading
 from collections import namedtuple
@@ -52,20 +53,31 @@ def default_node_service(server, uuid, appname=None):
 
 def dvid_api_wrapper(f):
     """
-    Decorator for functions whose first arg is a dvid server address, and calls DVID via the requests module.
+    Decorator for functions whose first arg is a dvid server address,
+    and accepts 'session' as a keyword-only argument.
+    
+    This decorator does the following:
     - If the server address begins with 'http://', that prefix is stripped from it.
-    - If an requests.HTTPError is raised, the response body (if any) is also included in the exception text.
+    - If 'session' was not provided by the caller, a default one is provided.
+    - If an HTTPError is raised, the response body (if any) is also included in the exception text.
       (DVID error responses often includes useful information in the response body,
       but requests doesn't show that by default.)
     """
+    argspec = inspect.getfullargspec(f)
+    assert 'session' in argspec.kwonlyargs, \
+        f"Cannot wrap {f.__name__}: DVID API wrappers must accept 'session' as a keyword-only argument."
+    
     @functools.wraps(f)
-    def wrapper(server, *args, **kwargs):
+    def wrapper(server, *args, session=None, **kwargs):
         assert isinstance(server, str)
         if server.startswith('http://'):
             server = server[len('http://'):]
 
+        if session is None:
+            session = default_dvid_session()
+
         try:
-            return f(server, *args, **kwargs)
+            return f(server, *args, **kwargs, session=session)
         except requests.HTTPError as ex:
             # If the error response had content (and it's not super-long),
             # show that in the traceback, too.  DVID error messages are often helpful.
@@ -83,8 +95,7 @@ def dvid_api_wrapper(f):
     return wrapper
 
 
-def fetch_generic_json(url, json=None):
-    session = default_dvid_session()
+def fetch_generic_json(url, json=None, *, session=None):
     r = session.get(url, json=json)
     r.raise_for_status()
     return r.json()

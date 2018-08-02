@@ -21,8 +21,8 @@ logger.addHandler(logging.StreamHandler(sys.stdout))
 ## defined in conftest.py and used here via pytest magic
 ##
 
-def test_sanitize_server():
-    f = dvid_api_wrapper(lambda server, uuid, instance, x: (server, uuid, instance, x))
+def test_dvid_api_wrapper():
+    f = dvid_api_wrapper(lambda server, uuid, instance, x, *, session=None: (server, uuid, instance, x))
     server, uuid, instance, x = f("http://foo", "bar", "baz", 5)
     assert (server, uuid, instance, x) == ('foo', 'bar', 'baz', 5)
 

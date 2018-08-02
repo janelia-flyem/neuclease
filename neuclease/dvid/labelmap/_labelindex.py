@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 from numba import jit
 
-from .. import dvid_api_wrapper, default_dvid_session
+from .. import dvid_api_wrapper
 
 # The labelops_pb2 file was generated with the following commands:
 # $ cd neuclease/dvid
@@ -13,7 +13,7 @@ from .. import dvid_api_wrapper, default_dvid_session
 from .labelops_pb2 import LabelIndex
 
 @dvid_api_wrapper
-def fetch_labelindex(server, uuid, instance, label, format='protobuf'): # @ReservedAssignment
+def fetch_labelindex(server, uuid, instance, label, format='protobuf', *, session=None): # @ReservedAssignment
     """
     Fetch the LabelIndex for the given label ID from DVID,
     and return it as the native protobuf structure, or as a more-convenient
@@ -24,7 +24,6 @@ def fetch_labelindex(server, uuid, instance, label, format='protobuf'): # @Reser
     """
     assert format in ('protobuf', 'pandas')
 
-    session = default_dvid_session()
     r = session.get(f'http://{server}/api/node/{uuid}/{instance}/index/{label}')
     r.raise_for_status()
     labelindex = LabelIndex()
