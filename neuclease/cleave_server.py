@@ -101,7 +101,7 @@ def main(debug_mode=False):
         if args.mapping_file:
             MERGE_GRAPH.apply_mapping(args.mapping_file)
         elif all(primary_instance_info):
-            MERGE_GRAPH.fetch_and_apply_mapping(primary_instance_info)
+            MERGE_GRAPH.fetch_and_apply_mapping(*primary_instance_info)
 
         if args.suspend_before_launch:
             pid = os.getpid()
@@ -241,7 +241,7 @@ def _run_cleave(data):
     # Extract this body's edges from the complete merge graph
     with Timer() as timer:
         try:
-            df, supervoxels = MERGE_GRAPH.extract_rows(instance_info, body_id, body_logger)
+            df, supervoxels = MERGE_GRAPH.extract_rows(*instance_info, body_id, body_logger)
         except requests.HTTPError as ex:
             status_name = str(HTTPStatus(ex.response.status_code)).split('.')[1]
             if ex.response.status_code == HTTPStatus.NOT_FOUND:
@@ -325,7 +325,7 @@ def body_edge_table():
     body_logger.info("Recevied body-edge-table request")
 
     try:
-        subset_df, _supervoxels = MERGE_GRAPH.extract_rows(instance_info, body_id, body_logger)
+        subset_df, _supervoxels = MERGE_GRAPH.extract_rows(*instance_info, body_id, body_logger)
     except requests.HTTPError as ex:
         status_name = str(HTTPStatus(ex.response.status_code)).split('.')[1]
         if ex.response.status_code == HTTPStatus.NOT_FOUND:

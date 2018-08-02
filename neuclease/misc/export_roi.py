@@ -78,7 +78,7 @@ def export_downsampled_grayscale(instance_info, scale, parent_output_dir):
     output_dir = f'{parent_output_dir}/grayscale-scale-{scale}'
     os.makedirs(output_dir, exist_ok=True)
 
-    scaled_shape_zyx = fetch_volume_box(instance_info)[1]
+    scaled_shape_zyx = fetch_volume_box(*instance_info)[1]
 
     ns = DVIDNodeService(*instance_info[:2])
     z_slab_bounds = list(range(0, scaled_shape_zyx[0] // 64 * 64 + 1, 64))

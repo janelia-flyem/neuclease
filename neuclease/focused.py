@@ -52,7 +52,7 @@ def main():
 
 
 DvidInstanceInfo = namedtuple("DvidInstanceInfo", "server uuid instance")
-def compute_focused_paths( instance_info,
+def compute_focused_paths( server, uuid, instance,
                            original_mapping,
                            important_bodies,
                            speculative_merge_tables,
@@ -61,15 +61,14 @@ def compute_focused_paths( instance_info,
                            stop_after_endpoint_num=None,
                            return_after_setup=False ):
 
-    instance_info = DvidInstanceInfo(*instance_info)
     with Timer("Loading speculative merge graph", logger):
-        merge_graph = LabelmapMergeGraph(speculative_merge_tables, instance_info.uuid)   
+        merge_graph = LabelmapMergeGraph(speculative_merge_tables, uuid)   
 
     if split_mapping is not None:
         _bad_edges = merge_graph.append_edges_for_split_supervoxels( split_mapping,
-                                                                     instance_info.server,
-                                                                     instance_info.uuid,
-                                                                     instance_info.instance,
+                                                                     server,
+                                                                     uuid,
+                                                                     instance,
                                                                      parent_sv_handling='drop' )
     merge_table_df = merge_graph.merge_table_df
         

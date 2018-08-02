@@ -19,7 +19,7 @@ def test_fetch_supervoxels_for_body(labelmap_setup):
     
     merge_graph = LabelmapMergeGraph(merge_table_path)
     merge_graph.apply_mapping(mapping_path)
-    _mut_id, supervoxels = merge_graph.fetch_supervoxels_for_body(instance_info, 1)
+    _mut_id, supervoxels = merge_graph.fetch_supervoxels_for_body(*instance_info, 1)
     assert (sorted(supervoxels) == [1,2,3,4,5])
 
 
@@ -29,7 +29,7 @@ def test_fetch_and_apply_mapping(labelmap_setup):
     
     # Don't give mapping, ensure it's loaded from dvid.
     merge_graph = LabelmapMergeGraph(merge_table_path, no_kafka=True)
-    merge_graph.fetch_and_apply_mapping(instance_info)
+    merge_graph.fetch_and_apply_mapping(*instance_info)
     assert (merge_graph.merge_table_df['body'] == 1).all()
 
 
@@ -56,7 +56,7 @@ def _test_extract_rows(labelmap_setup, force_dirty_mapping):
     # We should be able to repeat this with the same results
     # (Make sure the cache is repopulated correctly.)
     def _extract():
-        subset_df, dvid_supervoxels = merge_graph.extract_rows(instance_info, 1)
+        subset_df, dvid_supervoxels = merge_graph.extract_rows(*instance_info, 1)
         assert (dvid_supervoxels == [1,2,3,4,5]).all()
         assert (orig_merge_table == subset_df).all().all(), \
             f"Original merge table doesn't match fetched:\n{orig_merge_table}\n\n{subset_df}\n"
@@ -80,13 +80,13 @@ def _test_extract_rows(labelmap_setup, force_dirty_mapping):
         merge_graph.merge_table_df['body'].values[0:2] = np.uint64(0)
         merge_graph._mapping_versions.clear()
 
-    subset_df, dvid_supervoxels = merge_graph.extract_rows((dvid_server, uuid, 'segmentation'), 1)
+    subset_df, dvid_supervoxels = merge_graph.extract_rows(dvid_server, uuid, 'segmentation', 1)
     assert (dvid_supervoxels == [1,2,3]).all()
     cleaved_svs = set([4,5])
     assert (subset_df == orig_merge_table.query('id_a not in @cleaved_svs and id_b not in @cleaved_svs')).all().all()
 
     # Check the other body
-    subset_df, dvid_supervoxels = merge_graph.extract_rows((dvid_server, uuid, 'segmentation'), cleaved_body)
+    subset_df, dvid_supervoxels = merge_graph.extract_rows(dvid_server, uuid, 'segmentation', cleaved_body)
 
     # Checking one body or the other shouldn't invalidate the rest of the body column!
     assert (merge_graph.merge_table_df.iloc[:2]['body'] == 1).all()
@@ -222,7 +222,7 @@ def test_extract_rows_multithreaded(labelmap_setup):
                 merge_graph._mapping_versions.clear()
 
         # Extraction should still work.
-        subset_df, dvid_supervoxels = merge_graph.extract_rows(instance_info, 1)
+        subset_df, dvid_supervoxels = merge_graph.extract_rows(*instance_info, 1)
         assert (dvid_supervoxels == [1,2,3,4,5]).all()
         assert (orig_merge_table == subset_df).all().all(), f"Original merge table doesn't match fetched:\n{orig_merge_table}\n\n{subset_df}\n"
 
