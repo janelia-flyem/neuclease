@@ -155,8 +155,9 @@ def round_coord(coord, grid_spacing, how):
 
 
 def round_box(box, grid_spacing, how='out'):
+    # FIXME: Better name would be align_box()
     """
-    Expand/shrink the given box out to align it to a grid.
+    Expand/shrink the given box out/in to align it to a grid.
 
     box: (start, stop)
     grid_spacing: int or shape
@@ -173,6 +174,43 @@ def round_box(box, grid_spacing, how='out'):
     return np.array( [ round_coord(box[0], grid_spacing, directions[how][0]),
                        round_coord(box[1], grid_spacing, directions[how][1]) ] )
 
+
+def lexsort_inplace(columns):
+    """
+    Lexsort the columns of the given array, in-place.
+    """
+    assert columns.ndim == 2
+    assert columns.flags['C_CONTIGUOUS']
+    mem_view = memoryview(columns.reshape(-1))
+    
+    # Convert to 1D structured array for in-place sort
+    dtype = [(str(i), columns.dtype) for i in range(columns.shape[1])]
+    array_view = np.frombuffer(mem_view, dtype)
+    array_view.sort()
+
+
+def is_lexsorted(columns):
+    """
+    Given a 2d array, return True if the array is lexsorted,
+    i.e. the first column is sorted, with ties being broken
+    by the second column, and so on.
+    """
+    prev_rows = columns[:-1]
+    next_rows = columns[1:]
+    
+    # Mark non-decreasing positions in every column
+    nondecreasing = (next_rows >= prev_rows)
+    if not nondecreasing[:,0].all():
+        return False
+    
+    # Mark increasing positions in every column, but allow later columns to
+    # inherit the status of earlier ones, if an earlier one was found to be increasing.
+    increasing = (next_rows > prev_rows)
+    np.logical_or.accumulate(increasing, axis=1, out=increasing)
+    
+    # Every column must be non-decreasing, except in places where
+    #  an earlier column in the row is increasing.
+    return (nondecreasing[:, 1:] | increasing[:,:-1]).all()
 
 
 class NumpyConvertingEncoder(json.JSONEncoder):
@@ -194,7 +232,6 @@ class NumpyConvertingEncoder(json.JSONEncoder):
         return super().default(o)
 
 
-
 _graph_tool_available = None
 def graph_tool_available():
     global _graph_tool_available
@@ -212,6 +249,7 @@ def graph_tool_available():
         except ImportError:
             _graph_tool_available = False
     return _graph_tool_available
+
 
 def connected_components(edges, num_nodes, _lib=None):
     """
