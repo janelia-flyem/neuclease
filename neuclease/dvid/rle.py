@@ -27,12 +27,23 @@ def extract_rle_size_and_first_coord(rle_payload_bytes):
     return voxel_count, first_coord_zyx
 
 
-def parse_rle_response(response_bytes):
+def parse_rle_response(response_bytes, dtype=np.int32):
     """
     Parse a (legacy) RLE response from DVID, used by various endpoints
     such as 'sparsevol' and 'sparsevol-coarse'.
     
-    Return an array of coordinates of the form:
+    Args:
+        response_bytes:
+            RLE bytes as returned by a DVID endpoint, e.g. /sparsevol
+        
+        dtype:
+            The dtype of the returned coordinate array.
+            Must be either np.int32 (the default) or np.int16.
+            If you know the results will not exceed 2**16 in any coordinate,
+            you can save some RAM by selecting np.int16
+
+    Return:
+        An array of coordinates of the form:
 
         [[Z,Y,X],
          [Z,Y,X],
@@ -40,13 +51,14 @@ def parse_rle_response(response_bytes):
          ...
         ]
     """
+    assert dtype in (np.int32, np.int16)
     descriptor = response_bytes[0]
     ndim = response_bytes[1]
     run_dimension = response_bytes[2]
 
     assert descriptor == 0, f"Don't know how to handle this payload. (descriptor: {descriptor})"
     assert ndim == 3, "Expected XYZ run-lengths"
-    assert run_dimension == 0, "FIXME, we assume the run dimension is X"
+    assert run_dimension == 0, "This function assumes the RLE run dimension is X"
 
     content_as_int32 = np.frombuffer(response_bytes, np.int32)
     _voxel_count = content_as_int32[1]
@@ -68,7 +80,14 @@ def parse_rle_response(response_bytes):
     #assert rle_lengths.sum() == _voxel_count,\
     #    f"Voxel count ({voxel_count}) doesn't match expected sum of run-lengths ({rle_lengths.sum()})"
 
+    if dtype == np.int16:
+        assert rle_starts_zyx[:2].max() < 2**16, "Can't return np.int16 -- result would overflow"
+        assert (rle_starts_zyx[:,2] + rle_lengths).max() < 2**16, "Can't return np.int16 -- result would overflow"
+        rle_starts_zyx = rle_starts_zyx.astype(np.int16)
+        rle_lengths = rle_lengths.astype(np.int16)
+
     dense_coords = runlength_decode_from_lengths(rle_starts_zyx, rle_lengths)
+    assert dense_coords.dtype == dtype
     
     assert rle_lengths.sum() == len(dense_coords), "Got the wrong number of coordinates!"
     return dense_coords
@@ -158,7 +177,7 @@ def _runlength_encode_to_ranges(coord_list_zyx):
     return runs[1:, :] # omit dummy row (see above)
 
 
-@jit("i4[:,:](i4[:,::1],i4[::1])", nopython=True) # See note about signature, below.
+@jit(["i4[:,:](i4[:,::1],i4[::1])", "i2[:,:](i2[:,::1],i2[::1])"], nopython=True) # See note about signature, below.
 def runlength_decode_from_lengths(rle_start_coords_zyx, rle_lengths):
     """
     Given a 2D array of coordinates and a 1D array of runlengths, i.e.:
@@ -193,17 +212,22 @@ def runlength_decode_from_lengths(rle_start_coords_zyx, rle_lengths):
         
             TypeError: No matching definition for argument type(s) readonly array(int32, 2d, A), readonly array(int32, 1d, C)
     """
-    coords = []
+    coords = np.empty((rle_lengths.sum(), 3), rle_start_coords_zyx.dtype)
+
+    c = 0 # coord row
     for i in range(len(rle_start_coords_zyx)):
         (z, y, x0) = rle_start_coords_zyx[i]
         length = rle_lengths[i]
         for x in range(x0, x0+length):
-            coords.extend([z,y,x])
+            coords[c, 0] = z
+            coords[c, 1] = y
+            coords[c, 2] = x
+            c += 1
 
-    return np.array(coords, np.int32).reshape((-1,3))
+    return coords
 
 
-@jit("i4[:,:](i4[:,::1])", nopython=True) # See note about signature, below.
+@jit(["i4[:,:](i4[:,::1])", "i2[:,:](i2[:,::1])"], nopython=True) # See note about signature, below.
 def runlength_decode_from_ranges(rle_array_zyx):
     """
     Used for parsing the result of DVID's /roi endpoint.
@@ -236,12 +260,19 @@ def runlength_decode_from_ranges(rle_array_zyx):
         
             TypeError: No matching definition for argument type(s) readonly array(int32, 2d, A)
     """
-    coords = []
+    total_coords = 0
+    for i in range(len(rle_array_zyx)):
+        total_coords += 1 + rle_array_zyx[i, 3] - rle_array_zyx[i, 2]
+
+    coords = np.empty((total_coords, 3), rle_array_zyx.dtype)
+
+    c = 0 # coord row
     for i in range(len(rle_array_zyx)):
         (z, y, x1, x2) = rle_array_zyx[i]
-        for x in range(x1,x2+1):
-            coords.extend([z,y,x])
+        for x in range(x1, x2+1):
+            coords[c, 0] = z
+            coords[c, 1] = y
+            coords[c, 2] = x
+            c += 1
 
-    return np.array(coords, np.int32).reshape((-1,3))
-
-
+    return coords
