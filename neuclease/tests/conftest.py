@@ -9,9 +9,11 @@ import pytest
 import numpy as np
 import pandas as pd
 
-import neuclease
 
 from libdvid import DVIDNodeService
+
+import neuclease
+from neuclease.dvid import create_labelmap_instance
 
 TEST_DVID_SERVER_PROC = None # Initialized below
 
@@ -24,8 +26,8 @@ TEST_SERVER = f"127.0.0.1:{DVID_PORT}"
 TEST_REPO = None # Initialized below
 TEST_REPO_ALIAS = 'neuclease-test'
 
-#DVID_SHUTDOWN_TIMEOUT = 10.0
-DVID_SHUTDOWN_TIMEOUT = 2.0
+DVID_SHUTDOWN_TIMEOUT = 10.0
+#DVID_SHUTDOWN_TIMEOUT = 2.0
 
 DVID_CONFIG = f"""\
 [server]
@@ -96,21 +98,6 @@ def init_test_repo(reuse_existing=True):
     TEST_REPO = repo_uuid
     return repo_uuid
 
-def create_test_labelmap_instance(uuid, instance_name):
-    params = { "typename": "labelmap",
-               "dataname": instance_name,
-               "BlockSize": "64,64,64",
-               "IndexedLabels": "true",
-               "CountLabels": "true",
-               "MaxDownresLevel": '2' }
-    
-    r = requests.post(f'http://{TEST_SERVER}/api/repo/{uuid}/instance', json=params)
-
-    if r.status_code == 400 and 'already exists' in r.content.decode():
-        return
-    else:
-        r.raise_for_status()
-
 
 def init_labelmap_nodes():
     # Five supervoxels are each 1x3x3, arranged in a single row like this:
@@ -147,7 +134,8 @@ def init_labelmap_nodes():
     merge_table_path = f'{TEST_DATA_DIR}/merge-table.npy'
     np.save(merge_table_path, merge_table.to_records(index=False))
     
-    create_test_labelmap_instance(TEST_REPO, 'segmentation')
+    create_labelmap_instance(TEST_SERVER, TEST_REPO, 'segmentation', max_scale=2)
+    create_labelmap_instance(TEST_SERVER, TEST_REPO, 'segmentation-scratch', max_scale=2)
 
     # Expand to 64**3
     supervoxel_block = np.zeros((64,64,64), np.uint64)

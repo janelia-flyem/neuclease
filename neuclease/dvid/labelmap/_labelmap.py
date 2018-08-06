@@ -1,10 +1,11 @@
+import gzip
 import logging
 from io import BytesIO
 
 import numpy as np
 import pandas as pd
 
-from libdvid import DVIDNodeService
+from libdvid import DVIDNodeService, encode_label_block
 
 from ...util import Timer, round_box, extract_subvol
 
@@ -479,6 +480,85 @@ def fetch_labelarray_voxels(server, uuid, instance, box, scale=0, throttle=False
     
     requested_box_within_aligned = box - aligned_box[0]
     return extract_subvol(aligned_volume, requested_box_within_aligned )
+
+
+@dvid_api_wrapper
+def post_labelarray_blocks(server, uuid, instance, corners_zyx, blocks, scale=0, downres=False, noindexing=False, throttle=False, *, session=None):
+    """
+    Post voxels to a labelarray instance, from a list of blocks.
+    
+    Args:
+        server:
+            dvid server, e.g. 'emdata3:8900'
+        
+        uuid:
+            dvid uuid, e.g. 'abc9'
+        
+        instance:
+            dvid instance name, e.g. 'segmentation'
+
+        corners_zyx:
+            The starting coordinates of each block in the list (in full-res voxel coordinates)
+        
+        blocks:
+            A list of uint64 blocks, each with shape (64,64,64)
+        
+        scale:
+            Which pyramid scale to post this block to.
+
+        downres:
+            Specifies whether the given blocks should trigger regeneration
+            of donwres pyramids for this block on the DVID server.
+            Only permitted for scale 0 posts.
+        
+        noindexing:
+            If True, will not compute label indices from the received voxel data.
+            Normally only used during initial ingestion.
+
+        throttle:
+            If True, passed via the query string to DVID, in which case DVID might return a '503' error
+            if the server is too busy to service the request.
+            It is your responsibility to catch DVIDExceptions in that case.
+    """
+    assert not downres or scale == 0, "downres option is only valid for scale 0"
+    if len(corners_zyx) == 0:
+        return
+
+    corners_zyx = np.asarray(corners_zyx, np.int32)
+    assert corners_zyx.ndim == 2
+    assert corners_zyx.shape[1] == 3
+    assert len(blocks) == len(corners_zyx)
+    corners_xyz = corners_zyx[:, ::-1].copy('C')
+
+    # dvid wants block coordinates, not voxel coordinates
+    encoded_corners = list(map(bytes, corners_xyz // 64))
+
+    encoded_blocks = []
+    for block in blocks:
+        assert block.shape == (64,64,64)
+        block = np.asarray(block, np.uint64, 'C')
+        encoded_blocks.append( gzip.compress(encode_label_block(block)) )
+    assert len(encoded_blocks) == len(corners_xyz)
+
+    encoded_lengths = np.fromiter(map(len, encoded_blocks), np.int32)
+    
+    stream = BytesIO()
+    for corner_buf, len_buf, block_buf in zip(encoded_corners, encoded_lengths, encoded_blocks):
+        stream.write(corner_buf)
+        stream.write(len_buf)
+        stream.write(block_buf)
+    body_data = stream.getbuffer()
+
+    params = { 'scale': str(scale) }
+
+    # These options are already false by default, so we'll only include them if we have to.
+    opts = { 'downres': downres, 'noindexing': noindexing, 'throttle': throttle }
+    for opt, value in opts.items():
+        if value:
+            params[opt] = str(bool(value)).lower()
+
+    r = session.post(f'http://{server}/api/node/{uuid}/{instance}/blocks', params=params, data=body_data)
+    r.raise_for_status()
 
 
 @dvid_api_wrapper

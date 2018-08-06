@@ -10,7 +10,7 @@ import pandas as pd
 
 from neuclease.dvid import (dvid_api_wrapper, DvidInstanceInfo, fetch_supervoxels_for_body, fetch_supervoxel_sizes_for_body,
                             fetch_label_for_coordinate, fetch_mappings, fetch_complete_mappings, fetch_mutation_id,
-                            generate_sample_coordinate, fetch_labelarray_voxels)
+                            generate_sample_coordinate, fetch_labelarray_voxels, post_labelarray_blocks, create_labelmap_instance)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -74,6 +74,7 @@ def test_fetch_mappings(labelmap_setup):
     assert (sorted(mapping.index) == [2,3,4,5]) # Does not include 'identity' row for SV 1. See docstring.
     assert (mapping == 1).all() # see initialization in conftest.py
 
+
 def test_fetch_complete_mappings(labelmap_setup):
     """
     Very BASIC test for fetch_complete_mappings().
@@ -118,6 +119,22 @@ def test_fetch_labelarray_voxels(labelmap_setup):
     
     voxels = fetch_labelarray_voxels(*instance_info, [(0,0,0), supervoxel_vol.shape], supervoxels=False)
     assert (voxels == 1).all()
+
+def test_post_labelarray_voxels(labelmap_setup):
+    dvid_server, dvid_repo, _merge_table_path, _mapping_path, _supervoxel_vol = labelmap_setup
+    instance_info = DvidInstanceInfo(dvid_server, dvid_repo, 'segmentation-scratch')
+    
+    # Write some random data and read it back.
+    blocks = np.random.randint(10, size=(3,64,64,64), dtype=np.uint64)
+    corners_zyx = [[0,0,0], [0,64,0], [0,0,64]]
+
+    post_labelarray_blocks(dvid_server, dvid_repo, 'segmentation-scratch', corners_zyx, blocks, 0)
+    complete_voxels = fetch_labelarray_voxels(*instance_info, [(0,0,0), (128,128,128)], supervoxels=True)
+        
+    assert (complete_voxels[0:64,  0:64,  0:64]  == blocks[0]).all()
+    assert (complete_voxels[0:64, 64:128, 0:64]  == blocks[1]).all()
+    assert (complete_voxels[0:64,  0:64, 64:128] == blocks[2]).all()
+
 
 if __name__ == "__main__":
     pytest.main(['-s', '--tb=native', '--pyargs', 'neuclease.tests.test_dvid'])
