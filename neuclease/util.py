@@ -10,6 +10,7 @@ from itertools import starmap
 import numpy as np
 import pandas as pd
 import networkx as nx
+from numba import jit
 
 @contextlib.contextmanager
 def Timer(msg=None, logger=None):
@@ -175,18 +176,52 @@ def round_box(box, grid_spacing, how='out'):
                        round_coord(box[1], grid_spacing, directions[how][1]) ] )
 
 
-def lexsort_inplace(columns):
+def view_rows_as_records(table):
     """
-    Lexsort the columns of the given array, in-place.
-    """
-    assert columns.ndim == 2
-    assert columns.flags['C_CONTIGUOUS']
-    mem_view = memoryview(columns.reshape(-1))
+    Return a 1D strucured-array view of the given 2D array,
+    in which each row is converted to a strucutred element.
     
-    # Convert to 1D structured array for in-place sort
-    dtype = [(str(i), columns.dtype) for i in range(columns.shape[1])]
+    The structured array fields will be named '0', '1', etc.
+    """
+    assert table.ndim == 2
+    assert table.flags['C_CONTIGUOUS']
+    mem_view = memoryview(table.reshape(-1))
+
+    dtype = [(str(i), table.dtype) for i in range(table.shape[1])]
     array_view = np.frombuffer(mem_view, dtype)
+    return array_view
+
+
+def lexsort_inplace(table):
+    """
+    Lexsort the given 2D table of the given array, in-place.
+    The table is sorted by the first column (table[:,0]),
+    then the second, third, etc.
+    
+    Equivalent to:
+    
+        order = np.lexsort(table.transpose()[::-1])
+        table = table[order]
+    
+    But should (in theory) be faster and use less RAM.
+    
+    WARNING:
+        Tragically, this function seems to be much slower than the straightforward
+        implementation shown above, so its only advantage is its reduced RAM requirements.
+    """
+    # Convert to 1D structured array for in-place sort
+    array_view = view_rows_as_records(table)
     array_view.sort()
+
+
+def lexsort_columns(table):
+    """
+    Lexsort the given 2D table of the given array, in-place.
+    The table is sorted by the first column (table[:,0]),
+    then the second, third, etc.
+    """
+    order = np.lexsort(table.transpose()[::-1])
+    return table[order]
 
 
 def is_lexsorted(columns):
@@ -211,6 +246,71 @@ def is_lexsorted(columns):
     # Every column must be non-decreasing, except in places where
     #  an earlier column in the row is increasing.
     return (nondecreasing[:, 1:] | increasing[:,:-1]).all()
+
+
+@jit(nopython=True)
+def groupby_presorted(a, sorted_cols):
+    """
+    Given an array of data and some sorted reference columns to use for grouping,
+    yield subarrays of the data, according to runs of identical rows in the reference columns.
+    
+    JIT-compiled with numba.
+    For pre-sorted structured array input, this is much faster than pandas.DataFrame(a).groupby().
+    
+    Args:
+        a: ND array, any dtype, shape (N,) or (N,...)
+        sorted_cols: ND array, at least 2D, any dtype, shape (N,...),
+                     not necessarily the same shape as 'a', except for the first dimension.
+                     Must be pre-ordered so that identical rows are contiguous,
+                     and therefore define the group boundaries.
+
+    Note: The contents of 'a' need not be related in any way to sorted_cols.
+          The sorted_cols array is just used to determine the split points,
+          and the corresponding rows of 'a' are returned.
+
+    Examples:
+    
+        a = np.array( [[0,0,0],
+                       [1,0,0],
+                       [2,1,0],
+                       [3,1,1],
+                       [4,2,1]] )
+
+        # Group by second column
+        groups = list(groupby_presorted(a, a[:,1:2]))
+        assert (groups[0] == [[0,0,0], [1,0,0]]).all()
+        assert (groups[1] == [[2,1,0], [3,1,1]]).all()
+        assert (groups[2] == [[4,2,1]]).all()
+    
+        # Group by third column
+        groups = list(groupby_presorted(a, a[:,2:3]))
+        assert (groups[0] == [[0,0,0], [1,0,0], [2,1,0]]).all()
+        assert (groups[1] == [[3,1,1], [4,2,1]]).all()
+
+        # Group by external column
+        col = np.array([10,10,40,40,40]).reshape(5,1) # must be at least 2D
+        groups = list(groupby_presorted(a, col))
+        assert (groups[0] == [[0,0,0], [1,0,0]]).all()
+        assert (groups[1] == [[2,1,0], [3,1,1],[4,2,1]]).all()
+        
+    """
+    assert sorted_cols.ndim >= 2
+    assert sorted_cols.shape[0] == a.shape[0]
+
+    if len(a) == 0:
+        return
+
+    start = 0
+    row = sorted_cols[0]
+    for stop in range(len(sorted_cols)):
+        next_row = sorted_cols[stop]
+        if (next_row != row).any():
+            yield a[start:stop]
+            start = stop
+            row = next_row
+
+    # Last group
+    yield a[start:len(sorted_cols)]
 
 
 class NumpyConvertingEncoder(json.JSONEncoder):
