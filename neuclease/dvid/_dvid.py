@@ -60,8 +60,9 @@ def dvid_api_wrapper(f):
     - If the server address begins with 'http://', that prefix is stripped from it.
     - If 'session' was not provided by the caller, a default one is provided.
     - If an HTTPError is raised, the response body (if any) is also included in the exception text.
-      (DVID error responses often includes useful information in the response body,
-      but requests doesn't show that by default.)
+      (DVID error responses often include useful information in the response body,
+      but requests doesn't normally include the error response body in the exception string.
+      This fixes that.)
     """
     argspec = inspect.getfullargspec(f)
     assert 'session' in argspec.kwonlyargs, \
