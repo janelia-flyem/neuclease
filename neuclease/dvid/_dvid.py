@@ -98,8 +98,9 @@ def dvid_api_wrapper(f):
     return wrapper
 
 
+@dvid_api_wrapper
 def fetch_generic_json(url, json=None, *, session=None):
-    r = session.get(url, json=json)
+    r = session.get('http://' + url, json=json)
     r.raise_for_status()
     return r.json()
 
