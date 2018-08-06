@@ -42,6 +42,7 @@ def create_labelmap_instance(server, uuid, instance, tags=[], block_size=64, vox
 
 @dvid_api_wrapper
 def fetch_supervoxels_for_body(server, uuid, instance, body_id, user=None, *, session=None):
+    # FIXME: Rename to 'fetch_supervoxels()'
     # FIXME: Remove 'user' in favor of session arg
     query_params = {}
     if user:
@@ -68,6 +69,7 @@ fetch_body_size = fetch_size
 
 @dvid_api_wrapper
 def fetch_sizes(server, uuid, instance, label_ids, supervoxels=False, *, session=None):
+    # FIXME: Return pd.Series
     label_ids = list(map(int, label_ids))
     supervoxels = str(bool(supervoxels)).lower()
 
@@ -81,8 +83,13 @@ fetch_body_sizes = fetch_sizes
 @dvid_api_wrapper
 def fetch_supervoxel_sizes_for_body(server, uuid, instance, body_id, user=None, *, session=None):
     """
-    Return the sizes of all supervoxels in a body 
+    Return the sizes of all supervoxels in a body.
+    Convenience function to call fetch_supervoxels() followed by fetch_sizes()
+    
+    Returns: 
+        pd.Series, indexed by supervoxel
     """
+    
     # FIXME: Remove 'user' param in favor of 'session' param.
     supervoxels = fetch_supervoxels_for_body(server, uuid, instance, body_id, user, session=session)
     
@@ -90,6 +97,7 @@ def fetch_supervoxel_sizes_for_body(server, uuid, instance, body_id, user=None, 
     if user:
         query_params['u'] = user
 
+    # FIXME: Call fetch_sizes() with a custom session instead of rolling our own request here.
     url = f'http://{server}/api/node/{uuid}/{instance}/sizes?supervoxels=true'
     r = session.get(url, params=query_params, json=supervoxels.tolist())
     r.raise_for_status()
@@ -113,6 +121,11 @@ def fetch_label_for_coordinate(server, uuid, instance, coordinate_zyx, supervoxe
 
 @dvid_api_wrapper
 def fetch_sparsevol_rles(server, uuid, instance, label, supervoxels=False, scale=0, *, session=None):
+    """
+    Fetch the sparsevol RLE representation for a given label.
+    
+    See also: neuclease.dvid.rle.parse_rle_response()
+    """
     supervoxels = str(bool(supervoxels)).lower() # to lowercase string
     url = f'http://{server}/api/node/{uuid}/{instance}/sparsevol/{label}?supervoxels={supervoxels}&scale={scale}'
     r = session.get(url)
@@ -467,9 +480,34 @@ def fetch_labelarray_voxels(server, uuid, instance, box, scale=0, throttle=False
     requested_box_within_aligned = box - aligned_box[0]
     return extract_subvol(aligned_volume, requested_box_within_aligned )
 
-# FIXME: rename this function post_cleave and write a test
+
 @dvid_api_wrapper
-def perform_cleave(server, uuid, instance, body_id, supervoxel_ids, *, session=None):
+def post_cleave(server, uuid, instance, body_id, supervoxel_ids, *, session=None):
+    """
+    Execute a cleave operation on the given body.
+    This "cleaves away" the given list of supervoxel ids into a new body,
+    whose ID will be chosen by DVID.
+    
+    Args:
+        server:
+            dvid server, e.g. 'emdata3:8900'
+        
+        uuid:
+            dvid uuid, e.g. 'abc9'
+        
+        instance:
+            dvid instance name, e.g. 'segmentation'
+
+        body_id:
+            The body ID from which to cleave the supervoxels
+        
+        supervoxel_ids:
+            The list of supervoxels to cleave out of the given body.
+            (All of the given supervoxel IDs must be mapped to the given body)
+    
+    Returns:
+        The label ID of the new body created by the cleave operation.
+    """
     supervoxel_ids = list(map(int, supervoxel_ids))
 
     r = session.post(f'http://{server}/api/node/{uuid}/{instance}/cleave/{body_id}', json=supervoxel_ids)

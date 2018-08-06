@@ -11,6 +11,8 @@ from libdvid import DVIDNodeService
 DEFAULT_DVID_SESSIONS = {}
 DEFAULT_DVID_NODE_SERVICES = {}
 DEFAULT_APPNAME = "neuclease"
+
+# FIXME: This should be eliminated or at least renamed
 DvidInstanceInfo = namedtuple("DvidInstanceInfo", "server uuid instance")
 
 def default_dvid_session(appname=None):

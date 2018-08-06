@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 
 from neuclease.dvid import (fetch_label_for_coordinate, fetch_sparsevol_rles, split_supervoxel, fetch_mapping,
-                            generate_sample_coordinate, fetch_body_size, fetch_body_sizes, read_kafka_messages, perform_cleave)
+                            generate_sample_coordinate, fetch_body_size, fetch_body_sizes, read_kafka_messages, post_cleave)
 from neuclease.dvid.rle import extract_rle_size_and_first_coord
 from neuclease.util import read_csv_col
 
@@ -197,7 +197,7 @@ def cleave_supervoxels_as_isolated_bodies(instance_info, sv_ids):
     cleaved_ids = []
     for sv_id, body_id in tqdm(list(zip(sv_ids, body_ids))):
         try:
-            cleaved_body = perform_cleave(*instance_info, body_id, [sv_id])
+            cleaved_body = post_cleave(*instance_info, body_id, [sv_id])
         except requests.RequestException as ex:
             if 'cannot cleave all supervoxels from the label' in ex.response.content.decode():
                 # Body has only one supervoxel to begin with
