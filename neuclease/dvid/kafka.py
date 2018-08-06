@@ -8,7 +8,7 @@ import networkx as nx
 from ..util import uuids_match, Timer
 from . import dvid_api_wrapper
 from .server import fetch_server_info
-from .repo import fetch_and_parse_dag
+from .repo import fetch_repo_dag
 from .node import fetch_instance_info
 
 logger = logging.getLogger(__name__)
@@ -99,7 +99,7 @@ def read_kafka_messages(server, uuid, instance, action_filter=None, dag_filter='
 
     elif dag_filter == 'leaf-and-parents':
         # Load DAG structure as nx.DiGraph
-        dag = fetch_and_parse_dag(server, repo_uuid, session=session)
+        dag = fetch_repo_dag(server, repo_uuid, session=session)
         
         # Determine full name of leaf uuid, for proper set membership
         matching_uuids = list(filter(lambda u: uuids_match(u, uuid), dag.nodes()))

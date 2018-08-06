@@ -5,6 +5,7 @@ import networkx as nx
 from ..util import uuids_match
 from . import dvid_api_wrapper, fetch_generic_json
 
+
 INSTANCE_TYPENAMES = """\
 annotation
 float32blk
@@ -40,7 +41,7 @@ def expand_uuid(server, uuid, repo_uuid=None, *, session=None):
     
     Args:
         server:
-            dvid server
+            dvid server, e.g. 'emdata3:8900'
         uuid:
             Abbreviated uuid, e.g. `662edc`
         repo_uuid:
@@ -121,6 +122,7 @@ def create_instance(server, uuid, instance, typename, versioned=True, compressio
     r = session.post(f"http://{server}/api/repo/{uuid}/instance", json=settings)
     r.raise_for_status()
 
+
 @dvid_api_wrapper
 def create_voxel_instance(server, uuid, instance, typename, versioned=True, compression=None, tags=[],
                           block_size=64, voxel_size=8.0, voxel_units='nanometers', background=None,
@@ -155,16 +157,46 @@ def create_voxel_instance(server, uuid, instance, typename, versioned=True, comp
 
 
 @dvid_api_wrapper
-def fetch_and_parse_dag(server, repo_uuid, *, session=None):
-    # FIXME: Better name would be 'fetch_repo_dag'
+def fetch_repo_dag(server, uuid, *, session=None):
     """
-    Read the /repo/info for the given repo UUID
-    and extract the DAG structure from it.
+    Read the /repo/info for the given repo UUID and extract
+    the DAG structure from it, parsed into a nx.DiGraph.
 
-    Return the DAG as a nx.DiGraph, whose nodes' attribute
-    dicts contain the fields from the DAG json data.
+    Args:
+        server:
+            dvid server, e.g. 'emdata3:8900'
+
+        uuid:
+            Any node UUID within the repo of interest.
+            (DVID will return the entire repo info regardless of
+            which node uuid is provided here.)
+
+    Returns:
+        The DAG as a nx.DiGraph, whose nodes' attribute
+        dicts contain the fields from the DAG json data.
+    
+    Example:
+    
+        >>> g = fetch_repo_dag('emdata3:8900', 'a77')
+        
+        >>> list(nx.topological_sort(g))
+        ['a776af0b132f44c3a428fe7607ba0da0',
+         'ac90185a83a44809a2c8f0251c121827',
+         '417bd9a68ed94b9381c4f35aa8a0d7f6']
+        
+        >>> g.nodes['ac90185a83a44809a2c8f0251c121827']
+        {'Branch': '',
+         'Children': [3],
+         'Created': '2018-04-03T23:04:57.835725508-04:00',
+         'Locked': True,
+         'Log': [],
+         'Note': 'Agglo Indices (updated agglo version)',
+         'Parents': [1],
+         'UUID': 'ac90185a83a44809a2c8f0251c121827',
+         'Updated': '2018-04-04T14:15:53.377342506-04:00',
+         'VersionID': 2}
     """
-    repo_info = fetch_repo_info(server, repo_uuid, session=session)
+    repo_info = fetch_repo_info(server, uuid, session=session)
 
     # The JSON response is a little weird.
     # The DAG nodes are given as a dict with uuids as keys,
