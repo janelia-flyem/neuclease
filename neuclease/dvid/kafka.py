@@ -9,7 +9,7 @@ from ..util import uuids_match, Timer
 from . import dvid_api_wrapper
 from .server import fetch_server_info
 from .repo import fetch_and_parse_dag
-from .node import fetch_full_instance_info
+from .node import fetch_instance_info
 
 logger = logging.getLogger(__name__)
 
@@ -73,7 +73,7 @@ def read_kafka_messages(server, uuid, instance, action_filter=None, dag_filter='
 
     kafka_server = server_info["Kafka Servers"]
 
-    full_instance_info = fetch_full_instance_info(server, uuid, instance, session=session)
+    full_instance_info = fetch_instance_info(server, uuid, instance, session=session)
     data_uuid = full_instance_info["Base"]["DataUUID"]
     repo_uuid = full_instance_info["Base"]["RepoUUID"]
 

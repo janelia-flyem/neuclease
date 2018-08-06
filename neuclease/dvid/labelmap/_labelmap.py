@@ -10,7 +10,7 @@ from ...util import Timer, round_box, extract_subvol
 
 from .. import dvid_api_wrapper, fetch_generic_json
 from ..repo import create_voxel_instance
-from ..node import fetch_full_instance_info
+from ..node import fetch_instance_info
 from ..kafka import read_kafka_messages
 from ..rle import parse_rle_response
 
@@ -373,7 +373,7 @@ def fetch_volume_box(server, uuid, instance, *, session=None):
         - Returns *box*, shape=(box[1] - box[0])
         - Returns ZYX order
     """
-    info = fetch_full_instance_info(server, uuid, instance, session)
+    info = fetch_instance_info(server, uuid, instance, session)
     box_xyz = np.array((info["Extended"]["MinPoint"], info["Extended"]["MaxPoint"]))
     box_xyz[1] += 1
     

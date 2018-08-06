@@ -1,8 +1,7 @@
 from . import dvid_api_wrapper, fetch_generic_json
 
 @dvid_api_wrapper
-def fetch_full_instance_info(server, uuid, instance, *, session=None):
-    #FIXME: Rename this function to 'fetch_info' or maybe 'fetch_instance_info'
+def fetch_instance_info(server, uuid, instance, *, session=None):
     """
     Returns the full JSON instance info from DVID
     """
