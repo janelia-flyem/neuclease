@@ -10,7 +10,7 @@ def fetch_full_instance_info(server, uuid, instance, *, session=None):
 
 
 @dvid_api_wrapper
-def create_branch(server, uuid, branch_name, note=None, custom_uuid=None, *, session=None):
+def post_branch(server, uuid, branch_name, note, custom_uuid=None, *, session=None):
     """
     Create a branch from the given UUID with the given new branch name.
     Branch name must be unique (not used previously in the repo).
