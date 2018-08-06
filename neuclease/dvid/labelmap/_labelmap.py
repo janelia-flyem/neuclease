@@ -4,13 +4,14 @@ from io import BytesIO
 
 import numpy as np
 import pandas as pd
+import networkx as nx
 
 from libdvid import DVIDNodeService, encode_label_block
 
 from ...util import Timer, round_box, extract_subvol
 
 from .. import dvid_api_wrapper, fetch_generic_json
-from ..repo import create_voxel_instance
+from ..repo import create_voxel_instance, fetch_repo_info, fetch_repo_dag, expand_uuid
 from ..node import fetch_instance_info
 from ..kafka import read_kafka_messages
 from ..rle import parse_rle_response
@@ -39,6 +40,32 @@ def create_labelmap_instance(server, uuid, instance, tags=[], block_size=64, vox
     create_voxel_instance( server, uuid, instance, 'labelmap', tags=tags, block_size=block_size, voxel_size=voxel_size,
                        voxel_units=voxel_units, type_specific_settings=type_specific_settings, session=session )
 
+
+@dvid_api_wrapper
+def fetch_max_label(server, uuid, instance, *, session=None):
+    """
+    Read the MaxLabel for the given segmentation instance at the given node.
+    This is somewhat tricky because it requires parsing the repo DAG to determine
+    the node's "VersionID" and then traversing the DAG upwards until a node's
+    MaxLabel is found.
+    """
+    # Fetch the dict of { version_id : label_id },
+    # e.g. { '1': 5812978871, '5': 5812984051, ... }
+    labelmap_info = fetch_instance_info(server, uuid, instance, session=session)
+    maxlabel_per_version = labelmap_info['Extended']['MaxLabel']
+
+    repo_info = fetch_repo_info(server, uuid, session=session)
+    uuid = expand_uuid(server, uuid, repo_info=repo_info, session=session)
+    dag = fetch_repo_dag(server, uuid, repo_info)
+
+    upstream_dag = dag.subgraph({uuid} | nx.ancestors(dag, uuid))
+
+    for node in reversed(list(nx.topological_sort(upstream_dag))):
+        v_id = str(upstream_dag.nodes[node]['VersionID'])
+        if v_id in maxlabel_per_version:
+            return maxlabel_per_version[v_id]
+    
+    raise RuntimeError(f"No ancestors of {uuid} have a listed MaxLabel")
 
 
 @dvid_api_wrapper

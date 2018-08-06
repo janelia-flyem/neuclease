@@ -10,7 +10,7 @@ import pandas as pd
 
 from neuclease.dvid import (dvid_api_wrapper, DvidInstanceInfo, fetch_supervoxels_for_body, fetch_supervoxel_sizes_for_body,
                             fetch_label_for_coordinate, fetch_mappings, fetch_complete_mappings, fetch_mutation_id,
-                            generate_sample_coordinate, fetch_labelarray_voxels, post_labelarray_blocks, create_labelmap_instance)
+                            generate_sample_coordinate, fetch_labelarray_voxels, post_labelarray_blocks, fetch_max_label)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -28,6 +28,13 @@ def test_dvid_api_wrapper():
 
     server, uuid, instance, x = f("foo", "bar", "baz", 5)
     assert (server, uuid, instance, x) == ("foo", "bar", "baz", 5)
+
+
+def test_fetch_maxlabel(labelmap_setup):
+    dvid_server, dvid_repo, _merge_table_path, _mapping_path, _supervoxel_vol = labelmap_setup
+    maxlabel = fetch_max_label(dvid_server, dvid_repo, 'segmentation')
+    assert maxlabel == 5
+
 
 def test_fetch_supervoxels_for_body(labelmap_setup):
     dvid_server, dvid_repo, _merge_table_path, _mapping_path, _supervoxel_vol = labelmap_setup

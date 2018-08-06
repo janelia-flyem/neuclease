@@ -34,7 +34,8 @@ def fetch_repo_info(server, uuid, *, session=None):
     
 
 @dvid_api_wrapper
-def expand_uuid(server, uuid, repo_uuid=None, *, session=None):
+def expand_uuid(server, uuid, repo_uuid=None, repo_info=None, *, session=None):
+    # FIXME: Name should start with fetch_, maybe 'fetch_full_uuid()'
     """
     Given an abbreviated uuid, find the matching uuid
     on the server and return the complete uuid.
@@ -42,17 +43,24 @@ def expand_uuid(server, uuid, repo_uuid=None, *, session=None):
     Args:
         server:
             dvid server, e.g. 'emdata3:8900'
+
         uuid:
             Abbreviated uuid, e.g. `662edc`
+
         repo_uuid:
             The repo in which to search for the complete uuid.
             If not provided, the abbreviated uuid itself is used.
+        
+        repo_info:
+            If you already have a copy of the repo info, you can
+            pass it here to avoid an extra call to DVID.
         
     Returns:
         Complete uuid, e.g. `662edcb44e69481ea529d89904b5ef9b`
     """
     repo_uuid = repo_uuid or uuid
-    repo_info = fetch_repo_info(server, repo_uuid, session=session)
+    if repo_info is None:
+        repo_info = fetch_repo_info(server, repo_uuid, session=session)
     full_uuids = repo_info["DAG"]["Nodes"].keys()
     
     matching_uuids = list(filter(lambda full_uuid: uuids_match(uuid, full_uuid), full_uuids))
@@ -157,7 +165,7 @@ def create_voxel_instance(server, uuid, instance, typename, versioned=True, comp
 
 
 @dvid_api_wrapper
-def fetch_repo_dag(server, uuid, *, session=None):
+def fetch_repo_dag(server, uuid, repo_info=None, *, session=None):
     """
     Read the /repo/info for the given repo UUID and extract
     the DAG structure from it, parsed into a nx.DiGraph.
@@ -171,6 +179,10 @@ def fetch_repo_dag(server, uuid, *, session=None):
             (DVID will return the entire repo info regardless of
             which node uuid is provided here.)
 
+        repo_info:
+            If you already have a copy of the repo info, you can
+            pass it here to avoid an extra call to DVID.
+        
     Returns:
         The DAG as a nx.DiGraph, whose nodes' attribute
         dicts contain the fields from the DAG json data.
@@ -196,7 +208,8 @@ def fetch_repo_dag(server, uuid, *, session=None):
          'Updated': '2018-04-04T14:15:53.377342506-04:00',
          'VersionID': 2}
     """
-    repo_info = fetch_repo_info(server, uuid, session=session)
+    if repo_info is None:
+        repo_info = fetch_repo_info(server, uuid, session=session)
 
     # The JSON response is a little weird.
     # The DAG nodes are given as a dict with uuids as keys,
