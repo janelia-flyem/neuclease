@@ -85,7 +85,7 @@ def post_roi(server, uuid, instance, roi_ranges, *, session):
     Post a set of RLE ranges to DVID as an ROI.
     The ranges must be provided in SCALE-5 coordinates.
     
-    For generating RLE ranges from a list of coordiantes, see:
+    For generating RLE ranges from a list of coordinates, see:
         neuclease.dvid.rle.runlength_encode_to_ranges()
 
     Args:
@@ -105,4 +105,5 @@ def post_roi(server, uuid, instance, roi_ranges, *, session):
     encoded_ranges = json.dumps(roi_ranges, cls=NumpyConvertingEncoder)
     r = session.post(f'http://{server}/api/node/{uuid}/{instance}/roi', data=encoded_ranges)
     r.raise_for_status()
+
 
