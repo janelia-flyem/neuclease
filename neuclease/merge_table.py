@@ -351,6 +351,14 @@ def compute_body_sizes(sv_sizes, mapping):
     
     Any supervoxels in the mapping that are missing from sv_sizes will be ignored.
     
+    Example:
+    
+        >>> mesh_job_dir = '/groups/flyem/data/scratchspace/copyseg-configs/labelmaps/hemibrain/8nm'
+        >>> sv_sizes_path = f'{mesh_job_dir}/compute-8nm-extended-fixed-STATS-ONLY-20180402.192015/supervoxel-sizes.h5'
+        >>> sv_sizes = load_supervoxel_sizes(sv_sizes_path)
+        >>> mapping = fetch_complete_mappings('emdata3:8900', '52f9', 'segmentation')
+        >>> body_sizes = compute_body_sizes(sv_sizes, mapping)
+    
     Returns: Series, indexed by body.
     """
     if isinstance(sv_sizes, str):
