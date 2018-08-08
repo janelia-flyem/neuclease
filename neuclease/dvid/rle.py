@@ -39,7 +39,7 @@ def parse_rle_response(response_bytes, dtype=np.int32):
         dtype:
             The dtype of the returned coordinate array.
             Must be either np.int32 (the default) or np.int16.
-            If you know the results will not exceed 2**16 in any coordinate,
+            If you know the results will not exceed 2**15 in any coordinate,
             you can save some RAM by selecting np.int16
 
     Return:
@@ -81,8 +81,10 @@ def parse_rle_response(response_bytes, dtype=np.int32):
     #    f"Voxel count ({voxel_count}) doesn't match expected sum of run-lengths ({rle_lengths.sum()})"
 
     if dtype == np.int16:
-        assert rle_starts_zyx[:2].max() < 2**16, "Can't return np.int16 -- result would overflow"
-        assert (rle_starts_zyx[:,2] + rle_lengths).max() < 2**16, "Can't return np.int16 -- result would overflow"
+        assert rle_starts_zyx[:2].min() >= -(2**15), "Can't return np.int16 -- result would overflow"
+        assert rle_starts_zyx[:2].max() < 2**15, "Can't return np.int16 -- result would overflow"
+        assert (rle_starts_zyx[:,2] + rle_lengths).min() >= -(2**15), "Can't return np.int16 -- result would overflow"
+        assert (rle_starts_zyx[:,2] + rle_lengths).max() < 2**15, "Can't return np.int16 -- result would overflow"
         rle_starts_zyx = rle_starts_zyx.astype(np.int16)
         rle_lengths = rle_lengths.astype(np.int16)
 
