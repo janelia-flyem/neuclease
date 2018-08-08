@@ -1,5 +1,8 @@
-import requests
-from . import dvid_api_wrapper
+import numpy as np
+import pandas as pd
+
+from ..util import fetch_file
+from . import dvid_api_wrapper, fetch_generic_json
 from .repo import create_instance
 
 @dvid_api_wrapper
@@ -56,43 +59,33 @@ def fetch_tarfile(server, uuid, instance, body_id, output=None, *, session=None)
     return fetch_file(url, output, session=session)
 
 
-# FIXME: Put this in util
-def fetch_file(url, output=None, chunksize=2**10, *, session=None):
+@dvid_api_wrapper
+def fetch_exists(server, uuid, instance, supervoxels, *, session=None):
     """
-    Fetch a file from the given endpoint,
-    and save it to bytes, a file object, or a file path.
-
+    Determine if the given supervoxels have files loaded into the given tarsupervoxels instance.
+    
     Args:
-        url:
-            Complete url to fetch from.
+        server:
+            dvid server, e.g. 'emdata3:8900'
         
-        output:
-            If None, file is returned in-memory, as bytes.
-            If str, it is interpreted as a path to which the file will be written.
-            Otherwise, must be a file object to write the bytes to (e.g. a BytesIO object).
+        uuid:
+            dvid uuid, e.g. 'abc9'
         
-        chunksize:
-            Data will be streamed in chunks, with the given chunk size.
-
+        instance:
+            dvid instance name, e.g. 'segmentation'
+        
+        supervoxels:
+            list of supervoxel IDs for which to look for files.
+    
     Returns:
-        None, unless no output file object/path is provided,
-        in which case the fetched bytes are returned.
+        pd.Series of bool, indexed by supervoxel
     """
-    session = session or requests.Session()
-    with session.get(url, stream=True) as r:
-        r.raise_for_status()
+    url = f'http://{server}/api/node/{uuid}/{instance}/exists'
+    supervoxels = np.asarray(supervoxels, np.uint64)
+    exists = fetch_generic_json(url, json=supervoxels.tolist(), session=session)
 
-        if output is None:
-            return r.content
-
-        if isinstance(output, str):
-            # Create a file on disk and write to it.
-            with open(output, 'wb') as f:
-                for chunk in r.iter_content(chunksize):
-                    f.write(chunk)
-        else:
-            # output is a file object
-            for chunk in r.iter_content(chunksize):
-                output.write(chunk)
-
+    result = pd.Series(exists, dtype=bool, index=supervoxels)
+    result.name = 'exists'
+    result.index.name = 'sv'
+    return result
 
