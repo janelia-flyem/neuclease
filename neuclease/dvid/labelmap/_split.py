@@ -294,15 +294,16 @@ def render_split_tree(tree, root=None, uuid_len=4):
     
     Returns:
         str
-        Example:
-            >>> events = fetch_supervoxel_splits(('emdata3:8900', '52f9', 'segmentation'))
-            >>> tree = extract_split_tree(events, 677527463)
-            >>> print(render_split_tree(tree))
-            677527463 (<unknown>)
-             +-- 5813042205 (25dc)
-             +-- 5813042206 (25dc)
-                 +-- 5813042207 (25dc)
-                 +-- 5813042208 (25dc)
+
+    Example:
+        >>> events = fetch_supervoxel_splits(('emdata3:8900', '52f9', 'segmentation'))
+        >>> tree = extract_split_tree(events, 677527463)
+        >>> print(render_split_tree(tree))
+        677527463 (<unknown>)
+         +-- 5813042205 (25dc)
+         +-- 5813042206 (25dc)
+             +-- 5813042207 (25dc)
+             +-- 5813042208 (25dc)
     """
     root = root or find_root(tree, next(iter(tree.nodes())))
 

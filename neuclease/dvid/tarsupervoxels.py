@@ -9,6 +9,28 @@ from .repo import create_instance
 def create_tarsupervoxel_instance(server, uuid, instance, sync_instance, extension, tags=[], *, session=None):
     """
     Create a tarsupervoxel instance and sync it to a labelmap instance.
+
+    Args:
+        server:
+            dvid server, e.g. 'emdata3:8900'
+        
+        uuid:
+            dvid uuid, e.g. 'abc9'
+        
+        instance:
+            dvid tarsupervoxels instance name, e.g. 'segmentation_sv_meshes'
+        
+        sync_instance:
+            dvid labelmap instance name, e.g. 'segmentation',
+            to which the tarsupervoxels instance will be synchronized.
+        
+        extension:
+            tarsupervoxels instances store one file per supervoxel,
+            and the file extensions for all supervoxels must match.
+            For example, mesh files are typically stored with extension 'drc' or 'obj'.
+        
+        tags:
+            Optional 'tags' to initialize the instance with.
     """
     if extension[0] == '.':
         extension = extension[1:]
@@ -41,7 +63,7 @@ def fetch_tarfile(server, uuid, instance, body_id, output=None, *, session=None)
             dvid uuid, e.g. 'abc9'
         
         instance:
-            dvid instance name, e.g. 'segmentation'
+            dvid tarsupervoxels instance name, e.g. 'segmentation_sv_meshes'
         
         body_id:
             The body whose supervoxel files will be fetched in the tar.
