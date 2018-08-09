@@ -21,14 +21,14 @@ nohup neuclease_cleave_server \
 ##
 
 ##
-## DEVELOPMENT (port 5552), just for cleaner logs.
+## DEVELOPMENT (port 5552)
 ##
 nohup neuclease_cleave_server \
   -p 5552 \
-  --log-dir /nrs/flyem/bergs/neuclease-logs/development-emdata3-8900 \
+  --log-dir /nrs/flyem/bergs/neuclease-logs/development-emdata1-8400 \
   --merge-table /nrs/flyem/bergs/final-agglo-fixsplit-patched/final_patched_20180426_merge_table.npy \
-  --primary-dvid-server emdata3:8900 \
-  --primary-uuid 2053c1a64f254961874d91407e7301e3 \
+  --primary-dvid-server emdata1:8400 \
+  --primary-uuid ecbedddd08034db8b0b0f1529b578d96 \
   --primary-labelmap-instance segmentation \
   &
 ##
