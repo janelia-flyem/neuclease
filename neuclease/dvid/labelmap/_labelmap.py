@@ -395,7 +395,7 @@ def fetch_volume_box(server, uuid, instance, *, session=None):
         - Returns *box*, shape=(box[1] - box[0])
         - Returns ZYX order
     """
-    info = fetch_instance_info(server, uuid, instance, session)
+    info = fetch_instance_info(server, uuid, instance, session=session)
     box_xyz = np.array((info["Extended"]["MinPoint"], info["Extended"]["MaxPoint"]))
     box_xyz[1] += 1
     
@@ -426,7 +426,7 @@ def generate_sample_coordinate(server, uuid, instance, label_id, supervoxels=Fal
 
 
 @dvid_api_wrapper
-def fetch_labelarray_voxels(server, uuid, instance, box, scale=0, throttle=False, supervoxels=False, *, session=None):
+def fetch_labelarray_voxels(server, uuid, instance, box_zyx, scale=0, throttle=False, supervoxels=False, *, session=None):
     """
     Fetch a volume of voxels from the given instance.
     
@@ -440,9 +440,9 @@ def fetch_labelarray_voxels(server, uuid, instance, box, scale=0, throttle=False
         instance:
             dvid instance name, e.g. 'segmentation'
 
-        box:
+        box_zyx:
             The bounds of the volume to fetch in the coordinate system for the requested scale.
-            Given as a pair of coordinates (start, stop), e.g. [(0,0,0), (10,20,30)].
+            Given as a pair of coordinates (start, stop), e.g. [(0,0,0), (10,20,30)], in Z,Y,X order.
             The box need not be block-aligned, but the request to DVID will be block aligned
             to 64px boundaries, and the retrieved volume will be truncated as needed before
             it is returned.
@@ -463,7 +463,7 @@ def fetch_labelarray_voxels(server, uuid, instance, box, scale=0, throttle=False
     """
     # Labelarray data can be fetched very efficiently if the request is block-aligned
     # So, block-align the request no matter what.
-    aligned_box = round_box(box, 64, 'out')
+    aligned_box = round_box(box_zyx, 64, 'out')
     aligned_shape = aligned_box[1] - aligned_box[0]
 
     shape_str = '_'.join(map(str, aligned_shape[::-1]))

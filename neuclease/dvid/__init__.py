@@ -7,6 +7,7 @@ from .info import *
 from .kafka import *
 
 from .keyvalue import *
+from .annotations import *
 from .roi import *
 from .tarsupervoxels import *
 from .labelmap import *
