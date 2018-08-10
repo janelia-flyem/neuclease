@@ -303,3 +303,11 @@ def fetch_synapses_in_batches(server, uuid, synapses_instance, bounding_box_zyx,
             dfs.append(df)
     
     return pd.concat(dfs)
+
+
+def load_synapses_from_csv(csv_path):
+    """
+    Convenience function for reading saved synapse table as CSV with the proper dtypes.
+    """
+    dtype = { 'x': np.int32, 'y': np.int32, 'z': np.int32, 'kind': 'category', 'conf': np.float32, 'user': 'category' }
+    return pd.read_csv(csv_path, header=0, dtype=dtype)
