@@ -299,6 +299,7 @@ def fetch_synapses_in_batches(server, uuid, synapses_instance, bounding_box_zyx,
     boxes = clipped_boxes_from_grid(bounding_box_zyx, Grid(batch_shape_zyx))
     for box in tqdm(boxes, disable=not show_progress, total=num_batches):
         df = fetch_synapses(server, uuid, synapses_instance, box, session=session)
-        dfs.append(df)
+        if len(df) > 0:
+            dfs.append(df)
     
     return pd.concat(dfs)
