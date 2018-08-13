@@ -486,7 +486,7 @@ def fetch_labelarray_voxels(server, uuid, instance, box_zyx, scale=0, throttle=F
     
     aligned_volume = DVIDNodeService.inflate_labelarray_blocks3D_from_raw(r.content, aligned_shape, aligned_box[0])
     
-    requested_box_within_aligned = box - aligned_box[0]
+    requested_box_within_aligned = box_zyx - aligned_box[0]
     return extract_subvol(aligned_volume, requested_box_within_aligned )
 
 
