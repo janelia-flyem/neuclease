@@ -309,5 +309,14 @@ def load_synapses_from_csv(csv_path):
     """
     Convenience function for reading saved synapse table as CSV with the proper dtypes.
     """
-    dtype = { 'x': np.int32, 'y': np.int32, 'z': np.int32, 'kind': 'category', 'conf': np.float32, 'user': 'category' }
+    dtype = { 'x': np.int32,
+              'y': np.int32,
+              'z': np.int32,
+              'kind': 'category',
+              'conf': np.float32,
+              'user': 'category',
+              'label': np.uint64,
+              'body': np.uint64,
+              'sv': np.uint64 }
+
     return pd.read_csv(csv_path, header=0, dtype=dtype)
