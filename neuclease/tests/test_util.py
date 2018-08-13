@@ -3,7 +3,8 @@ import textwrap
 import pytest
 
 import numpy as np
-from neuclease.util import uuids_match, read_csv_header, read_csv_col, connected_components, graph_tool_available
+from neuclease.util import uuids_match, read_csv_header, read_csv_col, connected_components, graph_tool_available,\
+    closest_approach
 
 def test_uuids_match():
     assert uuids_match('abcd', 'abcdef') == True
@@ -132,6 +133,48 @@ def test_connected_components_nx():
     assert (cc_labels[4:7] == cc_labels[4]).all()
     assert cc_labels[7] != cc_labels[6]
 
+
+def test_closest_approach():
+    _ = 0
+    
+    img = [[1,1,2,2,2],
+           [_,_,_,_,_],
+           [3,_,_,4,_],
+           [3,3,3,_,_],
+           [_,_,_,_,_],]
+
+    img = np.asarray(img, np.uint64)
+
+    point_a, point_b, distance = closest_approach(img, 1, 2)
+    assert point_a == (0,1)
+    assert point_b == (0,2)
+    assert distance == 1.0
+
+    point_a, point_b, distance = closest_approach(img, 1, 3)
+    assert point_a == (0,0)
+    assert point_b == (2,0)
+    assert distance == 2.0
+
+    point_a, point_b, distance = closest_approach(img, 2, 4)
+    assert point_a == (0,3)
+    assert point_b == (2,3)
+    assert distance == 2.0
+    
+    point_a, point_b, distance = closest_approach(img, 3, 4)
+    assert point_a == (3,2)
+    assert point_b == (2,3)
+    assert np.allclose(np.sqrt(2.0), distance)
+
+    # Bad inputs
+    point_a, point_b, distance = closest_approach(img, 1, 1)
+    assert distance == 0.0
+    point_a, point_b, distance = closest_approach(img, 1, 99)
+    assert distance == np.inf
+    point_a, point_b, distance = closest_approach(img, 99, 1)
+    assert distance == np.inf
+    
+
+    
 
 if __name__ == "__main__":
     pytest.main(['-s', '--tb=native', '--pyargs', 'neuclease.tests.test_util'])

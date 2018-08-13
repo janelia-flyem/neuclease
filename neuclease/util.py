@@ -1,6 +1,7 @@
 import csv
 import time
 import json
+import vigra
 import logging
 import warnings
 import contextlib
@@ -447,6 +448,46 @@ def box_intersection(box_A, box_B):
     intersection[0] = np.maximum( box_A[0], box_B[0] )
     intersection[1] = np.minimum( box_A[1], box_B[1] )
     return intersection
+
+
+def closest_approach(sv_vol, id_a, id_b):
+    """
+    Given a segmentation volume and two label IDs which it contains,
+    Find the two coordinates within id_a and id_b, respectively,
+    which mark the two objects' closest approach, i.e. where the objects
+    come closest to touching, even if they don't actually touch.
+    
+    Returns (coord_a, coord_b, distance)
+    """
+    mask_a = (sv_vol == id_a)
+    mask_b = (sv_vol == id_b)
+
+    if not mask_a.any() or not mask_b.any():
+        # If either object is not present, there is no closest approach
+        return (-1,-1,-1), (-1,-1,-1), np.inf
+    
+    if id_a == id_b:
+        # IDs are identical.  Choose an arbitrary point.
+        first_point = tuple(np.transpose(mask_a.nonzero())[0])
+        return first_point, first_point, 0.0
+    
+    # For all voxels, find the shortest vector toward id_b
+    to_b_vectors = vigra.filters.vectorDistanceTransform(mask_b.astype(np.uint32))
+    
+    # Magnitude of those vectors == distance to id_b
+    to_b_distances = np.linalg.norm(to_b_vectors, axis=-1)
+
+    # We're only interested in the voxels within id_a;
+    # everything else is infinite distance
+    to_b_distances[~mask_a] = np.inf
+
+    # Find the point within id_a with the smallest vector
+    point_a = np.unravel_index(np.argmin(to_b_distances), to_b_distances.shape)
+
+    # Its closest point id_b is indicated by the corresponding vector
+    point_b = tuple((point_a + to_b_vectors[point_a]).astype(int))
+
+    return (point_a, point_b, to_b_distances[point_a])
 
 
 class SparseBlockMask:
