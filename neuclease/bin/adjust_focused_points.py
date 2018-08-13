@@ -59,7 +59,7 @@ def main():
     logger.info(f"Done. Wrote to {args.output}")
 
 
-def adjust_focused_points(server, uuid, instance, assignment_json_data, search_radius=64, show_progress=True):
+def adjust_focused_points(server, uuid, instance, assignment_json_data, show_progress=True):
     new_assignment_data = copy.deepcopy(assignment_json_data)
     new_tasks = new_assignment_data["task list"]
 
@@ -74,23 +74,28 @@ def adjust_focused_points(server, uuid, instance, assignment_json_data, search_r
         
         avg_coord = (coord_1 + coord_2) // 2
         
-        box_xyz = ( avg_coord - search_radius,
-                    avg_coord + search_radius )
+        # Search until we find a scale in which the two touch, or give up.
+        for scale in [0,1,2,3]:
+            box_xyz = ( avg_coord // (2**scale) - 64,
+                        avg_coord // (2**scale) + 64 )
+            box_zyx = np.array(box_xyz)[:,::-1]
+            seg_vol = fetch_labelarray_voxels(server, uuid, instance, box_zyx, scale)
+            
+            adjusted_coords_zyx = find_best_plane(seg_vol, body_1, body_2)
+            adjusted_coords_zyx = np.array(adjusted_coords_zyx)
 
-        box_zyx = np.array(box_xyz)[:,::-1]
-        seg_vol = fetch_labelarray_voxels(server, uuid, instance, box_zyx)
-        
-        adjusted_coords_zyx = find_best_plane(seg_vol, body_1, body_2)
-        adjusted_coords_zyx = np.array(adjusted_coords_zyx)
+            if not (adjusted_coords_zyx == -1).all():
+                # Found it.
+                adjusted_coords_zyx += box_zyx[0]
+                adjusted_coords_zyx *= (2**scale)
+                break
 
         if (adjusted_coords_zyx == -1).all():
-            # find_best_plane() returns [(-1,-1,-1), (-1,-1,-1)] upon failure
             task["coordinate-status"] = "misplaced"
         else:
-            adjusted_coords_zyx += box_zyx[0]
             task["supervoxel point 1"] = adjusted_coords_zyx[0, ::-1].tolist()
             task["supervoxel point 2"] = adjusted_coords_zyx[1, ::-1].tolist()
-            task["coordinate-status"] = "adjusted" 
+            task["coordinate-status"] = f"adjusted-at-scale-{scale}"
     
     return new_assignment_data
     
