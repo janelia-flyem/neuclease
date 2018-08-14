@@ -14,6 +14,7 @@ from datetime import timedelta
 from itertools import starmap
 
 import requests
+import ipykernel.iostream
 from tqdm import tqdm
 
 import numpy as np
@@ -603,7 +604,11 @@ def tqdm_proxy(iterable, *, logger=None, level=logging.INFO, **kwargs):
     assert 'file' not in kwargs, \
         "There's no reason to use this function if you are providing your own output stream"
     
-    if os.isatty(sys.stdout.fileno()):
+    _tqdm = tqdm
+    if isinstance(sys.stdout, ipykernel.iostream.OutStream):
+        kwargs['file'] = sys.stdout
+        _tqdm = tqdm_notebook
+    elif os.isatty(sys.stdout.fileno()):
         kwargs['file'] = sys.stdout
     else:
         if logger is None:
@@ -623,7 +628,7 @@ def tqdm_proxy(iterable, *, logger=None, level=logging.INFO, **kwargs):
             if 'total' in kwargs:
                 kwargs['total'] = kwargs['total'] // 20
 
-    return tqdm(iterable, **kwargs)
+    return _tqdm(iterable, **kwargs)
 
 
 class TqdmToLogger(io.StringIO):
