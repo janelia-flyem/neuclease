@@ -14,7 +14,6 @@ from datetime import timedelta
 from itertools import starmap
 
 import requests
-import ipykernel.iostream
 from tqdm import tqdm
 
 import numpy as np
@@ -605,11 +604,19 @@ def tqdm_proxy(iterable, *, logger=None, level=logging.INFO, **kwargs):
         "There's no reason to use this function if you are providing your own output stream"
     
     _tqdm = tqdm
-    if isinstance(sys.stdout, ipykernel.iostream.OutStream):
-        kwargs['file'] = sys.stdout
-        _tqdm = tqdm_notebook
-    elif os.isatty(sys.stdout.fileno()):
-        kwargs['file'] = sys.stdout
+    _file = None
+    
+    try:
+        import ipykernel.iostream
+        from tqdm import tqdm_notebook
+        if isinstance(sys.stdout, ipykernel.iostream.OutStream):
+            _tqdm = tqdm_notebook
+        _file = sys.stdout
+    except ImportError:
+        pass
+    
+    if not _file and os.isatty(sys.stdout.fileno()):
+        _file = sys.stdout
     else:
         if logger is None:
             frame = inspect.stack()[1]
@@ -618,7 +625,8 @@ def tqdm_proxy(iterable, *, logger=None, level=logging.INFO, **kwargs):
                 logger = logging.getLogger(modname)
             else:
                 logger = logging.getLogger("unknown")
-        kwargs['file'] = TqdmToLogger(logger, level)
+
+        _file = TqdmToLogger(logger, level)
 
         if 'ncols' not in kwargs:
             kwargs['ncols'] = 100
@@ -628,6 +636,7 @@ def tqdm_proxy(iterable, *, logger=None, level=logging.INFO, **kwargs):
             if 'total' in kwargs:
                 kwargs['total'] = kwargs['total'] // 20
 
+    kwargs['file'] = _file
     return _tqdm(iterable, **kwargs)
 
 
