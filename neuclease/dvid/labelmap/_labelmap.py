@@ -20,7 +20,7 @@ from ._split import SplitEvent, fetch_supervoxel_splits_from_kafka
 logger = logging.getLogger(__name__)
 
 @dvid_api_wrapper
-def create_labelmap_instance(server, uuid, instance, tags=[], block_size=64, voxel_size=8.0,
+def create_labelmap_instance(server, uuid, instance, versioned=True, tags=[], block_size=64, voxel_size=8.0,
                              voxel_units='nanometers', enable_index=True, max_scale=0, *, session=None):
     """
     Create a labelmap instance.
@@ -36,7 +36,7 @@ def create_labelmap_instance(server, uuid, instance, tags=[], block_size=64, vox
         Other args passed directly to create_voxel_instance().
     """
     type_specific_settings = { "IndexedLabels": str(enable_index).lower(), "CountLabels": str(enable_index).lower(), "MaxDownresLevel": str(max_scale) }
-    create_voxel_instance( server, uuid, instance, 'labelmap', tags=tags, block_size=block_size, voxel_size=voxel_size,
+    create_voxel_instance( server, uuid, instance, 'labelmap', versioned, tags=tags, block_size=block_size, voxel_size=voxel_size,
                        voxel_units=voxel_units, type_specific_settings=type_specific_settings, session=session )
 
 
