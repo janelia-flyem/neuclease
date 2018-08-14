@@ -14,25 +14,22 @@ In those cases, the task is marked with:
     "coordinate-status": "misplaced"
 """
 import os
-import sys
 import json
 import copy
 import logging
 import argparse
 
-from tqdm import tqdm
 import numpy as np
 
+from neuclease import configure_default_logging
+from neuclease.util import tqdm_proxy, Timer
 from neuclease.dvid import fetch_mapping, fetch_labelarray_voxels
 from neuclease.misc import find_best_plane
 
 logger = logging.getLogger(__name__)
 
-
 def main():
-    handler = logging.StreamHandler(sys.stdout)
-    logger.setLevel(logging.INFO)
-    logging.getLogger().addHandler(handler)
+    configure_default_logging()
     
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--output", "-o", type=str, required=False)
@@ -48,22 +45,23 @@ def main():
 
     instance_info = (args.dvid_server, args.uuid, args.labelmap_instance)
 
-    with open(args.assignment_json, 'r') as f:
-        assignment_data = json.load(f)
+    with Timer(f"Processing {args.assignment_json}", logger):
+        with open(args.assignment_json, 'r') as f:
+            assignment_data = json.load(f)
+    
+        new_assignment_data = adjust_focused_points(*instance_info, assignment_data)
+    
+        with open(args.output, 'w') as f:
+            json.dump(new_assignment_data, f, indent=2)
 
-    new_assignment_data = adjust_focused_points(*instance_info, assignment_data)
-
-    with open(args.output, 'w') as f:
-        json.dump(new_assignment_data, f, indent=2)
-
-    logger.info(f"Done. Wrote to {args.output}")
+    logger.info(f"Wrote to {args.output}")
 
 
-def adjust_focused_points(server, uuid, instance, assignment_json_data, supervoxels=True, show_progress=True):
+def adjust_focused_points(server, uuid, instance, assignment_json_data, supervoxels=True):
     new_assignment_data = copy.deepcopy(assignment_json_data)
     new_tasks = new_assignment_data["task list"]
 
-    for task in tqdm(new_tasks, disable=not show_progress):
+    for task in tqdm_proxy(new_tasks):
         sv_1 = task["supervoxel ID 1"]
         sv_2 = task["supervoxel ID 2"]
         

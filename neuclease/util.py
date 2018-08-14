@@ -1,8 +1,12 @@
+import os
+import io
+import sys
 import csv
 import time
 import json
 import vigra
 import logging
+import inspect
 import warnings
 import contextlib
 import collections
@@ -10,6 +14,7 @@ from datetime import timedelta
 from itertools import starmap
 
 import requests
+from tqdm import tqdm
 
 import numpy as np
 import pandas as pd
@@ -580,3 +585,65 @@ class SparseBlockMask:
         
         # Return the full-res voxels
         return result_mask_fullres
+
+
+def tqdm_proxy(iterable, *, logger=None, level=logging.INFO, **kwargs):
+    """
+    Useful as an (almost) drop-in replacement for tqdm which can be used
+    in EITHER an interactive console OR a script that logs to file.
+    
+    Automatically detects whether or not sys.stdout is a file or a console,
+    and configures tqdm accordingly.
+    
+    Example:
+
+        for i in tqdm_proxy(range(1000)):
+            # do some stuff
+    """
+    assert 'file' not in kwargs, \
+        "There's no reason to use this function if you are providing your own output stream"
+    
+    if os.isatty(sys.stdout.fileno()):
+        kwargs['file'] = sys.stdout
+    else:
+        if logger is None:
+            frame = inspect.stack()[1]
+            modname = inspect.getmodulename(frame[1])
+            if modname:
+                logger = logging.getLogger(modname)
+            else:
+                logger = logging.getLogger("unknown")
+        kwargs['file'] = TqdmToLogger(logger, level)
+
+        if 'ncols' not in kwargs:
+            kwargs['ncols'] = 100
+        
+        if 'miniters' not in kwargs:
+            # Aim for 5% updates
+            if 'total' in kwargs:
+                kwargs['total'] = kwargs['total'] // 20
+
+    return tqdm(iterable, **kwargs)
+
+
+class TqdmToLogger(io.StringIO):
+    """
+    Output stream for tqdm which will output to logger module instead of stdout.
+    Copied from:
+    https://github.com/tqdm/tqdm/issues/313#issuecomment-267959111
+    """
+    logger = None
+    level = logging.INFO
+    buf = ''
+
+    def __init__(self, logger, level=logging.INFO):
+        super().__init__()
+        self.logger = logger
+        self.level = level
+
+    def write(self,buf):
+        self.buf = buf.strip('\r\n\t ')
+
+    def flush(self):
+        self.logger.log(self.level, self.buf)
+
