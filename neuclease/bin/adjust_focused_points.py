@@ -57,7 +57,7 @@ def main():
     logger.info(f"Wrote to {args.output}")
 
 
-def adjust_focused_points(server, uuid, instance, assignment_json_data, supervoxels=True):
+def adjust_focused_points(server, uuid, instance, assignment_json_data, supervoxels=True, max_search_scale=3):
     new_assignment_data = copy.deepcopy(assignment_json_data)
     new_tasks = new_assignment_data["task list"]
 
@@ -77,7 +77,7 @@ def adjust_focused_points(server, uuid, instance, assignment_json_data, supervox
         avg_coord = (coord_1 + coord_2) // 2
         
         # Search until we find a scale in which the two touch, or give up.
-        for scale in [0,1,2,3]:
+        for scale in range(1+max_search_scale):
             box_xyz = ( avg_coord // (2**scale) - 64,
                         avg_coord // (2**scale) + 64 )
             box_zyx = np.array(box_xyz)[:,::-1]
