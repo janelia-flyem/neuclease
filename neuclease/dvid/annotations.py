@@ -6,7 +6,7 @@ import pandas as pd
 
 from . import dvid_api_wrapper, fetch_generic_json
 from .labelmap import fetch_volume_box
-from ..util import round_box
+from ..util import Grid, clipped_boxes_from_grid, round_box
 
 logger = logging.getLogger(__name__)
 
@@ -286,9 +286,6 @@ def fetch_synapses_in_batches(server, uuid, synapses_instance, bounding_box_zyx,
     Returns:
         DataFrame with columns ['x', 'y', 'z', 'kind', 'conf', 'user']    
     """
-    # FIXME: Move these utility functions into neuclease or elsewhere
-    from DVIDSparkServices.io_util.brick import Grid, clipped_boxes_from_grid
-
     if isinstance(bounding_box_zyx, str):
         bounding_box_zyx = fetch_volume_box(server, uuid, bounding_box_zyx, session=session)
 
