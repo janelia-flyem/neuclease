@@ -13,9 +13,9 @@ import pandas as pd
 from dvidutils import LabelMapper
 
 # local
-from .util import Timer, read_csv_col, NumpyConvertingEncoder
-from .merge_table import load_mapping
-from .merge_graph import LabelmapMergeGraph
+from ..util import Timer, read_csv_col, NumpyConvertingEncoder
+from ..merge_table import load_mapping
+from ..merge_graph import LabelmapMergeGraph
 
 logger = logging.getLogger(__name__)
 
