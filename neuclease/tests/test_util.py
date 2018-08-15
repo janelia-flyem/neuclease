@@ -4,7 +4,7 @@ import pytest
 
 import numpy as np
 from neuclease.util import uuids_match, read_csv_header, read_csv_col, connected_components, graph_tool_available,\
-    closest_approach
+    closest_approach, upsample
 
 def test_uuids_match():
     assert uuids_match('abcd', 'abcdef') == True
@@ -174,7 +174,19 @@ def test_closest_approach():
     assert distance == np.inf
     
 
+def test_upsample():
+    img = [[1,2],
+           [3,4]]
     
+    img = np.asarray(img, dtype=int)
+    upsampled = upsample(img, 2)
+    
+    expected = [[1,1,2,2],
+                [1,1,2,2],
+                [3,3,4,4],
+                [3,3,4,4]]
+
+    assert (upsampled == expected).all()
 
 if __name__ == "__main__":
     pytest.main(['-s', '--tb=native', '--pyargs', 'neuclease.tests.test_util'])

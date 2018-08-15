@@ -9,9 +9,9 @@ import logging
 import inspect
 import warnings
 import contextlib
-import collections
 from datetime import timedelta
-from itertools import starmap
+from itertools import product, starmap
+from skimage.util import view_as_blocks
 
 import requests
 from tqdm import tqdm
@@ -20,7 +20,6 @@ import numpy as np
 import pandas as pd
 import networkx as nx
 from numba import jit
-from skimage.util import view_as_blocks
 
 @contextlib.contextmanager
 def Timer(msg=None, logger=None):
@@ -174,55 +173,37 @@ def fetch_file(url, output=None, chunksize=2**10, *, session=None):
                 output.write(chunk)
 
 
-def extract_subvol(array, box):
+def ndrange(start, stop=None, step=None):
     """
-    Extract a subarray according to the given box.
-    """
-    return array[box_to_slicing(*box)]
+    Generator.
 
-
-def box_to_slicing(start, stop):
-    """
-    For the given bounding box (start, stop),
-    return the corresponding slicing tuple.
-
+    Like np.ndindex, but accepts start/stop/step instead of
+    assuming that start is always (0,0,0) and step is (1,1,1).
+    
     Example:
     
-        >>> assert bb_to_slicing([1,2,3], [4,5,6]) == np.s_[1:4, 2:5, 3:6]
+    >>> for index in ndrange((1,2,3), (10,20,30), step=(5,10,15)):
+    ...     print(index)
+    (1, 2, 3)
+    (1, 2, 18)
+    (1, 12, 3)
+    (1, 12, 18)
+    (6, 2, 3)
+    (6, 2, 18)
+    (6, 12, 3)
+    (6, 12, 18)
     """
-    return tuple( starmap( slice, zip(start, stop) ) )
+    if stop is None:
+        stop = start
+        start = (0,)*len(stop)
 
+    if step is None:
+        step = (1,)*len(stop)
 
-def round_coord(coord, grid_spacing, how):
-    """
-    Round the given coordinate up or down to the nearest grid position.
-    """
-    assert how in ('down', 'up')
-    if how == 'down':
-        return (coord // grid_spacing) * grid_spacing
-    if how == 'up':
-        return ((coord + grid_spacing - 1) // grid_spacing) * grid_spacing
+    assert len(start) == len(stop) == len(step), \
+        f"tuple lengths don't match: ndrange({start}, {stop}, {step})"
 
-
-def round_box(box, grid_spacing, how='out'):
-    # FIXME: Better name would be align_box()
-    """
-    Expand/shrink the given box out/in to align it to a grid.
-
-    box: (start, stop)
-    grid_spacing: int or shape
-    how: One of ['out', 'in', 'down', 'up'].
-         Determines which direction the box corners are moved.
-    """
-    directions = { 'out':  ('down', 'up'),
-                   'in':   ('up', 'down'),
-                   'down': ('down', 'down'),
-                   'up':   ('up', 'up') }
-
-    box = np.asarray(box)
-    assert how in directions.keys()
-    return np.array( [ round_coord(box[0], grid_spacing, directions[how][0]),
-                       round_coord(box[1], grid_spacing, directions[how][1]) ] )
+    yield from product(*starmap(range, zip(start, stop, step)))
 
 
 def view_rows_as_records(table):
@@ -441,20 +422,6 @@ def connected_components(edges, num_nodes, _lib=None):
         return cc_labels
 
 
-def box_intersection(box_A, box_B):
-    """
-    Compute the intersection of the two given boxes.
-    If the two boxes do not intersect at all, then the returned box will have non-positive shape:
-
-    >>> intersection = box_intersection(box_A, box_B)
-    >>> assert (intersection[1] - intersection[0] > 0).all(), "Boxes do not intersect."
-    """
-    intersection = np.empty_like(box_A)
-    intersection[0] = np.maximum( box_A[0], box_B[0] )
-    intersection[1] = np.minimum( box_A[1], box_B[1] )
-    return intersection
-
-
 def closest_approach(sv_vol, id_a, id_b):
     """
     Given a segmentation volume and two label IDs which it contains,
@@ -495,96 +462,18 @@ def closest_approach(sv_vol, id_a, id_b):
     return (point_a, point_b, to_b_distances[point_a])
 
 
-class SparseBlockMask:
+def upsample(orig_data, upsample_factor):
     """
-    Tiny class to hold a low-resolution binary mask and the box it corresponds to.
-    
-    In other words, a simple way of sparsely marking blocks of a large volume.
-    
-    If your blocks of interest are VERY sparse, it would be cheaper to simply
-    store the list of block coordinate tuples.  But for semi-sparse data, storing
-    a binary mask as done here is cheaper, assuming your chosen block 'resolution'
-    is reasonably large (typically (64,64,64), or (32,32,32) for DVID ROIs).
+    Upsample the given array by duplicating every
+    voxel into the corresponding upsampled voxels.
     """
-    def __init__(self, lowres_mask, box, resolution):
-        """
-        Args:
-            lowres_mask:
-                boolean ndarray, where each voxel represents a block of full-res data.
-            box:
-                The volume of space covered by the mask, in FULL-RES coordinates
-            resolution:
-                The width (or shape) of each lowres voxel in FULL-RES coordinates.
-        """
-        self.lowres_mask = lowres_mask.astype(bool, copy=False)
-        self.box = np.asarray(box)
-        self.resolution = resolution
-        if isinstance(self.resolution, collections.Iterable):
-            self.resolution = np.asarray(resolution)
-        else:
-            self.resolution = np.array( [resolution]*lowres_mask.ndim )
-            
-        assert (((self.box[1] - self.box[0]) // self.resolution) == self.lowres_mask.shape).all(), \
-            f"Inconsistent mask shape ({lowres_mask.shape}) and box {self.box.tolist()} for the given resolution ({resolution}).\n"\
-            "Note: box should be specified in FULL resolution coordinates."
-
-
-    def get_fullres_mask(self, requested_box_fullres):
-        """
-        Sample a subvolume of the mask, using full-resolution
-        coordinates and returning a full-resolution mask subvolume.
-        
-        This means creating an array of the requested shape, and overwriting
-        the portion of it that intersects (if any) with our stored lowres_mask.
-        
-        Any box can be requested.  If the requested box does not intersect
-        with the stored voxels, the returned mask will be zeros.
-        """
-        # Here's a guide to the variable names below:
-        # 
-        # +-----------------------+
-        # | stored                |
-        # | (self.lowres_mask)    |
-        # |      +----------------+--------+
-        # |      |  intersecting  |        |
-        # |      |  ("clipped")   |        |
-        # +------+----------------+        |
-        #        |              requested  |
-        #        |              ("result") |
-        #        +-------------------------+
-
-        req_box_fullres = np.asarray(requested_box_fullres)
-        assert (req_box_fullres % self.resolution == 0).all(), \
-            "FIXME: Currently this function requires that the requested box is aligned to the lowres grid."
-
-        req_shape_fullres = req_box_fullres[1] - req_box_fullres[0]
-        result_mask_fullres = np.zeros(req_shape_fullres, bool)
-
-        # Unless otherwise noted, all boxes/masks below are in low-res coordinates/voxels.
-        req_box = req_box_fullres // self.resolution
-        stored_box = (self.box // self.resolution)
-        
-        clipped_box = box_intersection(req_box, stored_box)
-        if (clipped_box[1] <= clipped_box[0]).any():
-            # No intersection; return zeros
-            return result_mask_fullres
-
-        # Compute relative boxes as shown in diagram above.
-        clipped_within_stored = clipped_box - stored_box[0]
-        clipped_within_req = clipped_box - req_box[0]
-
-        # Extract intersecting region from within stored voxels
-        clipped_mask = self.lowres_mask[box_to_slicing(*clipped_within_stored)]
-        
-        # Use the view_as_blocks() trick to create a 6D view,
-        # which we will write to via broadcasting from low-res voxels
-        result_mask_view = view_as_blocks(result_mask_fullres, tuple(self.resolution))
-
-        # Overwrite within result view (broadcasting achieves upsampling here)
-        result_mask_view[box_to_slicing(*clipped_within_req)] = clipped_mask[:,:,:,None,None,None]
-        
-        # Return the full-res voxels
-        return result_mask_fullres
+    orig_shape = np.array(orig_data.shape)
+    upsampled_data = np.empty( orig_shape * upsample_factor, dtype=orig_data.dtype )
+    v = view_as_blocks(upsampled_data, orig_data.ndim*(upsample_factor,))
+    
+    slicing = (Ellipsis,) + (None,)*orig_data.ndim
+    v[:] = orig_data[slicing]
+    return upsampled_data
 
 
 def tqdm_proxy(iterable, *, logger=None, level=logging.INFO, **kwargs):
