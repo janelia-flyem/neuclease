@@ -10,7 +10,6 @@ import warnings
 import contextlib
 from datetime import timedelta
 from itertools import product, starmap
-from skimage.util import view_as_blocks
 
 import requests
 from tqdm import tqdm
@@ -18,6 +17,7 @@ from tqdm import tqdm
 import numpy as np
 import networkx as nx
 
+from .view_as_blocks import view_as_blocks
 
 @contextlib.contextmanager
 def Timer(msg=None, logger=None):

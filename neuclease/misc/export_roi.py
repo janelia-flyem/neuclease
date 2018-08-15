@@ -29,7 +29,7 @@ def export_roi(server, uuid, roi_name, scale, scaled_shape_zyx, parent_output_di
             Where to write the directory of PNG images.
             (A child directory will be created here and named after the ROI instance.)        
     """
-    from skimage.util import view_as_blocks
+    from neuclease.util import view_as_blocks
 
     assert not ((scaled_shape_zyx * 2**scale) % 64).any(), \
         "The code below assumes that the volume shape is block aligned"

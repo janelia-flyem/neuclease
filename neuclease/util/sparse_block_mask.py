@@ -1,7 +1,7 @@
 import collections
 import numpy as np
 
-from skimage.util import view_as_blocks
+from .view_as_blocks import view_as_blocks
 from .box import box_intersection, box_to_slicing
 from .grid import Grid, boxes_from_grid
 
