@@ -1,7 +1,6 @@
 import os
 import io
 import sys
-import csv
 import time
 import json
 import vigra
@@ -17,12 +16,28 @@ import requests
 from tqdm import tqdm
 
 import numpy as np
-import pandas as pd
 import networkx as nx
-from numba import jit
+
 
 @contextlib.contextmanager
 def Timer(msg=None, logger=None):
+    """
+    Simple context manager that acts as a wall-clock timer.
+    
+    Args:
+        msg:
+            Optional message to be logged at the start
+            and stop of the timed period.
+        logger:
+            Which logger to write the message to.
+
+    Example:
+        >>> with Timer("Doing stuff") as timer:
+        ...     # do stuff here
+        >>>
+        >>> print(timer.seconds)
+        >>> print(timer.timedelta)
+    """
     if msg:
         logger = logger or logging.getLogger(__name__)
         logger.info(msg + '...')
@@ -34,6 +49,9 @@ def Timer(msg=None, logger=None):
 
 
 class _TimerResult(object):
+    """
+    Helper class, yielded by the Timer context manager.
+    """
     def __init__(self):
         self.start = time.time()
         self.stop = None
@@ -60,78 +78,6 @@ def uuids_match(uuid1, uuid2):
     assert uuid1 and uuid2, "Empty UUID"
     n = min(len(uuid1), len(uuid2))
     return (uuid1[:n] == uuid2[:n])
-
-
-def chunkify_table(table, approx_chunk_len):
-    """
-    Generator.
-    Break the given array into chunks of approximately the given size.
-    
-    FIXME: This leaves the last chunk with all 'leftovers' if the chunk
-           size doesn't divide cleanly.  Would be better to more evenly
-           distribute them.
-    """
-    total_len = len(table)
-    num_chunks = max(1, total_len // approx_chunk_len)
-    chunk_len = total_len // num_chunks
-
-    partitions = list(range(0, chunk_len*num_chunks, chunk_len))
-    if partitions[-1] < total_len:
-        partitions.append( total_len )
-
-    for (start, stop) in zip(partitions[:-1], partitions[1:]):
-        yield table[start:stop]
-
-
-def read_csv_header(csv_path):
-    """
-    Open the CSV file at the given path and return it's header column names as a list.
-    If it has no header (as determined by csv.Sniffer), return None.
-    """
-    with open(csv_path, 'r') as csv_file:
-        first_line = csv_file.readline()
-        csv_file.seek(0)
-        if ',' not in first_line:
-            # csv.Sniffer doesn't work if there's only one column in the file
-            try:
-                int(first_line)
-                has_header = False
-            except:
-                has_header = True
-        else:
-            has_header = csv.Sniffer().has_header(csv_file.read(1024))
-            csv_file.seek(0)
-
-        if not has_header:
-            return None
-    
-        rows = iter(csv.reader(csv_file))
-        header = next(rows)
-        return header
-
-
-def csv_has_header(csv_path):
-    return (read_csv_header(csv_path) is not None)
-
-
-def read_csv_col(csv_path, col=0, dtype=np.uint64):
-    """
-    Read a single column from a CSV file as a pd.Series.
-    """
-    int(col) # must be an int
-    header_names = read_csv_header(csv_path)
-    if header_names:
-        header_row = 0
-        names = [header_names[col]]
-    else:
-        header_row = None
-        names = ['noname']
-
-    s = pd.read_csv(csv_path, header=header_row, usecols=[col], names=names, dtype=dtype)[names[0]]
-    
-    if header_row is None:
-        s.name = None
-    return s
 
 
 def fetch_file(url, output=None, chunksize=2**10, *, session=None):
@@ -206,143 +152,6 @@ def ndrange(start, stop=None, step=None):
     yield from product(*starmap(range, zip(start, stop, step)))
 
 
-def view_rows_as_records(table):
-    """
-    Return a 1D strucured-array view of the given 2D array,
-    in which each row is converted to a strucutred element.
-    
-    The structured array fields will be named '0', '1', etc.
-    """
-    assert table.ndim == 2
-    assert table.flags['C_CONTIGUOUS']
-    mem_view = memoryview(table.reshape(-1))
-
-    dtype = [(str(i), table.dtype) for i in range(table.shape[1])]
-    array_view = np.frombuffer(mem_view, dtype)
-    return array_view
-
-
-def lexsort_inplace(table):
-    """
-    Lexsort the given 2D table of the given array, in-place.
-    The table is sorted by the first column (table[:,0]),
-    then the second, third, etc.
-    
-    Equivalent to:
-    
-        order = np.lexsort(table.transpose()[::-1])
-        table = table[order]
-    
-    But should (in theory) be faster and use less RAM.
-    
-    WARNING:
-        Tragically, this function seems to be much slower than the straightforward
-        implementation shown above, so its only advantage is its reduced RAM requirements.
-    """
-    # Convert to 1D structured array for in-place sort
-    array_view = view_rows_as_records(table)
-    array_view.sort()
-
-
-def lexsort_columns(table):
-    """
-    Lexsort the given 2D table of the given array, in-place.
-    The table is sorted by the first column (table[:,0]),
-    then the second, third, etc.
-    """
-    order = np.lexsort(table.transpose()[::-1])
-    return table[order]
-
-
-def is_lexsorted(columns):
-    """
-    Given a 2d array, return True if the array is lexsorted,
-    i.e. the first column is sorted, with ties being broken
-    by the second column, and so on.
-    """
-    prev_rows = columns[:-1]
-    next_rows = columns[1:]
-    
-    # Mark non-decreasing positions in every column
-    nondecreasing = (next_rows >= prev_rows)
-    if not nondecreasing[:,0].all():
-        return False
-    
-    # Mark increasing positions in every column, but allow later columns to
-    # inherit the status of earlier ones, if an earlier one was found to be increasing.
-    increasing = (next_rows > prev_rows)
-    np.logical_or.accumulate(increasing, axis=1, out=increasing)
-    
-    # Every column must be non-decreasing, except in places where
-    #  an earlier column in the row is increasing.
-    return (nondecreasing[:, 1:] | increasing[:,:-1]).all()
-
-
-@jit(nopython=True)
-def groupby_presorted(a, sorted_cols):
-    """
-    Given an array of data and some sorted reference columns to use for grouping,
-    yield subarrays of the data, according to runs of identical rows in the reference columns.
-    
-    JIT-compiled with numba.
-    For pre-sorted structured array input, this is much faster than pandas.DataFrame(a).groupby().
-    
-    Args:
-        a: ND array, any dtype, shape (N,) or (N,...)
-        sorted_cols: ND array, at least 2D, any dtype, shape (N,...),
-                     not necessarily the same shape as 'a', except for the first dimension.
-                     Must be pre-ordered so that identical rows are contiguous,
-                     and therefore define the group boundaries.
-
-    Note: The contents of 'a' need not be related in any way to sorted_cols.
-          The sorted_cols array is just used to determine the split points,
-          and the corresponding rows of 'a' are returned.
-
-    Examples:
-    
-        a = np.array( [[0,0,0],
-                       [1,0,0],
-                       [2,1,0],
-                       [3,1,1],
-                       [4,2,1]] )
-
-        # Group by second column
-        groups = list(groupby_presorted(a, a[:,1:2]))
-        assert (groups[0] == [[0,0,0], [1,0,0]]).all()
-        assert (groups[1] == [[2,1,0], [3,1,1]]).all()
-        assert (groups[2] == [[4,2,1]]).all()
-    
-        # Group by third column
-        groups = list(groupby_presorted(a, a[:,2:3]))
-        assert (groups[0] == [[0,0,0], [1,0,0], [2,1,0]]).all()
-        assert (groups[1] == [[3,1,1], [4,2,1]]).all()
-
-        # Group by external column
-        col = np.array([10,10,40,40,40]).reshape(5,1) # must be at least 2D
-        groups = list(groupby_presorted(a, col))
-        assert (groups[0] == [[0,0,0], [1,0,0]]).all()
-        assert (groups[1] == [[2,1,0], [3,1,1],[4,2,1]]).all()
-        
-    """
-    assert sorted_cols.ndim >= 2
-    assert sorted_cols.shape[0] == a.shape[0]
-
-    if len(a) == 0:
-        return
-
-    start = 0
-    row = sorted_cols[0]
-    for stop in range(len(sorted_cols)):
-        next_row = sorted_cols[stop]
-        if (next_row != row).any():
-            yield a[start:stop]
-            start = stop
-            row = next_row
-
-    # Last group
-    yield a[start:len(sorted_cols)]
-
-
 class NumpyConvertingEncoder(json.JSONEncoder):
     """
     Encoder that converts numpy arrays and scalars
@@ -364,6 +173,9 @@ class NumpyConvertingEncoder(json.JSONEncoder):
 
 _graph_tool_available = None
 def graph_tool_available():
+    """
+    Return True if the graph_tool module is installed.
+    """
     global _graph_tool_available
     
     # Just do this import check once.

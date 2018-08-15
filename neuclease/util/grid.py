@@ -1,6 +1,6 @@
 import numpy as np
 
-from .box import ndrange
+from .util import ndrange
 from .box import box_intersection, round_box
 
 class Grid:
