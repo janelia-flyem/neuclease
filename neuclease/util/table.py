@@ -163,3 +163,24 @@ def groupby_presorted(a, sorted_cols):
     yield a[start:len(sorted_cols)]
 
 
+@jit(nopython=True)
+def groupby_spans_presorted(sorted_cols):
+    """
+    Similar to groupby_presorted(), but yields only the (start, stop)
+    indexes of the contiguous groups, (not the group subarrays themselves).
+    """
+    assert sorted_cols.ndim >= 2
+    if len(sorted_cols) == 0:
+        return
+
+    start = 0
+    row = sorted_cols[0]
+    for stop in range(len(sorted_cols)):
+        next_row = sorted_cols[stop]
+        if (next_row != row).any():
+            yield (start, stop)
+            start = stop
+            row = next_row
+
+    # Last group
+    yield (start, len(sorted_cols))
