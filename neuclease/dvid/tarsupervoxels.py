@@ -82,6 +82,38 @@ def fetch_tarfile(server, uuid, instance, body_id, output=None, *, session=None)
 
 
 @dvid_api_wrapper
+def fetch_supervoxel(server, uuid, instance, supervoxel_id, output=None, *, session=None):
+    """
+    Fetch an individual supervoxel file from a tarsupervoxels instance,
+    and save it to bytes, a file object, or a file path.
+    
+    Args:
+        server:
+            dvid server, e.g. 'emdata3:8900'
+        
+        uuid:
+            dvid uuid, e.g. 'abc9'
+        
+        instance:
+            dvid tarsupervoxels instance name, e.g. 'segmentation_sv_meshes'
+        
+        supervoxel_id:
+            The supervoxel ID whose file will be retrieved.
+        
+        output:
+            If None, tarfile is returned in-memory, as bytes.
+            If str, it is interpreted as a path to which the file will be written.
+            Otherwise, must be a file object to write the bytes to (e.g. a BytesIO object).
+    
+    Returns:
+        None, unless no output file object/path is provided,
+        in which case the file bytes are returned.
+    """
+    url = f'http://{server}/api/node/{uuid}/{instance}/supervoxel/{supervoxel_id}'
+    return fetch_file(url, output, session=session)
+
+
+@dvid_api_wrapper
 def fetch_exists(server, uuid, instance, supervoxels, *, session=None):
     """
     Determine if the given supervoxels have files loaded into the given tarsupervoxels instance.
