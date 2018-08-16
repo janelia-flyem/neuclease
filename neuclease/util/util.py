@@ -335,7 +335,7 @@ def tqdm_proxy(iterable, *, logger=None, level=logging.INFO, **kwargs):
         if 'miniters' not in kwargs:
             # Aim for 5% updates
             if 'total' in kwargs:
-                kwargs['total'] = kwargs['total'] // 20
+                kwargs['miniters'] = kwargs['total'] // 20
 
     kwargs['file'] = _file
     return _tqdm(iterable, **kwargs)
