@@ -1,13 +1,12 @@
 import logging
 from itertools import chain
 
-from tqdm import tqdm
 import numpy as np
 import pandas as pd
 
 from . import dvid_api_wrapper, fetch_generic_json
 from .labelmap import fetch_volume_box
-from ..util import Grid, clipped_boxes_from_grid, round_box
+from ..util import Grid, clipped_boxes_from_grid, round_box, tqdm_proxy
 
 logger = logging.getLogger(__name__)
 
@@ -269,7 +268,7 @@ def load_synapses_as_dataframe(elements):
 
 
 @dvid_api_wrapper
-def fetch_synapses_in_batches(server, uuid, synapses_instance, bounding_box_zyx, batch_shape_zyx=(64,64,64000), format='json', show_progress=True, *, session=None): #@ReservedAssignment
+def fetch_synapses_in_batches(server, uuid, synapses_instance, bounding_box_zyx, batch_shape_zyx=(64,64,64000), format='json', *, session=None): #@ReservedAssignment
     """
     Fetch all synapse annotations for the given labelmap volume (or subvolume) and synapse instance.
     Box-shaped regions are queried in batches according to the given batch shape.
@@ -326,7 +325,7 @@ def fetch_synapses_in_batches(server, uuid, synapses_instance, bounding_box_zyx,
     num_batches = np.prod((aligned_bounding_box[1] - aligned_bounding_box[0]) // batch_shape_zyx)
     
     boxes = clipped_boxes_from_grid(bounding_box_zyx, Grid(batch_shape_zyx))
-    for box in tqdm(boxes, disable=not show_progress, total=num_batches):
+    for box in tqdm_proxy(boxes, logger=logger, total=num_batches):
         elements = fetch_blocks(server, uuid, synapses_instance, box, session=session)
         if len(elements) == 0:
             continue
