@@ -312,7 +312,7 @@ def tqdm_proxy(iterable, *, logger=None, level=logging.INFO, **kwargs):
         from tqdm import tqdm_notebook
         if isinstance(sys.stdout, ipykernel.iostream.OutStream):
             _tqdm = tqdm_notebook
-        _file = sys.stdout
+            _file = sys.stdout
     except ImportError:
         pass
     
