@@ -183,6 +183,35 @@ def fetch_elements(server, uuid, instance, box_zyx, *, session=None):
 
 
 @dvid_api_wrapper
+def post_elements(server, uuid, instance, elements, kafkalog=True, *, session=None):
+    """
+    Adds or modifies point annotations.
+    
+    Args:
+        server:
+            dvid server, e.g. 'emdata3:8900'
+        
+        uuid:
+            dvid uuid, e.g. 'abc9'
+        
+        instance:
+            dvid annotations instance name, e.g. 'synapses'
+        
+        elements:
+            Elements as JSON data (a python list-of-dicts)
+        
+        kafkalog:
+            If True, log kafka events for each posted element.
+    """
+    params = {}
+    if not kafkalog or kafkalog == 'off':
+        params['kafkalog'] = 'off'
+    
+    r = session.post(f'http://{server}/api/node/{uuid}/{instance}/elements', json=elements, params=params)
+    r.raise_for_status()
+
+
+@dvid_api_wrapper
 def fetch_blocks(server, uuid, instance, box_zyx, *, session=None):
     """
     Returns all point annotations within all blocks that intersect the given box.
