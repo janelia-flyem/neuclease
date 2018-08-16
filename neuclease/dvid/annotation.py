@@ -1,4 +1,5 @@
 import logging
+from itertools import chain
 
 from tqdm import tqdm
 import numpy as np
@@ -9,6 +10,7 @@ from .labelmap import fetch_volume_box
 from ..util import Grid, clipped_boxes_from_grid, round_box
 
 logger = logging.getLogger(__name__)
+
 
 @dvid_api_wrapper
 def post_sync(server, uuid, instance, sync_instances, replace=False, *, session=None):
@@ -151,6 +153,7 @@ def fetch_roi(server, uuid, instance, roi, roi_uuid=None, *, session=None):
 def fetch_elements(server, uuid, instance, box_zyx, *, session=None):
     """
     Returns all point annotations within the given box.
+    Note: Automatically includes relationships.
     
     Args:
         server:
@@ -181,11 +184,17 @@ def fetch_elements(server, uuid, instance, box_zyx, *, session=None):
 
 
 @dvid_api_wrapper
-def fetch_synapses(server, uuid, instance, box_zyx, *, session=None):
+def fetch_blocks(server, uuid, instance, box_zyx, *, session=None):
     """
-    Convenience wrapper for fetch_elements(), specifically for synapses.
-    Returns results as pandas DataFrame instead of JSON.
+    Returns all point annotations within all blocks that intersect the given box.
+    
+    This differs from fetch_elements() in the following ways:
+        - All annotations in the intersecting blocks are returned,
+          even annotations that lie outside of the specified box.
+        - The return value is a dict instead of a list.
 
+    Note: Automatically includes relationships.
+    
     Args:
         server:
             dvid server, e.g. 'emdata3:8900'
@@ -197,20 +206,27 @@ def fetch_synapses(server, uuid, instance, box_zyx, *, session=None):
             dvid annotations instance name, e.g. 'synapses'
         
         box_zyx:
-            The bounds of the subvolume from which to fetch synapses elements.
+            The bounds of the subvolume from which to fetch annotation elements.
             Given as a pair of coordinates (start, stop), e.g. [(0,0,0), (10,20,30)],
             in Z,Y,X order.  It need not be block-aligned.
         
     Returns:
-        DataFrame with columns ['x', 'y', 'z', 'kind', 'conf', 'user']
+        JSON dict { block_id : element-list }
     """
-    elements = fetch_elements(server, uuid, instance, box_zyx, session=session)
-    return load_synapses(elements)
+    box_zyx = np.asarray(box_zyx)
+    shape = box_zyx[1] - box_zyx[0]
+    
+    shape_str = '_'.join(map(str, shape[::-1]))
+    offset_str = '_'.join(map(str, box_zyx[0, ::-1]))
+
+    url = f'http://{server}/api/node/{uuid}/{instance}/blocks/{shape_str}/{offset_str}'
+    return fetch_generic_json(url, session=session)
 
 
-def load_synapses(elements):
+def load_synapses_as_dataframe(elements):
     """
-    Load the given JSON elements as synapses and return a pd.DataFrame
+    Load the given JSON elements as synapses a DataFrame.
+    Note: Discards relationships.
     
     Args:
         elements:
@@ -225,13 +241,15 @@ def load_synapses(elements):
 
     # Accumulating separate lists for each column ought to be
     # faster than building a list-of-tuples, I think.
+    
+    # Primary columns
     xs = []
     ys = []
     zs = []
     kinds = []
     confs = []
     users = []
-        
+    
     for e in elements:
         x,y,z = e['Pos']
         
@@ -242,7 +260,7 @@ def load_synapses(elements):
         kinds.append( e['Kind'] )
         confs.append( float(e.get('Prop', {}).get('conf', 0.0)) )
         users.append( e.get('Prop', {}).get('user', '') )
-
+        
     df = pd.DataFrame( {'x': xs, 'y': ys, 'z': zs}, dtype=np.int32 )
     df['kind'] = pd.Series(kinds, dtype='category')
     df['conf'] = pd.Series(confs, dtype=np.float32)
@@ -251,13 +269,14 @@ def load_synapses(elements):
 
 
 @dvid_api_wrapper
-def fetch_synapses_in_batches(server, uuid, synapses_instance, bounding_box_zyx, batch_shape_zyx=(128,128,64000), show_progress=True, *, session=None):
+def fetch_synapses_in_batches(server, uuid, synapses_instance, bounding_box_zyx, batch_shape_zyx=(64,64,64000), format='json', show_progress=True, *, session=None): #@ReservedAssignment
     """
-    Fetch all synapse annotations for the given labelmap volume and synapse instance.
+    Fetch all synapse annotations for the given labelmap volume (or subvolume) and synapse instance.
     Box-shaped regions are queried in batches according to the given batch shape.
+    Returns either the raw JSON or a pandas DataFrame.
     
-    FIXME: Currently requires some utility functions from DVIDSparkServices
-
+    Note: The DataFrame format discards relationship information.
+    
     Args:
         server:
             dvid server, e.g. 'emdata3:8900'
@@ -270,36 +289,62 @@ def fetch_synapses_in_batches(server, uuid, synapses_instance, bounding_box_zyx,
         
         bounding_box_zyx:
             The bounds of the subvolume from which to fetch synapse annotations.
-            Given as a pair of coordinates (start, stop), e.g. [(0,0,0), (10,20,30)],
-            in Z,Y,X order.  It need not be block-aligned.
+            Given as a pair of coordinates (start, stop), e.g. [(0,0,0), (256,1024,1024)],
+            in Z,Y,X order.  It must be block-aligned.
 
             Alternatively, a labelmap instance name can be passed here (e.g. 'segmentation'),
             in which case the labelmap's bounding box will be fetched and used.
             
         batch_shape_zyx:
             What box shape to use for each /elements request.
-            For best performance, should be block-aligned (i.e. multiple of 64px in all dimensions).
+            Must be block-aligned (i.e. multiple of 64px in all dimensions).
+        
+        format:
+            Either 'json' or 'pandas'. If 'pandas, return a DataFrame.
+            Note: The DataFrame format discards relationship information.
         
         show_progress:
             If True, display a progress bar on the console.
     
     Returns:
-        DataFrame with columns ['x', 'y', 'z', 'kind', 'conf', 'user']    
+        If format == 'json', a list of JSON elements.
+        If format == 'pandas', a DataFrame with columns ['x', 'y', 'z', 'kind', 'conf', 'user'].
+        Note: The pandas format discards relationship information.
     """
+    assert format in ('pandas', 'json')
     if isinstance(bounding_box_zyx, str):
         bounding_box_zyx = fetch_volume_box(server, uuid, bounding_box_zyx, session=session)
+    else:
+        bounding_box_zyx = np.asarray(bounding_box_zyx)
+        assert (bounding_box_zyx % 64 == 0).all(), "box must be block-aligned"
+    
+    batch_shape_zyx = np.asarray(batch_shape_zyx)
+    assert (batch_shape_zyx % 64 == 0).all(), "batch shape must be block-aligned"
 
-    dfs = []    
+    results = []
     aligned_bounding_box = round_box(bounding_box_zyx, batch_shape_zyx, 'out')
     num_batches = np.prod((aligned_bounding_box[1] - aligned_bounding_box[0]) // batch_shape_zyx)
     
     boxes = clipped_boxes_from_grid(bounding_box_zyx, Grid(batch_shape_zyx))
     for box in tqdm(boxes, disable=not show_progress, total=num_batches):
-        df = fetch_synapses(server, uuid, synapses_instance, box, session=session)
-        if len(df) > 0:
-            dfs.append(df)
-    
-    return pd.concat(dfs)
+        elements = fetch_blocks(server, uuid, synapses_instance, box, session=session)
+        if len(elements) == 0:
+            continue
+
+        elements = chain(*elements.values())
+
+        if format == 'json':
+            results.extend(elements)
+        elif format == 'pandas':
+            df = load_synapses_as_dataframe(elements)
+            results.append(df)
+
+    if format == 'json':
+        return results
+    elif format == 'pandas':
+        return pd.concat(results)
+
+    raise AssertionError("Shouldn't get here")
 
 
 def load_synapses_from_csv(csv_path):
