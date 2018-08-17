@@ -35,8 +35,10 @@ def post_sync(server, uuid, instance, sync_instances, replace=False, *, session=
             Otherwise append the sync_instances.
     """
     body = { "sync": ",".join(sync_instances) }
+
+    params = {}
     if replace:
-        params = { 'replace': str(bool(replace)).lower() }
+        params['replace'] = str(bool(replace)).lower()
 
     r = session.post(f'http://{server}/api/node/{uuid}/{instance}/sync', json=body, params=params)
     r.raise_for_status()
