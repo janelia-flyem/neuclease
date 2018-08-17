@@ -306,6 +306,7 @@ def tqdm_proxy(iterable, *, logger=None, level=logging.INFO, **kwargs):
     
     _tqdm = tqdm
     _file = None
+    disable_monitor = False
     
     try:
         import ipykernel.iostream
@@ -329,6 +330,9 @@ def tqdm_proxy(iterable, *, logger=None, level=logging.INFO, **kwargs):
 
         _file = TqdmToLogger(logger, level)
 
+        # The tqdm monitor thread messes up our 'miniters' setting, so disable it.
+        disable_monitor = True
+
         if 'ncols' not in kwargs:
             kwargs['ncols'] = 100
         
@@ -336,9 +340,15 @@ def tqdm_proxy(iterable, *, logger=None, level=logging.INFO, **kwargs):
             # Aim for 5% updates
             if 'total' in kwargs:
                 kwargs['miniters'] = kwargs['total'] // 20
+            elif hasattr(iterable, '__len__'):
+                kwargs['miniters'] = len(iterable) // 20
+                
 
     kwargs['file'] = _file
-    return _tqdm(iterable, **kwargs)
+    bar = _tqdm(iterable, **kwargs)
+    if disable_monitor:
+        bar.monitor_interval = 0
+    return bar
 
 
 class TqdmToLogger(io.StringIO):
