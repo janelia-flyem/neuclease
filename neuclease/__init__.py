@@ -6,6 +6,11 @@ if not faulthandler.is_enabled():
 import logging
 logging.getLogger('kafka').setLevel(logging.WARNING)
 
+## Don't show the following warning from within pandas:
+## FutureWarning: elementwise comparison failed; returning scalar instead, but in the future will perform elementwise comparison
+import warnings
+warnings.filterwarnings("ignore", module=r"pandas\..*", category=FutureWarning)
+
 def configure_default_logging():
     """
     Simple logging configuration.
