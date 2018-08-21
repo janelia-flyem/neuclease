@@ -21,7 +21,9 @@ CSV_DTYPES = { 'id_a': np.uint64, 'id_b': np.uint64, # Use'id_a', and 'id_b' for
                'xb': np.int32, 'yb': np.int32, 'zb': np.int32,
                'caa': np.float32, 'cab': np.float32, 'cba': np.float32, 'cbb': np.float32,
                'iou': np.float32,
-               'da': np.float32, 'db': np.float32 }
+               'da': np.float32, 'db': np.float32,
+               'score': np.float32,
+               'overlap': np.uint32 }
 
 
 def load_focused_table(path):
@@ -60,6 +62,6 @@ def filter_bodies_for_synapses(synapse_samples, min_tbars, min_psds): # @UnusedV
     filtered_bodies = synapse_counts.query('PreSyn >= @min_tbars and PostSyn > @min_psds')
     return filtered_bodies.fillna(0.0)
 
-def compute_focused_bodies(server, uuid, instance, root_sv_sizes, synapse_samples, min_tbars, min_psds):
+#def compute_focused_bodies(server, uuid, instance, root_sv_sizes, synapse_samples, min_tbars, min_psds):
     
     
