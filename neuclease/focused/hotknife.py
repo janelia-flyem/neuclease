@@ -207,7 +207,7 @@ def fetch_plane(server, uuid, instance, plane_coord, plane_bounds=None, axisname
 
     with Timer(f"Fetching tiles for plane {axisname}={plane_coord}", logger):
         for tile_box in boxes_from_grid(plane_box, tile_shape, clipped=True):
-            tile = fetch_labelarray_voxels(server, uuid, instance, tile_box, scale, supervoxels)
+            tile = fetch_labelarray_voxels(server, uuid, instance, tile_box, scale, supervoxels=supervoxels)
             overwrite_subvol(plane_vol, tile_box - plane_box[0], tile)
     return plane_vol
 
