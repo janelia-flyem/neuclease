@@ -375,12 +375,16 @@ def load_all_supervoxel_sizes(server, uuid, instance, root_sv_sizes):
     
     
 
-def compute_body_sizes(sv_sizes, mapping):
+def compute_body_sizes(sv_sizes, mapping, include_unmapped_singletons=False):
     """
     Given a Series of supervoxel sizes and an sv-to-body mapping,
     compute the size of each body in the mapping.
     
     Any supervoxels in the mapping that are missing from sv_sizes will be ignored.
+    
+    If include_unmapped_singletons is True, then the result will also include all
+    supervoxels from sv_sizes that weren't mentioned in the mapping.
+    (They are presumed to be singleton-supervoxel bodies.)
     
     Example:
     
@@ -406,8 +410,8 @@ def compute_body_sizes(sv_sizes, mapping):
     
     assert sv_sizes.index.dtype == np.uint64
     
-    sv_sizes = sv_sizes.astype(np.uint64)
-    mapper = LabelMapper(sv_sizes.index.values, sv_sizes.values)
+    sv_sizes = sv_sizes.astype(np.uint64, copy=False)
+    size_mapper = LabelMapper(sv_sizes.index.values, sv_sizes.values)
 
     # Just drop SVs that we don't have sizes for.
     logger.info("Dropping unknown supervoxels")
@@ -415,10 +419,18 @@ def compute_body_sizes(sv_sizes, mapping):
 
     logger.info("Applying sizes to mapping")
     df = pd.DataFrame({'body': mapping})
-    df['voxel_count'] = mapper.apply(mapping.index.values)
+    df['voxel_count'] = size_mapper.apply(mapping.index.values)
 
     logger.info("Aggregating sizes by body")
     body_sizes = df.groupby('body').sum()['voxel_count']
+    
+    if include_unmapped_singletons:
+        logger.info("Appending singleton sizes")
+        nonsingleton_rows = sv_sizes.index.isin(mapping.index)
+        singleton_sizes = sv_sizes[~nonsingleton_rows]
+        body_sizes = pd.concat((body_sizes, singleton_sizes))
+    
+    logger.info("Sorting sizes")
     return body_sizes.sort_values(ascending=False)
 
 
