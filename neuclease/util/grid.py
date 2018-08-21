@@ -51,7 +51,88 @@ class Grid:
         return np.asarray( (block_start, block_start + self.block_shape) )
 
 
-def boxes_from_grid(bounding_box, grid, include_halos=True):
+class boxes_from_grid:
+    """
+    Iterable.
+    
+    Given a bounding box and a Grid, this class can be used to iterate
+    over the boxes of the Grid that intersect the bounding box.
+    See __init__ for options.
+    
+    This iterable declares __len__, so it can be used with tqdm, for instance.
+    """
+    def __init__(self, bounding_box, grid, include_halos=True, clipped=False):
+        """
+        Args:
+            bounding_box:
+                The extents of the region to pull boxes from.
+                Note:
+                    If clipped=False and this bounding box is not aligned to the grid,
+                    then some boxes will extend beyond the the bounding_box.
+            grid:
+                An instance of Grid, or a block shape (tuple).
+            
+            include_halos:
+                If True, yielded boxes will include the Grid halo, otherwise the Grid
+                halo is ignored and only the 'internal' portion of each Grid box
+                is yielded (as if the Grid has no halo).
+            
+            clipped:
+                If True, boxes that intersect the bounding box edges will be "clipped"
+                (truncated) to their intersecting portion, and thus no yielded boxes
+                will extend outside of the bounding box (but some boxes may be smaller
+                than others).
+        
+        Examples:
+
+            >>> for box in boxes_from_grid([[0,0], [10,10]], (5,6)):
+            ...     print(box.tolist())
+            [[0, 0], [5, 6]]
+            [[0, 6], [5, 12]]
+            [[5, 0], [10, 6]]
+            [[5, 6], [10, 12]]
+
+            >>> for box in boxes_from_grid([[0,0], [10,10]], (5,6), clipped=True):
+            ...     print(box.tolist())
+            [[0, 0], [5, 6]]
+            [[0, 6], [5, 10]]
+            [[5, 0], [10, 6]]
+            [[5, 6], [10, 10]]
+        """
+        # If necessary, auto-convert blockshape into a Grid
+        if not isinstance(grid, Grid):
+            if not hasattr(grid, '__len__'):
+                # If we were given an int, convert to isotropic blockshape
+                grid = (grid,)*len(bounding_box[0])
+            grid = Grid(grid)
+
+        self.bounding_box = bounding_box
+        self.grid = grid
+        self.include_halos = include_halos
+        self.clipped = clipped
+
+    def __iter__(self):
+        if self.clipped:
+            return _clipped_boxes_from_grid(self.bounding_box, self.grid, self.include_halos)
+        else:
+            return _boxes_from_grid(self.bounding_box, self.grid, self.include_halos)
+    
+    def __len__(self):
+        offset_bounding_box = self.bounding_box - self.grid.offset
+        aligned_bounding_box = round_box(offset_bounding_box, self.grid.block_shape, 'out')
+        num_boxes = np.prod((aligned_bounding_box[1] - aligned_bounding_box[0]) // self.grid.block_shape)
+        return num_boxes
+
+
+def clipped_boxes_from_grid(bounding_box, grid, include_halos=True):
+    """
+    Convenience function for boxes_from_grid(..., clipped=True).
+    (Mostly here for backwards compatibility with old code.)
+    """
+    return boxes_from_grid(bounding_box, grid, include_halos, clipped=True)
+
+
+def _boxes_from_grid(bounding_box, grid, include_halos=True):
     """
     Generator.
     
@@ -62,7 +143,6 @@ def boxes_from_grid(bounding_box, grid, include_halos=True):
           If either bounding_box[0] or bounding_box[1] is not aligned with the grid,
           some returned boxes will extend beyond the bounding_box.
     """
-    
     if include_halos:
         halo = grid.halo_shape
     else:
@@ -105,7 +185,7 @@ def _boxes_from_grid_no_offset(bounding_box, block_shape, halo):
                         block_start + halo_shape + block_shape))
 
 
-def clipped_boxes_from_grid(bounding_box, grid, include_halos=True):
+def _clipped_boxes_from_grid(bounding_box, grid, include_halos=True):
     """
     Generator.
     
@@ -117,6 +197,7 @@ def clipped_boxes_from_grid(bounding_box, grid, include_halos=True):
     """
     for box in boxes_from_grid(bounding_box, grid, include_halos):
         yield box_intersection(box, bounding_box)
+
 
 def slabs_from_box( full_res_box, slab_depth, scale=0, scaling_policy='round-out', slab_cutting_axis=0 ):
     """
