@@ -12,7 +12,7 @@ import pandas as pd
 from dvidutils import LabelMapper
 
 from .util import Timer, read_csv_header
-from .dvid import fetch_complete_mappings
+from .dvid import fetch_complete_mappings, fetch_split_supervoxel_sizes
 
 logger = logging.getLogger(__name__)
 
@@ -343,6 +343,37 @@ def load_supervoxel_sizes(h5_path):
     # Sorting by supervoxel ID may give better performance during merges later
     sv_sizes.sort_index(inplace=True)
     return sv_sizes
+
+
+def load_all_supervoxel_sizes(server, uuid, instance, root_sv_sizes):
+    """
+    Given the original SV sizes (or a path to the .h5 file that contains it)
+    and a DVID node/instance, compute the set of ALL supervoxel sizes for the node.
+    
+    Note:
+        Result will contain all supervoxels that exist in the given node,
+        but it may ALSO include some supervoxels that no longer exist.
+    
+    Args:
+        server, uuid, instance:
+            DVID instance
+        
+        root_sv_sizes:
+            Either a pd.Series (indexed by sv) or a path to an hdf5
+            file that can be passed to load_supervoxel_sizes()
+    
+    Returns:
+        pd.Series, indexed by supervoxel ID
+    """
+    if isinstance(root_sv_sizes, str):
+        root_sv_sizes = load_supervoxel_sizes(root_sv_sizes)
+    assert isinstance(root_sv_sizes, pd.Series)
+    split_fragment_sizes = fetch_split_supervoxel_sizes(server, uuid, instance)
+    
+    all_sv_sizes = pd.concat((root_sv_sizes, split_fragment_sizes))
+    return all_sv_sizes
+    
+    
 
 def compute_body_sizes(sv_sizes, mapping):
     """
