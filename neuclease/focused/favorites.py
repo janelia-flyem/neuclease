@@ -28,7 +28,7 @@ def compute_favorites(edge_table_df):
     edge_counts = merged_body_stats[['edge_count_a', 'edge_count_b']].sum(axis=1).astype(np.uint32)
     
     min_index = merged_body_stats['min_index_b'].copy()
-    pos_a = merged_body_stats['min_score_a'] < merged_body_stats['min_score_b']
+    pos_a = (merged_body_stats['min_score_a'] < merged_body_stats['min_score_b']) | merged_body_stats['min_score_b'].isnull()
     min_index.loc[pos_a] = merged_body_stats['min_index_a']
     
     sides = pd.Series('b', index=merged_body_stats.index)
@@ -38,11 +38,11 @@ def compute_favorites(edge_table_df):
     
     # body_favorites is indexed by body
     body_favorites = pd.DataFrame({'min_score': min_scores,
-                               'min_index': min_index,
-                               'edge_count': edge_counts,
-                               'side': sides})
+                                   'min_index': min_index,
+                                   'edge_count': edge_counts,
+                                   'side': sides})
     
-    body_favorites = body_favorites.drop(0).query('side != "x"')
+    body_favorites = body_favorites.drop(0, errors='ignore').query('side != "x"')
     return body_favorites
 
 
@@ -54,8 +54,8 @@ def mark_favorites(edge_table_df, body_favorites):
     body_a_favorite_edges = body_favorites.query("side == 'a'")['min_index'].astype(np.int64)
     body_b_favorite_edges = body_favorites.query("side == 'b'")['min_index'].astype(np.int64)
     
-    favorite_flags_df.loc[body_a_favorite_edges, 'is_favorite_of_a'] = True
-    favorite_flags_df.loc[body_b_favorite_edges, 'is_favorite_of_b'] = True
+    favorite_flags_df.loc[body_a_favorite_edges.values, 'is_favorite_of_a'] = True
+    favorite_flags_df.loc[body_b_favorite_edges.values, 'is_favorite_of_b'] = True
     
     return favorite_flags_df
 
