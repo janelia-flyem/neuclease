@@ -4,11 +4,14 @@ import numpy as np
 import pandas as pd
 import vigra
 
+from dvidutils import LabelMapper
+
 from .favorites import compute_favorites, mark_favorites, extract_favorites
-from ..util import Timer, tqdm_proxy
+from ..logging_setup import PrefixedLogger
+from ..util import Timer
 from ..util.box import box_to_slicing, round_box, overwrite_subvol
 from ..util.grid import boxes_from_grid
-from ..dvid import fetch_volume_box, fetch_labelarray_voxels
+from ..dvid import fetch_volume_box, fetch_labelarray_voxels, fetch_mappings
 
 logger = logging.getLogger(__name__)
 
@@ -48,9 +51,91 @@ HEMIBRAIN_WIDTH = HEMIBRAIN_TAB_BOUNDARIES[-1] - HEMIBRAIN_TAB_BOUNDARIES[0]
 assert HEMIBRAIN_TAB_BOUNDARIES.tolist() == [0, 2655, 5251, 7920, 10600, 13229, 15895, 18489, 21204, 24041, 26853, 29743, 32360, 34427]
 
 
-def find_hotknife_edges(server, uuid, instance, plane_center_coord_s0, plane_bounds_s0, plane_spacing_s0, min_overlap_s0=1, *, scale=0, supervoxels=True):
+def find_all_hotknife_edges_for_plane(server, uuid, instance, plane_center_coord_s0, tile_shape_s0, plane_spacing_s0, min_overlap_s0=1, *, scale=0):
     """
+    Find all hotknife edges around the given X-plane, found in batches according to tile_shape_s0.
+     
+    See find_hotknife_edges() for more details.
+    """
+    plane_box_s0 = fetch_volume_box(server, uuid, instance)
+    plane_bounds_s0 = plane_box_s0[:,:2]
+
+    edge_tables = []
+    tile_boxes = boxes_from_grid(plane_bounds_s0, tile_shape_s0, clipped=True)
+    for tile_index, tile_bounds_s0 in enumerate(tile_boxes):
+        tile_logger = PrefixedLogger(logger, f"Tile {tile_index:03d}/{len(tile_boxes):03d}: ")
+        edge_table = find_hotknife_edges( server,
+                                          uuid,
+                                          instance,
+                                          plane_center_coord_s0,
+                                          tile_bounds_s0,
+                                          plane_spacing_s0,
+                                          min_overlap_s0,
+                                          scale=scale,
+                                          supervoxels=True, # Compute edges across supervoxels, and then filter out already-merged bodies afterwards
+                                          logger=tile_logger )
+        edge_tables.append(edge_table)
+
+    edge_table = pd.concat(edge_tables, ignore_index=True)
+    assert (edge_table.columns == ['left', 'right', 'xa', 'ya', 'za', 'xb', 'yb', 'zb', 'overlap']).all()
+    edge_table.columns = ['id_a', 'id_b', 'xa', 'ya', 'za', 'xb', 'yb', 'zb', 'overlap']
+    assert edge_table['id_a'].dtype == np.uint64
+    assert edge_table['id_b'].dtype == np.uint64
     
+    # "Complete" mappings not necessary for our purposes.
+    mapping = fetch_mappings(server, uuid, instance, as_array=True)
+    mapper = LabelMapper(mapping[:,0], mapping[:,1])
+    
+    edge_table['body_a'] = mapper.apply(edge_table['id_a'].values, True)
+    edge_table['body_b'] = mapper.apply(edge_table['id_b'].values, True)
+
+    edge_table.query('body_a != body_b', inplace=True)
+    return edge_table
+
+
+def find_hotknife_edges(server, uuid, instance, plane_center_coord_s0, plane_bounds_s0, plane_spacing_s0, min_overlap_s0=1, *, scale=0, supervoxels=True, logger=logger):
+    """
+    Download two X-tiles (left, right) spaced equidistantly from the given center-coord
+    (presumably a hot-knife boundary) and bounded by the given plane_bounds.
+    
+    Then feed them to match_overlaps() to find potential edges across the center plane.
+    
+    Returns the DataFrame from match_overlaps, adjusting coordinates/overlaps for scale.
+    
+    Note:
+        All args ending with '_s0' should be provided in scale 0 units.
+        Internally, they will be adjusted (depending on the 'scale' arg),
+        and the results will be returned in scale-0 units.
+    
+    Args:
+        plane_center_coord_s0: (int)
+            An X-coordinate to center the analysis around.
+            For example, selected from HEMIBRAIN_TAB_BOUNDARIES
+
+        plane_bounds_s0: (2D box)
+            The YZ box to extract from each left/right plane.
+        
+        plane_spacing_s0: int
+            How many pixels from the center plane the extracted tiles should be.
+            Note: Internally, this will be adjusted to ensure that the extracted
+            tiles do not overlap with the center plane, regardless of scale.
+        
+        min_overlap_s0: int
+            Edges with small overlap will be filtered out, according to this setting.
+        
+        scale:
+            Which image scale to perform the analysis with.
+        
+        supervoxels:
+            Whether or not to perform the analysis on supervoxel labels (default) or body labels.
+        
+        Returns:
+            DataFrame with columns: ['left', 'right', 'xa', 'ya', 'za', 'xb', 'yb', 'zb', 'overlap']
+            where 'left' and 'right' are the supervoxel (or body) IDs for each edge,
+            and ('xa', 'ya', 'za') is a sample coordinate from within the left object,
+            and ('xb', 'yb', 'zb') is within the right object.
+            (If scale>0 is used, there is a small chance that these coordinates
+            will not lie within the object, but only in pathological cases.)
     """
     plane_bounds_s0 = np.asarray(plane_bounds_s0)
     assert plane_bounds_s0.shape == (2,2), f'plane_bounds_s0 should be a box, i.e. [(y0,x0), (y1,x1)], not {plane_bounds_s0}'
@@ -67,15 +152,15 @@ def find_hotknife_edges(server, uuid, instance, plane_center_coord_s0, plane_bou
     if right_plane_coord == plane_center_coord:
         right_plane_coord += 1
 
-    left_img = fetch_plane(server, uuid, instance, left_plane_coord, plane_bounds, axisname='x', scale=scale, supervoxels=supervoxels)
-    right_img = fetch_plane(server, uuid, instance, right_plane_coord, plane_bounds, axisname='x', scale=scale, supervoxels=supervoxels)
+    left_img = fetch_plane(server, uuid, instance, left_plane_coord, plane_bounds, axisname='x', scale=scale, supervoxels=supervoxels, logger=logger)
+    right_img = fetch_plane(server, uuid, instance, right_plane_coord, plane_bounds, axisname='x', scale=scale, supervoxels=supervoxels, logger=logger)
 
     assert left_img.shape[2] == right_img.shape[2] == 1
     left_img = left_img[:,:,0]
     right_img = right_img[:,:,0]
 
     with Timer("Finding overlap edges", logger):
-        edge_table = match_overlaps(left_img, right_img, min_overlap, crossover_filter='exclude-identities', match_filter='favorites')
+        edge_table = match_overlaps(left_img, right_img, min_overlap, crossover_filter='exclude-identities', match_filter='favorites', logger=logger)
 
     # Rename axes (we passed ZY image, not a YX image)
     edge_table.rename(inplace=True, columns={'ya': 'za',
@@ -102,7 +187,7 @@ def find_hotknife_edges(server, uuid, instance, plane_center_coord_s0, plane_bou
     return edge_table
     
 
-def fetch_plane(server, uuid, instance, plane_coord, plane_bounds=None, axisname='z', tile_shape=(1024,1024), scale=0, supervoxels=False):
+def fetch_plane(server, uuid, instance, plane_coord, plane_bounds=None, axisname='z', tile_shape=(1024,1024), scale=0, supervoxels=False, logger=logger):
     axis = 'zyx'.index(axisname.lower())
 
     if plane_bounds is None:
@@ -121,7 +206,7 @@ def fetch_plane(server, uuid, instance, plane_coord, plane_bounds=None, axisname
     tile_shape.insert(axis, 1)
 
     with Timer(f"Fetching tiles for plane {axisname}={plane_coord}", logger):
-        for tile_box in tqdm_proxy(boxes_from_grid(plane_box, tile_shape, clipped=True)):
+        for tile_box in boxes_from_grid(plane_box, tile_shape, clipped=True):
             tile = fetch_labelarray_voxels(server, uuid, instance, tile_box, scale, supervoxels)
             overwrite_subvol(plane_vol, tile_box - plane_box[0], tile)
     return plane_vol
@@ -247,7 +332,7 @@ def region_coordinates(label_img, label_list):
     return coords
 
 
-def match_overlaps(left_img, right_img, min_overlap=1, crossover_filter='exclude-all', match_filter=None):
+def match_overlaps(left_img, right_img, min_overlap=1, crossover_filter='exclude-all', match_filter=None, logger=logger):
     """
     Given two 2D label images, overlay them and find pairs of overlapping labels ('edges').
     Overlaps are computed after computing the connected components on each image,
