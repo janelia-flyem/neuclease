@@ -1,9 +1,16 @@
+import logging
+
 import numpy as np
 import pandas as pd
 import vigra
 
 from .favorites import compute_favorites, mark_favorites, extract_favorites
-from ..util.box import box_to_slicing
+from ..util import Timer, tqdm_proxy
+from ..util.box import box_to_slicing, round_box, overwrite_subvol
+from ..util.grid import boxes_from_grid
+from ..dvid import fetch_volume_box, fetch_labelarray_voxels
+
+logger = logging.getLogger(__name__)
 
 HEMIBRAIN_TAB_STARTS_INVERTED = {
     # These are the Y-boundaries in the original coordiante system,
@@ -13,6 +20,9 @@ HEMIBRAIN_TAB_STARTS_INVERTED = {
     #   From: "Saalfeld, Stephan" <saalfelds@janelia.hhmi.org>
     #   Date: December 18, 2017 at 20:07:13 EST
     #   Subject: Re: Hemi-brain aligned
+    
+    # NOTE: These inverted coordinates do not correspond to DVID coordinates.
+    #       See HEMIBRAIN_TAB_BOUNDARIES, below.
     22: 0,
     23: 2067,
     24: 4684,
@@ -33,6 +43,89 @@ HEMIBRAIN_TAB_STARTS_INVERTED = {
 # The last entry marks the end of the volume.
 HEMIBRAIN_TAB_BOUNDARIES = 34427 - np.fromiter(HEMIBRAIN_TAB_STARTS_INVERTED.values(), np.int32)[::-1]
 HEMIBRAIN_WIDTH = HEMIBRAIN_TAB_BOUNDARIES[-1] - HEMIBRAIN_TAB_BOUNDARIES[0]
+
+# (These are X coordinates)
+assert HEMIBRAIN_TAB_BOUNDARIES.tolist() == [0, 2655, 5251, 7920, 10600, 13229, 15895, 18489, 21204, 24041, 26853, 29743, 32360, 34427]
+
+
+def find_hotknife_edges(server, uuid, instance, plane_center_coord_s0, plane_bounds_s0, plane_spacing_s0, min_overlap_s0=1, *, scale=0, supervoxels=True):
+    """
+    
+    """
+    plane_bounds_s0 = np.asarray(plane_bounds_s0)
+    assert plane_bounds_s0.shape == (2,2), f'plane_bounds_s0 should be a box, i.e. [(y0,x0), (y1,x1)], not {plane_bounds_s0}'
+    
+    plane_center_coord = plane_center_coord_s0 // (2**scale)
+    left_plane_coord = (plane_center_coord_s0 - plane_spacing_s0) // (2**scale)
+    right_plane_coord = (plane_center_coord_s0 + plane_spacing_s0) // (2**scale)
+    
+    plane_bounds = round_box(plane_bounds_s0, 2**scale, 'out') // (2**scale)
+    min_overlap = min_overlap_s0 // ((2**scale)**2)
+    
+    if left_plane_coord == plane_center_coord:
+        left_plane_coord -= 1
+    if right_plane_coord == plane_center_coord:
+        right_plane_coord += 1
+
+    left_img = fetch_plane(server, uuid, instance, left_plane_coord, plane_bounds, axisname='x', scale=scale, supervoxels=supervoxels)
+    right_img = fetch_plane(server, uuid, instance, right_plane_coord, plane_bounds, axisname='x', scale=scale, supervoxels=supervoxels)
+
+    assert left_img.shape[2] == right_img.shape[2] == 1
+    left_img = left_img[:,:,0]
+    right_img = right_img[:,:,0]
+
+    with Timer("Finding overlap edges", logger):
+        edge_table = match_overlaps(left_img, right_img, min_overlap, crossover_filter='exclude-identities', match_filter='favorites')
+
+    # Rename axes (we passed ZY image, not a YX image)
+    edge_table.rename(inplace=True, columns={'ya': 'za',
+                                             'xa': 'ya',
+                                             'yb': 'zb',
+                                             'xb': 'yb'})
+    # Append X cols
+    edge_table['xa'] = np.int32(left_plane_coord)
+    edge_table['xb'] = np.int32(right_plane_coord)
+
+    # translate    
+    edge_table.loc[:, ['za', 'ya']] += plane_bounds[0]
+    edge_table.loc[:, ['zb', 'yb']] += plane_bounds[0]
+
+    # rescale
+    edge_table.loc[:, ['za', 'ya', 'xa']] *= (2**scale)
+    edge_table.loc[:, ['zb', 'yb', 'xb']] *= (2**scale)
+    edge_table['overlap'] *= (2**scale)**2
+
+    # Friendly ordering
+    edge_table.sort_values(['overlap'], inplace=True, ascending=False)
+    edge_table = edge_table[['left', 'right', 'xa', 'ya', 'za', 'xb', 'yb', 'zb', 'overlap']]
+
+    return edge_table
+    
+
+def fetch_plane(server, uuid, instance, plane_coord, plane_bounds=None, axisname='z', tile_shape=(1024,1024), scale=0, supervoxels=False):
+    axis = 'zyx'.index(axisname.lower())
+
+    if plane_bounds is None:
+        plane_box = fetch_volume_box(server, uuid, instance)
+        plane_box //= (2**scale)
+        plane_box[:, axis] = (plane_coord, plane_coord+1)
+    else:
+        plane_box = np.asarray(plane_bounds).tolist()
+        plane_box[0].insert(axis, plane_coord)
+        plane_box[1].insert(axis, plane_coord+1)
+        plane_box = np.asarray(plane_box)
+
+    plane_vol = np.zeros(plane_box[1] - plane_box[0], np.uint64)
+
+    tile_shape = list(tile_shape)
+    tile_shape.insert(axis, 1)
+
+    with Timer(f"Fetching tiles for plane {axisname}={plane_coord}", logger):
+        for tile_box in tqdm_proxy(boxes_from_grid(plane_box, tile_shape, clipped=True)):
+            tile = fetch_labelarray_voxels(server, uuid, instance, tile_box, scale, supervoxels)
+            overwrite_subvol(plane_vol, tile_box - plane_box[0], tile)
+    return plane_vol
+
 
 # def contingency_table(left_vol, right_vol):
 #     """
@@ -126,13 +219,14 @@ def region_coordinates(label_img, label_list):
     For a 3D image, returns array of shape (N,3), in Z-Y-X order.
     For a 2D image, returns array of shape (N,2) in Y-X order.
     """
+    label_list = np.asarray(label_list)
     ndim = label_img.ndim
     label_img = vigra.taggedView(label_img, 'zyx'[3-ndim:])
     assert label_img.dtype == np.uint32
     # Little trick here: Vigra requires an intensity (float) image, but we don't compute any features that need it.
     # To save some RAM, just provide a fake view of the original image, since it happens to be the same bitwidth
     acc = vigra.analysis.extractRegionFeatures(label_img.view(np.float32), label_img, ['RegionCenter', 'Coord<Minimum>', 'Coord<Maximum>'])
-    coords = acc['RegionCenter'][(np.asarray(label_list),)].astype(np.int32)
+    coords = acc['RegionCenter'][(label_list,)].astype(np.int32)
     
     # Sample the image at the region centers.
     # If a region center doesn't happen to fall on the object,
@@ -143,9 +237,12 @@ def region_coordinates(label_img, label_list):
         box = np.array([  acc['Coord<Minimum>'][label],
                         1+acc['Coord<Maximum>'][label] ]).astype(np.int32)
         subvol = label_img[box_to_slicing(*box)]
-        first_coord = np.transpose((subvol == label).nonzero())[0]
-        first_coord += box[0]
-        coords[i] = first_coord
+        
+        # Hopefully the middle scan-order coord is roughly in the middle of the object.
+        label_coords = np.transpose((subvol == label).nonzero())
+        middle_coord = label_coords[len(label_coords)//2]
+        middle_coord += box[0]
+        coords[i] = middle_coord
 
     return coords
 
@@ -198,11 +295,16 @@ def match_overlaps(left_img, right_img, min_overlap=1, crossover_filter='exclude
     Returns:
         DataFrame in which each row lists an edge, with the following columns (not necessarily in this order):
             ['left', 'right', 'overlap', 'ya', 'xa', 'yb', 'xb, 'left_cc', 'right_cc']
+
         The left/right columns are label IDs, overlap is the size (in pixels) of the overlap region,
         xa,ya are sample coordinates guaranteed to fall within the the left object,
         and likewise xb,yb for the right object.
         The 'left_cc' and 'right_cc' columns are the IDs of the object after connected components,
         (used internally but perhaps useful for debugging or analysis).
+        
+        Note:
+            There may be "duplicate" edges if two left/right bodies overlap in multiple places.
+            But the left_cc,right_cc pairs will never have duplicates. 
     """
     assert left_img.ndim == right_img.ndim == 2
     assert left_img.shape == right_img.shape
@@ -215,10 +317,13 @@ def match_overlaps(left_img, right_img, min_overlap=1, crossover_filter='exclude
 
     # It's convenient if left and right CC images use disjoint label sets,
     # so shift the right CC values up.
-    left_cc_img, left_mapping = compute_cc(left_img, 1)
-    right_cc_img, right_mapping = compute_cc(right_img, left_mapping.index.max()+1)
+    with Timer("Computing left/right CC", logger):
+        left_cc_img, left_mapping = compute_cc(left_img, 1)
+        right_cc_img, right_mapping = compute_cc(right_img, left_mapping.index.max()+1)
 
-    cc_overlap_sizes = contingency_table(left_cc_img, right_cc_img)
+    with Timer("Computing contingency table", logger):
+        cc_overlap_sizes = contingency_table(left_cc_img, right_cc_img)
+
     cc_overlap_sizes = pd.DataFrame(cc_overlap_sizes)
     cc_overlap_sizes.reset_index(inplace=True)
     cc_overlap_sizes.rename(inplace=True, columns={'left': 'left_cc',
@@ -226,10 +331,16 @@ def match_overlaps(left_img, right_img, min_overlap=1, crossover_filter='exclude
                                                    'voxel_count': 'overlap'})
 
     # Drop edges involving 0
-    cc_overlap_sizes.query('left_cc != 0 and right_cc != 0', inplace=True)
-
+    logger.info(f"Found {len(cc_overlap_sizes)} unfiltered edges")
+    
+    with Timer("Dropping zeros", logger):
+        cc_overlap_sizes.query('left_cc != 0 and right_cc != 0', inplace=True)
+    
     if min_overlap > 1:
-        cc_overlap_sizes.query('overlap > @min_overlap', inplace=True)
+        with Timer(f"Filtering for overlap > {min_overlap} from {len(cc_overlap_sizes)}", logger):
+            cc_overlap_sizes.query('overlap > @min_overlap', inplace=True)
+
+    logger.info(f"Found {len(cc_overlap_sizes)} non-zero edges")
     
     # Append columns showing the original pixel values for each overlap component
     cc_overlap_sizes['left'] = left_mapping.loc[cc_overlap_sizes['left_cc']].values
@@ -237,42 +348,51 @@ def match_overlaps(left_img, right_img, min_overlap=1, crossover_filter='exclude
     
     # "Crossover" objects are objects that exist on both sides overlap with themselves.
     if crossover_filter == 'exclude-identities':
-        # Crossovers are permitted, but obviously we still exclude completely identical matches.
-        cc_overlap_sizes.query('left != right', inplace=True)
+        with Timer("Dropping identity edges", logger):
+            # Crossovers are permitted, but obviously we still exclude completely identical matches.
+            cc_overlap_sizes.query('left != right', inplace=True)
+        logger.info(f"Found {len(cc_overlap_sizes)} edges after identity filter")
+
     elif crossover_filter == 'exclude-all':
-        # Crossovers not permitted.
-        # We exclude matches in which EITHER side is a 'crossover' object.
-        crossover_table = cc_overlap_sizes.query('left == right')
-        crossover_components = set(crossover_table['left_cc']) | set(crossover_table['right_cc']) #@UnusedVariable
-        cc_overlap_sizes.query('left_cc not in @crossover_components and right_cc not in @crossover_components', inplace=True)
-    
+        with Timer("Dropping crossover edges", logger):
+            # Crossovers not permitted.
+            # We exclude matches in which EITHER side is a 'crossover' object.
+            crossover_table = cc_overlap_sizes.query('left == right')
+            crossover_components = set(crossover_table['left_cc']) | set(crossover_table['right_cc']) #@UnusedVariable
+            cc_overlap_sizes.query('left_cc not in @crossover_components and right_cc not in @crossover_components', inplace=True)
+        logger.info(f"Found {len(cc_overlap_sizes)} edges after crossover filter")
 
     if match_filter in ('favorites', 'mutual-favorites'):
-        # Rename columns and invert score before calling compute_favorites()
-        renames = {'left_cc': 'body_a', 'right_cc': 'body_b', 'overlap': 'score'}
-        edge_table = cc_overlap_sizes.rename(columns=renames)
-        edge_table['score'] *= -1 # Negate. (compute_favorites() looks for MIN values)
-        
-        component_favorites = compute_favorites(edge_table)
-        favorite_flags_df = mark_favorites(edge_table, component_favorites)
-        favorite_edges = extract_favorites(edge_table, favorite_flags_df, (match_filter == 'mutual-favorites'))
+        with Timer("Dropping non-favorites", logger):
+            # Rename columns and invert score before calling compute_favorites()
+            renames = {'left_cc': 'body_a', 'right_cc': 'body_b', 'overlap': 'score'}
+            edge_table = cc_overlap_sizes.rename(columns=renames)
+            edge_table['score'] *= -1 # Negate. (compute_favorites() looks for MIN values)
+            
+            component_favorites = compute_favorites(edge_table)
+            favorite_flags_df = mark_favorites(edge_table, component_favorites)
+            favorite_edges = extract_favorites(edge_table, favorite_flags_df, (match_filter == 'mutual-favorites'))
+    
+            # Undo the renames and fix the scores (overlaps).
+            renames = {v:k for k,v in renames.items()}
+            favorite_edges.rename(columns=renames, inplace=True)
+            favorite_edges['overlap'] *= -1
+            
+            # Overwrite
+            cc_overlap_sizes = favorite_edges
 
-        # Undo the renames and fix the scores (overlaps).
-        renames = {v:k for k,v in renames.items()}
-        favorite_edges.rename(columns=renames, inplace=True)
-        favorite_edges['overlap'] *= -1
-        
-        # Overwrite
-        cc_overlap_sizes = favorite_edges
+        logger.info(f"Found {len(cc_overlap_sizes)} edges favorites filter")
 
-    left_coords = region_coordinates(left_cc_img, cc_overlap_sizes['left_cc'])
-    right_coords = region_coordinates(right_cc_img, cc_overlap_sizes['right_cc'])
+    with Timer("Generating coordinates", logger):
+        left_coords = region_coordinates(left_cc_img, cc_overlap_sizes['left_cc'])
+        right_coords = region_coordinates(right_cc_img, cc_overlap_sizes['right_cc'])
 
     # Using conventions 'a' for left, 'b' for right
-    cc_overlap_sizes['ya'] = left_coords[:,0]
     cc_overlap_sizes['xa'] = left_coords[:,1]
+    cc_overlap_sizes['ya'] = left_coords[:,0]
 
-    cc_overlap_sizes['yb'] = right_coords[:,0]
     cc_overlap_sizes['xb'] = right_coords[:,1]
+    cc_overlap_sizes['yb'] = right_coords[:,0]
 
+    logger.info(f"Returning {len(cc_overlap_sizes)} edges")
     return cc_overlap_sizes

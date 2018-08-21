@@ -55,8 +55,8 @@ def test_region_coordinates():
     assert (coords[-3] == [5,2]).all()
     
     # For object 4, the center of mass is not labeled,
-    # so coord should revert to first scan-order pixel
-    assert (coords[-4] == [5,7]).all()
+    # so coord should revert to middle scan-order pixel
+    assert (coords[-4] == [6,8]).all()
     
 
 def test_match_overlaps_DEFAULT():
