@@ -11,11 +11,22 @@ source $ACTIVATE flyem
 # Run this on emdata3 to produce a cleave server on emdata3:5551
 
 nohup neuclease_cleave_server \
-  -p 5551 \
+  -p 5552 \
   --log-dir /nrs/flyem/bergs/neuclease-logs/production-emdata3-8900 \
   --merge-table /nrs/flyem/bergs/final-agglo-fixsplit-patched/final_patched_20180426_merge_table.npy \
   --primary-dvid-server emdata3:8900 \
-  --primary-uuid d5852c27b5c04687bb1be414f6dc2336 \
+  --primary-uuid 7254f5a8aacf4e6f804dcbddfdac4f7f \
+  --primary-labelmap-instance segmentation \
+  &
+##
+
+CLEAVE_PORT=5552
+nohup neuclease_cleave_server \
+  -p ${CLEAVE_PORT} \
+  --log-dir /nrs/flyem/bergs/neuclease-logs/production-emdata3-8900-${CLEAVE_PORT} \
+  --merge-table /nrs/flyem/bergs/final-agglo-fixsplit-patched/final_patched_20180426_merge_table.npy \
+  --primary-dvid-server emdata3:8900 \
+  --primary-uuid 7254f5a8aacf4e6f804dcbddfdac4f7f \
   --primary-labelmap-instance segmentation \
   &
 ##
