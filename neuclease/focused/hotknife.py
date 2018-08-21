@@ -1,0 +1,278 @@
+import numpy as np
+import pandas as pd
+import vigra
+
+from .favorites import compute_favorites, mark_favorites, extract_favorites
+from ..util.box import box_to_slicing
+
+HEMIBRAIN_TAB_STARTS_INVERTED = {
+    # These are the Y-boundaries in the original coordiante system,
+    # before rotation into the DVID coordiante system.
+    #
+    # Source email:
+    #   From: "Saalfeld, Stephan" <saalfelds@janelia.hhmi.org>
+    #   Date: December 18, 2017 at 20:07:13 EST
+    #   Subject: Re: Hemi-brain aligned
+    22: 0,
+    23: 2067,
+    24: 4684,
+    25: 7574,
+    26: 10386,
+    27: 13223, # (last slice is black, sorry)
+    28: 15938,
+    29: 18532,
+    30: 21198,
+    31: 23827,
+    32: 26507,
+    33: 29176,
+    34: 31772,
+    35: 34427, # (tab does not exist, but here's where it would start)
+}
+
+# This corresponds to the X-coordinates of the DVID volume.
+# The last entry marks the end of the volume.
+HEMIBRAIN_TAB_BOUNDARIES = 34427 - np.fromiter(HEMIBRAIN_TAB_STARTS_INVERTED.values(), np.int32)[::-1]
+HEMIBRAIN_WIDTH = HEMIBRAIN_TAB_BOUNDARIES[-1] - HEMIBRAIN_TAB_BOUNDARIES[0]
+
+# def contingency_table(left_vol, right_vol):
+#     """
+#     Return a pd.DataFrame with columns 'left', 'right' and 'overlap_size',
+#     indicating the count of overlapping pixels for each segment in 'from' with segments in 'to'.
+#     
+#     Note: Internally, copies both volumes multiple times.
+#           This function seems to require an extra ~5x RAM relative to the inputs.
+#     """
+#     assert left_vol.dtype == right_vol.dtype
+#     dtype = left_vol.dtype
+#     vols_combined = np.empty((left_vol.size,2), dtype)
+#     vols_combined[:,0]= left_vol.flat
+#     vols_combined[:,1]= right_vol.flat
+#     vols_combined = vols_combined.reshape(-1).view([('left', dtype), ('right', dtype)])
+#     pairs, counts = np.unique(vols_combined, return_counts=True)
+#     return pd.DataFrame({'left': pairs['left'], 'right': pairs['right'], 'overlap_size': counts})
+
+def contingency_table(left_vol, right_vol):
+    """
+    Overlay left_vol and right_vol and compute the table of
+    overlapping label pairs, along with the size of each overlapping
+    region.
+    
+    Args:
+        left_vol, right_vol:
+            np.ndarrays of equal shape
+    
+    Returns:
+        pd.Series of sizes with a multi-level index (left,right)
+    """
+    assert left_vol.shape == right_vol.shape
+    df = pd.DataFrame({"left": left_vol.flat, "right": right_vol.flat}, dtype=left_vol.dtype)
+    sizes = df.groupby(['left', 'right']).size()
+    sizes.name = 'voxel_count'
+    return sizes
+
+
+def compute_cc(img, min_component=1):
+    """
+    Compute the connected components of the given label image,
+    and return a pd.Series that maps from the CC label back to the original label.
+    
+    Pixels of value 0 are treated as background and not labeled.
+    
+    Args:
+        img:
+            ND label image, either np.uint8, np.uint32, or np.uint64
+        
+        min_component:
+            Output components will be indexed starting with this value
+            (but 0 is not affected)
+        
+    Returns:
+        img_cc, cc_mapping, where:
+            - img_cc is the connected components image (as np.uint32)
+            - cc_mapping is pd.Series, indexed by CC labels, data is original labels.
+    """
+    assert min_component > 0
+    if img.dtype in (np.uint8, np.uint32):
+        img_cc = vigra.analysis.labelMultiArrayWithBackground(img)
+    elif img.dtype == np.uint64:
+        # Vigra's labelMultiArray() can't handle np.uint64,
+        # so we must convert it to np.uint32 first.
+        # We can't simply truncate the label values,
+        # so we "consecutivize" them.
+        img32 = np.zeros_like(img, dtype=np.uint32, order='C')
+        _, _, _ = vigra.analysis.relabelConsecutive(img, out=img32)
+        img_cc = vigra.analysis.labelMultiArrayWithBackground(img32)
+    else:
+        raise AssertionError(f"Invalid label dtype: {img.dtype}")    
+    
+    cc_mapping_df = pd.DataFrame( { 'orig': img.flat, 'cc': img_cc.flat } )
+    cc_mapping_df.drop_duplicates(inplace=True)
+    
+    if min_component > 1:
+        img_cc[img_cc != 0] += np.uint32(min_component-1)
+        cc_mapping_df.loc[cc_mapping_df['cc'] != 0, 'cc'] += np.uint32(min_component-1)
+
+    cc_mapping = cc_mapping_df.set_index('cc')['orig']
+    return img_cc, cc_mapping
+    
+
+def region_coordinates(label_img, label_list):
+    """
+    Find a sample coordinate within label_img for each ID in label_list.
+    For label ID, the RegionCenter (center of mass) of the object is returned,
+    unless the object is concave and its center of mass lies outside the object bounds.
+    In that case an arbitrary point within the object is returned.
+
+    For a 3D image, returns array of shape (N,3), in Z-Y-X order.
+    For a 2D image, returns array of shape (N,2) in Y-X order.
+    """
+    ndim = label_img.ndim
+    label_img = vigra.taggedView(label_img, 'zyx'[3-ndim:])
+    assert label_img.dtype == np.uint32
+    # Little trick here: Vigra requires an intensity (float) image, but we don't compute any features that need it.
+    # To save some RAM, just provide a fake view of the original image, since it happens to be the same bitwidth
+    acc = vigra.analysis.extractRegionFeatures(label_img.view(np.float32), label_img, ['RegionCenter', 'Coord<Minimum>', 'Coord<Maximum>'])
+    coords = acc['RegionCenter'][(np.asarray(label_list),)].astype(np.int32)
+    
+    # Sample the image at the region centers.
+    # If a region center doesn't happen to fall on the object,
+    # Choose an arbitrary valid coordiante.
+    samples = label_img[tuple(coords.transpose())]
+    for i in (samples != label_list).nonzero()[0]:
+        label = label_list[i]
+        box = np.array([  acc['Coord<Minimum>'][label],
+                        1+acc['Coord<Maximum>'][label] ]).astype(np.int32)
+        subvol = label_img[box_to_slicing(*box)]
+        first_coord = np.transpose((subvol == label).nonzero())[0]
+        first_coord += box[0]
+        coords[i] = first_coord
+
+    return coords
+
+
+def match_overlaps(left_img, right_img, min_overlap=1, crossover_filter='exclude-all', match_filter=None):
+    """
+    Given two 2D label images, overlay them and find pairs of overlapping labels ('edges').
+    Overlaps are computed after computing the connected components on each image,
+    so disjoint portions of each object are treated independently for the purposes of "min_overlap"
+    and "favorites", as desribed below.
+    
+    (Label ID 0 is ignored.)
+    
+    Args:
+        left_img, right_img:
+            2D label image (np.uint64 or np.uint32)
+        
+        min_overlap:
+            Specifies a minimum number of voxels for an overlapping region to count as an edge.
+            Overlapping regions smaller than this will not be returned in the results.
+        
+        crossover_filter:
+            When an object is present in both images (as determined by its label ID)
+            and it overlaps with itself, it is considered a "crossover".
+            Generally, one is not interested in crossover "identity" edges,
+            and maybe isn't interested in other edges involving crossovers.
+            This argument specifies how to include "crossovers" in the results.
+            
+            Choices:
+                - None:
+                    No filtering; include all crossovers, even identities).
+                - "exclude-identities":
+                    Don't include identity edges, but allow crossover
+                    objects to participate in other edges).
+                - "exclude-all":
+                    Don't include any crossover objects in the results at all.
+        
+        match_filter:
+            Specifies whether/how to require that each edge returned represents a "favorite"
+            overlap one or both of the two objects in the edge, i.e. whether or not the object
+            on left is the highest-overlapping object with the one on the right (or vice-versa).
+            Choices:
+                - None:
+                    No filtering; include all edges, even non-favorites.
+                - "favorites":
+                    Require that either the left or right edge is the favorite of the other.
+                - "mutual-favorites":
+                    Require that both left/right object in each edge chose each other as their favorite.
+
+    Returns:
+        DataFrame in which each row lists an edge, with the following columns (not necessarily in this order):
+            ['left', 'right', 'overlap', 'ya', 'xa', 'yb', 'xb, 'left_cc', 'right_cc']
+        The left/right columns are label IDs, overlap is the size (in pixels) of the overlap region,
+        xa,ya are sample coordinates guaranteed to fall within the the left object,
+        and likewise xb,yb for the right object.
+        The 'left_cc' and 'right_cc' columns are the IDs of the object after connected components,
+        (used internally but perhaps useful for debugging or analysis).
+    """
+    assert left_img.ndim == right_img.ndim == 2
+    assert left_img.shape == right_img.shape
+    left_img = vigra.taggedView(left_img, 'yx')
+    right_img = vigra.taggedView(right_img, 'yx')
+
+    assert min_overlap > 0
+    assert crossover_filter in (None, 'exclude-identities', 'exclude-all')
+    assert match_filter in (None, 'favorites', 'mutual-favorites')
+
+    # It's convenient if left and right CC images use disjoint label sets,
+    # so shift the right CC values up.
+    left_cc_img, left_mapping = compute_cc(left_img, 1)
+    right_cc_img, right_mapping = compute_cc(right_img, left_mapping.index.max()+1)
+
+    cc_overlap_sizes = contingency_table(left_cc_img, right_cc_img)
+    cc_overlap_sizes = pd.DataFrame(cc_overlap_sizes)
+    cc_overlap_sizes.reset_index(inplace=True)
+    cc_overlap_sizes.rename(inplace=True, columns={'left': 'left_cc',
+                                                   'right': 'right_cc',
+                                                   'voxel_count': 'overlap'})
+
+    # Drop edges involving 0
+    cc_overlap_sizes.query('left_cc != 0 and right_cc != 0', inplace=True)
+
+    if min_overlap > 1:
+        cc_overlap_sizes.query('overlap > @min_overlap', inplace=True)
+    
+    # Append columns showing the original pixel values for each overlap component
+    cc_overlap_sizes['left'] = left_mapping.loc[cc_overlap_sizes['left_cc']].values
+    cc_overlap_sizes['right'] = right_mapping.loc[cc_overlap_sizes['right_cc']].values
+    
+    # "Crossover" objects are objects that exist on both sides overlap with themselves.
+    if crossover_filter == 'exclude-identities':
+        # Crossovers are permitted, but obviously we still exclude completely identical matches.
+        cc_overlap_sizes.query('left != right', inplace=True)
+    elif crossover_filter == 'exclude-all':
+        # Crossovers not permitted.
+        # We exclude matches in which EITHER side is a 'crossover' object.
+        crossover_table = cc_overlap_sizes.query('left == right')
+        crossover_components = set(crossover_table['left_cc']) | set(crossover_table['right_cc']) #@UnusedVariable
+        cc_overlap_sizes.query('left_cc not in @crossover_components and right_cc not in @crossover_components', inplace=True)
+    
+
+    if match_filter in ('favorites', 'mutual-favorites'):
+        # Rename columns and invert score before calling compute_favorites()
+        renames = {'left_cc': 'body_a', 'right_cc': 'body_b', 'overlap': 'score'}
+        edge_table = cc_overlap_sizes.rename(columns=renames)
+        edge_table['score'] *= -1 # Negate. (compute_favorites() looks for MIN values)
+        
+        component_favorites = compute_favorites(edge_table)
+        favorite_flags_df = mark_favorites(edge_table, component_favorites)
+        favorite_edges = extract_favorites(edge_table, favorite_flags_df, (match_filter == 'mutual-favorites'))
+
+        # Undo the renames and fix the scores (overlaps).
+        renames = {v:k for k,v in renames.items()}
+        favorite_edges.rename(columns=renames, inplace=True)
+        favorite_edges['overlap'] *= -1
+        
+        # Overwrite
+        cc_overlap_sizes = favorite_edges
+
+    left_coords = region_coordinates(left_cc_img, cc_overlap_sizes['left_cc'])
+    right_coords = region_coordinates(right_cc_img, cc_overlap_sizes['right_cc'])
+
+    # Using conventions 'a' for left, 'b' for right
+    cc_overlap_sizes['ya'] = left_coords[:,0]
+    cc_overlap_sizes['xa'] = left_coords[:,1]
+
+    cc_overlap_sizes['yb'] = right_coords[:,0]
+    cc_overlap_sizes['xb'] = right_coords[:,1]
+
+    return cc_overlap_sizes
