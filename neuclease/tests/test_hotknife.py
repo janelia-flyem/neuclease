@@ -95,7 +95,11 @@ def test_match_overlaps_no_crossover_identities():
  
     assert (matched_edges[['left', 'right']].values == expected_edges).all()
     assert (matched_edges['overlap'].values == overlaps).all()
- 
+    for row in matched_edges.itertuples():
+        left_size = (left == row.left).sum()
+        right_size = (right == row.right).sum()
+        assert row.jaccard == (row.overlap / (left_size + right_size - row.overlap))
+
  
 def test_match_overlaps_no_crossover_mentions():
     left =  np.array([[0,0,0,1,1,1,2,2,2,3,3,3,4]], np.uint64)
@@ -114,6 +118,10 @@ def test_match_overlaps_no_crossover_mentions():
 
     assert (matched_edges[['left', 'right']].values == expected_edges).all()
     assert (matched_edges['overlap'].values == overlaps).all()
+    for row in matched_edges.itertuples():
+        left_size = (left == row.left).sum()
+        right_size = (right == row.right).sum()
+        assert row.jaccard == (row.overlap / (left_size + right_size - row.overlap))
  
  
 def test_match_overlaps_favorites_only():
@@ -133,6 +141,10 @@ def test_match_overlaps_favorites_only():
 
     assert (matched_edges[['left', 'right']].values == expected_edges).all()
     assert (matched_edges['overlap'].values == overlaps).all()
+    for row in matched_edges.itertuples():
+        left_size = (left == row.left).sum()
+        right_size = (right == row.right).sum()
+        assert row.jaccard == (row.overlap / (left_size + right_size - row.overlap))
 
 
 def test_match_overlaps_mutual_favorites_only():
@@ -153,6 +165,10 @@ def test_match_overlaps_mutual_favorites_only():
 
     assert (matched_edges[['left', 'right']].values == expected_edges).all()
     assert (matched_edges['overlap'].values == overlaps).all()
+    for row in matched_edges.itertuples():
+        left_size = (left == row.left).sum()
+        right_size = (right == row.right).sum()
+        assert row.jaccard == (row.overlap / (left_size + right_size - row.overlap))
 
 
 if __name__ == "__main__":

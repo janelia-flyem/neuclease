@@ -51,7 +51,7 @@ HEMIBRAIN_WIDTH = HEMIBRAIN_TAB_BOUNDARIES[-1] - HEMIBRAIN_TAB_BOUNDARIES[0]
 assert HEMIBRAIN_TAB_BOUNDARIES.tolist() == [0, 2655, 5251, 7920, 10600, 13229, 15895, 18489, 21204, 24041, 26853, 29743, 32360, 34427]
 
 
-def find_all_hotknife_edges_for_plane(server, uuid, instance, plane_center_coord_s0, tile_shape_s0, plane_spacing_s0, min_overlap_s0=1, *, scale=0):
+def find_all_hotknife_edges_for_plane(server, uuid, instance, plane_center_coord_s0, tile_shape_s0, plane_spacing_s0, min_overlap_s0=1, min_jaccard=0.0, *, scale=0, mapping=None):
     """
     Find all hotknife edges around the given X-plane, found in batches according to tile_shape_s0.
      
@@ -71,19 +71,21 @@ def find_all_hotknife_edges_for_plane(server, uuid, instance, plane_center_coord
                                           tile_bounds_s0,
                                           plane_spacing_s0,
                                           min_overlap_s0,
+                                          min_jaccard,
                                           scale=scale,
                                           supervoxels=True, # Compute edges across supervoxels, and then filter out already-merged bodies afterwards
                                           logger=tile_logger )
         edge_tables.append(edge_table)
 
     edge_table = pd.concat(edge_tables, ignore_index=True)
-    assert (edge_table.columns == ['left', 'right', 'xa', 'ya', 'za', 'xb', 'yb', 'zb', 'overlap']).all()
-    edge_table.columns = ['id_a', 'id_b', 'xa', 'ya', 'za', 'xb', 'yb', 'zb', 'overlap']
+    assert (edge_table.columns == ['left', 'right', 'xa', 'ya', 'za', 'xb', 'yb', 'zb', 'overlap', 'jaccard', 'left_cc_size', 'right_cc_size']).all()
+    edge_table.columns = ['id_a', 'id_b', 'xa', 'ya', 'za', 'xb', 'yb', 'zb', 'overlap', 'jaccard', 'left_cc_size', 'right_cc_size']
     assert edge_table['id_a'].dtype == np.uint64
     assert edge_table['id_b'].dtype == np.uint64
     
     # "Complete" mappings not necessary for our purposes.
-    mapping = fetch_mappings(server, uuid, instance, as_array=True)
+    if mapping is None:
+        mapping = fetch_mappings(server, uuid, instance, as_array=True)
     mapper = LabelMapper(mapping[:,0], mapping[:,1])
     
     edge_table['body_a'] = mapper.apply(edge_table['id_a'].values, True)
@@ -93,7 +95,7 @@ def find_all_hotknife_edges_for_plane(server, uuid, instance, plane_center_coord
     return edge_table
 
 
-def find_hotknife_edges(server, uuid, instance, plane_center_coord_s0, plane_bounds_s0, plane_spacing_s0, min_overlap_s0=1, *, scale=0, supervoxels=True, logger=logger):
+def find_hotknife_edges(server, uuid, instance, plane_center_coord_s0, plane_bounds_s0, plane_spacing_s0, min_overlap_s0=1, min_jaccard=0.0, *, scale=0, supervoxels=True, logger=logger):
     """
     Download two X-tiles (left, right) spaced equidistantly from the given center-coord
     (presumably a hot-knife boundary) and bounded by the given plane_bounds.
@@ -130,7 +132,7 @@ def find_hotknife_edges(server, uuid, instance, plane_center_coord_s0, plane_bou
             Whether or not to perform the analysis on supervoxel labels (default) or body labels.
         
         Returns:
-            DataFrame with columns: ['left', 'right', 'xa', 'ya', 'za', 'xb', 'yb', 'zb', 'overlap']
+            DataFrame with columns: ['left', 'right', 'xa', 'ya', 'za', 'xb', 'yb', 'zb', 'overlap', 'jaccard']
             where 'left' and 'right' are the supervoxel (or body) IDs for each edge,
             and ('xa', 'ya', 'za') is a sample coordinate from within the left object,
             and ('xb', 'yb', 'zb') is within the right object.
@@ -160,7 +162,7 @@ def find_hotknife_edges(server, uuid, instance, plane_center_coord_s0, plane_bou
     right_img = right_img[:,:,0]
 
     with Timer("Finding overlap edges", logger):
-        edge_table = match_overlaps(left_img, right_img, min_overlap, crossover_filter='exclude-identities', match_filter='favorites', logger=logger)
+        edge_table = match_overlaps(left_img, right_img, min_overlap, min_jaccard, crossover_filter='exclude-identities', match_filter='favorites', logger=logger)
 
     # Rename axes (we passed ZY image, not a YX image)
     edge_table.rename(inplace=True, columns={'ya': 'za',
@@ -182,7 +184,7 @@ def find_hotknife_edges(server, uuid, instance, plane_center_coord_s0, plane_bou
 
     # Friendly ordering
     edge_table.sort_values(['overlap'], inplace=True, ascending=False)
-    edge_table = edge_table[['left', 'right', 'xa', 'ya', 'za', 'xb', 'yb', 'zb', 'overlap']]
+    edge_table = edge_table[['left', 'right', 'xa', 'ya', 'za', 'xb', 'yb', 'zb', 'overlap', 'jaccard', 'left_cc_size', 'right_cc_size']]
 
     return edge_table
     
@@ -332,7 +334,7 @@ def region_coordinates(label_img, label_list):
     return coords
 
 
-def match_overlaps(left_img, right_img, min_overlap=1, crossover_filter='exclude-all', match_filter=None, logger=logger):
+def match_overlaps(left_img, right_img, min_overlap=1, min_jaccard=0.0, crossover_filter='exclude-all', match_filter=None, logger=logger):
     """
     Given two 2D label images, overlay them and find pairs of overlapping labels ('edges').
     Overlaps are computed after computing the connected components on each image,
@@ -349,6 +351,9 @@ def match_overlaps(left_img, right_img, min_overlap=1, crossover_filter='exclude
             Specifies a minimum number of voxels for an overlapping region to count as an edge.
             Overlapping regions smaller than this will not be returned in the results.
         
+        min_jaccard:
+            Specifies the minimum Jaccard Index (intersection / union) for a region to count as an edge.
+
         crossover_filter:
             When an object is present in both images (as determined by its label ID)
             and it overlaps with itself, it is considered a "crossover".
@@ -379,7 +384,7 @@ def match_overlaps(left_img, right_img, min_overlap=1, crossover_filter='exclude
 
     Returns:
         DataFrame in which each row lists an edge, with the following columns (not necessarily in this order):
-            ['left', 'right', 'overlap', 'ya', 'xa', 'yb', 'xb, 'left_cc', 'right_cc']
+            ['left', 'right', 'overlap', 'jaccard', 'ya', 'xa', 'yb', 'xb, 'left_cc', 'right_cc']
 
         The left/right columns are label IDs, overlap is the size (in pixels) of the overlap region,
         xa,ya are sample coordinates guaranteed to fall within the the left object,
@@ -415,15 +420,29 @@ def match_overlaps(left_img, right_img, min_overlap=1, crossover_filter='exclude
                                                    'right': 'right_cc',
                                                    'voxel_count': 'overlap'})
 
-    # Drop edges involving 0
+    # Compute sizes
+    left_sizes = cc_overlap_sizes.groupby('left_cc').agg({'overlap': 'sum'})
+    left_sizes.columns = ['left_cc_size']
+    right_sizes = cc_overlap_sizes.groupby('right_cc').agg({'overlap': 'sum'})
+    right_sizes.columns = ['right_cc_size']
+
+    # Join size columns
+    cc_overlap_sizes = cc_overlap_sizes.merge(left_sizes, how='left', left_on='left_cc', right_index=True, copy=False)
+    cc_overlap_sizes = cc_overlap_sizes.merge(right_sizes, how='left', left_on='right_cc', right_index=True, copy=False)
+
     logger.info(f"Found {len(cc_overlap_sizes)} unfiltered edges")
-    
+
     with Timer("Dropping zeros", logger):
         cc_overlap_sizes.query('left_cc != 0 and right_cc != 0', inplace=True)
-    
+
     if min_overlap > 1:
         with Timer(f"Filtering for overlap > {min_overlap} from {len(cc_overlap_sizes)}", logger):
             cc_overlap_sizes.query('overlap > @min_overlap', inplace=True)
+
+    cc_overlap_sizes['jaccard'] = cc_overlap_sizes.eval('overlap / (left_cc_size + right_cc_size - overlap)')
+    if min_jaccard > 0.0:
+        with Timer(f"Filtering for jacccard > {min_jaccard:.03f} from {len(cc_overlap_sizes)}", logger):
+            cc_overlap_sizes.query('overlap > @min_jaccard', inplace=True)
 
     logger.info(f"Found {len(cc_overlap_sizes)} non-zero edges")
     
