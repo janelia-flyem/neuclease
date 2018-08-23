@@ -19,7 +19,8 @@ def read_csv_header(csv_path):
             except:
                 has_header = True
         else:
-            has_header = csv.Sniffer().has_header(csv_file.read(1024))
+            first_three_lines = ''.join(csv_file.readline() for _ in range(3))
+            has_header = csv.Sniffer().has_header(first_three_lines)
             csv_file.seek(0)
 
         if not has_header:
