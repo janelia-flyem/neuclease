@@ -371,6 +371,8 @@ def load_all_supervoxel_sizes(server, uuid, instance, root_sv_sizes):
     split_fragment_sizes = fetch_split_supervoxel_sizes(server, uuid, instance)
     
     all_sv_sizes = pd.concat((root_sv_sizes, split_fragment_sizes))
+    all_sv_sizes.index.name = 'sv'
+    all_sv_sizes.name = 'voxel_count'
     return all_sv_sizes
     
     
@@ -431,6 +433,8 @@ def compute_body_sizes(sv_sizes, mapping, include_unmapped_singletons=False):
         body_sizes = pd.concat((body_sizes, singleton_sizes))
     
     logger.info("Sorting sizes")
+    body_sizes.index.name = 'body'
+    body_sizes.name = 'voxel_count'
     return body_sizes.sort_values(ascending=False)
 
 

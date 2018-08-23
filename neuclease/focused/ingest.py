@@ -1,6 +1,7 @@
 import os
 import logging
 
+import h5py
 import numpy as np
 import pandas as pd
 
@@ -27,6 +28,7 @@ CSV_DTYPES = { 'id_a': np.uint64, 'id_b': np.uint64, # Use'id_a', and 'id_b' for
                'iou': np.float32,
                'da': np.float32, 'db': np.float32,
                'score': np.float32,
+               'jaccard': np.float32,
                'overlap': np.uint32,
                'body_a': np.uint64, 'body_b': np.uint64,
                'sv_a': np.uint64, 'sv_b': np.uint64,
@@ -80,13 +82,13 @@ def body_synapse_counts(synapse_samples):
     return synapse_counts
 
 
-def compute_focused_bodies(server, uuid, instance, synapse_samples, min_tbars, min_psds, root_sv_sizes, min_body_size, bad_bodies, return_table=False):
+def compute_focused_bodies(server, uuid, instance, synapse_samples, min_tbars, min_psds, root_sv_sizes, min_body_size, sv_classifications=None, marked_bad_bodies=None, return_table=False):
     """
     Compute the complete set of focused bodies, based on criteria for
     number of tbars, psds, or overall size, and excluding explicitly
     listed bad bodies.
     
-    This function takes ~12 minutes to run on hemibrain inputs, with a ton of RAM.
+    This function takes ~20 minutes to run on hemibrain inputs, with a ton of RAM.
     
     The procedure is:
 
@@ -105,7 +107,7 @@ def compute_focused_bodies(server, uuid, instance, synapse_samples, min_tbars, m
       b. Remove bad bodies from the set
     
     Example:
-    
+
         server = 'emdata3:8900'
         uuid = '7254'
         instance = 'segmentation'
@@ -115,9 +117,10 @@ def compute_focused_bodies(server, uuid, instance, synapse_samples, min_tbars, m
         root_sv_sizes_dir = '/groups/flyem/data/scratchspace/copyseg-configs/labelmaps/hemibrain/8nm/compute-8nm-extended-fixed-STATS-ONLY-20180402.192015'
         root_sv_sizes = f'{root_sv_sizes_dir}/supervoxel-sizes.h5'
         min_body_size = int(10e6)
-        bad_bodies = '/nrs/flyem/bergs/complete-ffn-agglo/bad-bodies-2018-08-21.csv'
+        sv_classifications = '/nrs/flyem/bergs/sv-classifications.h5'
+        marked_bad_bodies = '/nrs/flyem/bergs/complete-ffn-agglo/bad-bodies-2018-08-21.csv'
         
-        focused_table = compute_focused_bodies(server, uuid, instance, synapse_samples, min_tbars, min_psds, root_sv_sizes, min_body_size, bad_bodies, return_table=True)
+        focused_table = compute_focused_bodies(server, uuid, instance, synapse_samples, min_tbars, min_psds, root_sv_sizes, min_body_size, sv_classifications, marked_bad_bodies, return_table=True)
     
     Args:
 
@@ -144,8 +147,12 @@ def compute_focused_bodies(server, uuid, instance, synapse_samples, min_tbars, m
             Determines which bodies are included on the basis of their size alone,
             regardless of synapse count.
         
-        bad_bodies:
-            A list of known-bad bodies to exclude from the results,
+        sv_classifications:
+            Optional. Path to an hdf5 file containing supervoxel classifications.
+            Must have datasets: 'supervoxel_ids', 'classifications', and 'class_names'.
+
+        marked_bad_bodies:
+            Optional. A list of known-bad bodies to exclude from the results,
             or a path to a .csv file with that list (in the first column),
             or a keyvalue instance name from which the list can be loaded as JSON.
         
@@ -161,6 +168,7 @@ def compute_focused_bodies(server, uuid, instance, synapse_samples, min_tbars, m
     """
     # Load full mapping. It's needed for both synapses and body sizes.
     mapping = fetch_complete_mappings(server, uuid, instance)
+    mapper = LabelMapper(mapping.index.values, mapping.values)
 
     ##
     ## Synapses
@@ -174,7 +182,6 @@ def compute_focused_bodies(server, uuid, instance, synapse_samples, min_tbars, m
     # If 'sv' column is present, use it to create (or update) the body column
     if 'sv' in synapse_samples.columns:
         assert synapse_samples['sv'].dtype == np.uint64
-        mapper = LabelMapper(mapping.index.values, mapping.values)
         synapse_samples['body'] = mapper.apply(synapse_samples['sv'].values, True)
 
     with Timer("Filtering for synapses", logger):
@@ -190,23 +197,59 @@ def compute_focused_bodies(server, uuid, instance, synapse_samples, min_tbars, m
     with Timer("Filtering for body size", logger):    
         sv_sizes = load_all_supervoxel_sizes(server, uuid, instance, root_sv_sizes)
         body_sizes = compute_body_sizes(sv_sizes, mapping, True)
-        big_bodies = body_sizes[body_sizes >= min_body_size].index
+        big_body_sizes = body_sizes[body_sizes >= min_body_size]
+        big_bodies = big_body_sizes.index
     logger.info(f"Found {len(big_bodies)} with sufficient size")
     
     focused_bodies |= set(big_bodies)
 
     ##
-    ## Bad bodies
+    ## SV classifications
     ##
-    if isinstance(bad_bodies, str):
-        if bad_bodies.endswith('.csv'):
-            bad_bodies = read_csv_col(bad_bodies, 0)
-        else:
-            # If it ain't a CSV, maybe it's a key-value instance to read from.
-            bad_bodies = fetch_key(server, uuid, bad_bodies, as_json=True)
+    if sv_classifications is not None:
+        with Timer(f"Filtering by supervoxel classifications"), h5py.File(sv_classifications, 'r') as f:
+            sv_classes = pd.DataFrame({'sv': f['supervoxel_ids'][:],
+                                       'klass': f['classifications'][:].astype(np.uint8)})
     
-    with Timer(f"Dropping {len(bad_bodies)} bad bodies (from {len(focused_bodies)})"):
-        focused_bodies -= set(bad_bodies)
+            # Get the set of bad supervoxels
+            all_class_names = list(map(bytes.decode, f['class_names'][:]))
+            bad_class_names = ['unknown', 'blood vessels', 'broken white tissue', 'glia', 'oob']
+            _bad_class_ids = set(map(all_class_names.index, bad_class_names))
+            bad_svs = sv_classes.query('klass in @_bad_class_ids')['sv']
+            
+            # Add column for sizes
+            bad_sv_sizes = pd.DataFrame(index=bad_svs).merge(pd.DataFrame(sv_sizes), how='left', left_index=True, right_index=True)
+    
+            # Append body
+            bad_sv_sizes['body'] = mapper.apply(bad_sv_sizes.index.values, True)
+            
+            # For bodies that contain at least one bad supervoxel,
+            # compute the total size of the bad supervoxels they contain
+            body_bad_voxels = bad_sv_sizes.groupby('body').agg({'voxel_count': 'sum'})
+            
+            # Append total body size for comparison
+            body_bad_voxels = body_bad_voxels.merge(pd.DataFrame(body_sizes), how='left', left_index=True, right_index=True, suffixes=('_bad', '_total'))
+            
+            bad_bodies = body_bad_voxels.query('voxel_count_bad > voxel_count_total//2').index
+            
+            bad_focused_bodies = focused_bodies & set(bad_bodies)
+            logger.info(f"Dropping {len(bad_focused_bodies)} bodies with more than 50% bad supervoxels")
+    
+            focused_bodies -= bad_focused_bodies
+
+    ##
+    ## Marked Bad bodies
+    ##
+    if marked_bad_bodies is not None:
+        if isinstance(marked_bad_bodies, str):
+            if marked_bad_bodies.endswith('.csv'):
+                marked_bad_bodies = read_csv_col(marked_bad_bodies, 0)
+            else:
+                # If it ain't a CSV, maybe it's a key-value instance to read from.
+                marked_bad_bodies = fetch_key(server, uuid, marked_bad_bodies, as_json=True)
+        
+        with Timer(f"Dropping {len(marked_bad_bodies)} bad bodies (from {len(focused_bodies)})"):
+            focused_bodies -= set(marked_bad_bodies)
 
     ##
     ## Prepare results
@@ -221,7 +264,6 @@ def compute_focused_bodies(server, uuid, instance, synapse_samples, min_tbars, m
     with Timer("Computing full focused table", logger):
         # Start with an empty DataFrame (except index)
         focus_table = pd.DataFrame(index=focused_bodies)
-        focus_table.index.name = 'body'
 
         # Add size column (voxel_count)
         body_sizes_df = pd.DataFrame({'voxel_count': body_sizes})
@@ -232,5 +274,6 @@ def compute_focused_bodies(server, uuid, instance, synapse_samples, min_tbars, m
 
         # Sort biggest..smallest
         focus_table.sort_values('voxel_count', ascending=False, inplace=True)
+        focus_table.index.name = 'body'
 
     return focus_table
