@@ -1,6 +1,8 @@
 import os
 import logging
 
+from tqdm import tqdm
+
 import h5py
 import numpy as np
 import pandas as pd
@@ -10,7 +12,7 @@ from dvidutils import LabelMapper
 from ..util import read_csv_header, Timer
 from ..util.csv import read_csv_col
 from ..merge_table import load_all_supervoxel_sizes, compute_body_sizes
-from ..dvid import fetch_key, fetch_complete_mappings
+from ..dvid import fetch_keys, fetch_key, fetch_complete_mappings
 from ..dvid.annotation import load_synapses_from_csv
 
 # Load new table. Normalize.
@@ -57,6 +59,77 @@ def load_focused_table(path):
 
     if not set(REQUIRED_COLUMNS).issubset(df.columns):
         raise RuntimeError(f"file ({path}) does not contain the required columns: {REQUIRED_COLUMNS}")
+
+    return df
+
+
+def fetch_focused_decisions(server, uuid, instance, normalize_pairs=None, show_progress=False):
+    """
+    Load all focused decisions from a given keyvalue instance
+    (e.g. 'segmentation_merged') and return them as a DataFrame,
+    with slight modifications to use standard column names.
+    
+    Args:
+        server, uuid, instance
+            Exmaple: 'emdata3:8900', '7254', 'segmentation_merged'
+        
+        normalize_pairs:
+            Either None, 'sv', or 'body'
+            If not None, swap A/B columns so that either sv_a < sv_b or body_a < body_b.
+        
+        show_progress:
+            If True, show a tqdm progress bar while the data is downloading.
+    
+    Returns:
+        DataFrame with columns:
+        ['body_a', 'body_b', 'result', 'sv_a', 'sv_b',
+        'time', 'time zone', 'user',
+        'xa', 'xb', 'ya', 'yb', 'za', 'zb', ...]
+    """
+    assert normalize_pairs in (None, 'sv', 'body')
+    
+    keys = fetch_keys(server, uuid, instance)
+    task_values = [fetch_key(server, uuid, instance, key, as_json=True) for key in tqdm(keys, disable=not show_progress)]
+
+    # Flatten coords before loading into dataframe
+    for value in task_values:
+        if 'supervoxel point 1' in value:
+            p1 = value['supervoxel point 1']
+            p2 = value['supervoxel point 2']
+            del value['supervoxel point 1']
+            del value['supervoxel point 2']
+        else:
+            p1 = p2 = [0,0,0]
+            
+        for name, coord in zip(['xa', 'ya', 'za'], p1):
+            value[name] = coord
+        for name, coord in zip(['xb', 'yb', 'zb'], p2):
+            value[name] = coord
+
+    df = pd.DataFrame(task_values)
+    df.rename(inplace=True, columns={'body ID 1': 'body_a', 'body ID 2': 'body_b',
+                                     'supervoxel ID 1': 'sv_a', 'supervoxel ID 2': 'sv_b' })
+
+    # Converting to category saves some RAM    
+    df['result'] = pd.Series(df['result'], dtype='category')
+    df['user'] = pd.Series(df['user'], dtype='category')
+    df['time zone'] = pd.Series(df['time zone'], dtype='category')
+
+    if normalize_pairs is None:
+        return df
+    
+    if normalize_pairs == 'sv':
+        swap_rows = (df['sv_a'] > df['sv_b'])
+    elif normalize_pairs == 'body':
+        swap_rows = (df['body_a'] > df['body_b'])
+    else:
+        raise AssertionError(f"bad 'normalize_pairs' setting: {normalize_pairs}")
+
+    # Swap A/B cols to "normalize" id pairs
+    df_copy = df[['sv_a', 'sv_b', 'body_a', 'body_b', 'xa', 'ya', 'za', 'xb', 'yb', 'zb']].copy()
+    for name in ['sv_', 'body_', 'x', 'y', 'z']:
+        df.loc[swap_rows, f'{name}a'] = df_copy.loc[swap_rows, f'{name}b']
+        df.loc[swap_rows, f'{name}b'] = df_copy.loc[swap_rows, f'{name}a']
 
     return df
 
