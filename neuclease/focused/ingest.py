@@ -136,6 +136,11 @@ def fetch_focused_decisions(server, uuid, instance, normalize_pairs=None, subset
     df['user'] = pd.Series(df['user'], dtype='category')
     df['time zone'] = pd.Series(df['time zone'], dtype='category')
 
+    # Replace NaN and fix dtypes
+    for col in ['sv_a', 'sv_b', 'body_a', 'body_b']:
+        df[col].fillna(0.0, inplace=True)
+        df[col] = df[col].astype(np.uint64)
+
     if normalize_pairs is None:
         return df
     
