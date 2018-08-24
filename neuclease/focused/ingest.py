@@ -63,11 +63,14 @@ def load_focused_table(path):
     return df
 
 
-def fetch_focused_decisions(server, uuid, instance, normalize_pairs=None, show_progress=False):
+def fetch_focused_decisions(server, uuid, instance, normalize_pairs=None, subset_pairs=None, subset_slice=None, show_progress=False):
     """
-    Load all focused decisions from a given keyvalue instance
+    Load focused decisions from a given keyvalue instance
     (e.g. 'segmentation_merged') and return them as a DataFrame,
     with slight modifications to use standard column names.
+    
+    By default, loads all decisions from the instance.
+    use subset_pairs or subset_slice to select fewer decisions.
     
     Args:
         server, uuid, instance
@@ -77,9 +80,18 @@ def fetch_focused_decisions(server, uuid, instance, normalize_pairs=None, show_p
             Either None, 'sv', or 'body'
             If not None, swap A/B columns so that either sv_a < sv_b or body_a < body_b.
         
+        subset_pairs:
+            If provided, don't fetch all focused decisions;
+            only select those whose key matches the given SV ID pairs
+            (The left/right order within the pair doesn't matter.)
+        
+        subset_slice:
+            If provided, only select from the given slice of the full key set.
+            Must be a slice object, e.g. slice(1000,2000), or np.s_[1000:2000]
+
         show_progress:
             If True, show a tqdm progress bar while the data is downloading.
-    
+
     Returns:
         DataFrame with columns:
         ['body_a', 'body_b', 'result', 'sv_a', 'sv_b',
@@ -89,6 +101,15 @@ def fetch_focused_decisions(server, uuid, instance, normalize_pairs=None, show_p
     assert normalize_pairs in (None, 'sv', 'body')
     
     keys = fetch_keys(server, uuid, instance)
+    if subset_pairs is not None:
+        subset_keys1 = [f'{a}+{b}' for a,b in subset_pairs]
+        subset_keys2 = [f'{a}+{b}' for a,b in subset_pairs]
+        
+        keys = list(set(subset_keys1).intersection(keys) | set(subset_keys2).intersection(keys))
+
+    if subset_slice:
+        keys = keys[subset_slice]
+    
     task_values = [fetch_key(server, uuid, instance, key, as_json=True) for key in tqdm(keys, disable=not show_progress)]
 
     # Flatten coords before loading into dataframe
