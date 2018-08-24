@@ -131,15 +131,21 @@ def fetch_focused_decisions(server, uuid, instance, normalize_pairs=None, subset
     df.rename(inplace=True, columns={'body ID 1': 'body_a', 'body ID 2': 'body_b',
                                      'supervoxel ID 1': 'sv_a', 'supervoxel ID 2': 'sv_b' })
 
-    # Converting to category saves some RAM    
-    df['result'] = pd.Series(df['result'], dtype='category')
-    df['user'] = pd.Series(df['user'], dtype='category')
-    df['time zone'] = pd.Series(df['time zone'], dtype='category')
+    # Converting to category saves some RAM
+    if 'status' in df:
+        df['status'] = pd.Series(df['status'], dtype='category')
+    if 'result' in df:
+        df['result'] = pd.Series(df['result'], dtype='category')
+    if 'user' in df:
+        df['user'] = pd.Series(df['user'], dtype='category')
+    if 'time zone' in df:
+        df['time zone'] = pd.Series(df['time zone'], dtype='category')
 
     # Replace NaN and fix dtypes
     for col in ['sv_a', 'sv_b', 'body_a', 'body_b']:
-        df[col].fillna(0.0, inplace=True)
-        df[col] = df[col].astype(np.uint64)
+        if col in df:
+            df[col].fillna(0.0, inplace=True)
+            df[col] = df[col].astype(np.uint64)
 
     if normalize_pairs is None:
         return df
@@ -152,10 +158,13 @@ def fetch_focused_decisions(server, uuid, instance, normalize_pairs=None, subset
         raise AssertionError(f"bad 'normalize_pairs' setting: {normalize_pairs}")
 
     # Swap A/B cols to "normalize" id pairs
-    df_copy = df[['sv_a', 'sv_b', 'body_a', 'body_b', 'xa', 'ya', 'za', 'xb', 'yb', 'zb']].copy()
+    cols = ['sv_a', 'sv_b', 'body_a', 'body_b', 'xa', 'ya', 'za', 'xb', 'yb', 'zb']
+    cols = filter(lambda col: col in df, cols)
+    df_copy = df[list(cols)].copy()
     for name in ['sv_', 'body_', 'x', 'y', 'z']:
-        df.loc[swap_rows, f'{name}a'] = df_copy.loc[swap_rows, f'{name}b']
-        df.loc[swap_rows, f'{name}b'] = df_copy.loc[swap_rows, f'{name}a']
+        if col in df:
+            df.loc[swap_rows, f'{name}a'] = df_copy.loc[swap_rows, f'{name}b']
+            df.loc[swap_rows, f'{name}b'] = df_copy.loc[swap_rows, f'{name}a']
 
     return df
 
