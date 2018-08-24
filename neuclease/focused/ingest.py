@@ -380,6 +380,11 @@ def compute_focused_bodies(server, uuid, instance, synapse_samples, min_tbars, m
         # Add synapse columns
         focus_table = focus_table.merge(synapse_body_table, how='left', left_index=True, right_index=True, copy=False)
 
+        focus_table.fillna(0)
+        focus_table['voxel_count'] = focus_table['voxel_count'].astype(np.uint64)
+        focus_table['PreSyn'] = focus_table['voxel_count'].astype(np.uint32)
+        focus_table['PostSyn'] = focus_table['voxel_count'].astype(np.uint32)
+
         # Sort biggest..smallest
         focus_table.sort_values('voxel_count', ascending=False, inplace=True)
         focus_table.index.name = 'body'
