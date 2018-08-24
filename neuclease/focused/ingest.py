@@ -23,7 +23,11 @@ from ..dvid.annotation import load_synapses_from_csv
 
 logger = logging.getLogger(__name__)
 
-CSV_DTYPES = { 'id_a': np.uint64, 'id_b': np.uint64, # Use'id_a', and 'id_b' for consistency with our other code.
+CSV_DTYPES = { 'body': np.uint64,
+               'sv': np.uint64,
+               'id_a': np.uint64, 'id_b': np.uint64, # We usually use'id_a', and 'id_b' for consistency with our other code.
+               'sv_a': np.uint64, 'sv_b': np.uint64,
+               'body_a': np.uint64, 'body_b': np.uint64,
                'xa': np.int32, 'ya': np.int32, 'za': np.int32,
                'xb': np.int32, 'yb': np.int32, 'zb': np.int32,
                'caa': np.float32, 'cab': np.float32, 'cba': np.float32, 'cbb': np.float32,
@@ -32,10 +36,6 @@ CSV_DTYPES = { 'id_a': np.uint64, 'id_b': np.uint64, # Use'id_a', and 'id_b' for
                'score': np.float32,
                'jaccard': np.float32,
                'overlap': np.uint32,
-               'body_a': np.uint64, 'body_b': np.uint64,
-               'sv_a': np.uint64, 'sv_b': np.uint64,
-               'body': np.uint64,
-               'sv': np.uint64,
                'x': np.int32, 'y': np.int32, 'z': np.int32 }
 
 
