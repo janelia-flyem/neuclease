@@ -119,6 +119,28 @@ def fetch_file(url, output=None, chunksize=2**10, *, session=None):
                 output.write(chunk)
 
 
+def post_file(url, f, *, session=None):
+    """
+    Args:
+        url:
+            Complete url to which the file will be posted.
+        f:
+            The file to post.
+            Either a path to a file, a (binary) file object,
+            or a bytes object.
+    """
+    session = session or requests.Session()
+    if isinstance(f, str):
+        fname = f
+        with open(fname, 'rb') as f:
+            r = session.post(url, data=f)
+    else:
+        # Either bytes or a file object
+        r = session.post(url, data=f)
+
+    r.raise_for_status()
+
+
 def ndrange(start, stop=None, step=None):
     """
     Generator.

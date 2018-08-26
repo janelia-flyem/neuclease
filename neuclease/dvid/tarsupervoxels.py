@@ -1,9 +1,10 @@
 import numpy as np
 import pandas as pd
 
-from ..util import fetch_file
+from ..util import fetch_file, post_file
 from . import dvid_api_wrapper, fetch_generic_json
 from .repo import create_instance
+
 
 @dvid_api_wrapper
 def create_tarsupervoxel_instance(server, uuid, instance, sync_instance, extension, tags=[], *, session=None):
@@ -79,6 +80,66 @@ def fetch_tarfile(server, uuid, instance, body_id, output=None, *, session=None)
     """
     url = f'http://{server}/api/node/{uuid}/{instance}/tarfile/{body_id}'
     return fetch_file(url, output, session=session)
+
+
+@dvid_api_wrapper
+def post_load(server, uuid, instance, tar, *, session=None):
+    """
+    Load a group of supervoxel files (e.g. .drc files) into the tarsupervoxels filestore.
+
+    Args:
+        server:
+            dvid server, e.g. 'emdata3:8900'
+        
+        uuid:
+            dvid uuid, e.g. 'abc9'
+        
+        instance:
+            dvid tarsupervoxels instance name, e.g. 'segmentation_sv_meshes'
+        
+        tar:
+            Tarfile contents.  Either a path to a .tar file, a (binary) file object,
+            or a bytes object with the contents of a .tar file.
+            The tarfile should contain files named with the pattern <supervoxel-id>.<extension>,
+            where the extension matches the extension specified in the tarsupervoxels instance metadata.
+            For example:1234.drc
+            (The tarfile should contain no directories.)
+            
+        Example:
+        
+            subprocess.check_call('tar -cf supervoxel-meshes.tar 123.drc 456.drc 789.drc', shell=True)
+            post_load('mydvid:8000', 'abc123', 'segmentation_sv_meshes', 'supervoxel-meshes.tar')
+    """
+    url = f'http://{server}/api/node/{uuid}/{instance}/load'
+    if isinstance(tar, str):
+        assert tar.endswith('.tar'), "Data to .../load must be a .tar file"
+    post_file(url, tar, session=session)
+
+
+@dvid_api_wrapper
+def post_supervoxel(server, uuid, instance, supervoxel_id, sv_file, *, session=None):
+    """
+    Post a supervoxel file (e.g. a mesh file) to a tarsupervoxels instance.
+    
+    Args:
+        server:
+            dvid server, e.g. 'emdata3:8900'
+        
+        uuid:
+            dvid uuid, e.g. 'abc9'
+        
+        instance:
+            dvid tarsupervoxels instance name, e.g. 'segmentation_sv_meshes'
+        
+        sv:
+            The supervoxel ID corresponding to the posted file.
+            
+        sv_file:
+            The file to post.
+            Either a path to a file, a (binary) file object, or bytes.
+    """
+    url = f'http://{server}/api/node/{uuid}/{instance}/supervoxel/{supervoxel_id}'
+    post_file(url, sv_file, session=session)
 
 
 @dvid_api_wrapper
