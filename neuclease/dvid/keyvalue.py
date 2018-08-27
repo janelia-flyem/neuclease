@@ -46,6 +46,31 @@ def post_key(server, uuid, instance, key, data, *, session=None):
 
 @dvid_api_wrapper
 def fetch_keyvalues(server, uuid, instance, keys, as_json=False, *, session=None):
+    """
+    Fetch a list of values from a keyvalue instance in a single batch call.
+    Internally, this function uses the 'jsontar' option to fetch the keys as a single tarball.
+    The values are extracted from the tarball and returned in a dict.
+    
+    Args:
+        server:
+            dvid server, e.g. 'emdata3:8900'
+        
+        uuid:
+            dvid uuid, e.g. 'abc9'
+        
+        instance:
+            keyvalue instance name, e.g. 'focused_merged'
+        
+        keys:
+            A list of keys (strings) to fetch values for
+        
+        as_json:
+            If True, parse the returned values as JSON.
+            Otherwise, return bytes.
+    
+    Returns:
+        dict of { key: value }
+    """
     params = {'jsontar': 'true'}
     
     assert not isinstance(keys, str), "keys should be a list (or array) of strings"
@@ -62,11 +87,14 @@ def fetch_keyvalues(server, uuid, instance, keys, as_json=False, *, session=None
     
     tf = TarFile(f'{instance}.tar', fileobj=BytesIO(r.content))
     
+    # Note: It is important to iterate over TarInfo *members* (not string names),
+    #       since calling extractfile() with a name causes an iteration over all filenames.
+    #       That is, looping over names (instead of members) results in quadratic behavior.
     keyvalues = {}
-    for key in keys:
-        val = tf.extractfile(key).read()
+    for member in tf:
+        val = tf.extractfile(member).read()
         if as_json:
             val = json.loads(val)
-        keyvalues[key] = val
+        keyvalues[member.name] = val
 
     return keyvalues
