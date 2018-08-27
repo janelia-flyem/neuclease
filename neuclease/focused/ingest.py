@@ -1,8 +1,6 @@
 import os
 import logging
 
-from tqdm import tqdm
-
 import h5py
 import numpy as np
 import pandas as pd
@@ -12,7 +10,7 @@ from dvidutils import LabelMapper
 from ..util import read_csv_header, Timer
 from ..util.csv import read_csv_col
 from ..merge_table import load_all_supervoxel_sizes, compute_body_sizes
-from ..dvid import fetch_keys, fetch_key, fetch_complete_mappings
+from ..dvid import fetch_keys, fetch_key, fetch_complete_mappings, fetch_keyvalues
 from ..dvid.annotation import load_synapses_from_csv
 
 # Load new table. Normalize.
@@ -63,7 +61,7 @@ def load_focused_table(path):
     return df
 
 
-def fetch_focused_decisions(server, uuid, instance, normalize_pairs=None, subset_pairs=None, subset_slice=None, show_progress=False):
+def fetch_focused_decisions(server, uuid, instance, normalize_pairs=None, subset_pairs=None, subset_slice=None):
     """
     Load focused decisions from a given keyvalue instance
     (e.g. 'segmentation_merged') and return them as a DataFrame,
@@ -89,9 +87,6 @@ def fetch_focused_decisions(server, uuid, instance, normalize_pairs=None, subset
             If provided, only select from the given slice of the full key set.
             Must be a slice object, e.g. slice(1000,2000), or np.s_[1000:2000]
 
-        show_progress:
-            If True, show a tqdm progress bar while the data is downloading.
-
     Returns:
         DataFrame with columns:
         ['body_a', 'body_b', 'result', 'sv_a', 'sv_b',
@@ -110,7 +105,7 @@ def fetch_focused_decisions(server, uuid, instance, normalize_pairs=None, subset
     if subset_slice:
         keys = keys[subset_slice]
     
-    task_values = [fetch_key(server, uuid, instance, key, as_json=True) for key in tqdm(keys, disable=not show_progress)]
+    task_values = list(fetch_keyvalues(server, uuid, instance, keys, as_json=True).values())
 
     # Flatten coords before loading into dataframe
     for value in task_values:

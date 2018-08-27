@@ -48,6 +48,7 @@ def post_key(server, uuid, instance, key, data, *, session=None):
 def fetch_keyvalues(server, uuid, instance, keys, as_json=False, *, session=None):
     params = {'jsontar': 'true'}
     
+    assert not isinstance(keys, str), "keys should be a list (or array) of strings"
     if isinstance(keys, np.ndarray):
         keys = keys.tolist()
     else:
