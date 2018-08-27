@@ -162,7 +162,7 @@ def fetch_focused_decisions(server, uuid, instance, normalize_pairs=None, subset
     cols = filter(lambda col: col in df, cols)
     df_copy = df[list(cols)].copy()
     for name in ['sv_', 'body_', 'x', 'y', 'z']:
-        if col in df:
+        if f'{name}a' in df:
             df.loc[swap_rows, f'{name}a'] = df_copy.loc[swap_rows, f'{name}b']
             df.loc[swap_rows, f'{name}b'] = df_copy.loc[swap_rows, f'{name}a']
 
