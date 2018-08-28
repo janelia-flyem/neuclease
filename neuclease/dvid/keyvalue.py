@@ -82,9 +82,6 @@ def fetch_keyvalues(server, uuid, instance, keys, as_json=False, *, session=None
     r = session.get(f'http://{server}/api/node/{uuid}/{instance}/keyvalues', params=params, json=keys)
     r.raise_for_status()
     
-    with open('/tmp/test.tar', 'wb') as f:
-        f.write(r.content)
-    
     tf = TarFile(f'{instance}.tar', fileobj=BytesIO(r.content))
     
     # Note: It is important to iterate over TarInfo *members* (not string names),
