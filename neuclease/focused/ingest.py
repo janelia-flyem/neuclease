@@ -223,7 +223,14 @@ def compute_focused_bodies(server, uuid, instance, synapse_samples, min_tbars, m
         sv_classifications = '/nrs/flyem/bergs/sv-classifications.h5'
         marked_bad_bodies = '/nrs/flyem/bergs/complete-ffn-agglo/bad-bodies-2018-08-21.csv'
         
+        table_description = f'{uuid}-{min_tbars}tbars-{min_psds}psds-{min_body_size / 1e6:.1f}Mv'
         focused_table = compute_focused_bodies(server, uuid, instance, synapse_samples, min_tbars, min_psds, root_sv_sizes, min_body_size, sv_classifications, marked_bad_bodies, return_table=True)
+
+        # As npy:
+        np.save(f'focused-{table_description}.npy', focused_table.to_records(index=True))
+
+        # As CSV:
+        focused_table.to_csv(f'focused-{table_description}.npy', index=True, header=True)
     
     Args:
 
@@ -375,10 +382,10 @@ def compute_focused_bodies(server, uuid, instance, synapse_samples, min_tbars, m
         # Add synapse columns
         focus_table = focus_table.merge(synapse_body_table, how='left', left_index=True, right_index=True, copy=False)
 
-        focus_table.fillna(0)
+        focus_table.fillna(0, inplace=True)
         focus_table['voxel_count'] = focus_table['voxel_count'].astype(np.uint64)
-        focus_table['PreSyn'] = focus_table['voxel_count'].astype(np.uint32)
-        focus_table['PostSyn'] = focus_table['voxel_count'].astype(np.uint32)
+        focus_table['PreSyn'] = focus_table['PreSyn'].astype(np.uint32)
+        focus_table['PostSyn'] = focus_table['PostSyn'].astype(np.uint32)
 
         # Sort biggest..smallest
         focus_table.sort_values('voxel_count', ascending=False, inplace=True)
