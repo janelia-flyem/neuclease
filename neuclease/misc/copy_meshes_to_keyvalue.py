@@ -49,7 +49,7 @@ def copy_meshes_to_keyvalue(src_info, dest_info, body_list):
             tar_bytes = fetch_tarfile(*src_info, body_id)
         except:
             logger.error(f"Failed to copy {body_id}")
-            failed_bodies.append(failed_bodies)
+            failed_bodies.append(body_id)
             continue
 
         encoded_body = np.uint64(keyEncodeLevel0 + body_id)
