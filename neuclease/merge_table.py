@@ -380,14 +380,28 @@ def load_all_supervoxel_sizes(server, uuid, instance, root_sv_sizes):
 def compute_body_sizes(sv_sizes, mapping, include_unmapped_singletons=False):
     """
     Given a Series of supervoxel sizes and an sv-to-body mapping,
-    compute the size of each body in the mapping.
+    compute the size of each body in the mapping, and its count of supervoxels.
     
     Any supervoxels in the mapping that are missing from sv_sizes will be ignored.
     
-    If include_unmapped_singletons is True, then the result will also include all
-    supervoxels from sv_sizes that weren't mentioned in the mapping.
-    (They are presumed to be singleton-supervoxel bodies.)
+    Args:
+        sv_sizes:
+            pd.Series, indexed by sv, or a path to an hdf5 file which
+            can be loaded via load_supervoxel_sizes()
+        
+        mapping:
+            pd.Series, indexed by sv, with body as value,
+            or a path to a file which can be loaded by load_mapping()
+       
+        include_unmapped_singletons:
+            If True, then the result will also include all
+            supervoxels from sv_sizes that weren't mentioned in the mapping.
+            (They are presumed to be singleton-supervoxel bodies.)
     
+    Returns:
+        pd.DataFrame, indexed by body, with columns ['voxel_count', 'sv_count'],
+        and sorted by decreasing voxel_count.
+
     Example:
     
         >>> mesh_job_dir = '/groups/flyem/data/scratchspace/copyseg-configs/labelmaps/hemibrain/8nm'
@@ -395,8 +409,6 @@ def compute_body_sizes(sv_sizes, mapping, include_unmapped_singletons=False):
         >>> sv_sizes = load_supervoxel_sizes(sv_sizes_path)
         >>> mapping = fetch_complete_mappings('emdata3:8900', '52f9', 'segmentation')
         >>> body_sizes = compute_body_sizes(sv_sizes, mapping)
-    
-    Returns: Series, indexed by body.
     """
     if isinstance(sv_sizes, str):
         logger.info("Loading supervoxel sizes")
@@ -424,18 +436,23 @@ def compute_body_sizes(sv_sizes, mapping, include_unmapped_singletons=False):
     df['voxel_count'] = size_mapper.apply(mapping.index.values)
 
     logger.info("Aggregating sizes by body")
-    body_sizes = df.groupby('body').sum()['voxel_count']
+    body_stats = df.groupby('body').agg({'voxel_count': ['sum', 'size']})
+    body_stats.columns = ['voxel_count', 'sv_count']
+    body_stats['sv_count'] = body_stats['sv_count'].astype(np.uint32)
+    #body_sizes = body_stats['voxel_count']
     
     if include_unmapped_singletons:
         logger.info("Appending singleton sizes")
         nonsingleton_rows = sv_sizes.index.isin(mapping.index)
         singleton_sizes = sv_sizes[~nonsingleton_rows]
-        body_sizes = pd.concat((body_sizes, singleton_sizes))
+        singleton_stats = pd.DataFrame({'voxel_count': singleton_sizes})
+        singleton_stats['sv_count'] = np.uint32(1)
+        body_stats = pd.concat((body_stats, singleton_stats))
     
     logger.info("Sorting sizes")
-    body_sizes.index.name = 'body'
-    body_sizes.name = 'voxel_count'
-    return body_sizes.sort_values(ascending=False)
+    body_stats.index.name = 'body'
+    body_stats.sort_values(['voxel_count', 'sv_count'], inplace=True, ascending=False)
+    return body_stats
 
 
 def extract_important_merges(speculative_merge_tables, important_bodies, body_mapping=None, mapping_instance_info=None, drop_duplicate_body_pairs=False):

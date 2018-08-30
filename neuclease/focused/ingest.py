@@ -306,9 +306,9 @@ def compute_focused_bodies(server, uuid, instance, synapse_samples, min_tbars, m
     ##
     with Timer("Filtering for body size", logger):    
         sv_sizes = load_all_supervoxel_sizes(server, uuid, instance, root_sv_sizes)
-        body_sizes = compute_body_sizes(sv_sizes, mapping, True)
-        big_body_sizes = body_sizes[body_sizes >= min_body_size]
-        big_bodies = big_body_sizes.index
+        body_stats = compute_body_sizes(sv_sizes, mapping, True)
+        big_body_stats = body_stats.query('voxel_count >= @min_body_size')
+        big_bodies = big_body_stats.index
     logger.info(f"Found {len(big_bodies)} with sufficient size")
     
     focused_bodies |= set(big_bodies)
@@ -338,7 +338,7 @@ def compute_focused_bodies(server, uuid, instance, synapse_samples, min_tbars, m
             body_bad_voxels = bad_sv_sizes.groupby('body').agg({'voxel_count': 'sum'})
             
             # Append total body size for comparison
-            body_bad_voxels = body_bad_voxels.merge(pd.DataFrame(body_sizes), how='left', left_index=True, right_index=True, suffixes=('_bad', '_total'))
+            body_bad_voxels = body_bad_voxels.merge(body_stats[['voxel_count']], how='left', left_index=True, right_index=True, suffixes=('_bad', '_total'))
             
             bad_bodies = body_bad_voxels.query('voxel_count_bad > voxel_count_total//2').index
             
@@ -375,15 +375,15 @@ def compute_focused_bodies(server, uuid, instance, synapse_samples, min_tbars, m
         # Start with an empty DataFrame (except index)
         focus_table = pd.DataFrame(index=focused_bodies)
 
-        # Add size column (voxel_count)
-        body_sizes_df = pd.DataFrame({'voxel_count': body_sizes})
-        focus_table = focus_table.merge(body_sizes_df, how='left', left_index=True, right_index=True, copy=False)
+        # Merge size/sv_count
+        focus_table = focus_table.merge(body_stats, how='left', left_index=True, right_index=True, copy=False)
         
         # Add synapse columns
         focus_table = focus_table.merge(synapse_body_table, how='left', left_index=True, right_index=True, copy=False)
 
         focus_table.fillna(0, inplace=True)
         focus_table['voxel_count'] = focus_table['voxel_count'].astype(np.uint64)
+        focus_table['sv_count'] = focus_table['sv_count'].astype(np.uint32)
         focus_table['PreSyn'] = focus_table['PreSyn'].astype(np.uint32)
         focus_table['PostSyn'] = focus_table['PostSyn'].astype(np.uint32)
 
