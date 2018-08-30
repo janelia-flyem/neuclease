@@ -187,7 +187,7 @@ def fetch_exists(server, uuid, instance, supervoxels, *, session=None):
             dvid uuid, e.g. 'abc9'
         
         instance:
-            dvid instance name, e.g. 'segmentation'
+            dvid tarsupervoxels instance name, e.g. 'segmentation_sv_meshes'
         
         supervoxels:
             list of supervoxel IDs for which to look for files.
@@ -204,3 +204,31 @@ def fetch_exists(server, uuid, instance, supervoxels, *, session=None):
     result.index.name = 'sv'
     return result
 
+
+@dvid_api_wrapper
+def fetch_missing(server, uuid, instance, body_id, *, session=None):
+    """
+    For a given body, fetch the list of supervoxels that are missing from a tarsupervoxels instance.
+    
+    Args:
+        server:
+            dvid server, e.g. 'emdata3:8900'
+        
+        uuid:
+            dvid uuid, e.g. 'abc9'
+        
+        instance:
+            dvid tarsupervoxels instance name, e.g. 'segmentation_sv_meshes'
+        
+        supervoxel_id:
+            The supervoxel ID whose file will be retrieved.
+    
+    Returns:
+        np.ndarray of supervoxels that are missing for the given body.
+        If no supervoxels are missing, the array will be empty (len 0).
+    """
+    r = session.get(f'http://{server}/api/node/{uuid}/{instance}/missing/{body_id}')
+    r.raise_for_status()
+    return np.array(r.json(), np.uint64)
+
+    
