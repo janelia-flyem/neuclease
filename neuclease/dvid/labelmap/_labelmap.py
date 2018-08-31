@@ -119,13 +119,22 @@ def fetch_supervoxel_sizes_for_body(server, uuid, instance, body_id, user=None, 
 
 
 @dvid_api_wrapper
-def fetch_label_for_coordinate(server, uuid, instance, coordinate_zyx, supervoxels=False, *, session=None):
+def fetch_label(server, uuid, instance, coordinate_zyx, supervoxels=False, scale=0, *, session=None):
     coord_xyz = np.array(coordinate_zyx)[::-1]
     coord_str = '_'.join(map(str, coord_xyz))
-    supervoxels = str(bool(supervoxels)).lower()
-    r = session.get(f'http://{server}/api/node/{uuid}/{instance}/label/{coord_str}?supervoxels={supervoxels}')
+    
+    params = {}
+    if supervoxels:
+        params['supervoxels'] = str(bool(supervoxels)).lower()
+    if scale != 0:
+        params['scale'] = str(scale)
+
+    r = session.get(f'http://{server}/api/node/{uuid}/{instance}/label/{coord_str}', params=params)
     r.raise_for_status()
     return np.uint64(r.json()["Label"])
+
+# Old name (FIXME: remove)
+fetch_label_for_coordinate = fetch_label
 
 
 @dvid_api_wrapper
