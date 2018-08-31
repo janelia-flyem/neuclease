@@ -312,8 +312,7 @@ class LabelmapMergeGraph:
                 except KeyError:
                     # This body doesn't exist in the mapping cache (yet)
                     svs_from_mapping = self.mapping[self.mapping == body_id]
-                    mapping_is_in_sync = ((svs_from_mapping.shape == dvid_supervoxels.shape)
-                                          and (svs_from_mapping == dvid_supervoxels).all())
+                    mapping_is_in_sync = (set(svs_from_mapping) == set(dvid_supervoxels))
     
                 # It's very fast to select rows based on the body_id,
                 # so we prefer that if the mapping is already in sync with DVID.
