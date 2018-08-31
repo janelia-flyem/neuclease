@@ -25,7 +25,6 @@ def calc_speculative_scores(table):
         - Higher is better!
         - Initially we are using a threshold of >=0.1
     """
-    # Michal's formula, but inverted so I can continue using 'min' code below
     scores = np.empty(len(table), np.float32)
     for i in range(len(table)):
         caa = table['caa'][i]
