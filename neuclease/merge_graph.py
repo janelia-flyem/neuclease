@@ -283,6 +283,13 @@ class LabelmapMergeGraph:
         """
         Determine which supervoxels belong to the given body,
         and extract all edges involving those supervoxels (and only those supervoxels).
+        
+        Returns:
+            subset_df, supervoxels, mapping_updated
+            where:
+                - subset_df is the extracted rows from self.merge_table_df,
+                - dvid_supervoxels is the full set of supervoxels in the body (even if they aren't mentioned in subset_df)
+                - mapping_updated is True if the mapping was changed as a result of this call (mostly used for debug/testing)
         """        
         body_id = np.uint64(body_id)
         if logger is None:
@@ -307,7 +314,7 @@ class LabelmapMergeGraph:
                     mapping_is_in_sync = (self._mapping_versions[body_id] == (server, uuid, instance, mut_id))
                 except KeyError:
                     # This body doesn't exist in the mapping cache (yet)
-                    svs_from_mapping = self.mapping[self.mapping == body_id]
+                    svs_from_mapping = self.mapping[self.mapping == body_id].index
                     mapping_is_in_sync = (set(svs_from_mapping) == set(dvid_supervoxels))
     
                 # It's very fast to select rows based on the body_id,
@@ -316,7 +323,7 @@ class LabelmapMergeGraph:
                 subset_df = self.merge_table_df.iloc[body_positions_orig]
     
                 if mapping_is_in_sync:
-                    return subset_df, dvid_supervoxels
+                    return subset_df, dvid_supervoxels, False
 
             # If we get this far, our mapping is out-of-sync with DVID's agglomeration.
             # Query for the rows the slow way (via set membership).
@@ -335,7 +342,7 @@ class LabelmapMergeGraph:
                 body_positions_orig = (self.merge_table_df['body'] == body_id)
                 
                 # Likewise, must re-query the old mapping supervoxels
-                svs_from_mapping = self.mapping[self.mapping == body_id]
+                svs_from_mapping = self.mapping[self.mapping == body_id].index
 
                 if self.debug_export_dir:
                     export_path = self.debug_export_dir + f"/body-{body_id}-table-before-sync.csv"
@@ -377,7 +384,7 @@ class LabelmapMergeGraph:
                     assert set(pd.unique(subset_df[['id_a', 'id_b']].values.flat)) - sv_set == set(), \
                         "Our new subset includes supervoxels that DVID didn't want!"
 
-                return subset_df, dvid_supervoxels
+                return subset_df, dvid_supervoxels, True
 
     
     def get_key_lock(self, dvid_server, uuid, instance, body_id):

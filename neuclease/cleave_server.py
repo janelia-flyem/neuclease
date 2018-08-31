@@ -244,7 +244,7 @@ def _run_cleave(data):
     # Extract this body's edges from the complete merge graph
     with Timer() as timer:
         try:
-            df, supervoxels = MERGE_GRAPH.extract_rows(*instance_info, body_id, body_logger)
+            df, supervoxels, _mapping_updated = MERGE_GRAPH.extract_rows(*instance_info, body_id, body_logger)
         except requests.HTTPError as ex:
             status_name = str(HTTPStatus(ex.response.status_code)).split('.')[1]
             if ex.response.status_code == HTTPStatus.NOT_FOUND:
@@ -328,7 +328,7 @@ def body_edge_table():
     body_logger.info("Recevied body-edge-table request")
 
     try:
-        subset_df, _supervoxels = MERGE_GRAPH.extract_rows(*instance_info, body_id, body_logger)
+        subset_df, _supervoxels, _mapping_updated = MERGE_GRAPH.extract_rows(*instance_info, body_id, body_logger)
     except requests.HTTPError as ex:
         status_name = str(HTTPStatus(ex.response.status_code)).split('.')[1]
         if ex.response.status_code == HTTPStatus.NOT_FOUND:
