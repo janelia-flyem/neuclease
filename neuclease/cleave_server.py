@@ -81,6 +81,9 @@ def main(debug_mode=False):
         with Timer(f"Loading merge table from: {args.merge_table}", logger):
             MERGE_GRAPH = LabelmapMergeGraph(args.merge_table, primary_instance_info.uuid, args.debug_export_dir, no_kafka=args.testing)
 
+        with Timer(f"Loading focused merge decisions"):
+            MERGE_GRAPH.append_edges_for_focused_merges(*primary_instance_info[:2], 'segmentation_merged')
+
         # Apply splits first
         if all(primary_instance_info):
             with Timer(f"Appending split supervoxel edges for supervoxels in", logger):

@@ -10,8 +10,9 @@ import pandas as pd
 
 from .util import Timer, uuids_match
 from .rwlock import ReadWriteLock
-from .dvid import fetch_supervoxels_for_body, fetch_label_for_coordinate, fetch_complete_mappings, fetch_mutation_id, fetch_supervoxel_splits, fetch_supervoxel_splits_from_kafka
+from .dvid import fetch_repo_info, fetch_supervoxels_for_body, fetch_label_for_coordinate, fetch_complete_mappings, fetch_mutation_id, fetch_supervoxel_splits, fetch_supervoxel_splits_from_kafka
 from .merge_table import MERGE_TABLE_DTYPE, load_mapping, load_merge_table, normalize_merge_table, apply_mapping_to_mergetable
+from .focused.ingest import fetch_focused_decisions
 
 _logger = logging.getLogger(__name__)
 
@@ -93,7 +94,41 @@ class LabelmapMergeGraph:
         if isinstance(mapping, str):
             mapping = load_mapping(mapping)
         apply_mapping_to_mergetable(self.merge_table_df, mapping)
+
+
+    def append_edges_for_focused_merges(self, server, uuid, focused_decisions_instance):
+        """
+        Read the proofreading focused merge decisions from a keyvalue
+        instance (stored as individual JSON values),
+        and append the resulting merge edges to the merge graph.
         
+        Args:
+            server, uuid, instance:
+                For example, ('emdata3:8900', 'cc4c', 'segmentation_merged')
+        
+        Returns:
+            The count of appended edges
+        """
+        repo_info = fetch_repo_info(server, uuid)
+        if focused_decisions_instance not in repo_info["DataInstances"]:
+            return 0
+        
+        focused_decisions = fetch_focused_decisions(server, uuid, focused_decisions_instance)
+        focused_merges = focused_decisions.query('result == "merge" or result == "mergeLater"')
+        focused_merges = focused_merges[["sv_a", "sv_b", "xa", "ya", "za", "xb", "yb", "zb"]]
+        focused_merges.rename(inplace=True, columns={'sv_a': 'id_a', 'sv_b': 'id_b'})
+
+        # These are manual merges: Give a great score.
+        focused_merges['score'] = np.float32(0.01)
+        
+        # Ensure correct dtypes for concatenation
+        for col, dtype in MERGE_TABLE_DTYPE:
+            focused_merges[col] = focused_merges[col].astype(dtype, copy=False)
+        
+        focused_merges = focused_merges.loc[:, list(self.merge_table_df.columns)]
+        self.merge_table_df = pd.concat((self.merge_table_df, focused_merges), ignore_index=True, copy=False)
+        return len(focused_merges)
+
 
     def append_edges_for_split_supervoxels(self, instance_info, parent_sv_handling='unmap', read_from='kafka'):
         """

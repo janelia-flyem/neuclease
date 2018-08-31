@@ -4,9 +4,10 @@ from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 
-from neuclease.dvid import DvidInstanceInfo
+from neuclease.dvid import DvidInstanceInfo, post_key
 from neuclease.merge_graph import LabelmapMergeGraph
 from neuclease.merge_table import load_merge_table, MAPPED_MERGE_TABLE_DTYPE
+from neuclease.dvid.repo import create_instance
 
 ##
 ## These tests rely on the global setupfunction 'labelmap_setup',
@@ -200,6 +201,25 @@ def test_append_edges_for_split_supervoxels_with_bad_edges(labelmap_setup, paren
         assert merge_graph.merge_table_df.shape[0] == orig_table.shape[0] + 2 - 1 # bad edge dropped
         assert set(merge_graph.merge_table_df[['id_a', 'id_b']].values.flat) == set([1,2,3,4,5,split_sv])
         assert (merge_graph.merge_table_df.query('id_a == 3 or id_b == 3')['body'] == 0).all()
+
+
+def test_append_edges_for_focused_merges(labelmap_setup):
+    dvid_server, dvid_repo, merge_table_path, _mapping_path, _supervoxel_vol = labelmap_setup
+    
+    decision_instance = 'segmentation_merged_TEST'
+    create_instance(dvid_server, dvid_repo, decision_instance, 'keyvalue')
+
+    # Post a new 'decision' between 1 and 5
+    post_key(dvid_server, dvid_repo, decision_instance, '1+5',
+             json={'supervoxel ID 1': 1,
+                   'supervoxel ID 2': 5,
+                   'result': 'merge',
+                   'supervoxel point 1': [0,0,0],
+                   'supervoxel point 2': [0,0,4]})
+
+    merge_graph = LabelmapMergeGraph(merge_table_path)
+    merge_graph.append_edges_for_focused_merges(dvid_server, dvid_repo, decision_instance)
+    assert len(merge_graph.merge_table_df.query('id_a == 1 and id_b == 5')) == 1
 
 
 def test_extract_rows_multithreaded(labelmap_setup):
