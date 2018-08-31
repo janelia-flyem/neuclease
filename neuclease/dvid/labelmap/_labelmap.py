@@ -138,6 +138,25 @@ fetch_label_for_coordinate = fetch_label
 
 
 @dvid_api_wrapper
+def fetch_labels(server, uuid, instance, coordinates_zyx, supervoxels=False, scale=0, *, session=None):
+    coordinates_zyx = np.asarray(coordinates_zyx, np.int32)
+    assert coordinates_zyx.ndim == 2 and coordinates_zyx.shape[1] == 3
+
+    params = {}
+    if supervoxels:
+        params['supervoxels'] = str(bool(supervoxels)).lower()
+    if scale != 0:
+        params['scale'] = str(scale)
+
+    coords_xyz = np.array(coordinates_zyx)[:, ::-1].tolist()
+    r = session.get(f'http://{server}/api/node/{uuid}/{instance}/labels', json=coords_xyz, params=params)
+    r.raise_for_status()
+    
+    labels = np.array(r.json(), np.uint64)
+    return labels
+
+
+@dvid_api_wrapper
 def fetch_sparsevol_rles(server, uuid, instance, label, supervoxels=False, scale=0, *, session=None):
     """
     Fetch the sparsevol RLE representation for a given label.
