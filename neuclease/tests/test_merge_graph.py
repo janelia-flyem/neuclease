@@ -78,6 +78,7 @@ def _test_extract_rows(labelmap_setup, force_dirty_mapping):
 
     if force_dirty_mapping:
         # A little white-box manipulation here to ensure that the mapping is dirty
+        merge_graph.mapping.loc[2] = 0
         merge_graph.merge_table_df['body'].values[0:2] = np.uint64(0)
         merge_graph._mapping_versions.clear()
 
