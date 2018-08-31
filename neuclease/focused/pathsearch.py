@@ -15,7 +15,6 @@ from dvidutils import LabelMapper
 # local
 from ..util import Timer, read_csv_col, NumpyConvertingEncoder
 from ..merge_table import load_mapping
-from ..merge_graph import LabelmapMergeGraph
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +59,8 @@ def compute_focused_paths( server, uuid, instance,
                            max_depth=10,
                            stop_after_endpoint_num=None,
                            return_after_setup=False ):
+
+    from ..merge_graph import LabelmapMergeGraph
 
     with Timer("Loading speculative merge graph", logger):
         merge_graph = LabelmapMergeGraph(speculative_merge_tables, uuid)   
