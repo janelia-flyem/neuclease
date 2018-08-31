@@ -10,7 +10,7 @@ import pandas as pd
 
 from .util import Timer, uuids_match
 from .rwlock import ReadWriteLock
-from .dvid import fetch_repo_info, fetch_supervoxels_for_body, fetch_label_for_coordinate, fetch_complete_mappings, fetch_mutation_id, fetch_supervoxel_splits, fetch_supervoxel_splits_from_kafka
+from .dvid import fetch_repo_info, fetch_supervoxels_for_body, fetch_labels, fetch_complete_mappings, fetch_mutation_id, fetch_supervoxel_splits, fetch_supervoxel_splits_from_kafka
 from .merge_table import MERGE_TABLE_DTYPE, load_mapping, load_merge_table, normalize_merge_table, apply_mapping_to_mergetable
 from .focused.ingest import fetch_focused_decisions
 
@@ -199,18 +199,14 @@ class LabelmapMergeGraph:
         with Timer(f"Appending {len(parent_rows_df)} edges with split supervoxel IDs", _logger):
             bad_edges = []
             update_rows = [parent_rows_df.iloc[:0]] # Init with empty df in case there are no updates
+
+            with Timer("Fetching supervoxels from split edge coordinates", _logger):
+                svs_a = fetch_labels(*instance_info, parent_rows_df[['za', 'ya', 'xa']].values, supervoxels=True)
+                svs_b = fetch_labels(*instance_info, parent_rows_df[['zb', 'yb', 'xb']].values, supervoxels=True)
+            
             for i in range(len(parent_rows_df)):
-                row = parent_rows_df.iloc[i:i+1]
-                coord_a = row[['za', 'ya', 'xa']].values[0]
-                coord_b = row[['zb', 'yb', 'xb']].values[0]
-                
-                sv_a = sv_b = 0
-
-                if not (coord_a == (0,0,0)).all():
-                    sv_a = fetch_label_for_coordinate(*instance_info, coord_a, supervoxels=True)
-
-                if not (coord_b == (0,0,0)).all():
-                    sv_b = fetch_label_for_coordinate(*instance_info, coord_b, supervoxels=True)
+                sv_a = svs_a[i]
+                sv_b = svs_b[i]
 
                 # If either coordinate returns a non-sensical point, then
                 # the provided split mapping does not match the currently stored labels.
