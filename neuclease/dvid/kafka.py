@@ -1,3 +1,4 @@
+import time
 import json
 import getpass
 import logging
@@ -84,6 +85,11 @@ def read_kafka_messages(server, uuid, instance, action_filter=None, dag_filter='
                               consumer_timeout_ms=int(consumer_timeout * 1000))
 
     consumer.subscribe([f'dvidrepo-{repo_uuid}-data-{data_uuid}'])
+
+    # There seems to be some sort of timing issue.
+    # If we start fetching records immediately after subscribing, it hangs forever.
+    # So, here's a slight delay.
+    time.sleep(0.5)
 
     logger.info(f"Reading kafka messages from {kafka_server} for {server} / {uuid} / {instance}")
     with Timer() as timer:
