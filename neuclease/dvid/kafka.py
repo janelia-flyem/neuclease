@@ -72,13 +72,13 @@ def read_kafka_messages(server, uuid, instance, action_filter=None, dag_filter='
     if "Kafka Servers" not in server_info or not server_info["Kafka Servers"]:
         raise KafkaReadError(f"DVID server ({server}) does not list a kafka server")
 
-    kafka_server = server_info["Kafka Servers"]
+    kafka_servers = server_info["Kafka Servers"].split(',')
 
     full_instance_info = fetch_instance_info(server, uuid, instance, session=session)
     data_uuid = full_instance_info["Base"]["DataUUID"]
     repo_uuid = full_instance_info["Base"]["RepoUUID"]
 
-    consumer = KafkaConsumer( bootstrap_servers=[kafka_server],
+    consumer = KafkaConsumer( bootstrap_servers=kafka_servers,
                               group_id=group_id,
                               enable_auto_commit=False,
                               auto_offset_reset='earliest',
@@ -91,7 +91,7 @@ def read_kafka_messages(server, uuid, instance, action_filter=None, dag_filter='
     # So, here's a slight delay.
     time.sleep(0.5)
 
-    logger.info(f"Reading kafka messages from {kafka_server} for {server} / {uuid} / {instance}")
+    logger.info(f"Reading kafka messages from {kafka_servers} for {server} / {uuid} / {instance}")
     with Timer() as timer:
         # Read all messages (until consumer timeout)
         records = list(consumer)
