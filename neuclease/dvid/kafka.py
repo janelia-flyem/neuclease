@@ -55,7 +55,9 @@ def read_kafka_messages(server, uuid, instance, action_filter=None, dag_filter='
         
         consumer_timeout:
             Seconds to timeout (after which we assume we've read all messages).
-        
+    
+    Returns:
+        Filtered list of kafka ConsumerRecord or list of JSON dict (depending on return_format).
     """
     from kafka import KafkaConsumer
     
@@ -78,25 +80,46 @@ def read_kafka_messages(server, uuid, instance, action_filter=None, dag_filter='
     data_uuid = full_instance_info["Base"]["DataUUID"]
     repo_uuid = full_instance_info["Base"]["RepoUUID"]
 
-    consumer = KafkaConsumer( bootstrap_servers=kafka_servers,
+    consumer = KafkaConsumer( f'dvidrepo-{repo_uuid}-data-{data_uuid}',
+                              bootstrap_servers=kafka_servers,
                               group_id=group_id,
                               enable_auto_commit=False,
                               auto_offset_reset='earliest',
                               consumer_timeout_ms=int(consumer_timeout * 1000))
-
-    consumer.subscribe([f'dvidrepo-{repo_uuid}-data-{data_uuid}'])
-
+    
     # There seems to be some sort of timing issue.
     # If we start fetching records immediately after subscribing, it hangs forever.
     # So, here's a slight delay.
-    time.sleep(0.5)
+    time.sleep(1.0)
+    
+    try:
+        # Consumer isn't fully initialized until the first message is fetched.
+        # (For example, consumer.assignment() can't be used until we fetch a message first.)
+        records = [next(consumer)]
+    except StopIteration:
+        # No messages in this topic at all.
+        records = []
+    else:
+        # Ask what the most recent message's "offset" is,
+        # so we'll know for sure that we downloaded the whole log.
+        topic_partition = next(iter(consumer.assignment()))
+        end_offset = consumer.end_offsets([topic_partition])[topic_partition]
+    
+        logger.info(f"Reading kafka messages from {kafka_servers} for {server} / {uuid} / {instance}")
+        with Timer() as timer:
+            # Read all messages (until consumer timeout)
+            records += list(consumer)
+        logger.info(f"Reading {len(records)} kafka messages took {timer.seconds} seconds")
+    
+        # If there is an unexpected delay (e.g. a weird network/server hiccup),
+        # The log may be truncated.  Raise an error in that case.
+        if records[-1].offset < (end_offset-1):
+            msg = (f"Kafka log appears incomplete: \n"
+                   f"Expected to log to end with offset of >= {end_offset-1}, but last "
+                   f"message has offset of only {records[-1].offset}")
+            raise RuntimeError(msg)
 
-    logger.info(f"Reading kafka messages from {kafka_servers} for {server} / {uuid} / {instance}")
-    with Timer() as timer:
-        # Read all messages (until consumer timeout)
-        records = list(consumer)
-    logger.info(f"Reading {len(records)} kafka messages took {timer.seconds} seconds")
-
+    # Extract and parse JSON values for easy filtering.
     values = [json.loads(rec.value) for rec in records]
     records_and_values = zip(records, values)
 
@@ -125,18 +148,18 @@ def read_kafka_messages(server, uuid, instance, action_filter=None, dag_filter='
         action_filter = set(action_filter)
         records_and_values = filter(lambda r_v: r_v[1]["Action"] in action_filter, records_and_values)
     
-    # Evaluate
+    # Evaluate filter
     records_and_values = list(records_and_values)
     
     # Unzip
     if records_and_values:
         records, values = zip(*records_and_values)
     else:
-        records = values = []
+        records, values = [], []
 
     if return_format == 'records':
         return records
     elif return_format == 'json-values':
         return values
     else:
-        assert False
+        raise AssertionError(f"Invalid return_format: {return_format}")
