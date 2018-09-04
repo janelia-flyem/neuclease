@@ -61,9 +61,19 @@ def check_tarsupervoxels_status(server, uuid, tsv_instance, seg_instance, bodies
     except KeyboardInterrupt:
         logger.warning("Interrupted. Returning results so far.  Interrupt again to kill.")
 
-    df = pd.DataFrame(body_sv_sizes, columns=['body', 'sv', 'size'], dtype=np.uint64)
+    df = pd.DataFrame(body_sv_sizes, columns=['body', 'sv', 'voxel_count'], dtype=np.uint64)
     df.set_index('sv', inplace=True)
     return df
+
+###
+### Useful follow-up:
+### Write empty files for all missing supervoxels below a certain size.
+###
+# from tqdm import tqdm
+# bio = BytesIO()
+# tf = tarfile.TarFile('empty-svs.tar', 'w', bio)
+# for sv in tqdm(missing_svs.query('voxel_count <= 100')['sv']):
+#     tf.addfile(tarfile.TarInfo(f'{sv}.drc'), BytesIO())
 
 if __name__ == "__main__":
     main()
