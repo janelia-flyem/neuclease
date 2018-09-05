@@ -146,15 +146,23 @@ def _read_complete_kafka_log(topic, kafka_servers, group_id=None, timeout_second
     end_offset = consumer.end_offsets([topic_partition])[topic_partition]
 
     # Read all messages (until consumer timeout)
-    records += list(consumer)
+    # And read AGAIN (repeat up to MAX_TRIES) if the log appears incomplete.
+    tries = 0
+    MAX_TRIES = 10
+    while records[-1].offset < (end_offset-1):
+        records += list(consumer)
+        tries += 1
 
-    # If there is an unexpected delay (e.g. a weird network/server hiccup),
-    # The log may be truncated.  Raise an error in that case.
-    if records[-1].offset < (end_offset-1):
-        msg = (f"Kafka log appears incomplete: \n"
-               f"Expected to log to end with offset of >= {end_offset-1}, but last "
-               f"message has offset of only {records[-1].offset}")
-        raise RuntimeError(msg)
+        if records[-1].offset < (end_offset-1):
+            if tries < MAX_TRIES:
+                logger.warn(f"Could not fetch entire kafka log after {tries} tries ({records[-1].offset} / {(end_offset)})")
+            else:
+                # If there is an unexpected delay (e.g. a weird network/server hiccup),
+                # The log may be truncated.  Raise an error in that case.
+                msg = (f"Kafka log appears incomplete: \n"
+                       f"Expected to log to end with offset of >= {end_offset-1}, but last "
+                       f"message has offset of only {records[-1].offset}")
+                raise RuntimeError(msg)
 
     return records
 
