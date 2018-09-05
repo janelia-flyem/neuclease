@@ -234,7 +234,7 @@ def fetch_mappings(server, uuid, instance, as_array=False, *, session=None):
 
 
 @dvid_api_wrapper
-def fetch_complete_mappings(server, uuid, instance, include_retired=False, kafka_msgs=None, *, session=None):
+def fetch_complete_mappings(server, uuid, instance, include_retired=True, kafka_msgs=None, *, session=None):
     """
     Fetch the complete mapping from DVID for all agglomerated bodies,
     including 'identity' mappings (for agglomerated bodies only)
