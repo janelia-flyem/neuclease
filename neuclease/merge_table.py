@@ -383,6 +383,8 @@ def compute_body_sizes(sv_sizes, mapping, include_unmapped_singletons=False):
     compute the size of each body in the mapping, and its count of supervoxels.
     
     Any supervoxels in the mapping that are missing from sv_sizes will be ignored.
+
+    Body 0 will be excluded from the results, even if it is present in the mapping.
     
     Args:
         sv_sizes:
@@ -448,6 +450,9 @@ def compute_body_sizes(sv_sizes, mapping, include_unmapped_singletons=False):
         singleton_stats = pd.DataFrame({'voxel_count': singleton_sizes})
         singleton_stats['sv_count'] = np.uint32(1)
         body_stats = pd.concat((body_stats, singleton_stats))
+    
+    if 0 in body_stats.index:
+        body_stats.drop(0, inplace=True)
     
     logger.info("Sorting sizes")
     body_stats.index.name = 'body'
