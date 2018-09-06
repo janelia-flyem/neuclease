@@ -277,7 +277,7 @@ def compute_focused_bodies(server, uuid, instance, synapse_samples, min_tbars, m
         (See return_table option.)
     """
     # Load full mapping. It's needed for both synapses and body sizes.
-    mapping = fetch_complete_mappings(server, uuid, instance)
+    mapping = fetch_complete_mappings(server, uuid, instance, include_retired=True)
     mapper = LabelMapper(mapping.index.values, mapping.values)
 
     ##
