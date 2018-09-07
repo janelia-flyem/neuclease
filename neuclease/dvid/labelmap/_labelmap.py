@@ -308,11 +308,7 @@ def fetch_complete_mappings(server, uuid, instance, include_retired=True, kafka_
         parts.append(retired_mapping)
 
     # Combine into a single table
-    if len(parts) > 1:
-        full_mapping = np.concatenate(parts)
-    else:
-        full_mapping = parts[0]
-
+    full_mapping = np.concatenate(parts)
     full_mapping = np.asarray(full_mapping, order='C')
     
     # View as 1D buffer of structured dtype to sort in-place.
@@ -323,8 +319,11 @@ def fetch_complete_mappings(server, uuid, instance, include_retired=True, kafka_
     # Construct pd.Series for fast querying
     s = pd.Series(index=full_mapping[:,0], data=full_mapping[:,1])
     
-    # Drop all rows with retired supervoxels.
-    s.drop(retired_svs, inplace=True, errors='ignore')
+    if not include_retired:
+        # Drop all rows with retired supervoxels, including:
+        # identities we may have added that are now retired
+        # any retired SVs erroneously included by DVID itself in the fetched mapping
+        s.drop(retired_svs, inplace=True, errors='ignore')
     
     # Reload index to ensure most RAM-efficient implementation.
     # (This seems to make a big difference in RAM usage!)
