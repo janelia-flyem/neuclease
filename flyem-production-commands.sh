@@ -1,6 +1,6 @@
+
 #!/bin/bash
 
-#
 # Example launch commands for FlyEM cleave server instances
 #
 
@@ -10,12 +10,13 @@ source $ACTIVATE flyem
 # emdata3:8900 -- d5852c27b5c04687bb1be414f6dc2336
 # Run this on emdata3 to produce a cleave server on emdata3:5551
 
+CLEAVE_PORT=5551
 nohup neuclease_cleave_server \
-  -p 5552 \
-  --log-dir /nrs/flyem/bergs/neuclease-logs/production-emdata3-8900 \
+  -p 5551 \
+  --log-dir /nrs/flyem/bergs/neuclease-logs/production-emdata3-8900-${CLEAVE_PORT} \
   --merge-table /nrs/flyem/bergs/final-agglo-fixsplit-patched/final_patched_20180426_merge_table.npy \
   --primary-dvid-server emdata3:8900 \
-  --primary-uuid 7254f5a8aacf4e6f804dcbddfdac4f7f \
+  --primary-uuid 9e0d2e899d624d47a53602f3ae986633 \
   --primary-labelmap-instance segmentation \
   &
 ##
@@ -26,7 +27,7 @@ nohup neuclease_cleave_server \
   --log-dir /nrs/flyem/bergs/neuclease-logs/production-emdata3-8900-${CLEAVE_PORT} \
   --merge-table /nrs/flyem/bergs/final-agglo-fixsplit-patched/final_patched_20180426_merge_table.npy \
   --primary-dvid-server emdata3:8900 \
-  --primary-uuid 7254f5a8aacf4e6f804dcbddfdac4f7f \
+  --primary-uuid 9e0d2e899d624d47a53602f3ae986633 \
   --primary-labelmap-instance segmentation \
   &
 ##
