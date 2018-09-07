@@ -12,6 +12,7 @@ from ..util.csv import read_csv_col
 from ..merge_table import load_all_supervoxel_sizes, compute_body_sizes
 from ..dvid import fetch_keys, fetch_key, fetch_complete_mappings, fetch_keyvalues
 from ..dvid.annotation import load_synapses_from_csv
+from ..dvid.labelmap import fetch_supervoxel_fragments, fetch_labels
 
 # Load new table. Normalize.
 
@@ -35,6 +36,41 @@ CSV_DTYPES = { 'body': np.uint64,
                'jaccard': np.float32,
                'overlap': np.uint32,
                'x': np.int32, 'y': np.int32, 'z': np.int32 }
+
+
+def update_synapse_table(server, uuid, instance, synapse_df, output_path=None):
+    """
+    Give a dataframe (or a CSV file) with at least columns ['sv', 'x', 'y', 'z'],
+    identify any 'retired' supervoxels and query DVID to
+    replace them with their split descendents.
+    
+    Optionally write the updated table to CSV.
+    """
+    seg_info = (server, uuid, instance)
+    
+    if isinstance(synapse_df, str):
+        synapse_df = load_synapses_from_csv(synapse_df)
+
+    # Get the set of all retired supervoxel IDs
+    _leaves, _retired = fetch_supervoxel_fragments(*seg_info, 'dvid')
+
+    # Which rows in the table have a retired ID?
+    retired_df = synapse_df.query('sv in @_retired')[['z', 'y', 'x']]
+
+    if len(retired_df) > 0:
+        with Timer(f"Updating {len(retired_df)} rows with retired SVs", logger):
+            # Fetch the new label for those IDs
+            coords_zyx = retired_df.values
+            updated_svs = fetch_labels(*seg_info, coords_zyx, supervoxels=True)
+            
+            # Update the table and write to CSV
+            synapse_df.loc[retired_df.index, 'sv'] = updated_svs
+    
+    if output_path:
+        with Timer(f"Writing to {output_path}", logger):
+            synapse_df.to_csv(output_path, header=True, index=False)
+
+    return synapse_df
 
 
 def load_focused_table(path):
@@ -182,6 +218,10 @@ def body_synapse_counts(synapse_samples):
     synapse_samples = synapse_samples[['body', 'kind']]
     synapse_counts = synapse_samples.pivot_table(index='body', columns='kind', aggfunc='size')
     synapse_counts.fillna(0.0, inplace=True)
+
+    if 0 in synapse_counts.index:
+        logger.warning("*** Synapse table includes body 0 and was therefore probably generated from out-of-date data. ***")
+    
     return synapse_counts
 
 
@@ -242,8 +282,10 @@ def compute_focused_bodies(server, uuid, instance, synapse_samples, min_tbars, m
             or a path to an hdf5 file from which it can be loaded
         
         synapse_samples:
-            A DataFrame with columns 'body' and 'kind', or a path to a CSV file with those columns.
+            A DataFrame with columns 'body' (or 'sv') and 'kind', or a path to a CSV file with those columns.
             The 'kind' column is expected to have only 'PreSyn' and 'PostSyn' entries.
+            If the table has an 'sv' column, any "retired" supervoxel IDs will be updated before
+            continuing with the analysis.
         
         min_tbars:
             The minimum number pf PreSyn entries to pass the filter.
@@ -291,6 +333,7 @@ def compute_focused_bodies(server, uuid, instance, synapse_samples, min_tbars, m
 
     # If 'sv' column is present, use it to create (or update) the body column
     if 'sv' in synapse_samples.columns:
+        synapse_samples = update_synapse_table(server, uuid, instance, synapse_samples)
         assert synapse_samples['sv'].dtype == np.uint64
         synapse_samples['body'] = mapper.apply(synapse_samples['sv'].values, True)
 
@@ -300,7 +343,7 @@ def compute_focused_bodies(server, uuid, instance, synapse_samples, min_tbars, m
     logger.info(f"Found {len(synapse_bodies)} with sufficient synapses")
 
     focused_bodies = set(synapse_bodies)
-
+    
     ##
     ## Body sizes
     ##
