@@ -1,13 +1,12 @@
 import logging
 import argparse
 import requests
-from tqdm import tqdm, trange
 
 import numpy as np
 import pandas as pd
 
 from neuclease import configure_default_logging
-from neuclease.util import read_csv_col
+from neuclease.util import read_csv_col, tqdm_proxy
 from neuclease.dvid import fetch_missing, fetch_exists, fetch_sizes
 from neuclease.dvid.labelmap._labelmap import fetch_complete_mappings
 
@@ -51,7 +50,7 @@ def check_tarsupervoxels_status_via_missing(server, uuid, tsv_instance, seg_inst
     body_sv_sizes = []
     
     try:
-        for body in tqdm(bodies):
+        for body in tqdm_proxy(bodies):
             try:
                 missing_svs = fetch_missing(server, uuid, tsv_instance, body)
             except requests.RequestException as ex:
@@ -101,7 +100,7 @@ def check_tarsupervoxels_status_via_exists(server, uuid, tsv_instance, seg_insta
         mapping = pd.concat((mapping, singleton_mapping))
 
         BATCH_SIZE = 1000
-        for start in trange(0, len(mapping), BATCH_SIZE):
+        for start in tqdm_proxy(range(0, len(mapping), BATCH_SIZE)):
             svs = mapping.index[start:start+BATCH_SIZE]
             statuses = fetch_exists(server, uuid, tsv_instance, svs)
             missing_svs = statuses[~statuses].index
