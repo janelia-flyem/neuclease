@@ -8,7 +8,8 @@ import pandas as pd
 
 from neuclease import configure_default_logging
 from neuclease.util import read_csv_col
-from neuclease.dvid import fetch_missing, fetch_sizes
+from neuclease.dvid import fetch_missing, fetch_exists, fetch_sizes
+from neuclease.dvid.labelmap._labelmap import fetch_complete_mappings
 
 logger = logging.getLogger(__name__)
 
@@ -32,20 +33,42 @@ def main():
     logging.info("DONE")
 
 
-def check_tarsupervoxels_status(server, uuid, tsv_instance, seg_instance, bodies):
+def check_tarsupervoxels_status(server, uuid, tsv_instance, seg_instance, bodies, use_mapping=True):
     """
     For the given bodies, query the given tarsupervoxels instance and return a
     DataFrame indicating which supervoxels are 'missing' from the instance,
     along with their sizes.
     
     Bodies that no longer exist in the segmentation instance are ignored.
+    
+    Args:
+        use_mapping:
+            If True, download the complete mapping in advance and use it to determine
+            which supervoxels belong to each body.  Then use the /exists endpoint to
+            query for missing supervoxels, rather than /missing, which incurs a disk
+            read in DVID.
     """
     body_sv_sizes = []
     
+    if use_mapping:
+        mapping = fetch_complete_mappings(server, uuid, seg_instance)
+        
+        _bodies = set(bodies)
+        mapping = pd.DataFrame(mapping).query('body in @_bodies')['body'].copy()
+        unmapped_bodies = _bodies - set(mapping)
+        
     try:
         for body in tqdm(bodies):
             try:
-                missing_svs = fetch_missing(server, uuid, tsv_instance, body)
+                if not use_mapping:
+                    missing_svs = fetch_missing(server, uuid, tsv_instance, body)
+                else:
+                    if body in unmapped_bodies:
+                        svs = [body]
+                    else:
+                        svs = mapping[mapping == body].index
+                    statuses = fetch_exists(server, uuid, tsv_instance, svs)
+                    missing_svs = statuses[~statuses].index
             except requests.RequestException as ex:
                 if 'has no supervoxels' in ex.args[0]:
                     continue
