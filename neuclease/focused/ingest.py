@@ -355,8 +355,9 @@ def compute_focused_bodies(server, uuid, instance, synapse_samples, min_tbars, m
             if marked_bad_bodies.endswith('.csv'):
                 marked_bad_bodies = read_csv_col(marked_bad_bodies, 0)
             else:
-                # If it ain't a CSV, maybe it's a key-value instance to read from.
-                marked_bad_bodies = fetch_key(server, uuid, marked_bad_bodies, as_json=True)
+                # If it ain't a CSV, maybe it's a key-value instance and key to read from.
+                raise AssertionError("FIXME: Need convention for specifying key-value instance and key")
+                #marked_bad_bodies = fetch_key(server, uuid, marked_bad_bodies, as_json=True)
         
         with Timer(f"Dropping {len(marked_bad_bodies)} bad bodies (from {len(focused_bodies)})"):
             focused_bodies -= set(marked_bad_bodies)
