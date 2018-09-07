@@ -14,6 +14,10 @@ from itertools import product, starmap
 import requests
 from tqdm import tqdm
 
+# Disable the monitor thread entirely.
+# It is more trouble than it's worth, especially when using tqdm_proxy, below.
+tqdm.monitor_interval = 0
+
 import numpy as np
 import networkx as nx
 
@@ -325,6 +329,10 @@ def tqdm_proxy(iterable, *, logger=None, level=logging.INFO, **kwargs):
     """
     assert 'file' not in kwargs, \
         "There's no reason to use this function if you are providing your own output stream"
+
+    # Special case for tqdm_proxy(range(...))
+    if isinstance(iterable, range) and 'total' not in kwargs:
+        kwargs['total'] = (iterable.stop - iterable.start) // iterable.step
     
     _tqdm = tqdm
     _file = None
