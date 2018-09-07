@@ -119,13 +119,16 @@ def _read_complete_kafka_log(topic, kafka_servers, group_id=None, timeout_second
         # Choose a unique 'group_id' to use
         # FIXME: Frequently creating new group IDs like this is probably not best-practice, but it works for now.
         group_id = getpass.getuser() + '-' + datetime.now().isoformat()
-    
-    consumer = KafkaConsumer( topic,
+
+    def _create_consumer():
+        return KafkaConsumer( topic,
                               bootstrap_servers=kafka_servers,
                               group_id=group_id,
                               enable_auto_commit=False,
                               auto_offset_reset='earliest',
                               consumer_timeout_ms=int(timeout_seconds * 1000))
+    
+    consumer = _create_consumer()
     
     # There seems to be some sort of timing issue.
     # If we start fetching records immediately after subscribing, it hangs forever.
@@ -156,6 +159,7 @@ def _read_complete_kafka_log(topic, kafka_servers, group_id=None, timeout_second
         if records[-1].offset < (end_offset-1):
             if tries < MAX_TRIES:
                 logger.warn(f"Could not fetch entire kafka log after {tries} tries ({records[-1].offset} / {(end_offset)})")
+                consumer = _create_consumer()
             else:
                 # If there is an unexpected delay (e.g. a weird network/server hiccup),
                 # The log may be truncated.  Raise an error in that case.
