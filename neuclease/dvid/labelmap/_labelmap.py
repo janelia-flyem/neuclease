@@ -310,6 +310,11 @@ def fetch_complete_mappings(server, uuid, instance, include_retired=True, kafka_
     # Combine into a single table
     full_mapping = np.concatenate(parts)
     full_mapping = np.asarray(full_mapping, order='C')
+
+    # Drop duplicates that may have been introduced via retired svs
+    # (if DVID didn't filter them out)
+    dupes = pd.Series(full_mapping[:,0]).duplicated(keep='last')
+    full_mapping = full_mapping[(~dupes).values]
     
     # View as 1D buffer of structured dtype to sort in-place.
     # (Sorted index is more efficient with speed and RAM in pandas)
