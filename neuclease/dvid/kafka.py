@@ -104,7 +104,7 @@ def read_kafka_messages(server, uuid, instance, action_filter=None, dag_filter='
         raise AssertionError(f"Invalid return_format: {return_format}")
 
 
-def _read_complete_kafka_log(topic, kafka_servers, group_id=None, timeout_seconds=2.0):
+def _read_complete_kafka_log(topic_name, kafka_servers, group_id=None, timeout_seconds=2.0):
     """
     Helper function.
     Read the complete kafka log for the given topic.
@@ -113,40 +113,24 @@ def _read_complete_kafka_log(topic, kafka_servers, group_id=None, timeout_second
     Special care is taken to ensure that the complete log was read.
     An error is raised if it appears that the log was terminated early.
     """
-    from kafka import KafkaConsumer
-
-    if group_id is None:
-        # Choose a unique 'group_id' to use
-        # FIXME: Frequently creating new group IDs like this is probably not best-practice, but it works for now.
-        group_id = getpass.getuser() + '-' + datetime.now().isoformat()
-
-    def _create_consumer():
-        return KafkaConsumer( topic,
-                              bootstrap_servers=kafka_servers,
-                              group_id=group_id,
-                              enable_auto_commit=False,
-                              auto_offset_reset='earliest',
-                              consumer_timeout_ms=int(timeout_seconds * 1000))
-    
-    consumer = _create_consumer()
-    
-    # There seems to be some sort of timing issue.
-    # If we start fetching records immediately after subscribing, it hangs forever.
-    # So, here's a slight delay.
-    time.sleep(1.0)
+    from pykafka import KafkaClient
+    client = KafkaClient(hosts=','.join(kafka_servers))
+    topic = client.topics[topic_name.encode('utf-8')]
+    consumer = topic.get_simple_consumer(consumer_group=group_id, consumer_timeout_ms=int(1000*timeout_seconds))
     
     try:
         # Consumer isn't fully initialized until the first message is fetched.
         # (For example, consumer.assignment() can't be used until we fetch a message first.)
-        records = [next(consumer)]
+        records = [next(iter(consumer))]
     except StopIteration:
         # No messages in this topic at all.
         return []
 
     # Ask what the most recent message's "offset" is,
     # so we'll know for sure that we downloaded the whole log.
-    topic_partition = next(iter(consumer.assignment()))
-    end_offset = consumer.end_offsets([topic_partition])[topic_partition]
+    end_offset = 0
+    for val in topic.latest_available_offsets().values():
+        end_offset = max(val.offset[0], end_offset)
 
     # Read all messages (until consumer timeout)
     # And read AGAIN (repeat up to MAX_TRIES) if the log appears incomplete.
@@ -159,7 +143,6 @@ def _read_complete_kafka_log(topic, kafka_servers, group_id=None, timeout_second
         if records[-1].offset < (end_offset-1):
             if tries < MAX_TRIES:
                 logger.warn(f"Could not fetch entire kafka log after {tries} tries ({records[-1].offset} / {(end_offset)})")
-                consumer = _create_consumer()
             else:
                 # If there is an unexpected delay (e.g. a weird network/server hiccup),
                 # The log may be truncated.  Raise an error in that case.

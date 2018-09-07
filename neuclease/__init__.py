@@ -4,7 +4,7 @@ if not faulthandler.is_enabled():
     faulthandler.enable()
 
 import logging
-logging.getLogger('kafka').setLevel(logging.WARNING)
+logging.getLogger('pykafka').setLevel(logging.WARNING)
 
 ## Don't show the following warning from within pandas:
 ## FutureWarning: elementwise comparison failed; returning scalar instead, but in the future will perform elementwise comparison
