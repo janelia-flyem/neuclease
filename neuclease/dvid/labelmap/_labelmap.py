@@ -234,7 +234,7 @@ def fetch_mappings(server, uuid, instance, as_array=False, *, session=None):
 
 
 @dvid_api_wrapper
-def fetch_complete_mappings(server, uuid, instance, include_retired=True, kafka_msgs=None, *, session=None):
+def fetch_complete_mappings(server, uuid, instance, include_retired=True, kafka_msgs=None, sort=None, *, session=None):
     """
     Fetch the complete mapping from DVID for all agglomerated bodies,
     including 'identity' mappings (for agglomerated bodies only)
@@ -265,6 +265,8 @@ def fetch_complete_mappings(server, uuid, instance, include_retired=True, kafka_
     Returns:
         pd.Series(index=sv, data=body)
     """
+    assert sort in (None, 'sv', 'body')
+    
     # Read complete kafka log; we need both split and cleave info
     if kafka_msgs is None:
         kafka_msgs = read_kafka_messages(server, uuid, instance)
@@ -337,8 +339,14 @@ def fetch_complete_mappings(server, uuid, instance, include_retired=True, kafka_
     s.index.name = 'sv'
     s.name = 'body'
 
+    if sort == 'sv':
+        s.sort_index(inplace=True)
+    elif sort == 'body':
+        s.sort_values(inplace=True)
+
     assert s.index.dtype == np.uint64
     assert s.dtype == np.uint64
+
     return s
 
 
