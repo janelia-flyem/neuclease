@@ -169,12 +169,19 @@ class LabelmapMergeGraph:
         assert parent_sv_handling in ('keep', 'drop', 'unmap')
         assert read_from in ('dvid', 'kafka')
         
-        if read_from == 'dvid':
-            split_events = fetch_supervoxel_splits(*instance_info)
-        elif read_from == 'kafka':
-            split_events = fetch_supervoxel_splits_from_kafka(*instance_info)
+        split_events = fetch_supervoxel_splits(*instance_info, read_from)
 
-        all_split_events = np.array(list(chain(*split_events.values())))
+        # Drop 'type' field, keep only the int fields.
+        all_split_events = []
+        for events in split_events.values():
+            for event in events:
+                all_split_events.append(event[:-1])
+
+        all_split_events = np.asarray(all_split_events, np.uint64)
+        if len(all_split_events) == 0:
+            all_split_events = np.zeros((0,4), np.uint64)
+        
+        assert all_split_events.shape[1] == 4
         if len(all_split_events) == 0:
             # No split events at all: Return empty dataframe
             bad_edges = self.merge_table_df.iloc[:0]
