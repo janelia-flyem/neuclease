@@ -449,9 +449,8 @@ def generate_sample_coordinate(server, uuid, instance, label_id, supervoxels=Fal
     Return an arbitrary coordinate that lies within the given body.
     Usually faster than fetching all the RLEs.
     """
-    # FIXME: I'm using sparsevol instead of sparsevol-coarse due to an apparent bug in DVID at the moment
-    SCALE = 2
-    coarse_block_coords = fetch_sparsevol(server, uuid, instance, label_id, supervoxels, scale=SCALE, session=session)
+    SCALE = 6 # sparsevol-coarse is always scale 6
+    coarse_block_coords = fetch_sparsevol_coarse(server, uuid, instance, label_id, supervoxels, session=session)
     first_block_coord = (2**SCALE) * np.array(coarse_block_coords[0]) // 64 * 64
     first_block_box = (first_block_coord, first_block_coord + 64)
     
