@@ -118,12 +118,16 @@ def check_tarsupervoxels_status_via_exists(server, uuid, tsv_instance, seg_insta
 ### Useful follow-up:
 ### Write empty files for all missing supervoxels below a certain size.
 ###
+# import tarfile
+# from io import BytesIO
 # from tqdm import tqdm
+# 
 # bio = BytesIO()
 # tf = tarfile.TarFile('empty-svs.tar', 'w', bio)
 # for sv in tqdm(missing_svs.query('voxel_count <= 100')['sv']):
 #     tf.addfile(tarfile.TarInfo(f'{sv}.drc'), BytesIO())
-
+# 
+# post_load(*master, 'segmentation_sv_meshes', bio.getvalue())
 
 if __name__ == "__main__":
     main()
