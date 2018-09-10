@@ -83,7 +83,15 @@ def fetch_sizes(server, uuid, instance, label_ids, supervoxels=False, *, session
     supervoxels = str(bool(supervoxels)).lower()
 
     url = f'http://{server}/api/node/{uuid}/{instance}/sizes?supervoxels={supervoxels}'
-    return fetch_generic_json(url, label_ids, session=session)
+    sizes = fetch_generic_json(url, label_ids, session=session)
+    
+    sizes = pd.Series(sizes, index=label_ids, name='size')
+    if supervoxels:
+        sizes.index.name = 'sv'
+    else:
+        sizes.index.name = 'body'
+    
+    return sizes
 
 # FIXME: Deprecated name
 fetch_body_sizes = fetch_sizes
@@ -189,7 +197,9 @@ def split_supervoxel(server, uuid, instance, supervoxel, rle_payload_bytes, *, s
 def fetch_mapping(server, uuid, instance, supervoxel_ids, *, session=None):
     supervoxel_ids = list(map(int, supervoxel_ids))
     body_ids = fetch_generic_json(f'http://{server}/api/node/{uuid}/{instance}/mapping', json=supervoxel_ids, session=session)
-    return body_ids
+    mapping = pd.Series(body_ids, index=np.asarray(supervoxel_ids, np.uint64), dtype=np.uint64, name='body')
+    mapping.index.name = 'sv'
+    return mapping
 
 
 @dvid_api_wrapper
