@@ -1,6 +1,6 @@
 import logging
 from collections import namedtuple
-from itertools import starmap
+from itertools import starmap, chain
 
 import numpy as np
 import pandas as pd
@@ -12,10 +12,11 @@ from ..kafka import KafkaReadError, read_kafka_messages
 
 logger = logging.getLogger(__name__)
 
-SplitEvent = namedtuple("SplitEvent", "mutid old remain split")
+SplitEvent = namedtuple("SplitEvent", "mutid old remain split type")
+SplitEvent.__new__.__defaults__ = ('unknown',)
 
 @dvid_api_wrapper
-def fetch_supervoxel_splits(server, uuid, instance, source='kafka', *, session=None):
+def fetch_supervoxel_splits(server, uuid, instance, source='kafka', format='dict', *, session=None): # @ReservedAssignment
     """
     Fetch supervoxel split events from dvid or kafka.
     (See fetch_supervoxel_splits_from_dvid() for details.)
@@ -23,18 +24,22 @@ def fetch_supervoxel_splits(server, uuid, instance, source='kafka', *, session=N
     Note: If source='kafka', but no kafka server is found, 'dvid' is used as a fallback
     """
     assert source in ('dvid', 'kafka')
+    assert format in ('dict', 'pandas')
 
     if source == 'kafka':
         try:
-            return fetch_supervoxel_splits_from_kafka(server, uuid, instance, session=session)
+            events = fetch_supervoxel_splits_from_kafka(server, uuid, instance, session=session)
         except KafkaReadError:
             # Fallback to reading DVID
             source = 'dvid'
 
     if source == 'dvid':
-        return fetch_supervoxel_splits_from_dvid(server, uuid, instance, session=session)
+        events = fetch_supervoxel_splits_from_dvid(server, uuid, instance, session=session)
 
-    assert False
+    if format == 'dict':
+        return events
+    if format == 'pandas':
+        return split_events_to_dataframe(events)
 
 
 @dvid_api_wrapper
@@ -165,11 +170,11 @@ def fetch_supervoxel_splits_from_kafka(server, uuid, instance, actions=['split',
             logger.error(f"SVSplits is null for body {msg['Target']}")
             continue
         for old_sv_str, split_info in msg["SVSplits"].items():
-            event = SplitEvent(msg["MutationID"], int(old_sv_str), split_info["Split"], split_info["Remain"])
+            event = SplitEvent(msg["MutationID"], int(old_sv_str), split_info["Split"], split_info["Remain"], "split")
             events.setdefault(msg["UUID"], []).append( event )
 
     for msg in sv_split_msgs:
-        event = SplitEvent( msg["MutationID"], msg["Supervoxel"], msg["SplitSupervoxel"], msg["RemainSupervoxel"] )
+        event = SplitEvent( msg["MutationID"], msg["Supervoxel"], msg["SplitSupervoxel"], msg["RemainSupervoxel"], "split-supervoxel" )
         events.setdefault(msg["UUID"], []).append( event )
     
     return events
@@ -190,7 +195,7 @@ def split_events_to_graph(events):
     g = nx.DiGraph()
 
     for uuid, event_list in events.items():
-        for (mutid, old, remain, split) in event_list:
+        for (mutid, old, remain, split, _type) in event_list:
             g.add_edge(old, remain)
             g.add_edge(old, split)
             if 'uuid' not in g.node[old]:
@@ -206,6 +211,19 @@ def split_events_to_graph(events):
             g.node[split]['mutid'] = mutid
     
     return g
+
+
+def split_events_to_dataframe(events):
+    df = pd.DataFrame(list(chain(*events.values())), columns=SplitEvent._fields)
+    df['uuid'] = ''
+    
+    i = 0
+    for uuid, table in events.items():
+        df.iloc[i:i+len(table), -1] = uuid
+        i += len(table)
+    
+    df['uuid'] = df['uuid'].astype('category')
+    return df[['uuid'] + list(df.columns[:-1])]
 
 
 def find_root(g, start):
@@ -444,8 +462,10 @@ def fetch_supervoxel_fragments(server, uuid, instance, split_source='kafka', *, 
         # No splits on this node
         return (np.array([], np.uint64), np.array([], np.uint64))
     
-    split_tables = list(map(lambda t: np.asarray(t, np.uint64), split_events.values()))
-    split_table = np.concatenate(split_tables)
+    split_table = []
+    for events in split_events.values():
+        split_table.append([event[:-1] for event in events])
+    split_table = np.asarray(split_table, np.uint64)
 
     retired_svs = split_table[:, SplitEvent._fields.index('old')]
     remain_fragment_svs = split_table[:, SplitEvent._fields.index('remain')]
@@ -478,8 +498,10 @@ def split_events_to_mapping(split_events, leaves_only=False):
     if len(split_events) == 0:
         return np.zeros((0,2), np.uint64)
     
-    split_tables = list(map(lambda t: np.asarray(t, np.uint64), split_events.values()))
-    split_table = np.concatenate(split_tables)
+    split_table = []
+    for events in split_events.values():
+        split_table.append([event[:-1] for event in events])
+    split_table = np.asarray(split_table, np.uint64)
 
     old_svs = split_table[:, SplitEvent._fields.index('old')]
     remain_fragment_svs = split_table[:, SplitEvent._fields.index('remain')]
