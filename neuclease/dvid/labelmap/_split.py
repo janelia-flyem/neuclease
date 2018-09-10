@@ -27,13 +27,8 @@ def fetch_supervoxel_splits(server, uuid, instance, source='kafka', format='dict
     assert format in ('dict', 'pandas')
 
     if source == 'kafka':
-        try:
-            events = fetch_supervoxel_splits_from_kafka(server, uuid, instance, session=session)
-        except KafkaReadError:
-            # Fallback to reading DVID
-            source = 'dvid'
-
-    if source == 'dvid':
+        events = fetch_supervoxel_splits_from_kafka(server, uuid, instance, session=session)
+    elif source == 'dvid':
         events = fetch_supervoxel_splits_from_dvid(server, uuid, instance, session=session)
 
     if format == 'dict':
@@ -161,22 +156,20 @@ def fetch_supervoxel_splits_from_kafka(server, uuid, instance, actions=['split',
     
     # Supervoxels can be split via either /split or /split-supervoxel.
     # We need to parse them both.
-    body_split_msgs = list(filter(lambda msg: msg['Action'] == 'split', msgs))
-    sv_split_msgs = list(filter(lambda msg: msg['Action'] == 'split-supervoxel', msgs))
-
     events = {}
-    for msg in body_split_msgs:
-        if msg["SVSplits"] is None:
-            logger.error(f"SVSplits is null for body {msg['Target']}")
-            continue
-        for old_sv_str, split_info in msg["SVSplits"].items():
-            event = SplitEvent(msg["MutationID"], int(old_sv_str), split_info["Remain"], split_info["Split"], "split")
+    for msg in msgs:
+        if msg['Action'] == 'split-supervoxel':
+            event = SplitEvent( msg["MutationID"], msg["Supervoxel"], msg["RemainSupervoxel"], msg["SplitSupervoxel"], "split-supervoxel" )
             events.setdefault(msg["UUID"], []).append( event )
-
-    for msg in sv_split_msgs:
-        event = SplitEvent( msg["MutationID"], msg["Supervoxel"], msg["RemainSupervoxel"], msg["SplitSupervoxel"], "split-supervoxel" )
-        events.setdefault(msg["UUID"], []).append( event )
     
+        elif msg['Action'] == 'split':
+            if msg["SVSplits"] is None:
+                logger.error(f"SVSplits is null for body {msg['Target']}")
+                continue
+            for old_sv_str, split_info in msg["SVSplits"].items():
+                event = SplitEvent(msg["MutationID"], int(old_sv_str), split_info["Remain"], split_info["Split"], "split")
+                events.setdefault(msg["UUID"], []).append( event )
+
     return events
 
 
