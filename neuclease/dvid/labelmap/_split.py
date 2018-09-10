@@ -170,11 +170,11 @@ def fetch_supervoxel_splits_from_kafka(server, uuid, instance, actions=['split',
             logger.error(f"SVSplits is null for body {msg['Target']}")
             continue
         for old_sv_str, split_info in msg["SVSplits"].items():
-            event = SplitEvent(msg["MutationID"], int(old_sv_str), split_info["Split"], split_info["Remain"], "split")
+            event = SplitEvent(msg["MutationID"], int(old_sv_str), split_info["Remain"], split_info["Split"], "split")
             events.setdefault(msg["UUID"], []).append( event )
 
     for msg in sv_split_msgs:
-        event = SplitEvent( msg["MutationID"], msg["Supervoxel"], msg["SplitSupervoxel"], msg["RemainSupervoxel"], "split-supervoxel" )
+        event = SplitEvent( msg["MutationID"], msg["Supervoxel"], msg["RemainSupervoxel"], msg["SplitSupervoxel"], "split-supervoxel" )
         events.setdefault(msg["UUID"], []).append( event )
     
     return events
