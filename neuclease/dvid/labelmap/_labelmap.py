@@ -281,7 +281,7 @@ def fetch_complete_mappings(server, uuid, instance, include_retired=True, kafka_
     if kafka_msgs is None:
         kafka_msgs = read_kafka_messages(server, uuid, instance)
     split_events = fetch_supervoxel_splits_from_kafka(server, uuid, instance, kafka_msgs=kafka_msgs, session=session)
-    split_tables = list(map(lambda t: np.asarray(t, np.uint64), split_events.values()))
+    split_tables = list(map(lambda t: np.asarray([row[:-1] for row in t], np.uint64), split_events.values()))
     if split_tables:
         split_table = np.concatenate(split_tables)
         retired_svs = split_table[:, SplitEvent._fields.index('old')] #@UndefinedVariable

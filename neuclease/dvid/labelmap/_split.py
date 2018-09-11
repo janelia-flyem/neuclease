@@ -457,7 +457,8 @@ def fetch_supervoxel_fragments(server, uuid, instance, split_source='kafka', *, 
     
     split_table = []
     for events in split_events.values():
-        split_table.append([event[:-1] for event in events])
+        for event in events:
+            split_table.append(event[:4])
     split_table = np.asarray(split_table, np.uint64)
 
     retired_svs = split_table[:, SplitEvent._fields.index('old')]
@@ -493,7 +494,7 @@ def split_events_to_mapping(split_events, leaves_only=False):
     
     split_table = []
     for events in split_events.values():
-        split_table.append([event[:-1] for event in events])
+        split_table.append([event[:4] for event in events])
     split_table = np.asarray(split_table, np.uint64)
 
     old_svs = split_table[:, SplitEvent._fields.index('old')]
