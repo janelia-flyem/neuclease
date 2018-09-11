@@ -200,6 +200,23 @@ def fetch_focused_decisions(server, uuid, instance, normalize_pairs=None, subset
     return df
 
 
+def drop_previously_reviewed(df, previous_focused_decisions_df):
+    """
+    Given a DataFrame of speculative focused decisions and 
+    a DataFrame of previously reviewed focused decisions,
+    drop all previous decisions from the speculative set,
+    regardless of review results.
+    """
+    comparison_df = previous_focused_decisions_df[['id_a', 'id_b']].drop_duplicates()
+    in_prev = df[['id_a', 'id_b']].merge(comparison_df,
+                                         how='left',
+                                         on=['id_a', 'id_b'],
+                                         indicator='side')
+
+    keep_rows = (in_prev['side'] == 'left_only')
+    return df[keep_rows.values]
+
+
 def body_synapse_counts(synapse_samples):
     """
     Given a DataFrame of sampled synapses (or a path to a CSV file),
