@@ -237,3 +237,33 @@ def fetch_repo_dag(server, uuid, repo_info=None, *, session=None):
 
     return g
 
+
+def find_branch_nodes(server, uuid, branch="", *, session=None):
+    """
+    Find all nodes in the repo which belong to the given branch.
+    Note: By convention, the master branch is indicated by an empty branch name.
+    
+    Args:
+        server:
+            dvid server, e.g. 'emdata3:8900'
+
+        uuid:
+            Any node UUID within the repo of interest.
+            (DVID will return the entire repo info regardless of
+            which node uuid is provided here.)
+
+        branch:
+            Branch name to filter for.
+            By default, filters for the master branch (i.e. an empty branch name).
+
+    Returns:
+        list of UUIDs, sorted chronologically from first to last.
+    
+    
+    Example:
+        master_branch_uuids = find_branch_nodes('emdata3:8900', 'a77')
+        current_master_uuid = master_branch_uuids[-1]
+    """
+    dag = fetch_repo_dag(server, uuid, session=session)
+    branch_uuids = nx.topological_sort(dag)
+    return list(filter(lambda uuid: dag.nodes()[uuid]['Branch'] == branch, branch_uuids))
