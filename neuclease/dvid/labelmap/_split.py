@@ -8,7 +8,7 @@ import networkx as nx
 
 from ...util import Timer
 from .. import dvid_api_wrapper
-from ..kafka import KafkaReadError, read_kafka_messages
+from ..kafka import read_kafka_messages
 
 logger = logging.getLogger(__name__)
 
