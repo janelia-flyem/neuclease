@@ -234,6 +234,7 @@ def _run_cleave(data):
     cleave_response["seeds"] = dict(sorted((k, sorted(v)) for (k,v) in data["seeds"].items()))
     cleave_response["assignments"] = {}
     cleave_response["warnings"] = []
+    cleave_response["info"] = []
 
     if not data["seeds"]:
         msg = "Request contained no seeds!"
@@ -291,7 +292,7 @@ def _run_cleave(data):
         msg = (f"Cleave result contains non-contiguous objects for seeds: "
                f"{sorted(results.disconnected_components)}")
         body_logger.warning(msg)
-        cleave_response["warnings"].append(msg)
+        cleave_response["info"].append(msg)
 
     if results.contains_unlabeled_components:
         num_unlabeled = len(cleave_response["assignments"]["0"])
