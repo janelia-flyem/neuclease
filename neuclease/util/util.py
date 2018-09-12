@@ -14,6 +14,8 @@ from itertools import product, starmap
 import requests
 from tqdm import tqdm
 
+import pandas as pd
+
 # Disable the monitor thread entirely.
 # It is more trouble than it's worth, especially when using tqdm_proxy, below.
 tqdm.monitor_interval = 0
@@ -312,6 +314,29 @@ def upsample(orig_data, upsample_factor):
     slicing = (Ellipsis,) + (None,)*orig_data.ndim
     v[:] = orig_data[slicing]
     return upsampled_data
+
+
+def unordered_duplicated(df, subset=None, keep='first'):
+    """
+    Like pd.DataFrame.duplicated(), but sorts each row first, so
+    rows can be considered duplicates even if their values don't
+    appear in the same order.
+    """
+    if subset is None:
+        subset = list(df.columns)
+    normalized_cols = np.sort(df[subset].values, axis=1)
+    dupes = pd.DataFrame(normalized_cols).duplicated(keep=keep).values
+    return pd.Series(dupes, index=df.index)
+
+
+def drop_unordered_duplicates(df, subset=None, keep='first'):
+    """
+    Like pd.DataFrame.drop_duplicates(), but sorts each row first, so
+    rows can be considered duplicates even if their values don't
+    appear in the same order. 
+    """
+    dupes = unordered_duplicated(df, subset, keep)
+    return df.loc[~dupes]
 
 
 def tqdm_proxy(iterable, *, logger=None, level=logging.INFO, **kwargs):
