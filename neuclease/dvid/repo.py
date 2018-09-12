@@ -29,7 +29,18 @@ uint8blk
 """.split()
 
 @dvid_api_wrapper
+def fetch_repos_info(server, *, session=None):
+    """
+    Wrapper for the .../api/repos/info endpoint.
+    """
+    return fetch_generic_json(f'http://{server}/api/repos/info', session=session)
+
+
+@dvid_api_wrapper
 def fetch_repo_info(server, uuid, *, session=None):
+    """
+    Wrapper for the .../api/repo/<uuid>/info endpoint.
+    """
     return fetch_generic_json(f'http://{server}/api/repo/{uuid}/info', session=session)
     
 
@@ -165,7 +176,7 @@ def create_voxel_instance(server, uuid, instance, typename, versioned=True, comp
 
 
 @dvid_api_wrapper
-def fetch_repo_dag(server, uuid, repo_info=None, *, session=None):
+def fetch_repo_dag(server, uuid=None, repo_info=None, *, session=None):
     """
     Read the /repo/info for the given repo UUID and extract
     the DAG structure from it, parsed into a nx.DiGraph.
@@ -208,6 +219,16 @@ def fetch_repo_dag(server, uuid, repo_info=None, *, session=None):
          'Updated': '2018-04-04T14:15:53.377342506-04:00',
          'VersionID': 2}
     """
+    if uuid is None:
+        repos_info = fetch_repos_info(server, session=session)
+        if len(repos_info) == 0:
+            raise RuntimeError(f"The server {server} has no repos")
+        if len(repos_info) > 1:
+            raise RuntimeError(f"Cannot infer repo UUID. The server {server} has more than one repo."
+                               " Please supply an explicit repo UUID.")
+
+        uuid = next(iter(repos_info.keys()))
+    
     if repo_info is None:
         repo_info = fetch_repo_info(server, uuid, session=session)
 
@@ -238,7 +259,7 @@ def fetch_repo_dag(server, uuid, repo_info=None, *, session=None):
     return g
 
 
-def find_branch_nodes(server, uuid, branch="", *, session=None):
+def find_branch_nodes(server, repo_uuid=None, branch="", *, session=None):
     """
     Find all nodes in the repo which belong to the given branch.
     Note: By convention, the master branch is indicated by an empty branch name.
@@ -247,10 +268,11 @@ def find_branch_nodes(server, uuid, branch="", *, session=None):
         server:
             dvid server, e.g. 'emdata3:8900'
 
-        uuid:
+        repo_uuid:
             Any node UUID within the repo of interest.
             (DVID will return the entire repo info regardless of
             which node uuid is provided here.)
+            If the server has only one repo, this argument can be omitted.
 
         branch:
             Branch name to filter for.
@@ -264,6 +286,28 @@ def find_branch_nodes(server, uuid, branch="", *, session=None):
         master_branch_uuids = find_branch_nodes('emdata3:8900', 'a77')
         current_master_uuid = master_branch_uuids[-1]
     """
-    dag = fetch_repo_dag(server, uuid, session=session)
+    dag = fetch_repo_dag(server, repo_uuid, session=session)
     branch_uuids = nx.topological_sort(dag)
     return list(filter(lambda uuid: dag.nodes()[uuid]['Branch'] == branch, branch_uuids))
+
+def find_master(server, repo_uuid=None):
+    """
+    Find the most recent master branch node.
+    
+    Args:
+        server:
+            dvid server, e.g. 'emdata3:8900'
+
+        repo_uuid:
+            Any node UUID within the repo of interest.
+            (DVID will return the entire repo info regardless of
+            which node uuid is provided here.)
+            If the server has only one repo, this argument can be omitted.
+
+    Returns:
+        uuid of the most recent master branch node
+    """
+    master_nodes = find_branch_nodes(server, repo_uuid)
+    if len(master_nodes) == 0:
+        raise RuntimeError(f"Could not find master branch on server {server}, repo {repo_uuid}")
+    return master_nodes[-1]
