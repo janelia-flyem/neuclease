@@ -1,7 +1,6 @@
 import os
 import logging
 import threading
-from itertools import chain
 from collections import defaultdict
 from contextlib import contextmanager
 
@@ -10,7 +9,7 @@ import pandas as pd
 
 from .util import Timer, uuids_match
 from .rwlock import ReadWriteLock
-from .dvid import fetch_repo_info, fetch_supervoxels_for_body, fetch_labels, fetch_complete_mappings, fetch_mutation_id, fetch_supervoxel_splits, fetch_supervoxel_splits_from_kafka
+from .dvid import fetch_repo_info, fetch_supervoxels_for_body, fetch_labels, fetch_complete_mappings, fetch_mutation_id, fetch_supervoxel_splits
 from .merge_table import MERGE_TABLE_DTYPE, load_mapping, load_merge_table, normalize_merge_table, apply_mapping_to_mergetable
 from .focused.ingest import fetch_focused_decisions
 
@@ -365,7 +364,8 @@ class LabelmapMergeGraph:
                 if permit_write:
                     logger.info(f"Overwriting cached mapping (erasing {body_positions_orig.sum()}, updating {len(subset_df)})")
                     # Before we overwrite, invalidate the mapping version for any body IDs we're about to overwrite
-                    for prev_body in pd.unique(self.mapping.loc[dvid_supervoxels].fillna(0).astype(np.uint64)):
+                    known_svs = self.mapping.index.intersection(dvid_supervoxels).astype(np.uint64, copy=False)
+                    for prev_body in pd.unique(known_svs):
                         if prev_body in self._mapping_versions:
                             del self._mapping_versions[prev_body]
     
