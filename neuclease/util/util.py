@@ -388,18 +388,17 @@ def tqdm_proxy(iterable, *, logger=None, level=logging.INFO, **kwargs):
     if isinstance(iterable, range) and 'total' not in kwargs:
         kwargs['total'] = (iterable.stop - iterable.start) // iterable.step
     
-    _tqdm = tqdm
-    _file = None
-    disable_monitor = False
-    
     try:
         import ipykernel.iostream
         from tqdm import tqdm_notebook
         if isinstance(sys.stdout, ipykernel.iostream.OutStream):
-            _tqdm = tqdm_notebook
-            _file = sys.stdout
+            return tqdm_notebook(iterable, **kwargs)
     except ImportError:
         pass
+    
+    _tqdm = tqdm
+    _file = None
+    disable_monitor = False
     
     if not _file and os.isatty(sys.stdout.fileno()):
         _file = sys.stdout
