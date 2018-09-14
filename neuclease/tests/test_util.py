@@ -3,8 +3,9 @@ import textwrap
 import pytest
 
 import numpy as np
-from neuclease.util import uuids_match, read_csv_header, read_csv_col, connected_components, graph_tool_available,\
-    closest_approach, upsample
+from neuclease.util import (uuids_match, read_csv_header, read_csv_col, connected_components,
+                            connected_components_nonconsecutive, graph_tool_available,
+                            closest_approach, upsample)
 
 def test_uuids_match():
     assert uuids_match('abcd', 'abcdef') == True
@@ -133,6 +134,24 @@ def test_connected_components_nx():
     assert (cc_labels[4:7] == cc_labels[4]).all()
     assert cc_labels[7] != cc_labels[6]
 
+
+def test_connected_components_nonconsecutive():
+    edges = [[1,2],
+             [2,3],
+             [4,5],
+             [5,6]]
+
+    edges = 10 * np.array(edges, np.uint32)
+    node_ids = 10 * np.array([0,1,2,3,4,5,6,7], np.uint32)
+
+    cc_labels = connected_components_nonconsecutive(edges, node_ids)
+    assert cc_labels.shape == (8,)
+    assert np.unique(cc_labels).shape == (4,)
+    assert (cc_labels[0] != cc_labels[1])
+    assert (cc_labels[1:4] == cc_labels[1]).all()
+    assert (cc_labels[4:7] == cc_labels[4]).all()
+    assert cc_labels[7] != cc_labels[6]
+    
 
 def test_closest_approach():
     _ = 0

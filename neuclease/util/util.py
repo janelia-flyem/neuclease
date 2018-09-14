@@ -14,14 +14,15 @@ from itertools import product, starmap
 import requests
 from tqdm import tqdm
 
-import pandas as pd
-
 # Disable the monitor thread entirely.
 # It is more trouble than it's worth, especially when using tqdm_proxy, below.
 tqdm.monitor_interval = 0
 
 import numpy as np
+import pandas as pd
 import networkx as nx
+
+from dvidutils import LabelMapper
 
 from .view_as_blocks import view_as_blocks
 
@@ -221,27 +222,55 @@ def graph_tool_available():
     return _graph_tool_available
 
 
+def connected_components_nonconsecutive(edges, node_ids):
+    """
+    Run connected components on the graph encoded by 'edges' and node_ids.
+    All nodes from edges must be present in node_ids.
+    (Additional nodes are permitted, in which case each is assigned its own CC.)
+    The node_ids do not need to be consecutive, and can have arbitrarily large values.
+
+    For graphs with consecutively-valued nodes, connected_components() (below)
+    will be faster because it avoids a relabeling step.
+    
+    Args:
+        edges:
+            ndarray, shape=(E,2), dtype np.uint32 or uint64
+        
+        node_ids:
+            ndarray, shape=(N,), dtype np.uint32 or uint64
+
+    Returns:
+        ndarray, same shape as node_ids, labeled by component index from 0..C
+    """
+    assert node_ids.ndim == 1
+    assert node_ids.dtype in (np.uint32, np.uint64)
+    cons_node_ids = np.arange(len(node_ids), dtype=np.uint32)
+    mapper = LabelMapper(node_ids, cons_node_ids)
+    cons_edges = mapper.apply(edges)
+    return connected_components(cons_edges, len(node_ids))
+
+
 def connected_components(edges, num_nodes, _lib=None):
     """
     Run connected components on the graph encoded by 'edges' and num_nodes.
     The graph vertex IDs must be CONSECUTIVE.
-    
-    edges:
-        ndarray, shape=(N,2), dtype=np.uint32
-    
-    num_nodes:
-        Integer, max_node+1.
-        (Allows for graphs which contain nodes that are not referenced in 'edges'.)
-    
-    _lib:
-        Do not use.  (Used for testing.)
+
+    Args:
+        edges:
+            ndarray, shape=(E,2), dtype=np.uint32
+        
+        num_nodes:
+            Integer, max_node+1.
+            (Allows for graphs which contain nodes that are not referenced in 'edges'.)
+        
+        _lib:
+            Do not use.  (Used for testing.)
     
     Returns:
         ndarray of shape (num_nodes,), labeled by component index from 0..C
     
     Note: Uses graph-tool if it's installed; otherwise uses networkx (slower).
     """
-
     if (graph_tool_available() or _lib == 'gt') and _lib != 'nx':
         import graph_tool as gt
         from graph_tool.topology import label_components
