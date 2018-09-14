@@ -527,6 +527,8 @@ def generate_focused_assignment(merge_table, output_path=None):
     Returns:
         The assignment data as Python object, ready for JSON serialization.
     """
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    
     if isinstance(merge_table, np.ndarray):
         merge_table = pd.DataFrame(merge_table)
     
