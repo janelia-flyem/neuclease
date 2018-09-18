@@ -516,4 +516,20 @@ def split_events_to_mapping(split_events, leaves_only=False):
     return mapping
 
 
+def extract_and_render_splits(split_events, svs, display=False):
+    """
+    Extract the split trees for the given supervoxels and render them as text.
+    If display=True, print them to the console immediately.
+    """
+    rendered_trees = set()
+    for sv in svs:
+        tree = extract_split_tree(split_events, sv)
+        rendered = render_split_tree(tree)
+        rendered_trees.add(rendered)
+        
+    if display:
+        for r in rendered_trees:
+            print(r + "\n")
+
+    return rendered_trees
 
