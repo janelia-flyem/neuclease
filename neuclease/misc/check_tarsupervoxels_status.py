@@ -1,3 +1,23 @@
+"""
+Checks a DVID tarsupervoxels instance (tsv_instance) for
+missing supervoxels, given a list of bodies to check.
+Outputs the list of missing supervoxels as a CSV file.
+
+If you are checking a lot of bodies, try the --use-mapping option,
+which fetches the entire in-memory mapping for the segmentation instance
+and then uses the /exists endpoint (instead of the /missing) endpoint.
+Fetching the entire mapping incurs an initial overhead of ~1 minute or so,
+but the /exists endpoint is MUCH faster than /missing.
+
+Examples:
+
+    # Check a couple bodies
+    check_tarsupervoxels_status emdata3:8900 0716 segmentation segmentation_sv_meshes bodies.csv
+
+    # Check a lot of bodies
+    check_tarsupervoxels_status --use-mapping emdata3:8900 0716 segmentation segmentation_sv_meshes bodies.csv
+    
+"""
 import logging
 import argparse
 import requests
@@ -15,14 +35,15 @@ logger = logging.getLogger(__name__)
 def main():
     configure_default_logging()
     
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--use-mapping', action='store_true')
-    parser.add_argument('--output', '-o', default='missing-from-tsv.csv')
-    parser.add_argument('server')
-    parser.add_argument('uuid')
-    parser.add_argument('seg_instance')
-    parser.add_argument('tsv_instance')
-    parser.add_argument('bodies_csv')
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument('--use-mapping', action='store_true',
+                        help='Use in-memory map + /exists instead of /missing, as described in the general help text above.')
+    parser.add_argument('--output', '-o', default='missing-from-tsv.csv', help='Where to write the output CSV (default: missing-from-tsv.csv)')
+    parser.add_argument('server', help='dvid server, e.g. emdata3:8900')
+    parser.add_argument('uuid', help='dvid node')
+    parser.add_argument('seg_instance', help='name of a labelmap instance, e.g. segmentation')
+    parser.add_argument('tsv_instance', help='name of a tarsupervoxels instance, e.g. segmentation_sv_meshes')
+    parser.add_argument('bodies_csv', help='CSV file whose first column is a list of body IDs. Other columns ignored.')
     args = parser.parse_args()
     
     bodies = read_csv_col(args.bodies_csv, 0, np.uint64)
