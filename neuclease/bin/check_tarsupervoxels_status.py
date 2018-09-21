@@ -145,7 +145,7 @@ def check_tarsupervoxels_status_via_exists(server, uuid, tsv_instance, seg_insta
 # 
 # bio = BytesIO()
 # tf = tarfile.TarFile('empty-svs.tar', 'w', bio)
-# for sv in tqdm(missing_svs.query('voxel_count <= 100')['sv']):
+# for sv in tqdm(missing_svs):
 #     tf.addfile(tarfile.TarInfo(f'{sv}.drc'), BytesIO())
 # 
 # post_load(*master, 'segmentation_sv_meshes', bio.getvalue())
