@@ -12,50 +12,12 @@ source $ACTIVATE flyem
 
 CLEAVE_PORT=5551
 nohup neuclease_cleave_server \
-  -p 5551 \
-  --log-dir /nrs/flyem/bergs/neuclease-logs/production-emdata3-8900-${CLEAVE_PORT} \
-  --merge-table /nrs/flyem/bergs/final-agglo-fixsplit-patched/final_patched_20180426_merge_table.npy \
-  --primary-dvid-server emdata3:8900 \
-  --primary-uuid 9e0d2e899d624d47a53602f3ae986633 \
-  --primary-labelmap-instance segmentation \
-  &
-##
-
-CLEAVE_PORT=5552
-nohup neuclease_cleave_server \
   -p ${CLEAVE_PORT} \
   --log-dir /nrs/flyem/bergs/neuclease-logs/production-emdata3-8900-${CLEAVE_PORT} \
   --merge-table /nrs/flyem/bergs/final-agglo-fixsplit-patched/final_patched_20180426_merge_table.npy \
   --primary-dvid-server emdata3:8900 \
-  --primary-uuid 9e0d2e899d624d47a53602f3ae986633 \
+  --primary-uuid 07160ccb9ee849ad8465c3b617bb90e5 \
   --primary-labelmap-instance segmentation \
   &
 ##
 
-##
-## DEVELOPMENT (port 5552)
-##
-nohup neuclease_cleave_server \
-  -p 5552 \
-  --log-dir /nrs/flyem/bergs/neuclease-logs/development-emdata1-8400 \
-  --merge-table /nrs/flyem/bergs/final-agglo-fixsplit-patched/final_patched_20180426_merge_table.npy \
-  --primary-dvid-server emdata1:8400 \
-  --primary-uuid ecbedddd08034db8b0b0f1529b578d96 \
-  --primary-labelmap-instance segmentation \
-  &
-##
-
-
-##
-## Practice server (same as above, but with a different dvid server and different log directory)
-##
-PRACTICE_PARENT_UUID="6134ca01a0cf444baf82d5bc1efb49e8"
-nohup neuclease_cleave_server \
-  -p 5551 \
-  --log-dir /nrs/flyem/bergs/neuclease-logs/practice-emdata1-8900 \
-  --merge-table /nrs/flyem/bergs/final-agglo-fixsplit-patched/final_patched_20180426_merge_table.npy \
-  --primary-dvid-server emdata1:8900 \
-  --primary-uuid ${PRACTICE_PARENT_UUID} \
-  --primary-labelmap-instance segmentation \
-  &
-##
