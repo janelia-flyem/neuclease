@@ -111,10 +111,12 @@ def test_generate_sample_coordinate(labelmap_setup):
     instance_info = DvidInstanceInfo(dvid_server, dvid_repo, 'segmentation')
 
     coord_zyx = generate_sample_coordinate(*instance_info, 1)
-    assert (coord_zyx == [0,0,0]).all()
+    label = fetch_label_for_coordinate(*instance_info, coord_zyx.tolist())
+    assert label == 1
 
     coord_zyx = generate_sample_coordinate(*instance_info, 2, supervoxels=True)
-    assert (coord_zyx == [0,0,3]).all()
+    label = fetch_label_for_coordinate(*instance_info, coord_zyx.tolist(), supervoxels=True)
+    assert label == 2
 
 
 def test_fetch_labelarray_voxels(labelmap_setup):

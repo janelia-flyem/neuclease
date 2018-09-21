@@ -461,17 +461,18 @@ def generate_sample_coordinate(server, uuid, instance, label_id, supervoxels=Fal
     """
     SCALE = 6 # sparsevol-coarse is always scale 6
     coarse_block_coords = fetch_sparsevol_coarse(server, uuid, instance, label_id, supervoxels, session=session)
-    first_block_coord = (2**SCALE) * np.array(coarse_block_coords[0]) // 64 * 64
-    first_block_box = (first_block_coord, first_block_coord + 64)
+    num_blocks = len(coarse_block_coords)
+    middle_block_coord = (2**SCALE) * np.array(coarse_block_coords[num_blocks//2]) // 64 * 64
+    middle_block_box = (middle_block_coord, middle_block_coord + 64)
     
-    first_block = fetch_labelarray_voxels(server, uuid, instance, first_block_box, supervoxels=supervoxels, session=session)
-    nonzero_coords = np.transpose((first_block == label_id).nonzero())
+    block = fetch_labelarray_voxels(server, uuid, instance, middle_block_box, supervoxels=supervoxels, session=session)
+    nonzero_coords = np.transpose((block == label_id).nonzero())
     if len(nonzero_coords) == 0:
         label_type = {False: 'body', True: 'supervoxel'}[supervoxels]
         raise RuntimeError(f"The sparsevol-coarse info for this {label_type} ({label_id}) "
                            "appears to be out-of-sync with the scale-0 segmentation.")
 
-    return first_block_coord + nonzero_coords[0]
+    return middle_block_coord + nonzero_coords[0]
 
 
 @dvid_api_wrapper
