@@ -5,27 +5,29 @@ import networkx as nx
 from ..util import uuids_match
 from . import dvid_api_wrapper, fetch_generic_json
 
-
-INSTANCE_TYPENAMES = """\
-annotation
+VOXEL_INSTANCE_TYPENAMES = """\
 float32blk
 googlevoxels
-imagetile
-keyvalue
 labelarray
 labelblk
-labelgraph
 labelmap
-labelsz
-labelvol
 multichan16
 rgba8blk
-roi
-tarsupervoxels
 uint16blk
 uint32blk
 uint64blk
 uint8blk
+""".split()
+
+INSTANCE_TYPENAMES = VOXEL_INSTANCE_TYPENAMES + """\
+annotation
+imagetile
+keyvalue
+labelgraph
+labelsz
+labelvol
+roi
+tarsupervoxels
 """.split()
 
 @dvid_api_wrapper
@@ -82,6 +84,41 @@ def expand_uuid(server, uuid, repo_uuid=None, repo_info=None, *, session=None):
         raise RuntimeError(f"Multiple ({len(matching_uuids)}) uuids match '{uuid}': {matching_uuids}")
 
     return matching_uuids[0]
+
+
+@dvid_api_wrapper
+def fetch_repo_instances(server, uuid, typenames=None, *, session=None):
+    """
+    Fetch and parse the repo info for the given server/uuid, and
+    return a dict of the data instance names and their typenames.
+    Optionally filter the list to include only certain typenames.
+    
+    Args:
+        server:
+            dvid server, e.g. 'emdata3:8900'
+
+        uuid:
+            Abbreviated uuid, e.g. `662edc`
+        
+        typenames:
+            Optional. A string or list-of-strings indicating which
+            typenames to include in the result.  All non-matching
+            data instances will be discarded from the result.
+
+    Returns:
+        dict { instance_name : typename }
+    """
+    if isinstance(typenames, str):
+        typenames = [typenames]
+
+    repo_info = fetch_repo_info(server, uuid, session=session)
+    instance_infos = repo_info["DataInstances"].values()
+
+    if typenames:
+        typenames = set(typenames)
+        instance_infos = filter(lambda info: info["Base"]["TypeName"] in typenames, instance_infos)
+    
+    return { info["Base"]["Name"] : info["Base"]["TypeName"] for info in instance_infos }
 
 
 @dvid_api_wrapper
