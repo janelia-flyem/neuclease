@@ -1,12 +1,14 @@
 import json
 from io import BytesIO
 from tarfile import TarFile
+from collections.abc import Mapping
+
 import numpy as np
 
 from .. import dvid_api_wrapper, fetch_generic_json
 
 # $ protoc --python_out=. neuclease/dvid/keyvalue/ingest.proto
-from .ingest_pb2 import Keys, KeyValues
+from .ingest_pb2 import Keys, KeyValue, KeyValues
 
 
 @dvid_api_wrapper
@@ -137,3 +139,41 @@ def _fetch_keyvalues_jsontar_via_jsontar(server, uuid, instance, keys, as_json=F
         keyvalues[member.name] = val
 
     return keyvalues
+
+
+@dvid_api_wrapper
+def post_keyvalues(server, uuid, instance, keyvalues, *, session=None):
+    """
+    Post a batch of key-value pairs to a keyvalue instance.
+    
+    Args:
+        server:
+            dvid server, e.g. 'emdata3:8900'
+        
+        uuid:
+            dvid uuid, e.g. 'abc9'
+        
+        instance:
+            keyvalue instance name, e.g. 'focused_merged'
+        
+        keyvalues:
+            A dictionary of { key : value }, in which key is a string and value is bytes.
+            If the value is not bytes, it will be treated as JSON data and encoded to bytes.
+    """
+    assert isinstance(keyvalues, Mapping)
+
+    kvs = []
+    for key, value in keyvalues.items():
+        if not isinstance(value, (bytes, str)):
+            value = json.dumps(value)
+        if isinstance(value, str):
+            value = value.encode('utf-8')
+
+        kvs.append( KeyValue(key=key, value=value) )
+
+    proto_keyvalues = KeyValues()
+    proto_keyvalues.kvs.extend(kvs)
+
+    url = f'http://{server}/api/node/{uuid}/{instance}/keyvalues'
+    r = session.post(url, data=proto_keyvalues.SerializeToString())
+    r.raise_for_status()
