@@ -1,10 +1,11 @@
 import json
 import logging
+from collections.abc import Mapping
+
 import numpy as np
 import pandas as pd
-from pandas.api.types import CategoricalDtype
 
-from ..util import NumpyConvertingEncoder, tqdm_proxy
+from ..util import NumpyConvertingEncoder, tqdm_proxy, extract_labels_from_volume
 from . import dvid_api_wrapper, fetch_generic_json
 from .rle import runlength_decode_from_ranges
 
@@ -112,7 +113,7 @@ def post_roi(server, uuid, instance, roi_ranges, *, session=None):
 
 
 @dvid_api_wrapper
-def fetch_combined_roi_volume(server, uuid, instances, as_bool=False, *, session=None):
+def fetch_combined_roi_volume(server, uuid, rois, as_bool=False, box_zyx=None, *, session=None):
     """
     Fetch several ROIs from DVID and combine them into a single label volume or mask.
     The label values in the returned volume correspond to the order in which the ROI
@@ -139,13 +140,31 @@ def fetch_combined_roi_volume(server, uuid, instances, as_bool=False, *, session
         uuid:
             dvid uuid, e.g. 'abc9'
         
-        instances:
-            list of dvid ROI instance names, e.g. ['PB', 'FB', 'EB', 'NO']
+        rois:
+            Either:
+            - a mapping of `{ roi_name : label }`, indicating each ROI's
+              label ID in the output image, or
+            - a list of dvid ROI instance names, e.g. `['PB', 'FB', 'EB', 'NO']`,
+              in which case the ROIs will be enumerated in order (starting at 1)
     
         as_bool:
             If True, return a boolean mask.
             Otherwise, return a label volume, whose dtype will be chosen such
             as to allow a unique value for each ROI in the list.
+        
+        box_zyx:
+            Optional. Specifies the box `[start, stop] == [(z0,y0,x0), (z1,y1,x1)]`
+            of the returned result.
+            If this is smaller than the ROIs' combined bounding box, then ROIs
+            will of course be truncated at the box boundaries.
+            If this is larger than the ROIs' combined bounding box, then the
+            result will be padded with zeros.
+            As a convenience, you may specify None for either start or stop,
+            in which case it will be replaced with the corresponding bound
+            from the ROIs' combined bounding box.
+            For example, `box_zyx=[(0,0,0), None]` can be used to produce an output
+            volume whose coordinates are aligned to the underlying data (at scale 5)
+            with no offset.
     
     Returns:
         (combined_vol, combined_box, overlapping_pairs)
@@ -160,31 +179,43 @@ def fetch_combined_roi_volume(server, uuid, instances, as_bool=False, *, session
         # Select ROIs of interest
         rois = fetch_repo_instances(*master, 'roi').keys()
         rois = filter(lambda roi: not roi.startswith('(L)'), rois)
-        rois = filter(lambda roi: not roi.endswith('-lm'), rois))
+        rois = filter(lambda roi: not roi.endswith('-lm'), rois)
 
         # Combine into volume
-        roi_vol, box, overlaps = fetch_combined_roi_volume('emdata3:8900', '7f0c', rois)
+        roi_vol, box, overlaps = fetch_combined_roi_volume('emdata3:8900', '7f0c', rois, box_zyx=[(0,0,0), None])
     """
-    all_ranges = [fetch_roi(server, uuid, roi, format='ranges', session=session)
-                  for roi in tqdm_proxy(instances, leave=False)]
+    if not isinstance(rois, Mapping):
+        rois = { roi : i for i,roi in enumerate(rois, start=1) }
+
+    all_rle_ranges = {}
+    for roi in tqdm_proxy(rois.keys(), leave=False):
+        all_rle_ranges[roi] = fetch_roi(server, uuid, roi, format='ranges', session=session)
     
     roi_boxes = []
-    for ranges in all_ranges:
-        roi_boxes.append( [  ranges[:, (0,1,2)].min(axis=0),
-                           1+ranges[:, (0,1,3)].max(axis=0)] )
+    for rle_ranges in all_rle_ranges.values():
+        roi_boxes.append( [  rle_ranges[:, (0,1,2)].min(axis=0),
+                           1+rle_ranges[:, (0,1,3)].max(axis=0)] )
     
     roi_boxes = np.array(roi_boxes)
-    combined_box = [roi_boxes[:,0,:].min(axis=0),
-                    roi_boxes[:,1,:].max(axis=0)]
 
-    combined_shape = combined_box[1] - combined_box[0]
+    if box_zyx is None:
+        box_zyx = [None, None]
+
+    assert len(box_zyx) == 2
+    if box_zyx[0] is None:
+        box_zyx[0] = roi_boxes[:,0,:].min(axis=0)
+    if box_zyx[1] is None:
+        box_zyx[1] = roi_boxes[:,1,:].max(axis=0)
+    
+    box_zyx = np.asarray(box_zyx)
+    combined_shape = (box_zyx[1] - box_zyx[0])
     
     if as_bool:
         dtype = np.bool
     else:
         # Choose smallest dtype that can hold enough unique values
         for d in [np.uint8, np.uint16, np.uint32]:
-            if len(instances) <= np.iinfo(d).max:
+            if max(rois.values()) <= np.iinfo(d).max:
                 dtype = d
                 break
 
@@ -192,36 +223,46 @@ def fetch_combined_roi_volume(server, uuid, instances, as_bool=False, *, session
     combined_vol = np.zeros(combined_shape, dtype)
 
     # Overlay ROIs one-by-one
-    for i, rle_ranges in enumerate(tqdm_proxy(all_ranges, leave=False), start=1):
-        coords = runlength_decode_from_ranges(rle_ranges)
-        coords -= combined_box[0]
+    for roi, label in tqdm_proxy(rois.items(), leave=False):
+        coords = runlength_decode_from_ranges(all_rle_ranges[roi])
+        
+        # Drop coords that are out-of-bounds
+        in_bounds = (coords >= box_zyx[0]).all(axis=1) & (coords < box_zyx[1]).all(axis=1)
+        coords = coords[in_bounds]
+
+        # Offset for output
+        coords -= box_zyx[0]
 
         # If we're overwriting some areas of a ROI we previously wrote,
         # keep track of the overlapping pairs.
         prev_rois = set(pd.unique(combined_vol[tuple(coords.transpose())]))
         prev_rois -= set([0])
         if prev_rois:
-            overlapping_pairs += ((p,i) for p in prev_rois)
+            overlapping_pairs += ((p,label) for p in prev_rois)
 
         if as_bool:
             combined_vol[tuple(coords.transpose())] = True
         else:
-            combined_vol[tuple(coords.transpose())] = i
+            combined_vol[tuple(coords.transpose())] = label
 
-    return combined_vol, combined_box, overlapping_pairs
+    return combined_vol, box_zyx, overlapping_pairs
 
 
 @dvid_api_wrapper
 def determine_point_rois(server, uuid, rois, points_df, combined_vol=None, combined_box=None, *, session=None):
     """
+    Convenience function that combines fetch_combined_roi_volume() and extract_labels_from_volume().
+    Labels points with their corresponding ROI (if any).
+    Points that are not contained in the given ROIs are not labeled.
+    
     Given a list of ROI names and a DataFrame with (at least) columns ['x', 'y', 'z'],
-    append columns 'roi_index' and 'roi', indicating which ROI each point falls in.
-    A roi_index of 0 indicates an unspecified ROI, and a roi_index of 1 indicates the
+    append columns 'roi_label' and 'roi', indicating which ROI each point falls in.
+    A roi_label of 0 indicates an unspecified ROI, and a label of 1 indicates the
     first roi in the given list, etc.
 
     That is, for each row:
         
-        roi = rois[roi_index-1]
+        roi = rois[roi_label-1]
     
     Args:
         server:
@@ -255,23 +296,6 @@ def determine_point_rois(server, uuid, rois, points_df, combined_vol=None, combi
 
     assert combined_box is not None
 
-    # Rescale points to scale 5 (ROIs are given at scale 5)
-    logger.info("Scaling points")
-    downsampled_coords_zyx = points_df[['z', 'y', 'x']] // (2**5)
-
-    # Drop everything outside the combined_box
-    logger.info("Excluding OOB points")
-    min_z, min_y, min_x = combined_box[0] #@UnusedVariable
-    max_z, max_y, max_x = combined_box[1] #@UnusedVariable
-    q = 'z >= @min_z and y >= @min_y and x >= @min_x and z < @max_z and y < @max_y and x < @max_x'
-    downsampled_coords_zyx.query(q, inplace=True)
-
-    logging.info(f"Extracting {len(downsampled_coords_zyx)} ROI index values")
-    points_df['roi_index'] = 0
-    downsampled_coords_zyx -= combined_box[0]
-    points_df.loc[downsampled_coords_zyx.index, 'roi_index'] = combined_vol[tuple(downsampled_coords_zyx.values.transpose())]
-
-    roi_categories = ['<unspecified>'] + list(rois)
-    roi_index_mapping = { roi : category for roi, category in zip(range(len(roi_categories)), roi_categories) }
-    points_df['roi'] = pd.Categorical(points_df['roi_index'].map(roi_index_mapping), categories=roi_categories)
+    extract_labels_from_volume(points_df, combined_vol, combined_box, 5, rois)
+    points_df.rename(inplace=True, columns={'label': 'roi_label', 'label_name': 'roi'})
 

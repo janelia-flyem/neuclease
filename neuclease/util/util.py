@@ -10,6 +10,7 @@ import warnings
 import contextlib
 from datetime import timedelta
 from itertools import product, starmap
+from collections.abc import Mapping
 
 import requests
 from tqdm import tqdm
@@ -25,6 +26,8 @@ import networkx as nx
 from dvidutils import LabelMapper
 
 from .view_as_blocks import view_as_blocks
+
+logger = logging.getLogger(__name__)
 
 @contextlib.contextmanager
 def Timer(msg=None, logger=None):
@@ -345,6 +348,88 @@ def upsample(orig_data, upsample_factor):
     return upsampled_data
 
 
+def extract_labels_from_volume(points_df, volume, box_zyx=None, vol_scale=0, label_names=None):
+    """
+    Given a list of point coordinates and a label volume, assign a
+    label to each point based on its position in the volume.
+    
+    Extracting values from an array in numpy is simple.
+    In the simplest case, this is equivalent to:
+    
+        coords = points_df[['z', 'y', 'x']].values.transpose()
+        points_df['label'] = volume[(*coords,)]
+
+    But this function supports extra features:
+    
+    - Points outside the volume extents are handled gracefully (they remain unlabeled).
+    - The volume can be offset from the origin (doesn't start at (0,0,0)).
+    - The volume can be downscaled.
+    - Both label values (ints) and label names are output, if the label names were specified.
+    
+    Args:
+        points_df:
+            DataFrame with at least columns ['x', 'y', 'z'].
+            The points in this DataFrame should be provided at SCALE-0,
+            regardless of vol_scale.
+            This function appends two additional columns to the DataFrame, IN-PLACE.
+        
+        volume:
+            3D ndarray of label voxels
+        
+        box_zyx:
+            The (min,max) coordinates in which the volume resides in the point coordinate space.
+            It is assumed that this box is provided at the same scale as vol_scale,
+            (i.e. it is not necessarily given using scale-0 coordiantes).
+        
+        vol_scale:
+            Specifies the scale at which volume (and box_zyx) were provided.
+            The coordinates in points_df will be downscaled accordingly.
+            
+        label_names:
+            Optional.  Specifies how label names map to label IDs.
+            If provided, a new column 'label_name' will be appended to
+            points_df in addition to the 'label' column.
+
+            Must be either:
+            - a mapping of `{ name : label }`, indicating each ROI's
+              label ID in the output image, or
+            - a list label names in which case the mapping is determined automatically
+              by enumerating the labels in the given order (starting at 1).
+    
+    Returns:
+        None.  Results are appended to the points_df as new column(s).
+    """
+    if box_zyx is None:
+        box_zyx = np.array(([0]*volume.ndim, volume.shape))
+
+    assert ((box_zyx[1] - box_zyx[0]) == volume.shape).all() 
+
+    downsampled_coords_zyx = points_df[['z', 'y', 'x']] // (2**vol_scale)
+
+    # Drop everything outside the combined_box
+    min_z, min_y, min_x = box_zyx[0] #@UnusedVariable
+    max_z, max_y, max_x = box_zyx[1] #@UnusedVariable
+    q = 'z >= @min_z and y >= @min_y and x >= @min_x and z < @max_z and y < @max_y and x < @max_x'
+    downsampled_coords_zyx.query(q, inplace=True)
+
+    logger.info(f"Extracting {len(downsampled_coords_zyx)} ROI index values")
+    points_df['label'] = 0
+    downsampled_coords_zyx -= box_zyx[0]
+    points_df.loc[downsampled_coords_zyx.index, 'label'] = volume[tuple(downsampled_coords_zyx.values.transpose())]
+
+    if label_names is not None:
+        if not isinstance(label_names, Mapping):
+            label_names = { name: i for i, name in enumerate(label_names, start=1) }
+
+        # Reverse the mapping
+        label_names = { v:k for k,v in label_names.items() }
+        
+        if 0 not in label_names:
+            label_names[0] = '<unspecified>'
+
+        points_df['label_name'] = pd.Categorical(points_df['label'].map(label_names), categories=label_names.values(), ordered=False)
+
+
 def unordered_duplicated(df, subset=None, keep='first'):
     """
     Like pd.DataFrame.duplicated(), but sorts each row first, so
@@ -454,4 +539,6 @@ class TqdmToLogger(io.StringIO):
 
     def flush(self):
         self.logger.log(self.level, self.buf)
+
+
 
