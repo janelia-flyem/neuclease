@@ -2,7 +2,7 @@ import json
 from io import BytesIO
 from tarfile import TarFile
 import numpy as np
-from . import dvid_api_wrapper, fetch_generic_json
+from .. import dvid_api_wrapper, fetch_generic_json
 
 
 @dvid_api_wrapper
