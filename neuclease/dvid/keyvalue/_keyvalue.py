@@ -2,7 +2,11 @@ import json
 from io import BytesIO
 from tarfile import TarFile
 import numpy as np
+
 from .. import dvid_api_wrapper, fetch_generic_json
+
+# $ protoc --python_out=. neuclease/dvid/keyvalue/ingest.proto
+from .ingest_pb2 import Keys, KeyValues
 
 
 @dvid_api_wrapper
@@ -45,11 +49,13 @@ def post_key(server, uuid, instance, key, data=None, json=None, *, session=None)
     
 
 @dvid_api_wrapper
-def fetch_keyvalues(server, uuid, instance, keys, as_json=False, *, session=None):
+def fetch_keyvalues(server, uuid, instance, keys, as_json=False, *, use_jsontar=False, session=None):
     """
     Fetch a list of values from a keyvalue instance in a single batch call.
-    Internally, this function uses the 'jsontar' option to fetch the keys as a single tarball.
-    The values are extracted from the tarball and returned in a dict.
+    The result is returned as a dict `{ key : value }`
+        
+    Internally, this function can use either the 'jsontar' option to
+    fetch the keys as a tarball, or via the default protobuf implementation (faster).
     
     Args:
         server:
@@ -67,10 +73,46 @@ def fetch_keyvalues(server, uuid, instance, keys, as_json=False, *, session=None
         as_json:
             If True, parse the returned values as JSON.
             Otherwise, return bytes.
+        
+        use_jsontar:
+            If True, fetch the data via the 'jsontar' mechanism, rather
+            than the default protobuf implementation, which is faster.
     
     Returns:
-        dict of { key: value }
+        dict of `{ key: value }`
     """
+    if use_jsontar:
+        return _fetch_keyvalues_jsontar_via_jsontar(server, uuid, instance, keys, as_json, session=session)
+    else:
+        return _fetch_keyvalues_via_protobuf(server, uuid, instance, keys, as_json, session=session)
+        
+
+@dvid_api_wrapper
+def _fetch_keyvalues_via_protobuf(server, uuid, instance, keys, as_json=False, *, use_jsontar=False, session=None):
+    assert not isinstance(keys, str), "keys should be a list (or array) of strings"
+
+    proto_keys = Keys()
+    for key in keys:
+        proto_keys.keys.append(key)
+    
+    r = session.get(f'http://{server}/api/node/{uuid}/{instance}/keyvalues', data=proto_keys.SerializeToString())
+    r.raise_for_status()
+
+    proto_keyvalues = KeyValues()
+    proto_keyvalues.ParseFromString(r.content)
+    
+    keyvalues = {}
+    for kv in proto_keyvalues.kvs:
+        if as_json:
+            keyvalues[kv.key] = json.loads(kv.value)
+        else:
+            keyvalues[kv.key] = kv.value
+
+    return keyvalues
+
+
+@dvid_api_wrapper
+def _fetch_keyvalues_jsontar_via_jsontar(server, uuid, instance, keys, as_json=False, *, session=None):
     params = {'jsontar': 'true'}
     
     assert not isinstance(keys, str), "keys should be a list (or array) of strings"
