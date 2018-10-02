@@ -427,7 +427,9 @@ def extract_labels_from_volume(points_df, volume, box_zyx=None, vol_scale=0, lab
         if 0 not in label_names:
             label_names[0] = '<unspecified>'
 
-        points_df['label_name'] = pd.Categorical(points_df['label'].map(label_names), categories=label_names.values(), ordered=False)
+        points_df['label_name'] = pd.Categorical( points_df['label'].map(label_names),
+                                                  categories=label_names.values(),
+                                                  ordered=False )
 
 
 def unordered_duplicated(df, subset=None, keep='first'):

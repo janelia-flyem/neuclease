@@ -10,7 +10,7 @@ from dvidutils import LabelMapper
 from ..util import read_csv_header, Timer
 from ..util.csv import read_csv_col
 from ..merge_table import load_all_supervoxel_sizes, compute_body_sizes
-from ..dvid import fetch_keys, fetch_key, fetch_complete_mappings, fetch_keyvalues
+from ..dvid import fetch_keys, fetch_complete_mappings, fetch_keyvalues
 from ..dvid.annotation import load_synapses_from_csv
 from ..dvid.labelmap import fetch_supervoxel_fragments, fetch_labels
 
@@ -278,7 +278,7 @@ def compute_focused_bodies(server, uuid, instance, synapse_samples, min_tbars, m
         root_sv_sizes = f'{root_sv_sizes_dir}/supervoxel-sizes.h5'
         min_body_size = int(10e6)
         sv_classifications = '/nrs/flyem/bergs/sv-classifications.h5'
-        marked_bad_bodies = '/nrs/flyem/bergs/complete-ffn-agglo/bad-bodies-2018-08-21.csv'
+        marked_bad_bodies = '/nrs/flyem/bergs/complete-ffn-agglo/bad-bodies-2018-10-01.csv'
         
         table_description = f'{uuid}-{min_tbars}tbars-{min_psds}psds-{min_body_size / 1e6:.1f}Mv'
         focused_table = compute_focused_bodies(server, uuid, instance, synapse_samples, min_tbars, min_psds, root_sv_sizes, min_body_size, sv_classifications, marked_bad_bodies, return_table=True)
