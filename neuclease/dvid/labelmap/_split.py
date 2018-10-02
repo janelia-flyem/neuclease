@@ -426,7 +426,7 @@ def fetch_split_supervoxel_sizes(server, uuid, instance, include_retired=False, 
     return sv_sizes
 
 
-def fetch_supervoxel_fragments(server, uuid, instance, split_source='kafka', *, session=None):
+def fetch_supervoxel_fragments(server, uuid, instance, split_source='kafka', kafka_msgs=None, *, session=None):
     """
     Fetch the list of all supervoxels that have been split and their resulting fragments.
     
@@ -450,7 +450,11 @@ def fetch_supervoxel_fragments(server, uuid, instance, split_source='kafka', *, 
         and retired_svs is the list of all supervoxels that have ever been split in the instance.
         Note that these do not constitute a mapping.
     """
-    split_events = fetch_supervoxel_splits(server, uuid, instance, split_source, session=session)
+    if split_source == 'kafka':
+        split_events = fetch_supervoxel_splits_from_kafka(server, uuid, instance, kafka_msgs=kafka_msgs, session=session)
+    else:
+        split_events = fetch_supervoxel_splits_from_dvid(server, uuid, instance, session=session)
+            
     if len(split_events) == 0:
         # No splits on this node
         return (np.array([], np.uint64), np.array([], np.uint64))
