@@ -307,6 +307,10 @@ def fetch_synapses_in_batches(server, uuid, synapses_instance, bounding_box_zyx,
     
     Note: The DataFrame format discards relationship information.
     
+    Warning: For large volumes with many synapses, the 'json' format requires a lot of RAM,
+             and is not particularly convenient to save/load.  If you don't need relationship info,
+             use the 'pandas' format.
+    
     Args:
         server:
             dvid server, e.g. 'emdata3:8900'
