@@ -11,8 +11,9 @@ import pandas as pd
 
 from dvidutils import LabelMapper
 
-from .util import Timer, read_csv_header
-from .dvid import fetch_complete_mappings, fetch_split_supervoxel_sizes
+from .util import Timer, read_csv_header, tqdm_proxy
+from .dvid import (fetch_complete_mappings, fetch_split_supervoxel_sizes, read_kafka_messages,
+                   fetch_supervoxel_splits, split_events_to_mapping, fetch_label)
 
 logger = logging.getLogger(__name__)
 
@@ -510,6 +511,112 @@ def extract_important_merges(speculative_merge_tables, important_bodies, body_ma
         results.append(spec_merge_table_df)
     
     return results
+
+
+def update_merge_table(server, uuid, instance, table_df, complete_mapping=None, split_mapping=None):
+    """
+    Given a merge table (such as a focused proofreading decision table),
+    find rows whose supervoxels no longer exist in the given instance (due to splits).
+
+    For those invalid rows, determine the new supervoxel and body ID at the given coordinates
+    to determine the updated supervoxel/body IDs.
+    
+    Updates (in-place) the supervoxel and body columns.
+    
+    Note: If any coordinate appears to be misplaced (i.e. the supervoxel ID at
+    the coordinate is not a descendant of the listed supervoxel), the supervoxel is
+    left unchanged and the body is mapped to 0.
+    
+    Args:
+        server, uuid, instance:
+            Table will be updated with respect to the given segmentation instance info
+        
+        table_df:
+            DataFrame with SV columns and coordinate columns ('xa', 'ya', 'za', etc.)
+        
+        complete_mapping:
+            Optional.  Will be fetched if not provided.
+            Must be the complete mapping as returned by fetch_complete_mappings(..., include_retired=True)
+        
+        split_mapping:
+            Optional.  Will be fetched if not provided.
+            A mapping from supervoxel fragments to root supervoxel IDs.
+
+    Returns:
+        None. (The table is modified in place.)
+    """
+    seg_info = server, uuid, instance
+
+    # Ensure proper table columns/dtypes
+    if 'id_a' in table_df.columns:
+        col_sv_a, col_sv_b = 'id_a', 'id_b'
+    elif 'sv_a' in table_df.columns:
+        col_sv_a, col_sv_b = 'sv_a', 'sv_b'
+    else:
+        raise RuntimeError("table has no sv columns")
+    
+    assert set([col_sv_a, col_sv_b, 'xa', 'ya', 'za', 'xb', 'yb', 'zb']).issubset(table_df.columns)
+    for col in ['xa', 'ya', 'za', 'xb', 'yb', 'zb']:
+        table_df[col] = table_df[col].fillna(0).astype(np.int32)
+
+    # Construct mappings if necessary
+    kafka_msgs = None
+    if complete_mapping is None or split_mapping is None:
+        kafka_msgs = read_kafka_messages(*seg_info)
+
+    if complete_mapping is None:
+        complete_mapping = fetch_complete_mappings(*seg_info, include_retired=True, kafka_msgs=kafka_msgs)
+    complete_mapper = LabelMapper(complete_mapping.index.values, complete_mapping.values)
+
+    if split_mapping is None:
+        split_events = fetch_supervoxel_splits(*seg_info)
+        split_mapping = split_events_to_mapping(split_events, leaves_only=False)
+    split_mapper = LabelMapper(split_mapping.index.values, split_mapping.values)
+
+    # Apply up-to-date body mapping
+    # (Retired supervoxels will map to body 0)
+    table_df['body_a'] = complete_mapper.apply(table_df[col_sv_a].values, True)
+    table_df['body_b'] = complete_mapper.apply(table_df[col_sv_b].values, True)
+
+    successfully_updated = 0
+    failed_update = 0
+
+    # Update the rows with invalid bodies.    
+    for index in tqdm_proxy(table_df.query('body_a == 0 or body_b == 0').index):
+        
+        def update_row(index, col_body, col_sv, col_z, col_y, col_x):
+            nonlocal successfully_updated, failed_update
+            
+            # Extract from table
+            coord = table_df.loc[index, [col_z, col_y, col_x]]
+            old_sv = table_df.loc[index, col_sv]
+            
+            # Check current SV in the volume
+            new_sv = fetch_label(*seg_info, coord, supervoxels=True)
+
+            # The old/new SV must have come from the same root SV.
+            # If not, the coordinate must be misplaced and can't be used here.
+            svs = np.asarray([new_sv, old_sv], np.uint64)
+            mapped_svs = split_mapper.apply(svs, True)
+            if mapped_svs[0] != mapped_svs[1]:
+                failed_update += 1
+            else:
+                body = complete_mapper.apply(np.array([new_sv], np.uint64))[0]
+                table_df.loc[index, col_body] = body
+                table_df.loc[index, col_sv] = new_sv
+                successfully_updated +=1
+
+        # id_a/body_a
+        if table_df.loc[index, 'body_a'] == 0:
+            update_row(index, 'body_a', col_sv_a, 'za', 'ya', 'xa')
+
+        # id_b/body_b
+        if table_df.loc[index, 'body_b'] == 0:
+            update_row(index, 'body_b', col_sv_b, 'zb', 'yb', 'xb')
+    
+    logger.info(f"Updated {successfully_updated}, failed to update {failed_update}")
+
+
 
 
 def generate_focused_assignment(merge_table, output_path=None):
