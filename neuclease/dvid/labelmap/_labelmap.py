@@ -80,9 +80,9 @@ fetch_body_size = fetch_size
 def fetch_sizes(server, uuid, instance, label_ids, supervoxels=False, *, session=None):
     # FIXME: Return pd.Series
     label_ids = list(map(int, label_ids))
-    supervoxels = str(bool(supervoxels)).lower()
+    sv_param = str(bool(supervoxels)).lower()
 
-    url = f'http://{server}/api/node/{uuid}/{instance}/sizes?supervoxels={supervoxels}'
+    url = f'http://{server}/api/node/{uuid}/{instance}/sizes?supervoxels={sv_param}'
     sizes = fetch_generic_json(url, label_ids, session=session)
     
     sizes = pd.Series(sizes, index=label_ids, name='size')
