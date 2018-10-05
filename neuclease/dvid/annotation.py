@@ -369,7 +369,7 @@ def fetch_synapses_in_batches(server, uuid, synapses_instance, bounding_box_zyx,
     for box in tqdm_proxy(boxes, logger=logger, total=num_batches):
         if endpoint == 'blocks':
             elements = fetch_blocks(server, uuid, synapses_instance, box, session=session)
-            elements = chain(*elements.values())
+            elements = list(chain(*elements.values()))
         elif endpoint == 'elements':
             elements = fetch_elements(server, uuid, synapses_instance, box, session=session)
         else:
