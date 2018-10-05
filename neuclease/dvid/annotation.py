@@ -181,7 +181,11 @@ def fetch_elements(server, uuid, instance, box_zyx, *, session=None):
     offset_str = '_'.join(map(str, box_zyx[0, ::-1]))
 
     url = f'http://{server}/api/node/{uuid}/{instance}/elements/{shape_str}/{offset_str}'
-    return fetch_generic_json(url, session=session)
+    data = fetch_generic_json(url, session=session)
+    
+    # The endooint returns 'null' instead of an empty list, on old servers at least.
+    # But we always return a list.
+    return data or []
 
 
 @dvid_api_wrapper
@@ -299,7 +303,7 @@ def load_synapses_as_dataframe(elements):
 
 
 @dvid_api_wrapper
-def fetch_synapses_in_batches(server, uuid, synapses_instance, bounding_box_zyx, batch_shape_zyx=(64,64,64000), format='json', *, session=None): #@ReservedAssignment
+def fetch_synapses_in_batches(server, uuid, synapses_instance, bounding_box_zyx, batch_shape_zyx=(64,64,64000), format='json', endpoint='blocks', *, session=None): #@ReservedAssignment
     """
     Fetch all synapse annotations for the given labelmap volume (or subvolume) and synapse instance.
     Box-shaped regions are queried in batches according to the given batch shape.
@@ -337,8 +341,8 @@ def fetch_synapses_in_batches(server, uuid, synapses_instance, bounding_box_zyx,
             Either 'json' or 'pandas'. If 'pandas, return a DataFrame.
             Note: The DataFrame format discards relationship information.
         
-        show_progress:
-            If True, display a progress bar on the console.
+        endpoint:
+            Either 'blocks' (faster) or 'elements' (supported on older servers).
     
     Returns:
         If format == 'json', a list of JSON elements.
@@ -346,6 +350,7 @@ def fetch_synapses_in_batches(server, uuid, synapses_instance, bounding_box_zyx,
         Note: The pandas format discards relationship information.
     """
     assert format in ('pandas', 'json')
+    assert endpoint in ('blocks', 'elements')
     if isinstance(bounding_box_zyx, str):
         bounding_box_zyx = fetch_volume_box(server, uuid, bounding_box_zyx, session=session)
     else:
@@ -361,11 +366,16 @@ def fetch_synapses_in_batches(server, uuid, synapses_instance, bounding_box_zyx,
     
     boxes = clipped_boxes_from_grid(bounding_box_zyx, Grid(batch_shape_zyx))
     for box in tqdm_proxy(boxes, logger=logger, total=num_batches):
-        elements = fetch_blocks(server, uuid, synapses_instance, box, session=session)
+        if endpoint == 'blocks':
+            elements = fetch_blocks(server, uuid, synapses_instance, box, session=session)
+            elements = chain(*elements.values())
+        elif endpoint == 'elements':
+            elements = fetch_elements(server, uuid, synapses_instance, box, session=session)
+        else:
+            raise AssertionError("Invalid endpoint choice")
+
         if len(elements) == 0:
             continue
-
-        elements = chain(*elements.values())
 
         if format == 'json':
             results.extend(elements)
