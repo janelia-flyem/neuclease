@@ -345,7 +345,7 @@ def compute_focused_bodies(server, uuid, instance, synapse_samples, min_tbars, m
     if isinstance(synapse_samples, str):
         synapse_samples = load_synapses_from_csv(synapse_samples)
 
-    assert set(['sv', 'body']) - set(synapse_samples.columns), \
+    assert set(['sv', 'body']).intersection(set(synapse_samples.columns)), \
         "synapse samples must have either 'body' or 'sv' column"
 
     # If 'sv' column is present, use it to create (or update) the body column
