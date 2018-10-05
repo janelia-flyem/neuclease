@@ -103,12 +103,15 @@ def _fetch_keyvalues_via_protobuf(server, uuid, instance, keys, as_json=False, *
     proto_keyvalues = KeyValues()
     proto_keyvalues.ParseFromString(r.content)
     
-    keyvalues = {}
-    for kv in proto_keyvalues.kvs:
-        if as_json:
-            keyvalues[kv.key] = json.loads(kv.value)
-        else:
-            keyvalues[kv.key] = kv.value
+    try:
+        keyvalues = {}
+        for kv in proto_keyvalues.kvs:
+            if as_json:
+                keyvalues[kv.key] = json.loads(kv.value)
+            else:
+                keyvalues[kv.key] = kv.value
+    except json.JSONDecodeError as ex:
+        raise RuntimeError(f"Error decoding key '{kv.key}' from value {kv.value}") from ex
 
     return keyvalues
 
@@ -133,10 +136,13 @@ def _fetch_keyvalues_jsontar_via_jsontar(server, uuid, instance, keys, as_json=F
     #       That is, looping over names (instead of members) results in quadratic behavior.
     keyvalues = {}
     for member in tf:
-        val = tf.extractfile(member).read()
-        if as_json:
-            val = json.loads(val)
-        keyvalues[member.name] = val
+        try:
+            val = tf.extractfile(member).read()
+            if as_json:
+                val = json.loads(val)
+            keyvalues[member.name] = val
+        except json.JSONDecodeError as ex:
+            raise RuntimeError(f"Error decoding key '{member.name}' from value {val}") from ex
 
     return keyvalues
 
