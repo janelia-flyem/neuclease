@@ -6,6 +6,7 @@ from collections.abc import Mapping
 import numpy as np
 
 from .. import dvid_api_wrapper, fetch_generic_json
+from ...util import tqdm_proxy
 
 # $ protoc --python_out=. neuclease/dvid/keyvalue/ingest.proto
 from .ingest_pb2 import Keys, KeyValue, KeyValues
@@ -51,7 +52,7 @@ def post_key(server, uuid, instance, key, data=None, json=None, *, session=None)
     
 
 @dvid_api_wrapper
-def fetch_keyvalues(server, uuid, instance, keys, as_json=False, *, use_jsontar=False, session=None):
+def fetch_keyvalues(server, uuid, instance, keys, as_json=False, batch_size=None, *, use_jsontar=False, session=None):
     """
     Fetch a list of values from a keyvalue instance in a single batch call.
     The result is returned as a dict `{ key : value }`
@@ -76,6 +77,11 @@ def fetch_keyvalues(server, uuid, instance, keys, as_json=False, *, use_jsontar=
             If True, parse the returned values as JSON.
             Otherwise, return bytes.
         
+        batch_size:
+            Optional.  Split the keys into batches to
+            split the query across multiple DVID calls.
+            Otherwise, the values are fetched in a single call (batch_size = len(keys)).
+        
         use_jsontar:
             If True, fetch the data via the 'jsontar' mechanism, rather
             than the default protobuf implementation, which is faster.
@@ -83,11 +89,20 @@ def fetch_keyvalues(server, uuid, instance, keys, as_json=False, *, use_jsontar=
     Returns:
         dict of `{ key: value }`
     """
-    if use_jsontar:
-        return _fetch_keyvalues_jsontar_via_jsontar(server, uuid, instance, keys, as_json, session=session)
-    else:
-        return _fetch_keyvalues_via_protobuf(server, uuid, instance, keys, as_json, session=session)
+    batch_size = batch_size or len(keys)
+
+    keyvalues = {}
+    for start in tqdm_proxy(range(0, len(keys), batch_size), leave=False, disable=(batch_size >= len(keys))):
+        batch_keys = keys[start:start+batch_size]
         
+        if use_jsontar:
+            batch_kvs = _fetch_keyvalues_jsontar_via_jsontar(server, uuid, instance, batch_keys, as_json, session=session)
+        else:
+            batch_kvs = _fetch_keyvalues_via_protobuf(server, uuid, instance, batch_keys, as_json, session=session)
+        
+        keyvalues.update( batch_kvs )
+    
+    return keyvalues
 
 @dvid_api_wrapper
 def _fetch_keyvalues_via_protobuf(server, uuid, instance, keys, as_json=False, *, use_jsontar=False, session=None):
