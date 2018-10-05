@@ -47,6 +47,7 @@ def fetch_key(server, uuid, instance, key, as_json=False, *, session=None):
 
 @dvid_api_wrapper
 def post_key(server, uuid, instance, key, data=None, json=None, *, session=None):
+    assert data is not None or json is not None, "No data to post"
     r = session.post(f'http://{server}/api/node/{uuid}/{instance}/key/{key}', data=data, json=json)
     r.raise_for_status()
     
