@@ -79,3 +79,36 @@ def post_newversion(server, uuid, note, custom_uuid=None, *, session=None):
     r = session.post(f'http://{server}/api/node/{uuid}/newversion', json=body)
     r.raise_for_status()
     return r.json()["child"]
+
+
+@dvid_api_wrapper
+def post_blob(server, uuid, instance, data=None, json=None, *, session=None):
+    """
+    Post a 'blob' of arbitrary data to the DVID server's blobstore.
+    
+    The server will create a reference for the blob, which is returned.
+    The reference is a URL-friendly content hash (FNV-128) of the blob data.
+    """
+    assert (data is not None) ^ (json is not None), "Must provide either data or json (but not both)"
+    r = session.post(f'http://{server}/api/node/{uuid}/{instance}/blobstore', data=data, json=json)
+    r.raise_for_status()
+    
+    return r.json()["reference"]
+
+
+@dvid_api_wrapper
+def fetch_blob(server, uuid, instance, reference, as_json=False, *, session=None):
+    """
+    Fetch a previously-stored 'blob' of data from the DVID server's blobstore.
+    
+    Blobs are stored by various operations, such as supervoxel splits,
+    annotation elements POSTs, and others.
+    
+    Returns:
+        Either bytes or parsed JSON data, depending on as_json.
+    """
+    r = session.get(f'http://{server}/api/node/{uuid}/{instance}/blobstore/{reference}')
+    r.raise_for_status()
+    if as_json:
+        return r.json()
+    return r.content
