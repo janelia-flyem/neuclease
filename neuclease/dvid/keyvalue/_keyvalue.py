@@ -56,7 +56,9 @@ def post_key(server, uuid, instance, key, data=None, json=None, *, session=None)
 def fetch_keyvalues(server, uuid, instance, keys, as_json=False, batch_size=None, *, use_jsontar=False, session=None):
     """
     Fetch a list of values from a keyvalue instance in a single batch call.
-    The result is returned as a dict `{ key : value }`
+    The result is returned as a dict `{ key : value }`.
+    If as_json is True, any keys that do not exist in the instance will
+    appear in the results with a value of None.
         
     Internally, this function can use either the 'jsontar' option to
     fetch the keys as a tarball, or via the default protobuf implementation (faster).
@@ -122,10 +124,12 @@ def _fetch_keyvalues_via_protobuf(server, uuid, instance, keys, as_json=False, *
     try:
         keyvalues = {}
         for kv in proto_keyvalues.kvs:
-            if as_json:
+            if not as_json:
+                keyvalues[kv.key] = kv.value
+            elif kv.value:
                 keyvalues[kv.key] = json.loads(kv.value)
             else:
-                keyvalues[kv.key] = kv.value
+                keyvalues[kv.key] = None
     except json.JSONDecodeError as ex:
         raise RuntimeError(f"Error decoding key '{kv.key}' from value {kv.value}") from ex
 
@@ -155,7 +159,10 @@ def _fetch_keyvalues_jsontar_via_jsontar(server, uuid, instance, keys, as_json=F
         try:
             val = tf.extractfile(member).read()
             if as_json:
-                val = json.loads(val)
+                if val:
+                    val = json.loads(val)
+                else:
+                    val = None
             keyvalues[member.name] = val
         except json.JSONDecodeError as ex:
             raise RuntimeError(f"Error decoding key '{member.name}' from value {val}") from ex
