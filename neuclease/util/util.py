@@ -225,6 +225,18 @@ def graph_tool_available():
     return _graph_tool_available
 
 
+def find_root(g, start):
+    """
+    Find the root node in a tree, given as a nx.DiGraph,
+    tracing up the tree starting with the given start node.
+    """
+    parents = [start]
+    while parents:
+        root = parents[0]
+        parents = list(g.predecessors(parents[0]))
+    return root
+
+
 def connected_components_nonconsecutive(edges, node_ids):
     """
     Run connected components on the graph encoded by 'edges' and node_ids.

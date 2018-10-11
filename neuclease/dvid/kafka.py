@@ -3,7 +3,7 @@ import logging
 
 import networkx as nx
 
-from ..util import uuids_match, Timer
+from ..util import uuids_match, Timer, find_root
 from . import dvid_api_wrapper
 from .server import fetch_server_info
 from .repo import fetch_repo_dag
@@ -78,9 +78,14 @@ def read_kafka_messages(server, uuid, instance, action_filter=None, dag_filter='
     data_uuid = full_instance_info["Base"]["DataUUID"]
     repo_uuid = full_instance_info["Base"]["RepoUUID"]
 
+    # Load DAG structure as nx.DiGraph
+    dag = fetch_repo_dag(server, repo_uuid, session=session)
+    root_uuid = find_root(dag, repo_uuid)
+
     logger.info(f"Reading kafka messages from {kafka_servers} for {server} / {uuid} / {instance}")
+    topic = f'dvidrepo-{root_uuid}-data-{data_uuid}'
     with Timer() as timer:
-        records = _read_complete_kafka_log(f'dvidrepo-{repo_uuid}-data-{data_uuid}',
+        records = _read_complete_kafka_log(topic,
                                            kafka_servers, group_id, consumer_timeout)
     logger.info(f"Reading {len(records)} kafka messages took {timer.seconds} seconds")
 
@@ -89,7 +94,7 @@ def read_kafka_messages(server, uuid, instance, action_filter=None, dag_filter='
     records_and_values = zip(records, values)
 
     # Chain filters and evaluate
-    records_and_values = _filter_records_for_dag(records_and_values, dag_filter, server, repo_uuid, uuid, session)
+    records_and_values = _filter_records_for_dag(records_and_values, dag_filter, dag, uuid)
     records_and_values = _filter_records_for_action(records_and_values, action_filter)
     records_and_values = list(records_and_values)
 
@@ -151,7 +156,7 @@ def _read_complete_kafka_log(topic_name, kafka_servers, group_id=None, timeout_s
     return records
 
 
-def _filter_records_for_dag(records_and_values, dag_filter, server, repo_uuid, uuid, session):
+def _filter_records_for_dag(records_and_values, dag_filter, dag, uuid):
     """
     Helper function.
     Filter the given zipped records and JSON values according to the dag_filter.
@@ -162,8 +167,6 @@ def _filter_records_for_dag(records_and_values, dag_filter, server, repo_uuid, u
         records_and_values = filter(lambda r_v: uuids_match(r_v[1]["UUID"], uuid), records_and_values)
 
     elif dag_filter == 'leaf-and-parents':
-        # Load DAG structure as nx.DiGraph
-        dag = fetch_repo_dag(server, repo_uuid, session=session)
         
         # Determine full name of leaf uuid, for proper set membership
         matching_uuids = list(filter(lambda u: uuids_match(u, uuid), dag.nodes()))

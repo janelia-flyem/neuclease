@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import networkx as nx
 
-from ...util import Timer
+from ...util import Timer, find_root
 from .. import dvid_api_wrapper
 from ..kafka import read_kafka_messages
 
@@ -217,18 +217,6 @@ def split_events_to_dataframe(events):
     
     df['uuid'] = df['uuid'].astype('category')
     return df[['uuid'] + list(df.columns[:-1])]
-
-
-def find_root(g, start):
-    """
-    Find the root node in a tree, given as a nx.DiGraph,
-    tracing up the tree starting with the given start node.
-    """
-    parents = [start]
-    while parents:
-        root = parents[0]
-        parents = list(g.predecessors(parents[0]))
-    return root
 
 
 def extract_split_tree(events, sv_id):
