@@ -203,6 +203,27 @@ class NumpyConvertingEncoder(json.JSONEncoder):
         return super().default(o)
 
 
+def write_json_list(objects, f):
+    """
+    Like json.dump(), but writes each item to its own line (no indentation).
+    """
+    assert isinstance(objects, list)
+
+    def _impl(f):
+        f.write('[\n')
+        for s in objects[:-1]:
+            json.dump(s, f)
+            f.write(',\n')
+        json.dump(objects[-1], f)
+        f.write('\n]')
+
+    if isinstance(f, str):
+        with open(f, 'w') as fp:
+            _impl(fp)
+    else:
+        _impl(f)
+
+
 _graph_tool_available = None
 def graph_tool_available():
     """

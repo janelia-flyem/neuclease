@@ -409,22 +409,3 @@ def load_synapses_from_csv(csv_path):
     return pd.read_csv(csv_path, header=0, dtype=dtype)
 
 
-def write_synapses_to_json(synapses, f):
-    """
-    Like json.dump(), but writes each item to its own line (no indentation).
-    """
-    assert isinstance(synapses, list)
-
-    def _impl(f):
-        f.write('[\n')
-        for s in synapses[:-1]:
-            json.dump(s, f)
-            f.write(',\n')
-        json.dump(synapses[-1], f)
-        f.write('\n]')
-
-    if isinstance(f, str):
-        with open(f, 'w') as fp:
-            _impl(fp)
-    else:
-        _impl(f)
