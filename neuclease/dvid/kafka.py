@@ -1,6 +1,8 @@
 import json
 import logging
 
+import numpy as np
+import pandas as pd
 import networkx as nx
 
 from ..util import uuids_match, Timer, find_root
@@ -204,3 +206,58 @@ def _filter_records_for_action(records_and_values, action_filter):
         action_filter = [action_filter]
     action_filter = set(action_filter)
     return filter(lambda r_v: r_v[1]["Action"] in action_filter, records_and_values)
+
+
+def kafka_msgs_to_df(msgs):
+    """
+    Load the messages into a DataFrame with columns for
+    timestamp, uuid, mut_id, and msg (the complete message).
+    
+    Args:
+        msgs:
+            Pre-parsed messages (from JSON)
+    Returns:
+        DataFrame
+    """
+    timestamps = np.repeat(None, len(msgs))
+    timestamps[:] = '2018-01-01 00:00:00.000'
+
+    for i, msg in enumerate(msgs):
+        if 'Timestamp' in msg:
+            timestamps[i] = msg['Timestamp'][:len('2018-01-01 00:00:00.000')]
+
+    msgs_df = pd.DataFrame({'msg': msgs})
+    msgs_df['timestamp'] = timestamps
+    msgs_df['timestamp'] = pd.to_datetime(msgs_df['timestamp'])
+    msgs_df['uuid'] = [msg['UUID'] for msg in msgs_df['msg']]
+    msgs_df['uuid'] = msgs_df['uuid'].astype('category')
+    msgs_df['mutid'] = [msg['MutationID'] for msg in msgs_df['msg']]
+    
+    return msgs_df[['timestamp', 'uuid', 'mutid', 'msg']]
+
+
+def filter_kafka_msgs_by_timerange(kafka_msgs, min_timestamp=None, max_timestamp=None, min_mutid=None, max_mutid=None):
+    queries = []
+    if min_timestamp is not None:
+        queries.append('timestamp >= @min_timestamp')
+    
+    if max_timestamp is not None:
+        queries.append('timestamp <= @max_timestamp')
+    
+    if min_mutid is not None:
+        queries.append('mutid >= @min_mutid')
+        
+    if max_mutid is not None:
+        queries.append('mutid <= @max_mutid')
+
+    if not queries:
+        return kafka_msgs
+
+    kafka_df = kafka_msgs_to_df(kafka_msgs)
+
+    q = ' and '.join(queries)
+    kafka_df.query(q, inplace=True)
+    
+    return kafka_df['msg'].tolist()
+
+
