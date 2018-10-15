@@ -179,18 +179,53 @@ def fetch_sparsevol_rles(server, uuid, instance, label, supervoxels=False, scale
 
 
 @dvid_api_wrapper
-def split_supervoxel(server, uuid, instance, supervoxel, rle_payload_bytes, *, session=None):
+def post_split_supervoxel(server, uuid, instance, supervoxel, rle_payload_bytes, *, split_id=None, remain_id=None, session=None):
     """
-    Split the given supervoxel according to the provided RLE payload, as specified in DVID's split-supervoxel docs.
+    Split the given supervoxel according to the provided RLE payload,
+    as specified in DVID's split-supervoxel docs.
+    
+    Args:
+    
+        server, uuid, intance:
+            Segmentation instance
+        
+        supervoxel:
+            ID of the supervoxel to split
+        
+        rle_payload_bytes:
+            RLE binary payload, in the format specified by the DVID docs.
+        
+        split_id, remain_id:
+            DANGEROUS.  Instead of letting DVID choose the ID of the new 'split' and
+            'remain' supervoxels, these parameters allow you to specify them yourself.
     
     Returns:
         The two new IDs resulting from the split: (split_sv_id, remaining_sv_id)
     """
-    r = session.post(f'http://{server}/api/node/{uuid}/{instance}/split-supervoxel/{supervoxel}', data=rle_payload_bytes)
+    url = f'http://{server}/api/node/{uuid}/{instance}/split-supervoxel/{supervoxel}'
+
+
+    if bool(split_id) ^ bool(remain_id):
+        msg = ("I'm not sure if DVID allows you to specify the split_id "
+               "without specifying remain_id (or vice-versa).  "
+               "Please specify both (or neither).")
+        raise RuntimeError(msg)
+    
+    params = {}
+    if split_id is not None:
+        params['split'] = str(split_id)
+    if remain_id is not None:
+        params['remain'] = str(remain_id)
+    
+    r = session.post(url, data=rle_payload_bytes, params=params)
     r.raise_for_status()
     
     results = r.json()
     return (results["SplitSupervoxel"], results["RemainSupervoxel"] )
+
+
+# Legacy name
+split_supervoxel = post_split_supervoxel
 
 
 @dvid_api_wrapper
