@@ -27,6 +27,26 @@ def extract_rle_size_and_first_coord(rle_payload_bytes):
     return voxel_count, first_coord_zyx
 
 
+def combine_sparsevol_rle_responses(rle_payloads):
+    all_coords = []
+    for payload in rle_payloads:
+        all_coords.append( parse_rle_response(payload) )
+    
+    combined_coords = np.concatenate(all_coords)
+    rles_zyx  = runlength_encode_to_lengths(combined_coords, assume_sorted=False)
+    assert rles_zyx.dtype == np.int32
+    rles_xyz = rles_zyx[:, (2,1,0,3)]
+    
+    payload_items = []
+    payload_items.append( np.array([0, 3, 0, 0], dtype=np.uint8) )
+    payload_items.append( np.array([0, len(rles_xyz)], dtype=np.uint32) )
+    payload_items.append( rles_xyz )
+    
+    payload = b''.join( list(map(bytes, payload_items)) )
+    return payload
+    
+
+
 def parse_rle_response(response_bytes, dtype=np.int32):
     """
     Parse a (legacy) RLE response from DVID, used by various endpoints
@@ -51,6 +71,7 @@ def parse_rle_response(response_bytes, dtype=np.int32):
          ...
         ]
     """
+    assert isinstance(response_bytes, bytes)
     assert dtype in (np.int32, np.int16)
     descriptor = response_bytes[0]
     ndim = response_bytes[1]
@@ -165,7 +186,7 @@ def _runlength_encode_to_ranges(coord_list_zyx):
 
         # If necessary, end the current run and start a new one
         # (Also, support duplicate coords without breaking the current run.)
-        if (z != prev_z) or (y != prev_y) or (x not in (prev_x, 1+prev_x)):
+        if (z != prev_z) or (y != prev_y) or (x not in (prev_x, np.int32(1+prev_x))):
             runs += list(current_run_start) + [prev_x]
             current_run_start = coord
 
@@ -175,9 +196,53 @@ def _runlength_encode_to_ranges(coord_list_zyx):
     runs += list(current_run_start) + [prev_x]
 
     # Return as 2D array
-    runs = np.array(runs).reshape((-1,4))
+    runs = np.array(runs, np.int32).reshape((-1,4))
     return runs[1:, :] # omit dummy row (see above)
 
+
+def runlength_encode_to_lengths(coord_list_zyx, assume_sorted=False):
+    """
+    Given an array of coordinates in the form:
+        
+        [[Z,Y,X],
+         [Z,Y,X],
+         [Z,Y,X],
+         ...
+        ]
+        
+    Return an array of run-length encodings of the form:
+    
+        [[Z,Y,X,N],
+         [Z,Y,X,N],
+         [Z,Y,X,N],
+         ...
+        ]
+    
+    ... where N is the length of each run.
+    
+    Args:
+        coord_list_zyx:
+            Array of shape (C,3)
+        
+        assume_sorted:
+            If True, the provided coordinates are assumed to be pre-sorted in Z-Y-X order.
+            Otherwise, this function sorts them before the RLEs are computed.    """
+    if len(coord_list_zyx) == 0:
+        return np.ndarray( (0,4), np.int32 )
+
+    coord_list_zyx = np.asarray(coord_list_zyx)
+    assert coord_list_zyx.ndim == 2
+    assert coord_list_zyx.shape[1] == 3
+    
+    if not assume_sorted:
+        sorting_ind = np.lexsort(coord_list_zyx.transpose()[::-1])
+        coord_list_zyx = coord_list_zyx[sorting_ind]
+
+    # Compute ranges and then convert to lengths.
+    rle_result = _runlength_encode_to_ranges(coord_list_zyx)
+    rle_result[:,3] = 1 + rle_result[:,3] - rle_result[:,2]
+    return rle_result
+    
 
 @jit(["i4[:,:](i4[:,::1],i4[::1])", "i2[:,:](i2[:,::1],i2[::1])"], nopython=True) # See note about signature, below.
 def runlength_decode_from_lengths(rle_start_coords_zyx, rle_lengths):
