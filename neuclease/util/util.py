@@ -1,6 +1,7 @@
 import os
 import io
 import sys
+import copy
 import time
 import json
 import vigra
@@ -8,7 +9,7 @@ import logging
 import inspect
 import warnings
 import contextlib
-from datetime import timedelta
+from datetime import datetime, timedelta
 from itertools import product, starmap
 from collections.abc import Mapping
 
@@ -222,6 +223,42 @@ def write_json_list(objects, f):
             _impl(fp)
     else:
         _impl(f)
+
+
+DEFAULT_TIMESTAMP = datetime.strptime('2018-01-01 00:00:00', '%Y-%m-%d %H:%M:%S')
+def parse_timestamp(ts, default=DEFAULT_TIMESTAMP):
+    """
+    Parse the given timestamp as a datetime object.
+    If it is already a datetime object, it will be returned as-is.
+    If it is None, then the given default timestamp will be returned.
+    
+    Acceptable formats are:
+
+        2018-01-01             (date only)
+        2018-01-01 00:00:00    (date and time)
+        2018-01-01 00:00:00.0  (date and time with microseconds)
+    
+    """
+    if ts is None:
+        ts = copy.copy(default)
+
+    if isinstance(ts, datetime):
+        return ts
+
+    if isinstance(ts, str):
+        if len(ts) == len('2018-01-01'):
+            ts = datetime.strptime(ts, '%Y-%m-%d')
+        elif len(ts) == len('2018-01-01 00:00:00'):
+            ts = datetime.strptime(ts, '%Y-%m-%d %H:%M:%S')
+        elif len(ts) >= len('2018-01-01 00:00:00.0'):
+            frac = ts.split('.')[1]
+            zero_pad = 6 - len(frac)
+            ts += '0'*zero_pad
+            ts = datetime.strptime(ts, '%Y-%m-%d %H:%M:%S.%f')
+        else:
+            raise AssertionError("Bad timestamp format")
+
+    return ts
 
 
 _graph_tool_available = None
