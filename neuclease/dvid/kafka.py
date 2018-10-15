@@ -17,7 +17,7 @@ class KafkaReadError(RuntimeError):
 
 
 @dvid_api_wrapper
-def read_kafka_messages(server, uuid, instance, action_filter=None, dag_filter='leaf-and-parents', return_format='json-values', group_id=None, consumer_timeout=2.0, *, session=None):
+def read_kafka_messages(server, uuid, instance, action_filter=None, dag_filter='leaf-and-parents', return_format='json-values', group_id=None, consumer_timeout=2.0, kafka_servers=None, *, session=None):
     """
     Read the stream of available Kafka messages for the given DVID instance,
     with convenient filtering options.
@@ -61,6 +61,12 @@ def read_kafka_messages(server, uuid, instance, action_filter=None, dag_filter='
         
         consumer_timeout:
             Seconds to timeout (after which we assume we've read all messages).
+        
+        kafka_servers:
+            Normally the kafka servers to read from are determined automatically
+            by parsing the DVID /server/info.  But if you are attempting to read the kafka
+            log of a DVID server whose kafka logging is temporarily disabled, you will need
+            to specify the kafka servers here (as a list of strings).
     
     Returns:
         Filtered list of kafka ConsumerRecord or list of JSON dict (depending on return_format).
@@ -68,11 +74,12 @@ def read_kafka_messages(server, uuid, instance, action_filter=None, dag_filter='
     assert dag_filter in ('leaf-only', 'leaf-and-parents', None)
     assert return_format in ('records', 'json-values')
 
-    server_info = fetch_server_info(server, session=session)
-    if "Kafka Servers" not in server_info or not server_info["Kafka Servers"]:
-        raise KafkaReadError(f"DVID server ({server}) does not list a kafka server")
-
-    kafka_servers = server_info["Kafka Servers"].split(',')
+    if kafka_servers is None:
+        server_info = fetch_server_info(server, session=session)
+        if "Kafka Servers" not in server_info or not server_info["Kafka Servers"]:
+            raise KafkaReadError(f"DVID server ({server}) does not list a kafka server")
+    
+        kafka_servers = server_info["Kafka Servers"].split(',')
 
     full_instance_info = fetch_instance_info(server, uuid, instance, session=session)
     data_uuid = full_instance_info["Base"]["DataUUID"]
