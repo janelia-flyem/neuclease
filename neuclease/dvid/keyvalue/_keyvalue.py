@@ -171,7 +171,7 @@ def _fetch_keyvalues_jsontar_via_jsontar(server, uuid, instance, keys, as_json=F
 
 
 @dvid_api_wrapper
-def post_keyvalues(server, uuid, instance, keyvalues, *, session=None):
+def post_keyvalues(server, uuid, instance, keyvalues, batch_size=None, *, session=None):
     """
     Post a batch of key-value pairs to a keyvalue instance.
     
@@ -190,19 +190,23 @@ def post_keyvalues(server, uuid, instance, keyvalues, *, session=None):
             If the value is not bytes, it will be treated as JSON data and encoded to bytes.
     """
     assert isinstance(keyvalues, Mapping)
+    batch_size = batch_size or len(keyvalues)
+    
+    keyvalues = list(keyvalues.items())
 
-    kvs = []
-    for key, value in keyvalues.items():
-        if not isinstance(value, (bytes, str)):
-            value = json.dumps(value)
-        if isinstance(value, str):
-            value = value.encode('utf-8')
-
-        kvs.append( KeyValue(key=key, value=value) )
-
-    proto_keyvalues = KeyValues()
-    proto_keyvalues.kvs.extend(kvs)
-
-    url = f'http://{server}/api/node/{uuid}/{instance}/keyvalues'
-    r = session.post(url, data=proto_keyvalues.SerializeToString())
-    r.raise_for_status()
+    for start in tqdm_proxy(range(0, len(keyvalues), batch_size), leave=False, disable=(batch_size >= len(keyvalues))):
+        kvs = []
+        for key, value in keyvalues[start:start+batch_size]:
+            if not isinstance(value, (bytes, str)):
+                value = json.dumps(value)
+            if isinstance(value, str):
+                value = value.encode('utf-8')
+    
+            kvs.append( KeyValue(key=key, value=value) )
+    
+        proto_keyvalues = KeyValues()
+        proto_keyvalues.kvs.extend(kvs)
+    
+        url = f'http://{server}/api/node/{uuid}/{instance}/keyvalues'
+        r = session.post(url, data=proto_keyvalues.SerializeToString())
+        r.raise_for_status()
