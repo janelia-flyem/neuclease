@@ -19,7 +19,8 @@ class KafkaReadError(RuntimeError):
 
 
 @dvid_api_wrapper
-def read_kafka_messages(server, uuid, instance, action_filter=None, dag_filter='leaf-and-parents', return_format='json-values', group_id=None, consumer_timeout=2.0, kafka_servers=None, *, session=None):
+def read_kafka_messages(server, uuid, instance, action_filter=None, dag_filter='leaf-and-parents', return_format='json-values',
+                        group_id=None, consumer_timeout=2.0, kafka_servers=None, topic_prefix=None, *, session=None):
     """
     Read the stream of available Kafka messages for the given DVID instance,
     with convenient filtering options.
@@ -69,6 +70,11 @@ def read_kafka_messages(server, uuid, instance, action_filter=None, dag_filter='
             by parsing the DVID /server/info.  But if you are attempting to read the kafka
             log of a DVID server whose kafka logging is temporarily disabled, you will need
             to specify the kafka servers here (as a list of strings).
+        
+        topic_prefix:
+            Normally the topic prefix for all of DVID's kafka topics is determined automatically
+            by parsing the DVID /server/info.  But if you know what you are doing and you want
+            to force this function to use a different prefix, you can specify it here.
     
     Returns:
         Filtered list of kafka ConsumerRecord or list of JSON dict (depending on return_format).
@@ -76,12 +82,17 @@ def read_kafka_messages(server, uuid, instance, action_filter=None, dag_filter='
     assert dag_filter in ('leaf-only', 'leaf-and-parents', None)
     assert return_format in ('records', 'json-values')
 
-    if kafka_servers is None:
+    if kafka_servers is None or topic_prefix is None:
         server_info = fetch_server_info(server, session=session)
-        if "Kafka Servers" not in server_info or not server_info["Kafka Servers"]:
-            raise KafkaReadError(f"DVID server ({server}) does not list a kafka server")
-    
-        kafka_servers = server_info["Kafka Servers"].split(',')
+
+        if kafka_servers is None:
+            if "Kafka Servers" not in server_info or not server_info["Kafka Servers"]:
+                raise KafkaReadError(f"DVID server ({server}) does not list a kafka server")
+            else:
+                kafka_servers = server_info["Kafka Servers"].split(',')
+
+        if topic_prefix is None:
+            topic_prefix = server_info.get("Kafka Topic Prefix") or ""
 
     full_instance_info = fetch_instance_info(server, uuid, instance, session=session)
     data_uuid = full_instance_info["Base"]["DataUUID"]
@@ -91,11 +102,10 @@ def read_kafka_messages(server, uuid, instance, action_filter=None, dag_filter='
     dag = fetch_repo_dag(server, repo_uuid, session=session)
     root_uuid = find_root(dag, repo_uuid)
 
-    logger.info(f"Reading kafka messages from {kafka_servers} for {server} / {uuid} / {instance}")
-    topic = f'dvidrepo-{root_uuid}-data-{data_uuid}'
+    topic = f'{topic_prefix}dvidrepo-{root_uuid}-data-{data_uuid}'
+    logger.info(f"Reading kafka messages for {topic} from {kafka_servers}")
     with Timer() as timer:
-        records = _read_complete_kafka_log(topic,
-                                           kafka_servers, group_id, consumer_timeout)
+        records = _read_complete_kafka_log(topic, kafka_servers, group_id, consumer_timeout)
     logger.info(f"Reading {len(records)} kafka messages took {timer.seconds} seconds")
 
     # Extract and parse JSON values for easy filtering.
