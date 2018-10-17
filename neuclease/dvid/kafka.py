@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 import networkx as nx
 
-from ..util import uuids_match, Timer, find_root
+from ..util import uuids_match, Timer, find_root, parse_timestamp, DEFAULT_TIMESTAMP
 from . import dvid_api_wrapper
 from .server import fetch_server_info
 from .repo import fetch_repo_dag
@@ -223,6 +223,10 @@ def kafka_msgs_to_df(msgs):
     Load the messages into a DataFrame with columns for
     timestamp, uuid, mut_id, and msg (the complete message).
     
+    Note: Any messages that lack a 'Timestamp' field will have
+    their timestamps set to `neuclease.util.DEFAULT_TIMESTAMP`.
+    (At the time of this writing, `2018-01-01`).
+    
     Args:
         msgs:
             Pre-parsed messages (from JSON)
@@ -230,7 +234,7 @@ def kafka_msgs_to_df(msgs):
         DataFrame
     """
     timestamps = np.repeat(None, len(msgs))
-    timestamps[:] = '2018-01-01 00:00:00.000'
+    timestamps[:] = DEFAULT_TIMESTAMP
 
     for i, msg in enumerate(msgs):
         if 'Timestamp' in msg:
@@ -249,9 +253,11 @@ def kafka_msgs_to_df(msgs):
 def filter_kafka_msgs_by_timerange(kafka_msgs, min_timestamp=None, max_timestamp=None, min_mutid=None, max_mutid=None):
     queries = []
     if min_timestamp is not None:
+        min_timestamp = parse_timestamp(min_timestamp)
         queries.append('timestamp >= @min_timestamp')
     
     if max_timestamp is not None:
+        max_timestamp = parse_timestamp(max_timestamp)
         queries.append('timestamp <= @max_timestamp')
     
     if min_mutid is not None:
