@@ -218,23 +218,27 @@ def _filter_records_for_action(records_and_values, action_filter):
     return filter(lambda r_v: r_v[1]["Action"] in action_filter, records_and_values)
 
 
-def kafka_msgs_to_df(msgs):
+def kafka_msgs_to_df(msgs, default_timestamp=DEFAULT_TIMESTAMP):
     """
     Load the messages into a DataFrame with columns for
     timestamp, uuid, mut_id, and msg (the complete message).
     
-    Note: Any messages that lack a 'Timestamp' field will have
-    their timestamps set to `neuclease.util.DEFAULT_TIMESTAMP`.
+    Note:  `neuclease.util.DEFAULT_TIMESTAMP`.
     (At the time of this writing, `2018-01-01`).
     
     Args:
         msgs:
             Pre-parsed messages (from JSON)
+        
+        default_timestamp:
+            Any messages that lack a 'Timestamp' field will have
+            their 'timestamp' column set to this in the output dataframe.
+
     Returns:
         DataFrame
     """
     timestamps = np.repeat(None, len(msgs))
-    timestamps[:] = DEFAULT_TIMESTAMP
+    timestamps[:] = default_timestamp
 
     for i, msg in enumerate(msgs):
         if 'Timestamp' in msg:
@@ -251,6 +255,16 @@ def kafka_msgs_to_df(msgs):
 
 
 def filter_kafka_msgs_by_timerange(kafka_msgs, min_timestamp=None, max_timestamp=None, min_mutid=None, max_mutid=None):
+    """
+    Given a list of kafka messages from a DVID data instance,
+    filter messages according to a mutation ID range and/or a timestamp range.
+
+    For example, this call removes messages except those with at least
+    mutation ID 1002213701 and occurred no later than "2018-10-16 13:00":
+    
+        all_msgs = read_kafka_messages('emdata3:8900', 'ef1d', 'segmentation')
+        filtered_msgs = filter_kafka_msgs_by_timerange(all_msgs, min_mutid=1002213701, max_timestamp='2018-10-16 13:00')
+    """
     queries = []
     if min_timestamp is not None:
         min_timestamp = parse_timestamp(min_timestamp)
