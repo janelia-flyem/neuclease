@@ -32,6 +32,18 @@ def fetch_labelindex(server, uuid, instance, label, format='protobuf', *, sessio
         return convert_labelindex_to_pandas(labelindex)
 
 
+@dvid_api_wrapper
+def post_labelindex(server, uuid, instance, label, proto_index, *, session=None):
+    """
+    """
+    assert isinstance(proto_index, LabelIndex)
+    assert proto_index.label == label
+    
+    payload = proto_index.SerializeToString()
+    r = session.post(f'http://{server}/api/node/{uuid}/{instance}/index/{label}', data=payload)
+    r.raise_for_status()
+    
+
 PandasLabelIndex = namedtuple("PandasLabelIndex", "blocks label last_mutid last_mod_time last_mod_user")
 def convert_labelindex_to_pandas(labelindex):
     """
@@ -46,7 +58,7 @@ def convert_labelindex_to_pandas(labelindex):
         PandasLabelIndex (a namedtuple), in which the `blocks` member is a pd.DataFrame
         with the following columns: ['z', 'y', 'x', 'sv', 'count'].
         Note that the block coordinates are given in VOXEL units.
-        That is, all coordinates in the table are multiples ofo 64.
+        That is, all coordinates in the table are multiples of 64.
     """
     encoded_block_coords = np.fromiter(labelindex.blocks.keys(), np.uint64, len(labelindex.blocks))
     coords_zyx = decode_labelindex_blocks(encoded_block_coords)
