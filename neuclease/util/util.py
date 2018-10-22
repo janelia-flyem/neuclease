@@ -9,6 +9,7 @@ import logging
 import inspect
 import warnings
 import contextlib
+from collections import defaultdict
 from datetime import datetime, timedelta
 from itertools import product, starmap
 from collections.abc import Mapping
@@ -456,13 +457,13 @@ def extract_labels_from_volume(points_df, volume, box_zyx=None, vol_scale=0, lab
             The coordinates in points_df will be downscaled accordingly.
             
         label_names:
-            Optional.  Specifies how label names map to label IDs.
+            Optional.  Specifies how label IDs map to label names.
             If provided, a new column 'label_name' will be appended to
             points_df in addition to the 'label' column.
 
             Must be either:
-            - a mapping of `{ name : label }`, indicating each ROI's
-              label ID in the output image, or
+            - a mapping of `{ label_id: name }` (or `{ name : label_id }`),
+              indicating each ROI's label ID in the output image, or
             - a list label names in which case the mapping is determined automatically
               by enumerating the labels in the given order (starting at 1).
     
@@ -488,17 +489,22 @@ def extract_labels_from_volume(points_df, volume, box_zyx=None, vol_scale=0, lab
     points_df.loc[downsampled_coords_zyx.index, 'label'] = volume[tuple(downsampled_coords_zyx.values.transpose())]
 
     if label_names is not None:
-        if not isinstance(label_names, Mapping):
-            label_names = { name: i for i, name in enumerate(label_names, start=1) }
-
-        # Reverse the mapping
-        label_names = { v:k for k,v in label_names.items() }
+        if isinstance(label_names, Mapping):
+            # We need a mapping of label_ids -> names.
+            # If the user provided the reverse mapping,
+            # then flip it.
+            (k,v) = next(iter(label_names.items()))
+            if isinstance(k, str):
+                # Reverse the mapping
+                label_names = { v:k for k,v in label_names.items() }
+        else:
+            label_names = dict(enumerate(label_names, start=1))
         
-        if 0 not in label_names:
-            label_names[0] = '<unspecified>'
+        if not isinstance(label_names, defaultdict):
+            label_names = defaultdict(lambda: '<unspecified>', label_names)
 
         points_df['label_name'] = pd.Categorical( points_df['label'].map(label_names),
-                                                  categories=label_names.values(),
+                                                  categories=set(label_names.values()),
                                                   ordered=False )
 
 
