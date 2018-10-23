@@ -14,6 +14,7 @@ from datetime import datetime, timedelta
 from itertools import product, starmap
 from collections.abc import Mapping
 
+import regex # third-party regex module
 import requests
 from tqdm import tqdm
 
@@ -224,6 +225,134 @@ def write_json_list(objects, f):
             _impl(fp)
     else:
         _impl(f)
+
+
+def gen_json_objects(f, batch_size=None, parse=True):
+    """
+    Generator.
+    
+    Given a file (or string) containing a JSON list-of-objects,
+    parse the objects one-by-one and iterate over them.
+    
+    Args:
+        f:
+            A file containing a JSON document which must be a list-of-objects.
+
+        batch_size:
+            If provided, the objects will be yielded in groups
+            (lists) of the specified size.
+
+        parse:
+            If True, each json object will be parsed and yielded as a dict.
+            Otherwise, the raw text of the object is returned.
+    """
+    if isinstance(f, str):
+        f = io.StringIO(f)
+    
+    it = _gen_json_objects(f, parse)
+    
+    if batch_size is None:
+        yield from it
+    else:
+        yield from iter_batches(it, batch_size)
+
+
+def iter_batches(it, batch_size):
+    """
+    Consume the given iterator in batches and
+    yield each batch as a list of items.
+    
+    The last batch might be smaller than the others,
+    if there aren't enough items to fill it.
+    """
+    while True:
+        batch = []
+        try:
+            for _ in range(batch_size):
+                batch.append(next(it))
+        except StopIteration:
+            return
+        finally:
+            if batch:
+                yield batch
+
+
+def _gen_json_objects(f, parse=True):
+    """
+    Generator.
+    
+    Parse a JSON list-of-objects one at a time,
+    without reading in the entire file at once.
+    
+    Each object is yielded and then discarded.
+    
+    Warnings:
+        - The input MUST be valid JSON, and specifically must be a list-of-objects.
+          Any other input results in undefined behavior and/or errors.
+        - Strings containing curly braces are not supported.
+          (The document must not contain any curly braces except for the ones
+          defining actual JSON objects.)
+        
+    Args:
+        f:
+            A file containing a JSON document which must be a list-of-objects.
+        parse:
+            If True, each json object will be parsed and yielded as a dict.
+            Otherwise, the raw text of the object is returned.
+
+    """
+    IO_CHUNK = 10_000_000
+    
+    # Objects may contain other objects:
+    # (?1) means "first group, recursively" (using the third-party 'regex' package)
+    #
+    # This regex means, roughly:
+    # '{' <non-brackets> <internal object> <non-brackets> '}'
+    # (repeat as necessary)
+    object_rgx = regex.compile('({([^{}]*(?1)*[^{}]*)*})+.*')
+
+    # This is used to skip spaces and commas between objects
+    space_rgx = regex.compile('\s*,*\s*')
+
+    cur_text = f.read(IO_CHUNK)
+    if not cur_text:
+        raise RuntimeError("Empty file")
+
+    list_start = space_rgx.match(cur_text).end()
+    if cur_text[list_start] != '[':
+        raise RuntimeError("File must be a JSON list of objects")
+
+    cur_text = cur_text[list_start+1:]
+    
+    while True:
+        # skip spaces and commas to find the start of the next object
+        obj_start = space_rgx.match(cur_text).end()
+        cur_text = cur_text[obj_start:]
+
+        if cur_text[0] == ']':
+            # We reached the end of the list
+            break
+
+        if cur_text[0] != '{':
+            raise RuntimeError("Text does not appear to be a list of objects")
+
+        # Keep reading more data until we find the end of the object        
+        m = object_rgx.match(cur_text)
+        while not m:
+            next_text = f.read(IO_CHUNK)
+            if not next_text:
+                raise RuntimeError("Unexpected end-of-file.")
+            cur_text += next_text
+            m = object_rgx.match(cur_text)
+
+        # The object was captured in the first group        
+        obj_text = m.group(1)
+        cur_text = cur_text[m.span(1)[1]:]
+
+        if parse:
+            yield json.loads(obj_text)
+        else:
+            yield obj_text
 
 
 DEFAULT_TIMESTAMP = datetime.strptime('2018-01-01 00:00:00', '%Y-%m-%d %H:%M:%S')
@@ -617,6 +746,5 @@ class TqdmToLogger(io.StringIO):
 
     def flush(self):
         self.logger.log(self.level, self.buf)
-
 
 

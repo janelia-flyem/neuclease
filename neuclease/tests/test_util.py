@@ -1,3 +1,4 @@
+import json
 import tempfile
 import textwrap
 import pytest
@@ -5,7 +6,7 @@ import pytest
 import numpy as np
 from neuclease.util import (uuids_match, read_csv_header, read_csv_col, connected_components,
                             connected_components_nonconsecutive, graph_tool_available,
-                            closest_approach, upsample)
+                            closest_approach, upsample, gen_json_objects)
 
 def test_uuids_match():
     assert uuids_match('abcd', 'abcdef') == True
@@ -206,6 +207,34 @@ def test_upsample():
                 [3,3,4,4]]
 
     assert (upsampled == expected).all()
+
+
+def test_gen_json_objects():
+    strings = ['[]',
+               '[{}]',
+               '[{},{}]',
+               '[{}, {"a": {}}]',
+               ' [{"a": 123, "b": 456}, {"x": null}] ']
+
+    try:
+        for s in strings:
+            assert list(gen_json_objects(s)) == json.loads(s)
+    except Exception as ex:
+        raise AssertionError(f"Failed to properly parse this string: '{s}'") from ex
+
+    # Try some actual synapse data
+    s = (' [ {"Rels": [{"To": [32377, 12263, 24429], "Rel": "PostSynTo"}], '
+            '"Kind": "PostSyn", "Prop": {"user": "$fpl", "conf": "0.972182"}, '
+            '"Pos": [32382, 12243, 24439], "Tags": []} ] ')
+
+    it = gen_json_objects(s)
+    o = next(it)
+    assert o == json.loads(s)[0]
+
+    # Repeat 3 times
+    s2 = '[' + ',\n'.join(3*[json.dumps(o)]) + ']'
+    it = gen_json_objects(s2)
+    assert list(it) == json.loads(s2)
 
 if __name__ == "__main__":
     pytest.main(['-s', '--tb=native', '--pyargs', 'neuclease.tests.test_util'])

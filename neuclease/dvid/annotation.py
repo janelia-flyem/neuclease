@@ -1,4 +1,3 @@
-import json
 import logging
 from itertools import chain
 
@@ -7,7 +6,7 @@ import pandas as pd
 
 from . import dvid_api_wrapper, fetch_generic_json
 from .labelmap import fetch_volume_box
-from ..util import Grid, clipped_boxes_from_grid, round_box, tqdm_proxy
+from ..util import Grid, clipped_boxes_from_grid, round_box, tqdm_proxy, gen_json_objects
 
 logger = logging.getLogger(__name__)
 
@@ -304,7 +303,8 @@ def load_synapses_as_dataframe(elements):
 
 
 @dvid_api_wrapper
-def fetch_synapses_in_batches(server, uuid, synapses_instance, bounding_box_zyx, batch_shape_zyx=(64,64,64000), format='json', endpoint='blocks', *, session=None): #@ReservedAssignment
+def fetch_synapses_in_batches(server, uuid, synapses_instance, bounding_box_zyx, batch_shape_zyx=(64,64,64000),
+                              format='json', endpoint='blocks', *, session=None): #@ReservedAssignment
     """
     Fetch all synapse annotations for the given labelmap volume (or subvolume) and synapse instance.
     Box-shaped regions are queried in batches according to the given batch shape.
@@ -382,7 +382,8 @@ def fetch_synapses_in_batches(server, uuid, synapses_instance, bounding_box_zyx,
             results.extend(elements)
         elif format == 'pandas':
             df = load_synapses_as_dataframe(elements)
-            results.append(df)
+            if len(df) > 0:
+                results.append(df)
 
     if format == 'json':
         return results
@@ -409,3 +410,15 @@ def load_synapses_from_csv(csv_path):
     return pd.read_csv(csv_path, header=0, dtype=dtype)
 
 
+def load_synapses_from_json(json_path, batch_size=10_000):
+    """
+    Load the synapses to a dataframe from a JSON file.
+    The JSON file is consumed in batches, avoiding the need
+    to load the entire JSON document in RAM at once.
+    """
+    results = []
+    with open(json_path, 'r') as f:
+        for elements in gen_json_objects(f, batch_size):
+            df = load_synapses_as_dataframe(elements)
+            results.append(df)
+    return pd.concat(results)
