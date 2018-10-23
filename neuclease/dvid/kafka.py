@@ -218,7 +218,7 @@ def _filter_records_for_action(records_and_values, action_filter):
     return filter(lambda r_v: r_v[1]["Action"] in action_filter, records_and_values)
 
 
-def kafka_msgs_to_df(msgs, default_timestamp=DEFAULT_TIMESTAMP):
+def kafka_msgs_to_df(msgs, drop_duplicates=False, default_timestamp=DEFAULT_TIMESTAMP):
     """
     Load the messages into a DataFrame with columns for
     timestamp, uuid, mut_id, and msg (the complete message).
@@ -228,7 +228,14 @@ def kafka_msgs_to_df(msgs, default_timestamp=DEFAULT_TIMESTAMP):
     
     Args:
         msgs:
-            Pre-parsed messages (from JSON)
+            JSON messages, either as strings or pre-parsed into a list-of-dicts.
+            
+        drop_duplicates:
+            If the kafka messages contain exact duplicates for some reason,
+            this option can be used to drop the duplicates from the result.
+            Use with caution, especially if you are trying to disambiguate
+            messages from a 'mirror' server.  (Especially 'complete' messages,
+            which might be *correctly* duplicated.)
         
         default_timestamp:
             Any messages that lack a 'Timestamp' field will have
@@ -237,6 +244,24 @@ def kafka_msgs_to_df(msgs, default_timestamp=DEFAULT_TIMESTAMP):
     Returns:
         DataFrame
     """
+    if len(msgs) == 0:
+        return pd.DataFrame([], columns=['timestamp', 'uuid', 'mutid', 'msg'])
+        
+    if drop_duplicates:
+        if isinstance(msgs[0], str):
+            msg_strings = msgs
+        else:
+            # Convert to strings for hashing
+            msg_strings = [json.dumps(msg, sort_keys=True) for msg in msgs]
+        
+        msg_strings = pd.Series(msg_strings)
+        msg_strings.drop_duplicates(inplace=True)
+        msgs = msg_strings.values
+
+    # Parse JSON if necessary    
+    if isinstance(msgs[0], str):
+        msgs = [json.loads(msg) for msg in msgs]
+    
     timestamps = np.repeat(None, len(msgs))
     timestamps[:] = default_timestamp
 

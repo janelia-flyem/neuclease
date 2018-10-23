@@ -1,18 +1,19 @@
 import gzip
 import logging
 from io import BytesIO
+from collections import defaultdict
 
 import numpy as np
 import pandas as pd
 
 from libdvid import DVIDNodeService, encode_label_block
 
-from ...util import Timer, round_box, extract_subvol
+from ...util import Timer, round_box, extract_subvol, DEFAULT_TIMESTAMP
 
 from .. import dvid_api_wrapper, fetch_generic_json
 from ..repo import create_voxel_instance
 from ..node import fetch_instance_info
-from ..kafka import read_kafka_messages
+from ..kafka import read_kafka_messages, kafka_msgs_to_df
 from ..rle import parse_rle_response
 
 from ._split import SplitEvent, fetch_supervoxel_splits_from_kafka
@@ -718,4 +719,55 @@ def post_merge(server, uuid, instance, main_label, other_labels, *, session=None
     r = session.post(f'http://{server}/api/node/{uuid}/{instance}/merge', json=content)
     r.raise_for_status()
     
+
+def labelmap_kafka_msgs_to_df(kafka_msgs, default_timestamp=DEFAULT_TIMESTAMP):
+    """
+    Convert the kafka messages for a labelmap instance into a DataFrame.
+    """
+    df = kafka_msgs_to_df(kafka_msgs, drop_duplicates=False, default_timestamp=default_timestamp)
+
+    # Append action and 'body'
+    df['action'] = [msg['Action'] for msg in df['msg']]
+    
+    mutation_bodies = defaultdict(lambda: 0)
+    mutation_svs = defaultdict(lambda: 0)
+    
+    target_bodies = []
+    target_svs = []
+    
+    # This logic is somewhat more complex than you might think is necesary,
+    # but that's because the kafka logs (sadly) contain duplicate mutation IDs,
+    # i.e. the mutation ID was not unique in our earlier logs.
+    for msg in df['msg'].values:
+        action = msg['Action']
+        mutid = msg['MutationID']
+
+        if not action.endswith('complete'):
+            target_body = 0
+            target_sv = 0
+
+            if action == 'cleave':
+                target_body = msg['OrigLabel']
+            elif action in ('merge', 'split'):
+                target_body = msg['Target']
+            elif action == 'split-supervoxel':
+                target_sv = msg['Supervoxel']
+
+            target_bodies.append(target_body)
+            target_svs.append(target_sv)
+
+            mutation_bodies[mutid] = target_body
+            mutation_svs[mutid] = target_sv
+
+        else:
+            # The ...-complete messages contain nothing but the action, uuid, and mutation ID,
+            # but as a convenience we will match them with the target_body or target_sv,
+            # based on the most recent message with a matching mutation ID.
+            target_bodies.append( mutation_bodies[mutid] )
+            target_svs.append( mutation_svs[mutid] )
+
+    df['target_body'] = target_bodies
+    df['target_sv'] = target_svs
+
+    return df[['timestamp', 'uuid', 'mutid', 'action', 'target_body', 'target_sv', 'msg']]
 
