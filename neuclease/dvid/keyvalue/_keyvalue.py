@@ -53,6 +53,12 @@ def post_key(server, uuid, instance, key, data=None, json=None, *, session=None)
     
 
 @dvid_api_wrapper
+def delete_key(server, uuid, instance, key, *, session=None):
+    r = session.delete(f'http://{server}/api/node/{uuid}/{instance}/key/{key}')
+    r.raise_for_status()
+
+
+@dvid_api_wrapper
 def fetch_keyvalues(server, uuid, instance, keys, as_json=False, batch_size=None, *, use_jsontar=False, session=None):
     """
     Fetch a list of values from a keyvalue instance in a single batch call.
