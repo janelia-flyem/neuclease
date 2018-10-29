@@ -167,7 +167,7 @@ def create_instance(server, uuid, instance, typename, versioned=True, compressio
         assert compression in (None, 'none'), "Compression not supported for tarsupervoxels"
 
     if compression is not None:
-        assert compression in ('none', 'snappy', 'lz4', 'gzip') # jpeg is also supported, but then we need to parse e.g. jpeg:80
+        assert compression.startswith('jpeg') or compression in ('none', 'snappy', 'lz4', 'gzip')
         settings["Compression"] = compression
     
     if tags:
