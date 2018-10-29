@@ -57,7 +57,8 @@ class LabelmapMergeGraph:
                 Disables fetching of split supervoxel information entirely!
         """
         self.rwlock = ReadWriteLock()
-        self.primary_uuid = primary_uuid
+        self.primary_uuid = None
+        self.set_primary_uuid(primary_uuid)
         self.debug_export_dir = debug_export_dir
         if debug_export_dir:
             os.makedirs(debug_export_dir, exist_ok=True)
@@ -87,6 +88,11 @@ class LabelmapMergeGraph:
         # This dict holds a lock for each body, to avoid requesting supervoxels for the same body in parallel,
         # (but requesting supervoxels for different bodies in parallel is OK).
         self._sv_cache_key_locks = defaultdict(lambda: threading.Lock())
+
+
+    def set_primary_uuid(self, primary_uuid):
+        _logger.info(f"Changing primary (cached) UUID from {self.primary_uuid} to {primary_uuid}")
+        self.primary_uuid = primary_uuid
 
 
     def apply_mapping(self, mapping):

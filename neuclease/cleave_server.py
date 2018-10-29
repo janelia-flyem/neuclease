@@ -305,6 +305,22 @@ def _run_cleave(data):
     return ( cleave_response, HTTPStatus.OK )
 
 
+@app.route('/primary-uuid')
+def get_primary_uuid():
+    global MERGE_GRAPH
+    response = jsonify( { "uuid": MERGE_GRAPH.primary_uuid } )
+    return response, HTTPStatus.OK
+    
+
+@app.route('/primary-uuid', methods=['POST'])
+def set_primary_uuid():
+    global MERGE_GRAPH
+    data = request.json
+    MERGE_GRAPH.set_primary_uuid(data["uuid"])
+    response = jsonify( { "uuid": MERGE_GRAPH.primary_uuid } )
+    return response, HTTPStatus.OK
+
+
 @app.route('/body-edge-table', methods=['POST'])
 def body_edge_table():
     """

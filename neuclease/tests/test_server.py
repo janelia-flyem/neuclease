@@ -118,6 +118,17 @@ def test_fetch_log(cleave_server_setup):
 
 
 @show_request_exceptions
+def test_set_primary_uuid(cleave_server_setup):
+    dvid_server, dvid_port, dvid_repo, port = cleave_server_setup
+    r = requests.post(f'http://127.0.0.1:{port}/primary-uuid', json={"uuid": "abc123"})
+    r.raise_for_status()
+    
+    r = requests.get(f'http://127.0.0.1:{port}/primary-uuid')
+    r.raise_for_status()
+    assert r.json()["uuid"] == "abc123"
+    
+
+@show_request_exceptions
 def test_body_edge_table(cleave_server_setup):
     dvid_server, dvid_port, dvid_repo, port = cleave_server_setup
 
@@ -133,7 +144,6 @@ def test_body_edge_table(cleave_server_setup):
     lines = r.content.decode().rstrip().split('\n')
     assert lines[0] == 'id_a,id_b,xa,ya,za,xb,yb,zb,score,body'
     assert len(lines) == 5, '\n' +  '\n'.join(lines)
-
 
 @show_request_exceptions
 def test_change_default_method(cleave_server_setup):
