@@ -7,7 +7,6 @@ import json
 import vigra
 import logging
 import inspect
-import warnings
 import contextlib
 from collections import defaultdict
 from datetime import datetime, timedelta
@@ -23,9 +22,6 @@ tqdm.monitor_interval = 0
 
 import numpy as np
 import pandas as pd
-import networkx as nx
-
-from dvidutils import LabelMapper
 from numba import jit
 
 from .view_as_blocks import view_as_blocks
@@ -354,109 +350,6 @@ def parse_timestamp(ts, default=DEFAULT_TIMESTAMP):
             raise AssertionError("Bad timestamp format")
 
     return ts
-
-
-_graph_tool_available = None
-def graph_tool_available():
-    """
-    Return True if the graph_tool module is installed.
-    """
-    global _graph_tool_available
-    
-    # Just do this import check once.
-    if _graph_tool_available is None:
-        try:
-            with warnings.catch_warnings():
-                # Importing graph_tool results in warnings about duplicate C++/Python conversion functions.
-                # Ignore those warnings
-                warnings.filterwarnings("ignore", "to-Python converter")
-                import graph_tool as gt #@UnusedImport
-        
-            _graph_tool_available = True
-        except ImportError:
-            _graph_tool_available = False
-    return _graph_tool_available
-
-
-def find_root(g, start):
-    """
-    Find the root node in a tree, given as a nx.DiGraph,
-    tracing up the tree starting with the given start node.
-    """
-    parents = [start]
-    while parents:
-        root = parents[0]
-        parents = list(g.predecessors(parents[0]))
-    return root
-
-
-def connected_components_nonconsecutive(edges, node_ids):
-    """
-    Run connected components on the graph encoded by 'edges' and node_ids.
-    All nodes from edges must be present in node_ids.
-    (Additional nodes are permitted, in which case each is assigned its own CC.)
-    The node_ids do not need to be consecutive, and can have arbitrarily large values.
-
-    For graphs with consecutively-valued nodes, connected_components() (below)
-    will be faster because it avoids a relabeling step.
-    
-    Args:
-        edges:
-            ndarray, shape=(E,2), dtype np.uint32 or uint64
-        
-        node_ids:
-            ndarray, shape=(N,), dtype np.uint32 or uint64
-
-    Returns:
-        ndarray, same shape as node_ids, labeled by component index from 0..C
-    """
-    assert node_ids.ndim == 1
-    assert node_ids.dtype in (np.uint32, np.uint64)
-    cons_node_ids = np.arange(len(node_ids), dtype=np.uint32)
-    mapper = LabelMapper(node_ids, cons_node_ids)
-    cons_edges = mapper.apply(edges)
-    return connected_components(cons_edges, len(node_ids))
-
-
-def connected_components(edges, num_nodes, _lib=None):
-    """
-    Run connected components on the graph encoded by 'edges' and num_nodes.
-    The graph vertex IDs must be CONSECUTIVE.
-
-    Args:
-        edges:
-            ndarray, shape=(E,2), dtype=np.uint32
-        
-        num_nodes:
-            Integer, max_node+1.
-            (Allows for graphs which contain nodes that are not referenced in 'edges'.)
-        
-        _lib:
-            Do not use.  (Used for testing.)
-    
-    Returns:
-        ndarray of shape (num_nodes,), labeled by component index from 0..C
-    
-    Note: Uses graph-tool if it's installed; otherwise uses networkx (slower).
-    """
-    if (graph_tool_available() or _lib == 'gt') and _lib != 'nx':
-        import graph_tool as gt
-        from graph_tool.topology import label_components
-        g = gt.Graph(directed=False)
-        g.add_vertex(num_nodes)
-        g.add_edge_list(edges)
-        cc_pmap, _hist = label_components(g)
-        return cc_pmap.get_array()
-
-    else:
-        g = nx.Graph()
-        g.add_nodes_from(range(num_nodes))
-        g.add_edges_from(edges)
-
-        cc_labels = np.zeros((num_nodes,), np.uint32)
-        for i, component_set in enumerate(nx.connected_components(g)):
-            cc_labels[np.array(list(component_set))] = i
-        return cc_labels
 
 
 def closest_approach(sv_vol, id_a, id_b):
