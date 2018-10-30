@@ -1,11 +1,11 @@
 import os
 import csv
-import json
 import logging
 
 from tqdm import tqdm
 
 import h5py
+import ujson
 import numpy as np
 import pandas as pd
 
@@ -657,7 +657,7 @@ def generate_focused_assignment(merge_table, output_path=None):
     if output_path:
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
         with open(output_path, 'w') as f:
-            json.dump(assignment, f, indent=2)
+            ujson.dump(assignment, f, indent=2)
     return assignment
 
 

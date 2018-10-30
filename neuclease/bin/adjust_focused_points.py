@@ -14,11 +14,11 @@ In those cases, the task is marked with:
     "coordinate-status": "misplaced"
 """
 import os
-import json
 import copy
 import logging
 import argparse
 
+import ujson
 import numpy as np
 
 from neuclease import configure_default_logging
@@ -47,12 +47,12 @@ def main():
 
     with Timer(f"Processing {args.assignment_json}", logger):
         with open(args.assignment_json, 'r') as f:
-            assignment_data = json.load(f)
+            assignment_data = ujson.load(f)
     
         new_assignment_data = adjust_focused_points(*instance_info, assignment_data)
     
         with open(args.output, 'w') as f:
-            json.dump(new_assignment_data, f, indent=2)
+            ujson.dump(new_assignment_data, f, indent=2)
 
     logger.info(f"Wrote to {args.output}")
 

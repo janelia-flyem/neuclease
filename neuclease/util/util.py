@@ -13,6 +13,7 @@ from datetime import datetime, timedelta
 from itertools import product, starmap
 from collections.abc import Mapping
 
+import ujson
 import requests
 from tqdm import tqdm
 
@@ -211,9 +212,9 @@ def write_json_list(objects, f):
     def _impl(f):
         f.write('[\n')
         for s in objects[:-1]:
-            json.dump(s, f)
+            ujson.dump(s, f)
             f.write(',\n')
-        json.dump(objects[-1], f)
+        ujson.dump(objects[-1], f)
         f.write('\n]')
 
     if isinstance(f, str):
@@ -248,7 +249,7 @@ def gen_json_objects(f, batch_size=None, parse=True):
     it = map(bytes, _gen_json_objects(m))
     
     if parse:
-        it = map(json.loads, it)
+        it = map(ujson.loads, it)
         
     if batch_size is None:
         yield from it

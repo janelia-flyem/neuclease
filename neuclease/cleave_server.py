@@ -1,6 +1,5 @@
 import os
 import sys
-import json
 import copy
 import signal
 import logging
@@ -10,6 +9,7 @@ from itertools import chain
 from http import HTTPStatus
 from datetime import datetime
 
+import ujson
 import numpy as np
 import pandas as pd
 
@@ -191,7 +191,7 @@ def compute_cleave():
         # This is injected into the request so that it will be echoed back to the client
         data['request-timestamp'] = str(datetime.now())
     
-        req_string = json.dumps(data, sort_keys=True)
+        req_string = ujson.dumps(data, sort_keys=True)
         body_logger.info(f"Received cleave request: {req_string}")
         cleave_results, status_code = _run_cleave(data)
 
@@ -385,7 +385,7 @@ def debug():
     else:
         debug_logger = PrefixedLogger(logger, f"User {user}: ")
 
-    debug_string = json.dumps(debug_data, sort_keys=True)
+    debug_string = ujson.dumps(debug_data, sort_keys=True)
     debug_logger.info(f"Client debug: {debug_string}")
 
     return (debug_string, HTTPStatus.OK)

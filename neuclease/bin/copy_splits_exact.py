@@ -1,10 +1,10 @@
 import sys
-import json
 import time
 import logging
 import argparse
 from datetime import datetime
 
+import ujson
 import requests
 import numpy as np
 import pandas as pd
@@ -42,7 +42,7 @@ def main():
     # Fetch kafka log from src if none was provided from the command line
     if args.kafka_log is not None:
         with open(args.kafka_log, 'r') as f:
-            kafka_msgs = json.load(f)
+            kafka_msgs = ujson.load(f)
     else:
         if args.kafka_servers:
             args.kafka_servers = args.kafka_servers.split(',')

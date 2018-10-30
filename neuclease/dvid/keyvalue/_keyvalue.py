@@ -1,8 +1,8 @@
-import json
 from io import BytesIO
 from tarfile import TarFile
 from collections.abc import Mapping
 
+import ujson
 import numpy as np
 
 from .. import dvid_api_wrapper, fetch_generic_json
@@ -133,10 +133,10 @@ def _fetch_keyvalues_via_protobuf(server, uuid, instance, keys, as_json=False, *
             if not as_json:
                 keyvalues[kv.key] = kv.value
             elif kv.value:
-                keyvalues[kv.key] = json.loads(kv.value)
+                keyvalues[kv.key] = ujson.loads(kv.value)
             else:
                 keyvalues[kv.key] = None
-    except json.JSONDecodeError as ex:
+    except ValueError as ex:
         raise RuntimeError(f"Error decoding key '{kv.key}' from value {kv.value}") from ex
 
     return keyvalues
@@ -166,11 +166,11 @@ def _fetch_keyvalues_jsontar_via_jsontar(server, uuid, instance, keys, as_json=F
             val = tf.extractfile(member).read()
             if as_json:
                 if val:
-                    val = json.loads(val)
+                    val = ujson.loads(val)
                 else:
                     val = None
             keyvalues[member.name] = val
-        except json.JSONDecodeError as ex:
+        except ValueError as ex:
             raise RuntimeError(f"Error decoding key '{member.name}' from value {val}") from ex
 
     return keyvalues
@@ -204,7 +204,7 @@ def post_keyvalues(server, uuid, instance, keyvalues, batch_size=None, *, sessio
         kvs = []
         for key, value in keyvalues[start:start+batch_size]:
             if not isinstance(value, (bytes, str)):
-                value = json.dumps(value)
+                value = ujson.dumps(value)
             if isinstance(value, str):
                 value = value.encode('utf-8')
     

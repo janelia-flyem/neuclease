@@ -1,6 +1,6 @@
-import json
 import logging
 
+import ujson
 import numpy as np
 import pandas as pd
 import networkx as nx
@@ -109,7 +109,7 @@ def read_kafka_messages(server, uuid, instance, action_filter=None, dag_filter='
     logger.info(f"Reading {len(records)} kafka messages took {timer.seconds} seconds")
 
     # Extract and parse JSON values for easy filtering.
-    values = [json.loads(rec.value) for rec in records]
+    values = [ujson.loads(rec.value) for rec in records]
     records_and_values = zip(records, values)
 
     # Chain filters and evaluate
@@ -252,7 +252,7 @@ def kafka_msgs_to_df(msgs, drop_duplicates=False, default_timestamp=DEFAULT_TIME
             msg_strings = msgs
         else:
             # Convert to strings for hashing
-            msg_strings = [json.dumps(msg, sort_keys=True) for msg in msgs]
+            msg_strings = [ujson.dumps(msg, sort_keys=True) for msg in msgs]
         
         msg_strings = pd.Series(msg_strings)
         msg_strings.drop_duplicates(inplace=True)
@@ -260,7 +260,7 @@ def kafka_msgs_to_df(msgs, drop_duplicates=False, default_timestamp=DEFAULT_TIME
 
     # Parse JSON if necessary    
     if isinstance(msgs[0], str):
-        msgs = [json.loads(msg) for msg in msgs]
+        msgs = [ujson.loads(msg) for msg in msgs]
     
     timestamps = np.repeat(None, len(msgs))
     timestamps[:] = default_timestamp

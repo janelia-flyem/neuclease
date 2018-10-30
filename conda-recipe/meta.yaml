@@ -35,6 +35,7 @@ requirements:
     - libdvid-cpp
     - dvidutils
     - tqdm
+    - ujson
     - pykafka
     - networkx >=2.1
     - asciitree

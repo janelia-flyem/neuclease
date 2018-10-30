@@ -10,10 +10,10 @@ Note: It is assumed that the saved split RLEs exist
 """
 import os
 import sys
-import json
 import logging
 import argparse
 
+import ujson
 from tqdm import tqdm
 
 import numpy as np
@@ -71,7 +71,7 @@ def parse_new_ids(kafka_log_path):
     new_ids = []
     with open(kafka_log_path, 'r') as f:
         for line in f:
-            entry = json.loads(line)
+            entry = ujson.loads(line)
             new_ids.append(entry["NewLabel"])
     return new_ids
         
