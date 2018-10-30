@@ -601,6 +601,50 @@ def extract_labels_from_volume(points_df, volume, box_zyx=None, vol_scale=0, lab
                                                   categories=set(label_names.values()),
                                                   ordered=False )
 
+def compute_merges(orig_vol, agg_vol):
+    """
+    Given an original volume and another volume which was generated
+    exclusively from merges of the original, recover the merge decisions
+    that were made.  That is, give the list of merges in the original
+    volume that could reconstruct the geometry of segments in the
+    agglomerated volume.
+    
+    Args:
+        orig_vol:
+            label volume, original segmentation
+
+        agg_vol:
+            label volume, agglomerated segmentation
+    
+    Returns:
+        dict: { agg_id: [orig_id, orig_id, ...] },
+        where the original IDs present in each merge are listed from largest to smallest.
+        Agglomerated segments that exactly match an original segment (no merges) are not
+        included in the results. (All lists in the results have at least two items.)
+    
+    Notes:
+      - This function does not make any attempt to handle splits gracefully.
+        For correct results, the every segment in the original volume should
+        be a subset of only one segment in the agglomerated volume.
+    
+      - The label IDs in the agglomerated volume need not be related
+        in any way to the label IDs in the original.
+    """
+    # Compute the set of unique orig-agg pairs, and the size of each
+    df = pd.DataFrame({'orig': orig_vol.flat, 'agg': agg_vol.flat})
+    paired_seg_voxels = df.groupby(['orig', 'agg']).size().rename('voxels')
+    paired_seg_voxels = pd.DataFrame(paired_seg_voxels)
+
+    # For each agg ID with more than one corresponding 'orig' ID,
+    # Compute the list of merges that reconstruct the agg geometry
+    merges = {}    
+    for agg, g_df in paired_seg_voxels.groupby('agg'):
+        if len(g_df) > 1:
+            merged_orig = g_df.sort_values('voxels', ascending=False).index.get_level_values('orig')
+            merges[agg] = merged_orig.tolist()
+
+    return merges
+
 
 def unordered_duplicated(df, subset=None, keep='first'):
     """
