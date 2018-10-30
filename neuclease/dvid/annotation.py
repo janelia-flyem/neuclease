@@ -261,7 +261,6 @@ def fetch_blocks(server, uuid, instance, box_zyx, *, session=None):
 def load_synapses_as_dataframe(elements):
     """
     Load the given JSON elements as synapses a DataFrame.
-    Note: Discards relationships.
     
     Args:
         elements:
@@ -295,7 +294,7 @@ def load_synapses_as_dataframe(elements):
         kinds.append( e['Kind'] )
         confs.append( float(e.get('Prop', {}).get('conf', 0.0)) )
         users.append( e.get('Prop', {}).get('user', '') )
-        
+
     df = pd.DataFrame( {'x': xs, 'y': ys, 'z': zs}, dtype=np.int32 )
     df['kind'] = pd.Series(kinds, dtype='category')
     df['conf'] = pd.Series(confs, dtype=np.float32)
@@ -426,3 +425,77 @@ def load_synapses_from_json(json_path, batch_size=1000):
     except KeyboardInterrupt:
         sys.stderr.write(f"Stopping early due to KeyboardInterrupt. ({len(results)} batches completed)\n")
     return pd.concat(results)
+
+
+def load_relationships(elements, kind=None):
+    """
+    Given a list of JSON elements, load all relationships as a table.
+    """
+    from_x = []
+    from_y = []
+    from_z = []
+    
+    to_x = []
+    to_y = []
+    to_z = []
+    
+    rels = []
+    
+    for element in tqdm_proxy(elements):
+        if kind and (kind != element['Kind']):
+            continue
+        
+        fx, fy, fz = element['Pos']
+        
+        for obj in element['Rels']:
+            tx, ty, tz = obj['To']
+
+            from_x.append(fx)
+            from_y.append(fy)
+            from_z.append(fz)
+        
+            to_x.append(tx)
+            to_y.append(ty)
+            to_z.append(tz)
+
+            rels.append(obj['Rel'])
+        
+    df = pd.DataFrame( {'from_x': from_x,
+                        'from_y': from_y,
+                        'from_z': from_z,
+                        'to_x': to_x,
+                        'to_y': to_y,
+                        'to_z': to_z,
+                        }, dtype=np.int32 )
+
+    df['rel'] = pd.Series(rels, dtype='category')
+
+    return df
+
+
+def compute_weighted_edge_table(relationships_df, synapses_df):
+    """
+    Given a synapse 'relationship table' with columns [from_x, from_y, from_z, to_x, to_y, to_z],
+    and a synapse table with columns [x, y, z, body],
+    Perform the necessary merge operations to determine from_body and to_body for each relationship,
+    and then aggregate those relationships to to yield a table of weights for each unique body pair.
+    """
+    from_bodies = relationships_df.merge(synapses_df[['z', 'y', 'x', 'body']], how='left',
+                                         left_on=['from_z', 'from_y', 'from_x'],
+                                         right_on=['z', 'y', 'x'])['body']
+    
+    to_bodies = relationships_df.merge(synapses_df[['z', 'y', 'x', 'body']], how='left',
+                                       left_on=['to_z', 'to_y', 'to_x'],
+                                       right_on=['z', 'y', 'x'])['body']
+
+    edge_table = pd.DataFrame({'from_body': from_bodies,
+                               'to_body': to_bodies})
+
+    weighted_edge_table = edge_table.groupby(['from_body', 'to_body']).size()
+    weighted_edge_table.sort_values(ascending=False, inplace=True)
+    weighted_edge_table.name = 'weight'
+    return weighted_edge_table.reset_index()
+
+
+
+
