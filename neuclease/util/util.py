@@ -757,3 +757,52 @@ class TqdmToLogger(io.StringIO):
         self.logger.log(self.level, self.buf)
 
 
+@jit(nopython=True)
+def encode_coords_to_uint64(coords):
+    """
+    Encode an array of (N,3) int32 into an array of (N,) uint64,
+    giving 21 bits per coord (20 bits plus a sign bit for each).
+    """
+    assert coords.shape[1] == 3
+    
+    N = len(coords)
+    encoded_coords = np.empty(N, np.uint64)
+
+    for i in range(N):
+        z, y, x = coords[i]
+        encoded = np.uint64(0)
+        encoded |= np.uint64(z) << 42
+        encoded |= np.uint64(y) << 21
+        encoded |= np.uint64(x)
+        encoded_coords[i] = encoded
+
+    return encoded_coords
+
+
+@jit(nopython=True)
+def decode_coords_from_uint64(encoded_coords):
+    """
+    The reciprocal to encoded_coords_to_uint64(), above.
+    """
+    N = len(encoded_coords)
+    coords = np.empty((N,3), np.int32)
+    
+    for i in range(N):
+        encoded = encoded_coords[i]
+        z = np.int32((encoded >> 2*21) & 0x1F_FFFF) # 21 bits
+        y = np.int32((encoded >>   21) & 0x1F_FFFF) # 21 bits
+        x = np.int32((encoded >>    0) & 0x1F_FFFF) # 21 bits
+        
+        # Check sign bits and extend if necessary
+        if encoded & (1 << (3*21-1)):
+            z |= np.int32(0xFFFF_FFFF << 21)
+    
+        if encoded & (1 << (21*2-1)):
+            y |= np.int32(0xFFFF_FFFF << 21)
+    
+        if encoded & (1 << (21*1-1)):
+            x |= np.int32(0xFFFF_FFFF << 21)
+        
+        coords[i] = (z,y,x)
+
+    return coords
