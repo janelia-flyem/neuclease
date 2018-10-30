@@ -2,6 +2,8 @@ import json
 import tempfile
 import textwrap
 import pytest
+from tempfile import TemporaryFile
+from io import BytesIO
 
 import numpy as np
 from neuclease.util import (uuids_match, read_csv_header, read_csv_col, connected_components,
@@ -210,15 +212,17 @@ def test_upsample():
 
 
 def test_gen_json_objects():
-    strings = ['[]',
-               '[{}]',
-               '[{},{}]',
-               '[{}, {"a": {}}]',
-               ' [{"a": 123, "b": 456}, {"x": null}] ']
+    strings = [b'[]',
+               b'[{}]',
+               b'[{},{}]',
+               b'[{}, {"a": {}}]',
+               b' [{"a": 123, "b": 456}, {"x": null}] ']
 
     try:
         for s in strings:
-            assert list(gen_json_objects(s)) == json.loads(s)
+            with TemporaryFile() as f:
+                f.write(s)
+                assert list(gen_json_objects(f)) == json.loads(s)
     except Exception as ex:
         raise AssertionError(f"Failed to properly parse this string: '{s}'") from ex
 
@@ -227,14 +231,21 @@ def test_gen_json_objects():
             '"Kind": "PostSyn", "Prop": {"user": "$fpl", "conf": "0.972182"}, '
             '"Pos": [32382, 12243, 24439], "Tags": []} ] ')
 
-    it = gen_json_objects(s)
-    o = next(it)
-    assert o == json.loads(s)[0]
+    s = s.encode()
+
+    with TemporaryFile() as f:
+        f.write(s)
+        it = gen_json_objects(f)
+        o = next(it)
+        assert o == json.loads(s)[0]
 
     # Repeat 3 times
     s2 = '[' + ',\n'.join(3*[json.dumps(o)]) + ']'
-    it = gen_json_objects(s2)
-    assert list(it) == json.loads(s2)
+    s2 = s2.encode()
+    with TemporaryFile() as f:
+        f.write(s2)
+        it = gen_json_objects(f)
+        assert list(it) == json.loads(s2)
 
 if __name__ == "__main__":
     pytest.main(['-s', '--tb=native', '--pyargs', 'neuclease.tests.test_util'])

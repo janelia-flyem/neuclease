@@ -1,3 +1,4 @@
+import sys
 import logging
 from itertools import chain
 
@@ -410,15 +411,18 @@ def load_synapses_from_csv(csv_path):
     return pd.read_csv(csv_path, header=0, dtype=dtype)
 
 
-def load_synapses_from_json(json_path, batch_size=10_000):
+def load_synapses_from_json(json_path, batch_size=1000):
     """
     Load the synapses to a dataframe from a JSON file.
     The JSON file is consumed in batches, avoiding the need
     to load the entire JSON document in RAM at once.
     """
     results = []
-    with open(json_path, 'r') as f:
-        for elements in gen_json_objects(f, batch_size):
-            df = load_synapses_as_dataframe(elements)
-            results.append(df)
+    try:
+        with open(json_path, 'r') as f:
+            for elements in tqdm_proxy( gen_json_objects(f, batch_size) ):
+                df = load_synapses_as_dataframe(elements)
+                results.append(df)
+    except KeyboardInterrupt:
+        sys.stderr.write(f"Stopping early due to KeyboardInterrupt. ({len(results)} batches completed)\n")
     return pd.concat(results)
