@@ -71,10 +71,15 @@ def convert_labelindex_to_pandas(labelindex):
     for coord_zyx, sv_counts in zip(coords_zyx, labelindex.blocks.values()):
         svs = np.fromiter(sv_counts.counts.keys(), np.uint64, count=len(sv_counts.counts))
         counts = np.fromiter(sv_counts.counts.values(), np.uint32, count=len(sv_counts.counts))
+
+        coord_zyx = np.array(coord_zyx, np.int32)
+        coords = np.repeat(coord_zyx[None], len(svs), axis=0)
+        #coords = np.lib.stride_tricks.as_strided(coord_zyx, shape=(len(svs), 3), strides=(0,4))
+        #coords = np.broadcast_to(coord_zyx, (len(svs),3))
         
         block_svs.append(svs)
         block_counts.append(counts)
-        block_coords.append( np.repeat(coord_zyx[None], len(svs), axis=0) )
+        block_coords.append(coords)
 
     # Concatenate all block data and load into one big DataFrame
     all_coords = np.concatenate(block_coords)
