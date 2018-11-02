@@ -15,40 +15,47 @@ DEFAULT_APPNAME = "neuclease"
 # FIXME: This should be eliminated or at least renamed
 DvidInstanceInfo = namedtuple("DvidInstanceInfo", "server uuid instance")
 
-def default_dvid_session(appname=None):
+def default_dvid_session(appname=None, user=None):
     """
     Return a default requests.Session() object that automatically appends the
     'u' and 'app' query string parameters to every request.
     """
     if appname is None:
         appname = DEFAULT_APPNAME
+    
+    if user is None:
+        user = getpass.getuser()
+    
     # Technically, request sessions are not threadsafe,
     # so we keep one for each thread.
     thread_id = threading.current_thread().ident
     pid = os.getpid()
+
     try:
-        s = DEFAULT_DVID_SESSIONS[(appname, thread_id, pid)]
+        s = DEFAULT_DVID_SESSIONS[(appname, user, thread_id, pid)]
     except KeyError:
         s = requests.Session()
-        s.params = { 'u': getpass.getuser(),
-                     'app': appname }
+        s.params = { 'u': user, 'app': appname }
         DEFAULT_DVID_SESSIONS[(appname, thread_id, pid)] = s
 
     return s
 
 
-def default_node_service(server, uuid, appname=None):
+def default_node_service(server, uuid, appname=None, user=None):
     if appname is None:
         appname = DEFAULT_APPNAME
+
+    if user is None:
+        user = getpass.getuser()
 
     # One per thread/process
     thread_id = threading.current_thread().ident
     pid = os.getpid()
 
     try:
-        ns = DEFAULT_DVID_NODE_SERVICES[(appname, thread_id, pid, server, uuid)]
+        ns = DEFAULT_DVID_NODE_SERVICES[(appname, user, thread_id, pid, server, uuid)]
     except KeyError:
-        ns = DVIDNodeService(server, str(uuid), getpass.getuser(), appname)
+        ns = DVIDNodeService(server, str(uuid), user, appname)
 
     return ns
 
