@@ -3,8 +3,11 @@ from itertools import combinations
 import numpy as np
 import pandas as pd
 
-from neuclease.dvid.labelmap import fetch_labelindex, fetch_labelarray_voxels
+from dvidutils import LabelMapper
+
+from neuclease.dvid.labelmap import fetch_labelindex, fetch_labelarray_voxels, decode_labelindex_blocks
 from neuclease.util.graph import connected_components, connected_components_nonconsecutive
+from neuclease.dvid.labelmap._labelmap import fetch_supervoxels_for_body
 
 def find_missing_adjacencies(server, uuid, instance, body, known_edges, svs=None):
     """
@@ -64,11 +67,12 @@ def find_missing_adjacencies(server, uuid, instance, body, known_edges, svs=None
         Ideally, final_num_cc == 1, but in some cases the body's supervoxels may not be
         directly adjacent, or the adjacencies were not detected.  (See notes above.)
     """
-    li = None
+    labelindex = None
     
     if svs is None:
-        li = fetch_labelindex(server, uuid, instance, body, format='pandas')
-        svs = pd.unique( li.blocks['sv'].values )
+        # We could compute the supervoxel list ourselves from the labelindex, but dvid can do it faster.
+        svs = fetch_supervoxels_for_body(server, uuid, instance, body)
+        labelindex = fetch_labelindex(server, uuid, instance, body, format='protobuf')
 
     cc = connected_components_nonconsecutive(known_edges, svs)
     orig_num_cc = final_num_cc = cc.max()+1
@@ -76,20 +80,23 @@ def find_missing_adjacencies(server, uuid, instance, body, known_edges, svs=None
     if orig_num_cc == 1:
         return np.zeros((0,2), np.uint64), orig_num_cc, final_num_cc
 
-    if li is None:
-        # FIXME: This would be faster if we just used the protobuf format directly
-        li = fetch_labelindex(server, uuid, instance, body, format='pandas')
+    if labelindex is None:
+        labelindex = fetch_labelindex(server, uuid, instance, body, format='protobuf')
 
-    cc_mapping = pd.DataFrame({'sv': svs, 'cc': cc})
-    blocks_df = li.blocks.merge(cc_mapping, how='left', on='sv')
+    encoded_block_coords = np.fromiter(labelindex.blocks.keys(), np.uint64, len(labelindex.blocks))
+    coords_zyx = decode_labelindex_blocks(encoded_block_coords)
+
+    cc_mapper = LabelMapper(svs, cc)
     svs_set = set(svs)
     
     sv_adj_found = []
     cc_adj_found = set()
-    for coord, df in blocks_df.groupby(['z', 'y', 'x']):
+    for coord_zyx, sv_counts in zip(coords_zyx, labelindex.blocks.values()):
         # Given the supervoxels in this block, what CC adjacencies
         # MIGHT we find if we were to inspect the segmentation?
-        possible_adjacencies = set(combinations( set(df['cc']), 2 ))
+        block_svs = np.fromiter(sv_counts.counts.keys(), np.uint64)
+        block_ccs = cc_mapper.apply(block_svs)
+        possible_adjacencies = set(combinations( set(block_ccs), 2 ))
         
         # We only aim to find (at most) a single link between each CC pair.
         # That is, we don't care about adjacencies between CC that we've already linked so far.
@@ -97,7 +104,7 @@ def find_missing_adjacencies(server, uuid, instance, body, known_edges, svs=None
         if not possible_adjacencies:
             continue
 
-        block_box = coord + np.array([[0,0,0], [64,64,64]])
+        block_box = coord_zyx + np.array([[0,0,0], [64,64,64]])
         block_vol = fetch_labelarray_voxels(server, uuid, instance, block_box, supervoxels=True, scale=0)
         
         # Drop supervoxels that don't belong to this body
@@ -107,8 +114,8 @@ def find_missing_adjacencies(server, uuid, instance, body, known_edges, svs=None
         block_vol = block_flat.reshape((64,64,64))
 
         sv_adjacencies = compute_label_adjacencies(block_vol)
-        sv_adjacencies = sv_adjacencies.merge(cc_mapping, how='left', left_on='sv_a', right_on='sv')
-        sv_adjacencies = sv_adjacencies.merge(cc_mapping, how='left', left_on='sv_b', right_on='sv', suffixes=['_a', '_b'])
+        sv_adjacencies['cc_a'] = cc_mapper.apply(sv_adjacencies['sv_a'].values)
+        sv_adjacencies['cc_b'] = cc_mapper.apply(sv_adjacencies['sv_b'].values)
         
         for row in sv_adjacencies.itertuples(index=False):
             if (row.cc_a != row.cc_b) and (row.cc_a, row.cc_b) not in cc_adj_found:
@@ -120,35 +127,41 @@ def find_missing_adjacencies(server, uuid, instance, body, known_edges, svs=None
         if final_num_cc == 1:
             break
     
-    return np.array(sv_adj_found, np.uint64), orig_num_cc, final_num_cc
+    return np.array(sv_adj_found, np.uint64), int(orig_num_cc), int(final_num_cc)
         
 
-def compute_label_adjacencies(vol, exclude_zero=True):
+def compute_label_adjacencies(vol):
     adjacencies = []
     for axis in range(vol.ndim):
-        adjacencies.append( compute_label_adjacencies_for_axis(vol, axis) )
+        adjacencies.append( _compute_label_adjacencies_for_axis(vol, axis) )
 
-    adj_df = pd.DataFrame(np.concatenate(adjacencies), columns=['sv_a', 'sv_b']).drop_duplicates()
-    
-    if exclude_zero:
-        adj_df.query('sv_a != 0 and sv_b != 0', inplace=True)
-
+    adj = np.concatenate(adjacencies)
+    adj_df = pd.DataFrame(adj, columns=['sv_a', 'sv_b'])
+    adj_df = adj_df.drop_duplicates().copy()
     return adj_df
         
 
-def compute_label_adjacencies_for_axis(vol, axis=0):
+def _compute_label_adjacencies_for_axis(vol, axis=0):
     up_slicing = ((slice(None),) * axis) + (np.s_[:-1],)
     down_slicing = ((slice(None),) * axis) + (np.s_[1:],)
 
     up_vol = vol[up_slicing]
     down_vol = vol[down_slicing]
+
+    # Edges    
+    keep = (up_vol != down_vol)
     
-    edge_mask = (up_vol != down_vol)
+    # Exclude edges to label 0
+    keep &= (up_vol != 0)
+    keep &= (down_vol != 0)
     
-    edges = np.array( (up_vol[edge_mask], down_vol[edge_mask]) ).transpose()
+    edges = np.zeros((keep.sum(), 2), vol.dtype)
+    edges[:,0] = up_vol[keep]
+    edges[:,1] = down_vol[keep]
     edges.sort(axis=1)
+
+    return edges
     
-    return pd.DataFrame( edges ).drop_duplicates().values
 
 
 if __name__ == "__main__":
