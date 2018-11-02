@@ -1,3 +1,4 @@
+import time
 import logging
 
 import ujson
@@ -171,6 +172,11 @@ def _read_complete_kafka_log(topic_name, kafka_servers, group_id=None, timeout_s
                        f"Expected to log to end with offset of >= {end_offset-1}, but last "
                        f"message has offset of only {records[-1].offset}")
                 raise RuntimeError(msg)
+
+    # Avoid ReferenceError in pykafka.
+    # See comment in https://github.com/Parsely/pykafka/pull/827
+    consumer.stop()
+    time.sleep(0.1)
 
     return records
 

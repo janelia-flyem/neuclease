@@ -184,3 +184,49 @@ def groupby_spans_presorted(sorted_cols):
 
     # Last group
     yield (start, len(sorted_cols))
+
+
+def group_sums_presorted(a, sorted_cols):
+    """
+    Similar to a.groupby(sorted_cols).sum()
+
+    Args:
+        a: Columns to aggregate
+
+        sorted_cols: Columns to group by
+    
+    Returns:
+        (group_ids, group_sums)
+    """
+    assert a.ndim >= 2
+    assert sorted_cols.ndim >= 2
+    assert a.shape[0] == sorted_cols.shape[0]
+
+    # Two passes: first to get len
+    @jit(nopython=True)
+    def count_groups():
+        num_groups = 0
+        for _ in groupby_presorted(a, sorted_cols):
+            num_groups += 1
+        return num_groups
+
+    num_groups = count_groups()
+    print(f"Aggregating {num_groups} groups")
+    
+    groups_shape = (num_groups,) + sorted_cols.shape[1:]
+    groups = np.zeros(groups_shape, dtype=sorted_cols.dtype)
+
+    results_shape = (num_groups,) + a.shape[1:]
+    agg_results = np.zeros(results_shape, dtype=a.dtype)
+    
+    @jit(nopython=True)
+    def _agg(a, sorted_cols, groups, agg_results):
+        pos = 0
+        for i, group_rows in enumerate(groupby_presorted(a, sorted_cols)):
+            groups[i] = sorted_cols[pos]
+            pos += len(group_rows)
+            agg_results[i] = group_rows.sum(0) # axis 0
+        return (groups, agg_results)
+
+    return _agg(a, sorted_cols, groups, agg_results)
+

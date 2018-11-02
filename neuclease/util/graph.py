@@ -126,7 +126,7 @@ class SparseNodeGraph:
     (In my build, at least, it tends to segfault).
     """
     
-    def __init__(self, edge_array):
+    def __init__(self, edge_array, directed=True):
         import graph_tool as gt
     
         assert edge_array.dtype in (np.uint32, np.uint64)
@@ -137,7 +137,7 @@ class SparseNodeGraph:
         self.mapper = LabelMapper(self.node_ids, self.cons_node_ids)
         cons_edges = self.mapper.apply(edge_array)
     
-        self.g = gt.Graph(directed=True)
+        self.g = gt.Graph(directed=directed)
         self.g.add_edge_list(cons_edges, hashed=False)
         
 

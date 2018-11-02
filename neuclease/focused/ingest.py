@@ -271,12 +271,21 @@ def compute_focused_bodies(server, uuid, instance, synapse_samples, min_tbars, m
         server = 'emdata3:8900'
         uuid = '7254'
         instance = 'segmentation'
-        synapse_samples = '/nrs/flyem/bergs/complete-ffn-agglo/sampled-synapses-d585.csv'
+
+        synapse_samples = '/nrs/flyem/bergs/complete-ffn-agglo/sampled-synapses-ef1d-locked.csv'
+
         min_tbars = 2
         min_psds = 10
-        root_sv_sizes_dir = '/groups/flyem/data/scratchspace/copyseg-configs/labelmaps/hemibrain/8nm/compute-8nm-extended-fixed-STATS-ONLY-20180402.192015'
-        root_sv_sizes = f'{root_sv_sizes_dir}/supervoxel-sizes.h5'
+
+        # old repo supervoxels (before server rebase)
+        #root_sv_sizes_dir = '/groups/flyem/data/scratchspace/copyseg-configs/labelmaps/hemibrain/8nm/compute-8nm-extended-fixed-STATS-ONLY-20180402.192015'
+        #root_sv_sizes = f'{root_sv_sizes_dir}/supervoxel-sizes.h5'
+        
+        root_sv_sizes_dir = '/groups/flyem/data/scratchspace/copyseg-configs/labelmaps/hemibrain/flattened/compute-stats-from-corrupt-20181016.203848'
+        root_sv_sizes = f'{root_sv_sizes_dir}/supervoxel-sizes-2884.h5'
+        
         min_body_size = int(10e6)
+
         sv_classifications = '/nrs/flyem/bergs/sv-classifications.h5'
         marked_bad_bodies = '/nrs/flyem/bergs/complete-ffn-agglo/bad-bodies-2018-10-01.csv'
         
@@ -319,6 +328,8 @@ def compute_focused_bodies(server, uuid, instance, synapse_samples, min_tbars, m
         sv_classifications:
             Optional. Path to an hdf5 file containing supervoxel classifications.
             Must have datasets: 'supervoxel_ids', 'classifications', and 'class_names'.
+            Used to exclude known-bad supervoxels. The file need not include all supervoxels.
+            Any supervoxels MISSING from this file are not considered 'bad'.
 
         marked_bad_bodies:
             Optional. A list of known-bad bodies to exclude from the results,

@@ -7,11 +7,11 @@ from contextlib import contextmanager
 import numpy as np
 import pandas as pd
 
-from .util import Timer, uuids_match
-from .rwlock import ReadWriteLock
+from .util import Timer
 from .dvid import fetch_repo_info, fetch_supervoxels_for_body, fetch_labels, fetch_complete_mappings, fetch_mutation_id, fetch_supervoxel_splits
 from .merge_table import MERGE_TABLE_DTYPE, load_mapping, load_merge_table, normalize_merge_table, apply_mapping_to_mergetable
 from .focused.ingest import fetch_focused_decisions
+from .adjacency import find_missing_adjacencies
 
 _logger = logging.getLogger(__name__)
 
@@ -56,7 +56,6 @@ class LabelmapMergeGraph:
                 Only used for unit-testing purposes, when no kafka server is available.
                 Disables fetching of split supervoxel information entirely!
         """
-        self.rwlock = ReadWriteLock()
         self.primary_uuid = None
         self.set_primary_uuid(primary_uuid)
         self.debug_export_dir = debug_export_dir
@@ -79,15 +78,14 @@ class LabelmapMergeGraph:
         
         self._mapping_versions = {}
         
-        # Supervoxels retrieved from DVID are cached in this member.
-        self._sv_cache = {}
+        self._edge_cache = {}
         
         # This lock protects the above cache
-        self._sv_cache_main_lock = threading.Lock()
+        self._edge_cache_main_lock = threading.Lock()
         
-        # This dict holds a lock for each body, to avoid requesting supervoxels for the same body in parallel,
-        # (but requesting supervoxels for different bodies in parallel is OK).
-        self._sv_cache_key_locks = defaultdict(lambda: threading.Lock())
+        # This dict holds a lock for each body, to avoid requesting edges for the same body in parallel,
+        # (but requesting edges for different bodies in parallel is OK).
+        self._edge_cache_key_locks = defaultdict(lambda: threading.Lock())
 
 
     def set_primary_uuid(self, primary_uuid):
@@ -252,20 +250,12 @@ class LabelmapMergeGraph:
         return bad_edges
 
 
-    def fetch_supervoxels_for_body(self, server, uuid, instance, body_id, logger=_logger):
-        """
-        Fetch the supervoxels for the given body from DVID.
-        The results are cached internally, according to the body's current mutation id.
-        
-        Args:
-            instance_info: tuple of (server, uuid, instance)
-            body_id: uint64
-        
-        Returns:
-            (mutation id, supervoxels)
-        """
-        mut_id = fetch_mutation_id(server, uuid, instance, body_id)
+    def extract_edges(self, server, uuid, instance, body_id, *, session=None, logger=None):
+        body_id = np.uint64(body_id)
+        if logger is None:
+            logger = _logger
 
+        mutid = fetch_mutation_id(server, uuid, instance, body_id)
         key = (server, uuid, instance, body_id)
         key_lock = self.get_key_lock(*key)
 
@@ -273,136 +263,70 @@ class LabelmapMergeGraph:
         # in case the user sends several requests at once for the same body,
         # which can happen if they click faster than dvid can respond.
         with key_lock:
-            if key in self._sv_cache:
-                cached_mut_id, supervoxels = self._sv_cache[key]
-                if cached_mut_id == mut_id:
-                    return mut_id, supervoxels # Cache is up-to-date
+            if key in self._edge_cache:
+                cached_mutid, supervoxels, edges, scores = self._edge_cache[key]
+                if cached_mutid == mutid:
+                    logger.info("Returning cached edges")
+                    return (mutid, supervoxels, edges, scores)
+
+            logger.info("Edges not found in cache.  Extracting from merge graph.")
+            dvid_supervoxels = fetch_supervoxels_for_body(server, uuid, instance, body_id, session=session)
+
+            # It's very fast to select rows based on the body_id,
+            # so we prefer that if the mapping is already in sync with DVID.
+            svs_from_mapping = self.mapping[self.mapping == body_id].index
+            mapping_is_in_sync = (set(svs_from_mapping) == set(dvid_supervoxels))
+
+            if mapping_is_in_sync:
+                subset_df = self.extract_premapped_rows(body_id)
+            else:
+                subset_df = self.extract_rows_by_sv(dvid_supervoxels)
+
+            with Timer() as timer:                
+                known_edges = subset_df[['id_a', 'id_b']].values
+                extra_edges, orig_num_cc, final_num_cc = find_missing_adjacencies(server, uuid, instance, body_id, known_edges, svs=dvid_supervoxels)
+                extra_scores = np.zeros(len(extra_edges), np.float32)
             
-            with Timer() as timer:
-                supervoxels = fetch_supervoxels_for_body(server, uuid, instance, body_id)
-                supervoxels = np.asarray(supervoxels, np.uint64)
-                supervoxels.sort()
+            if orig_num_cc == 1:
+                logger.info("Graph is contiguous")
+            elif final_num_cc == 1:
+                logger.info(f"Finding missing adjacencies between {orig_num_cc} disjoint components took {timer.timedelta}")
+            else:
+                logger.warning(f"Graph is not contiguous, but some missing adjacencies could not be found.")
+                logger.warning(f"Reducing {orig_num_cc} disjoint components into {final_num_cc} took {timer.timedelta}")
+            
+            edges = known_edges
+            scores = subset_df['score'].values
 
-            # Save in cache
-            with self._sv_cache_main_lock:
-                self._sv_cache[key] = (mut_id, supervoxels)
+            if len(extra_edges) > 0:
+                edges = np.concatenate((edges, extra_edges))
+                scores = np.concatenate((scores, extra_scores))
 
-        logger.info(f"Retrieving supervoxel list from DVID took {timer.timedelta}")
-        return mut_id, supervoxels
-
-
-    def extract_rows(self, server, uuid, instance, body_id, logger=None):
-        """
-        Determine which supervoxels belong to the given body,
-        and extract all edges involving those supervoxels (and only those supervoxels).
+            # Cache before returning            
+            self._edge_cache[key] = (mutid, dvid_supervoxels, edges, scores)
         
-        Returns:
-            subset_df, supervoxels, mapping_updated
-            where:
-                - subset_df is the extracted rows from self.merge_table_df,
-                - dvid_supervoxels is the full set of supervoxels in the body (even if they aren't mentioned in subset_df)
-                - mapping_updated is True if the mapping was changed as a result of this call (mostly used for debug/testing)
-        """        
-        body_id = np.uint64(body_id)
-        if logger is None:
-            logger = _logger
-        mut_id, dvid_supervoxels = self.fetch_supervoxels_for_body(server, uuid, instance, body_id, logger)
+        return (mutid, dvid_supervoxels, edges, scores)
 
-        # Are we allowed to update the merge table 'body' column?
-        permit_write = (self.primary_uuid is None or uuids_match(uuid, self.primary_uuid))
 
-        # If we're permitted to write, then avoid running this function in parallel for the same computation.
-        # (The first thread to enter will take a while to apply the body mapping, but the rest will be fast.)
-        # Use a body-specific lock.  If we're not permitted to write, use a dummy lock (permit parallel computation).
-        if permit_write:
-            key_lock = self.get_key_lock(server, uuid, instance, body_id)
-        else:
-            key_lock = dummy_lock()
-
-        with key_lock:
-            svs_from_mapping = None
-            with self.rwlock.context(write=False):
-                try:
-                    mapping_is_in_sync = (self._mapping_versions[body_id] == (server, uuid, instance, mut_id))
-                except KeyError:
-                    # This body doesn't exist in the mapping cache (yet)
-                    svs_from_mapping = self.mapping[self.mapping == body_id].index
-                    mapping_is_in_sync = (set(svs_from_mapping) == set(dvid_supervoxels))
+    def extract_premapped_rows(self, body_id):
+        body_positions_orig = (self.merge_table_df['body'] == body_id).values.nonzero()[0]
+        subset_df = self.merge_table_df.iloc[body_positions_orig]
+        return subset_df.copy()
     
-                # It's very fast to select rows based on the body_id,
-                # so we prefer that if the mapping is already in sync with DVID.
-                body_positions_orig = (self.merge_table_df['body'] == body_id).values.nonzero()[0]
-                subset_df = self.merge_table_df.iloc[body_positions_orig]
-    
-                if mapping_is_in_sync:
-                    return subset_df, dvid_supervoxels, False
 
-            # If we get this far, our mapping is out-of-sync with DVID's agglomeration.
-            # Query for the rows the slow way (via set membership).
-            # 
-            # Note:
-            #    I tried speeding this up using proper index-based pandas selection:
-            #        merge_table_df.loc[(supervoxels, supervoxels), 'body'] = body_id
-            #    ...but that is MUCH worse for large selections, and only marginally
-            #    faster for small selections.
-            #    Using eval() seems to be the best option here.
-            #    The worst body we've got takes ~30 seconds to extract.
-    
-            # Should we overwrite the body column for these rows?
-            with self.rwlock.context(permit_write):
-                # Must re-query the rows to change, since the table might have changed while the lock was released.
-                body_positions_orig = (self.merge_table_df['body'] == body_id)
-                
-                # Likewise, must re-query the old mapping supervoxels
-                svs_from_mapping = self.mapping[self.mapping == body_id].index
+    def extract_rows_by_sv(self, supervoxels):
+        _sv_set = set(supervoxels)
+        subset_df = self.merge_table_df.query('id_a in @_sv_set and id_b in @_sv_set')
+        return subset_df.copy()
 
-                if self.debug_export_dir:
-                    export_path = self.debug_export_dir + f"/body-{body_id}-table-before-sync.csv"
-                    logger.info(f"Exporting {export_path}")
-                    orig_rows = body_positions_orig.values.nonzero()[0] # can't use bool array with iloc
-                    self.merge_table_df.iloc[orig_rows].to_csv(export_path, index=False)
 
-                logger.info(f"Cached supervoxels (N={len(svs_from_mapping)}) don't match expected (N={len(dvid_supervoxels)}).")
-                sv_set = set(dvid_supervoxels)
-                subset_df = self.merge_table_df.query('id_a in @sv_set and id_b in @sv_set').copy()
-                subset_df['body'] = body_id
-
-                if permit_write:
-                    logger.info(f"Overwriting cached mapping (erasing {body_positions_orig.sum()}, updating {len(subset_df)})")
-                    # Before we overwrite, invalidate the mapping version for any body IDs we're about to overwrite
-                    known_svs = self.mapping.index.intersection(dvid_supervoxels).astype(np.uint64, copy=False)
-                    for prev_body in pd.unique(known_svs):
-                        if prev_body in self._mapping_versions:
-                            del self._mapping_versions[prev_body]
-    
-                    self._mapping_versions[body_id] = (server, uuid, instance, mut_id)
-
-                    # Overwite old positions with zeros, overwrite new positions with the body_id
-                    self.merge_table_df.loc[body_positions_orig, 'body'] = np.uint64(0)
-                    self.merge_table_df.loc[subset_df.index, 'body'] = body_id
-
-                    # Overwite old positions with zeros, overwrite new positions with the body_id,
-                    # and add new positions if they don't exist in the mapping yet.
-                    self.mapping[self.mapping == body_id] = np.uint64(0)
-                    new_svs = pd.UInt64Index(dvid_supervoxels).difference(self.mapping.index)
-                    if len(new_svs) > 0:
-                        new_mapping_entries = pd.Series(index=np.fromiter(new_svs, dtype=np.uint64), data=body_id)
-                        self.mapping = pd.concat((self.mapping, new_mapping_entries))
-                    self.mapping.loc[dvid_supervoxels] = body_id
-                    
-                if self.debug_export_dir:
-                    export_path = self.debug_export_dir + f"/body-{body_id}-table-after-sync.csv"
-                    logger.info(f"Exporting {export_path}")
-                    subset_df.to_csv(export_path, index=False)
-                    assert set(pd.unique(subset_df[['id_a', 'id_b']].values.flat)) - sv_set == set(), \
-                        "Our new subset includes supervoxels that DVID didn't want!"
-
-                return subset_df, dvid_supervoxels, True
-
-    
     def get_key_lock(self, dvid_server, uuid, instance, body_id):
+        """
+        Rather than using a single Lock to protect all bodies at once,
+        we permit fine-grained locking for individual cached bodies.
+        Each body's unique lock is produced by this function.
+        """
         key = (dvid_server, uuid, instance, body_id)
-        with self._sv_cache_main_lock:
-            key_lock = self._sv_cache_key_locks[key]
+        with self._edge_cache_main_lock:
+            key_lock = self._edge_cache_key_locks[key]
         return key_lock
-

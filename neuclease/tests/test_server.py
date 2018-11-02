@@ -142,7 +142,7 @@ def test_body_edge_table(cleave_server_setup):
     r.raise_for_status()
 
     lines = r.content.decode().rstrip().split('\n')
-    assert lines[0] == 'id_a,id_b,xa,ya,za,xb,yb,zb,score,body'
+    assert lines[0] == 'id_a,id_b,score'
     assert len(lines) == 5, '\n' +  '\n'.join(lines)
 
 @show_request_exceptions
