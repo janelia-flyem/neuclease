@@ -10,7 +10,6 @@ from http import HTTPStatus
 from datetime import datetime
 
 import ujson
-import numpy as np
 import pandas as pd
 
 import requests
@@ -19,9 +18,8 @@ from flask import Flask, request, abort, redirect, url_for, jsonify, Response, m
 from .logging_setup import init_logging, log_exceptions, PrefixedLogger
 from .merge_graph import  LabelmapMergeGraph
 from .cleave import cleave, InvalidCleaveMethodError
-from .dvid import DvidInstanceInfo, KafkaReadError
+from .dvid import DvidInstanceInfo
 from .util import Timer
-from .adjacency import find_missing_adjacencies
 from neuclease.dvid._dvid import default_dvid_session
 
 # Globals
@@ -90,11 +88,7 @@ def main(debug_mode=False):
         # Apply splits first
         if all(primary_instance_info):
             with Timer(f"Appending split supervoxel edges for supervoxels in", logger):
-                bad_edges = []
-                try:
-                    bad_edges = MERGE_GRAPH.append_edges_for_split_supervoxels( primary_instance_info, read_from='kafka' )
-                except KafkaReadError:
-                    bad_edges = MERGE_GRAPH.append_edges_for_split_supervoxels( primary_instance_info, read_from='dvid' )
+                bad_edges = MERGE_GRAPH.append_edges_for_split_supervoxels( primary_instance_info, read_from='dvid' )
 
                 if len(bad_edges) > 0:
                     bad_edges_name = f'BAD-SPLIT-EDGES-{args.primary_uuid[:4]}.csv'
