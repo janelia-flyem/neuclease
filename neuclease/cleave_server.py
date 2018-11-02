@@ -21,6 +21,8 @@ from .merge_graph import  LabelmapMergeGraph
 from .cleave import cleave, InvalidCleaveMethodError
 from .dvid import DvidInstanceInfo, KafkaReadError
 from .util import Timer
+from .adjacency import find_missing_adjacencies
+from neuclease.dvid._dvid import default_dvid_session
 
 # Globals
 MERGE_GRAPH = None
@@ -246,7 +248,8 @@ def _run_cleave(data):
     # Extract this body's edges from the complete merge graph
     with Timer() as timer:
         try:
-            df, supervoxels, _mapping_updated = MERGE_GRAPH.extract_rows(*instance_info, body_id, body_logger)
+            session = default_dvid_session(appname='cleave-server', user=user)
+            mutid, supervoxels, edges, scores = MERGE_GRAPH.extract_edges(*instance_info, body_id, session=session, logger=body_logger)
         except requests.HTTPError as ex:
             status_name = str(HTTPStatus(ex.response.status_code)).split('.')[1]
             if ex.response.status_code == HTTPStatus.NOT_FOUND:
@@ -258,9 +261,7 @@ def _run_cleave(data):
             cleave_response.setdefault("errors", []).append(msg)
             return cleave_response, ex.response.status_code
 
-        edges = df[['id_a', 'id_b']].values.astype(np.uint64)
-        weights = df['score'].values
-    body_logger.info(f"Extracting body graph took {timer.timedelta}")
+    body_logger.info(f"Extracting body graph (mutid={mutid}) took {timer.timedelta}")
 
     unexpected_seeds = set(chain(*seeds.values())) - set(supervoxels)
     if unexpected_seeds:
@@ -271,9 +272,9 @@ def _run_cleave(data):
         return cleave_response, HTTPStatus.PRECONDITION_FAILED # code 412
 
     try:
-        # Perform the computation
+        # Perform the cleave computation
         with Timer() as timer:
-            results = cleave(edges, weights, seeds, supervoxels, method=method)
+            results = cleave(edges, scores, seeds, supervoxels, method=method)
     except InvalidCleaveMethodError as ex:
         body_logger.error(str(ex))
         body_logger.info("Responding with error BAD_REQUEST.")
@@ -346,7 +347,8 @@ def body_edge_table():
     body_logger.info("Recevied body-edge-table request")
 
     try:
-        subset_df, _supervoxels, _mapping_updated = MERGE_GRAPH.extract_rows(*instance_info, body_id, body_logger)
+        session = default_dvid_session(appname='cleave-server', user=user)
+        _mutid, _supervoxels, edges, scores = MERGE_GRAPH.extract_edges(*instance_info, body_id, session=session, logger=body_logger)
     except requests.HTTPError as ex:
         status_name = str(HTTPStatus(ex.response.status_code)).split('.')[1]
         if ex.response.status_code == HTTPStatus.NOT_FOUND:
@@ -357,7 +359,9 @@ def body_edge_table():
         return msg, ex.response.status_code
 
     response = StringIO()
-    subset_df.to_csv(response, index=False, header=True)
+    table = pd.DataFrame(edges, columns=['id_a', 'id_b'])
+    table['score'] = scores
+    table.to_csv(response, index=False, header=True)
     return response.getvalue()
 
 @app.route('/debug', methods=['POST'])
