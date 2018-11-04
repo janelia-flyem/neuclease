@@ -284,16 +284,19 @@ class LabelmapMergeGraph:
 
             with Timer() as timer:                
                 known_edges = subset_df[['id_a', 'id_b']].values
-                extra_edges, orig_num_cc, final_num_cc = find_missing_adjacencies(server, uuid, instance, body_id, known_edges, svs=dvid_supervoxels)
+                extra_edges, orig_num_cc, final_num_cc, block_table = \
+                    find_missing_adjacencies(server, uuid, instance, body_id, known_edges, svs=dvid_supervoxels)
                 extra_scores = np.zeros(len(extra_edges), np.float32)
             
             if orig_num_cc == 1:
                 logger.info("Graph is contiguous")
-            elif final_num_cc == 1:
-                logger.info(f"Finding missing adjacencies between {orig_num_cc} disjoint components took {timer.timedelta}")
             else:
-                logger.warning(f"Graph is not contiguous, but some missing adjacencies could not be found.")
-                logger.warning(f"Reducing {orig_num_cc} disjoint components into {final_num_cc} took {timer.timedelta}")
+                logger.info(f"Searched {len(block_table)} blocks for missing adjacencies.")
+                if final_num_cc == 1:
+                    logger.info(f"Finding missing adjacencies between {orig_num_cc} disjoint components took {timer.timedelta}")
+                else:
+                    logger.warning(f"Graph is not contiguous, but some missing adjacencies could not be found.")
+                    logger.warning(f"Reducing {orig_num_cc} disjoint components into {final_num_cc} took {timer.timedelta}")
             
             edges = known_edges
             scores = subset_df['score'].values
