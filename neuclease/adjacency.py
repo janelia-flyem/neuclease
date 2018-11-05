@@ -10,7 +10,7 @@ from neuclease.dvid.labelmap import fetch_labelindex, fetch_labelarray_voxels, d
 from neuclease.util.graph import connected_components, connected_components_nonconsecutive
 from neuclease.dvid.labelmap._labelmap import fetch_supervoxels_for_body
 
-def find_missing_adjacencies(server, uuid, instance, body, known_edges, svs=None, search_distance=1, connect_non_adjacent=False, debug=False):
+def find_missing_adjacencies(server, uuid, instance, body, known_edges, svs=None, search_distance=1, connect_non_adjacent=False):
     """
     Given a body and an intra-body merge graph defined by the given
     list of "known" supervoxel-to-supervoxel edges within that body,
@@ -119,7 +119,7 @@ def find_missing_adjacencies(server, uuid, instance, body, known_edges, svs=None
         searched_block_svs[(*coord_zyx,)] = block_svs
         
         # Not used in the search; only returned for debug purposes.
-        block_adj_table = _init_adj_table(coord_zyx, block_svs, cc_mapper, debug)
+        block_adj_table = _init_adj_table(coord_zyx, block_svs, cc_mapper)
 
         block_vol = fetch_block_vol(server, uuid, instance, coord_zyx, svs_set)
         if search_distance > 0:
@@ -154,16 +154,14 @@ def find_missing_adjacencies(server, uuid, instance, body, known_edges, svs=None
                 if row.sv_a > row.sv_b:
                     sv_adj = (row.sv_b, row.sv_a)
 
-                if debug:
-                    block_adj_table.loc[sv_adj, 'detected'] = True
+                block_adj_table.loc[sv_adj, 'detected'] = True
                     
                 if cc_adj not in cc_adj_found:
                     found_new_adj = True
                     cc_adj_found.add( cc_adj )
                     sv_adj_found.append( sv_adj )
                     
-                    if debug:
-                        block_adj_table.loc[sv_adj, 'applied'] = True
+                    block_adj_table.loc[sv_adj, 'applied'] = True
 
         block_tables[(*coord_zyx,)] = block_adj_table
 
@@ -195,16 +193,12 @@ def find_missing_adjacencies(server, uuid, instance, body, known_edges, svs=None
                     cc_adj_found.add( (cc_a, cc_b) )
                     sv_adj_found.append( (sv_a, sv_b) )
 
-                    if debug:
-                        block_tables[(*coord_zyx,)].loc[(sv_a, sv_b), 'applied'] = True
+                    block_tables[(*coord_zyx,)].loc[(sv_a, sv_b), 'applied'] = True
 
         final_num_cc = connected_components(np.array(list(cc_adj_found), np.uint64), orig_num_cc).max()+1
     
-    if debug:
-        block_table = pd.concat(block_tables.values(), sort=False).reset_index()
-        block_table = block_table[['z', 'y', 'x', 'sv_a', 'sv_b', 'cc_a', 'cc_b', 'detected', 'applied']]
-    else:
-        block_table = pd.concat(block_tables.values())[list('zyx')]
+    block_table = pd.concat(block_tables.values(), sort=False).reset_index()
+    block_table = block_table[['z', 'y', 'x', 'sv_a', 'sv_b', 'cc_a', 'cc_b', 'detected', 'applied']]
     
     new_edges = np.array(sv_adj_found, np.uint64)
     return new_edges, int(orig_num_cc), int(final_num_cc), block_table
@@ -264,20 +258,17 @@ def _compute_label_adjacencies_for_axis(vol, axis=0):
     return edges
 
 
-def _init_adj_table(coord_zyx, block_svs, cc_mapper, debug):
-    if debug:
-        block_adj_table = pd.DataFrame(list(combinations( sorted(set(block_svs)), 2 )), columns=['sv_a', 'sv_b'], dtype=np.uint64)
-        block_adj_table['cc_a'] = cc_mapper.apply(block_adj_table['sv_a'].values)
-        block_adj_table['cc_b'] = cc_mapper.apply(block_adj_table['sv_b'].values)
-        block_adj_table.query('cc_a != cc_b', inplace=True)
-        
-        block_adj_table['detected'] = False
-        block_adj_table['applied'] = False
-        block_adj_table.set_index(['sv_a', 'sv_b'], inplace=True)
-        block_adj_table = block_adj_table.assign(**dict(zip('zyx', coord_zyx)))
-        return block_adj_table
-    else:
-        return pd.DataFrame([coord_zyx], columns=list('zyx'))
+def _init_adj_table(coord_zyx, block_svs, cc_mapper):
+    block_adj_table = pd.DataFrame(list(combinations( sorted(set(block_svs)), 2 )), columns=['sv_a', 'sv_b'], dtype=np.uint64)
+    block_adj_table['cc_a'] = cc_mapper.apply(block_adj_table['sv_a'].values)
+    block_adj_table['cc_b'] = cc_mapper.apply(block_adj_table['sv_b'].values)
+    block_adj_table.query('cc_a != cc_b', inplace=True)
+    
+    block_adj_table['detected'] = False
+    block_adj_table['applied'] = False
+    block_adj_table.set_index(['sv_a', 'sv_b'], inplace=True)
+    block_adj_table = block_adj_table.assign(**dict(zip('zyx', coord_zyx)))
+    return block_adj_table
 
 
 def export_debug_volumes(server, uuid, instance, body, block_table, outdir='/tmp'):
@@ -322,6 +313,6 @@ if __name__ == "__main__":
     body = 739917109
     edges = np.load(f'/tmp/edges-{body}.npy').astype(np.uint64)
     
-    missing_edges, orig_num_cc, final_num_cc, block_table = find_missing_adjacencies(*test_seg, body, edges, search_distance=2, connect_non_adjacent=True, debug=True)
+    missing_edges, orig_num_cc, final_num_cc, block_table = find_missing_adjacencies(*test_seg, body, edges, search_distance=2, connect_non_adjacent=True)
     print(orig_num_cc, final_num_cc)
     print(block_table)
