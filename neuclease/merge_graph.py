@@ -86,6 +86,8 @@ class LabelmapMergeGraph:
         # This dict holds a lock for each body, to avoid requesting edges for the same body in parallel,
         # (but requesting edges for different bodies in parallel is OK).
         self._edge_cache_key_locks = defaultdict(lambda: threading.Lock())
+        
+        self.max_cache_len = 1000
 
 
     def set_primary_uuid(self, primary_uuid):
@@ -306,8 +308,14 @@ class LabelmapMergeGraph:
                 edges = np.concatenate((edges, extra_edges))
                 scores = np.concatenate((scores, extra_scores))
 
-            # Cache before returning            
-            self._edge_cache[key] = (mutid, dvid_supervoxels, edges, scores)
+            # Cache before returning
+            with self._edge_cache_main_lock:
+                if key in self._edge_cache:
+                    del self._edge_cache[key]
+                if len(self._edge_cache) == self.max_cache_len:
+                    first_key = next(iter(self._edge_cache.keys()))
+                    del self._edge_cache[first_key]
+                self._edge_cache[key] = (mutid, dvid_supervoxels, edges, scores)
         
         return (mutid, dvid_supervoxels, edges, scores)
 
