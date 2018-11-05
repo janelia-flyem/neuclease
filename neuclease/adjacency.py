@@ -10,7 +10,7 @@ from neuclease.dvid.labelmap import fetch_labelindex, fetch_labelarray_voxels, d
 from neuclease.util.graph import connected_components, connected_components_nonconsecutive
 from neuclease.dvid.labelmap._labelmap import fetch_supervoxels_for_body
 
-def find_missing_adjacencies(server, uuid, instance, body, known_edges, svs=None, search_distance=0, debug=False):
+def find_missing_adjacencies(server, uuid, instance, body, known_edges, svs=None, search_distance=1, connect_non_adjacent=False, debug=False):
     """
     Given a body and an intra-body merge graph defined by the given
     list of "known" supervoxel-to-supervoxel edges within that body,
@@ -58,6 +58,16 @@ def find_missing_adjacencies(server, uuid, instance, body, known_edges, svs=None
             If the known_edges ALREADY constitute a single connected component
             which covers all supervoxels in the body, there is no need to
             download the labelindex.
+        
+        search_distance:
+            If > 1, supervoxels are considered adjacent if they are within
+            the given distance from each other, even if they aren't directly adjacent.
+        
+        connect_non_adjacent:
+            If searching by adjacency failed to fully connect all supervoxels in the
+            body into a single connected component, generate edges for supervoxels
+            that are not adjacent, but merely are in the same block (if it helps
+            unify the body).
     
     Returns:
         (new_edges, orig_num_cc, final_num_cc),
@@ -89,7 +99,10 @@ def find_missing_adjacencies(server, uuid, instance, body, known_edges, svs=None
 
     sv_adj_found = []
     cc_adj_found = set()
-    block_tables = []
+    block_tables = {}
+    
+    searched_block_svs = {}
+    
     for coord_zyx, sv_counts in zip(coords_zyx, labelindex.blocks.values()):
         # Given the supervoxels in this block, what CC adjacencies
         # MIGHT we find if we were to inspect the segmentation?
@@ -103,6 +116,8 @@ def find_missing_adjacencies(server, uuid, instance, body, known_edges, svs=None
         if not possible_cc_adjacencies:
             continue
 
+        searched_block_svs[(*coord_zyx,)] = block_svs
+        
         # Not used in the search; only returned for debug purposes.
         block_adj_table = _init_adj_table(coord_zyx, block_svs, cc_mapper, debug)
 
@@ -150,7 +165,7 @@ def find_missing_adjacencies(server, uuid, instance, body, known_edges, svs=None
                     if debug:
                         block_adj_table.loc[sv_adj, 'applied'] = True
 
-        block_tables.append( block_adj_table )
+        block_tables[(*coord_zyx,)] = block_adj_table
 
         # If we made at least one change and we've 
         # finally unified all components, then we're done.
@@ -159,11 +174,37 @@ def find_missing_adjacencies(server, uuid, instance, body, known_edges, svs=None
             if final_num_cc == 1:
                 break
     
+    # If we couldn't connect everything via direct adjacencies,
+    # we can just add edges for any supervoxels that share a block.
+    if final_num_cc > 1 and connect_non_adjacent:
+        for coord_zyx, block_svs in searched_block_svs.items():
+            block_ccs = cc_mapper.apply(block_svs)
+            
+            # We only need one SV per connected component,
+            # so load them into a dict.
+            selected_svs = dict(zip(block_ccs, block_svs))
+            for (sv_a, sv_b) in combinations(sorted(selected_svs.values()), 2):
+                (cc_a, cc_b) = cc_mapper.apply(np.array([sv_a, sv_b], np.uint64))
+                if cc_a > cc_b:
+                    cc_a, cc_b = cc_b, cc_a
+                
+                if (cc_a, cc_b) not in cc_adj_found:
+                    if sv_a > sv_b:
+                        sv_a, sv_b = sv_b, sv_a
+
+                    cc_adj_found.add( (cc_a, cc_b) )
+                    sv_adj_found.append( (sv_a, sv_b) )
+
+                    if debug:
+                        block_tables[(*coord_zyx,)].loc[(sv_a, sv_b), 'applied'] = True
+
+        final_num_cc = connected_components(np.array(list(cc_adj_found), np.uint64), orig_num_cc).max()+1
+    
     if debug:
-        block_table = pd.concat(block_tables).reset_index()
+        block_table = pd.concat(block_tables.values(), sort=False).reset_index()
         block_table = block_table[['z', 'y', 'x', 'sv_a', 'sv_b', 'cc_a', 'cc_b', 'detected', 'applied']]
     else:
-        block_table = pd.concat(block_tables)[list('zyx')]
+        block_table = pd.concat(block_tables.values())[list('zyx')]
     
     new_edges = np.array(sv_adj_found, np.uint64)
     return new_edges, int(orig_num_cc), int(final_num_cc), block_table
@@ -281,6 +322,6 @@ if __name__ == "__main__":
     body = 739917109
     edges = np.load(f'/tmp/edges-{body}.npy').astype(np.uint64)
     
-    missing_edges, orig_num_cc, final_num_cc, block_table = find_missing_adjacencies(*test_seg, body, edges, radius=32, debug=True)
+    missing_edges, orig_num_cc, final_num_cc, block_table = find_missing_adjacencies(*test_seg, body, edges, search_distance=2, connect_non_adjacent=True, debug=True)
     print(orig_num_cc, final_num_cc)
     print(block_table)
