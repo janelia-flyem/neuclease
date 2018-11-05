@@ -285,7 +285,8 @@ class LabelmapMergeGraph:
             with Timer() as timer:                
                 known_edges = subset_df[['id_a', 'id_b']].values
                 extra_edges, orig_num_cc, final_num_cc, block_table = \
-                    find_missing_adjacencies(server, uuid, instance, body_id, known_edges, svs=dvid_supervoxels)
+                    find_missing_adjacencies(server, uuid, instance, body_id, known_edges,
+                                             svs=dvid_supervoxels, search_distance=10, connect_non_adjacent=True)
                 extra_scores = np.zeros(len(extra_edges), np.float32)
             
             if orig_num_cc == 1:
