@@ -38,7 +38,7 @@ CSV_DTYPES = { 'body': np.uint64,
                'x': np.int32, 'y': np.int32, 'z': np.int32 }
 
 
-def update_synapse_table(server, uuid, instance, synapse_df, output_path=None):
+def update_synapse_table(server, uuid, instance, synapse_df, output_path=None, split_source='kafka'):
     """
     Give a dataframe (or a CSV file) with at least columns ['sv', 'x', 'y', 'z'],
     identify any 'retired' supervoxels and query DVID to
@@ -52,7 +52,7 @@ def update_synapse_table(server, uuid, instance, synapse_df, output_path=None):
         synapse_df = load_synapses_from_csv(synapse_df)
 
     # Get the set of all retired supervoxel IDs
-    _leaves, _retired = fetch_supervoxel_fragments(*seg_info, 'dvid')
+    _leaves, _retired = fetch_supervoxel_fragments(*seg_info, split_source)
 
     # Which rows in the table have a retired ID?
     retired_df = synapse_df.query('sv in @_retired')[['z', 'y', 'x']]
@@ -346,6 +346,8 @@ def compute_focused_bodies(server, uuid, instance, synapse_samples, min_tbars, m
             ['voxel_count', 'PreSyn', 'PostSyn']
         (See return_table option.)
     """
+    split_source = 'dvid'
+    
     # Load full mapping. It's needed for both synapses and body sizes.
     mapping = fetch_complete_mappings(server, uuid, instance, include_retired=True)
     mapper = LabelMapper(mapping.index.values, mapping.values)
@@ -361,7 +363,7 @@ def compute_focused_bodies(server, uuid, instance, synapse_samples, min_tbars, m
 
     # If 'sv' column is present, use it to create (or update) the body column
     if 'sv' in synapse_samples.columns:
-        synapse_samples = update_synapse_table(server, uuid, instance, synapse_samples)
+        synapse_samples = update_synapse_table(server, uuid, instance, synapse_samples, split_source=split_source)
         assert synapse_samples['sv'].dtype == np.uint64
         synapse_samples['body'] = mapper.apply(synapse_samples['sv'].values, True)
 
@@ -376,7 +378,7 @@ def compute_focused_bodies(server, uuid, instance, synapse_samples, min_tbars, m
     ## Body sizes
     ##
     with Timer("Filtering for body size", logger):    
-        sv_sizes = load_all_supervoxel_sizes(server, uuid, instance, root_sv_sizes)
+        sv_sizes = load_all_supervoxel_sizes(server, uuid, instance, root_sv_sizes, split_source=split_source)
         body_stats = compute_body_sizes(sv_sizes, mapping, True)
         big_body_stats = body_stats.query('voxel_count >= @min_body_size')
         big_bodies = big_body_stats.index

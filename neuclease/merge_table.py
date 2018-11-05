@@ -346,7 +346,7 @@ def load_supervoxel_sizes(h5_path):
     return sv_sizes
 
 
-def load_all_supervoxel_sizes(server, uuid, instance, root_sv_sizes):
+def load_all_supervoxel_sizes(server, uuid, instance, root_sv_sizes, split_source='kafka'):
     """
     Given the original SV sizes (or a path to the .h5 file that contains it)
     and a DVID node/instance, compute the set of ALL supervoxel sizes for the node.
@@ -369,7 +369,7 @@ def load_all_supervoxel_sizes(server, uuid, instance, root_sv_sizes):
     if isinstance(root_sv_sizes, str):
         root_sv_sizes = load_supervoxel_sizes(root_sv_sizes)
     assert isinstance(root_sv_sizes, pd.Series)
-    split_fragment_sizes = fetch_split_supervoxel_sizes(server, uuid, instance)
+    split_fragment_sizes = fetch_split_supervoxel_sizes(server, uuid, instance, split_source=split_source)
     
     all_sv_sizes = pd.concat((root_sv_sizes, split_fragment_sizes))
     all_sv_sizes.index.name = 'sv'
