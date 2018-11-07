@@ -68,6 +68,7 @@ def connected_components_nonconsecutive(edges, node_ids):
     """
     assert node_ids.ndim == 1
     assert node_ids.dtype in (np.uint32, np.uint64)
+    
     cons_node_ids = np.arange(len(node_ids), dtype=np.uint32)
     mapper = LabelMapper(node_ids, cons_node_ids)
     cons_edges = mapper.apply(edges)
@@ -95,6 +96,11 @@ def connected_components(edges, num_nodes, _lib=None):
     
     Note: Uses graph-tool if it's installed; otherwise uses networkx (slower).
     """
+    if len(edges) == 0:
+        # Corner case: No edges -- every node is a component.
+        # Avoid errors in graph_tool with an empty edge list.
+        return np.arange(num_nodes, dtype=np.uint32)
+
     if (graph_tool_available() or _lib == 'gt') and _lib != 'nx':
         import graph_tool as gt
         from graph_tool.topology import label_components

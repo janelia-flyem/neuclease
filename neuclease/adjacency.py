@@ -78,6 +78,7 @@ def find_missing_adjacencies(server, uuid, instance, body, known_edges, svs=None
         Ideally, final_num_cc == 1, but in some cases the body's supervoxels may not be
         directly adjacent, or the adjacencies were not detected.  (See notes above.)
     """
+    BLOCK_TABLE_COLS = ['z', 'y', 'x', 'sv_a', 'sv_b', 'cc_a', 'cc_b', 'detected', 'applied']
     known_edges = np.asarray(known_edges, np.uint64)
     if svs is None:
         # We could compute the supervoxel list ourselves from 
@@ -88,7 +89,7 @@ def find_missing_adjacencies(server, uuid, instance, body, known_edges, svs=None
     orig_num_cc = final_num_cc = cc.max()+1
     
     if orig_num_cc == 1:
-        return np.zeros((0,2), np.uint64), orig_num_cc, final_num_cc, pd.DataFrame(columns=['z', 'y', 'x'])
+        return np.zeros((0,2), np.uint64), orig_num_cc, final_num_cc, pd.DataFrame(columns=BLOCK_TABLE_COLS)
 
     labelindex = fetch_labelindex(server, uuid, instance, body, format='protobuf')
     encoded_block_coords = np.fromiter(labelindex.blocks.keys(), np.uint64, len(labelindex.blocks))
@@ -197,8 +198,11 @@ def find_missing_adjacencies(server, uuid, instance, body, known_edges, svs=None
 
         final_num_cc = connected_components(np.array(list(cc_adj_found), np.uint64), orig_num_cc).max()+1
     
-    block_table = pd.concat(block_tables.values(), sort=False).reset_index()
-    block_table = block_table[['z', 'y', 'x', 'sv_a', 'sv_b', 'cc_a', 'cc_b', 'detected', 'applied']]
+    if len(block_tables) == 0:
+        block_table = pd.DataFrame(columns=BLOCK_TABLE_COLS)
+    else:
+        block_table = pd.concat(block_tables.values(), sort=False).reset_index()
+        block_table = block_table[BLOCK_TABLE_COLS]
     
     new_edges = np.array(sv_adj_found, np.uint64)
     return new_edges, int(orig_num_cc), int(final_num_cc), block_table

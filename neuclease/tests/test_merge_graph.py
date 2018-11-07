@@ -1,9 +1,13 @@
+import logging
 import pytest
 from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 
-from neuclease.dvid import DvidInstanceInfo, post_key, post_branch, create_instance, fetch_mutation_id, post_cleave, post_split_supervoxel
+from libdvid import DVIDNodeService
+
+from neuclease.dvid import ( DvidInstanceInfo, post_key, post_branch, create_instance,
+                             fetch_mutation_id, post_cleave, post_split_supervoxel, post_merge )
 from neuclease.merge_graph import LabelmapMergeGraph
 from neuclease.merge_table import load_merge_table, MAPPED_MERGE_TABLE_DTYPE
 
@@ -82,6 +86,41 @@ def test_extract_edges_clean_mapping(labelmap_setup):
 def test_extract_edges_dirty_mapping(labelmap_setup):
     _test_extract_edges(labelmap_setup, force_dirty_mapping=True)
     
+
+def test_extract_edges_with_large_gap(labelmap_setup):
+    """
+    If a large gap exists between a supervoxel and the rest of the body,
+    we won't find an edge for it, but there should be no crash.
+    """
+    dvid_server, dvid_repo, merge_table_path, mapping_path, _supervoxel_vol = labelmap_setup
+    orig_merge_table = load_merge_table(merge_table_path, mapping_path, normalize=True)
+    
+    merge_graph = LabelmapMergeGraph(merge_table_path)
+    merge_graph.apply_mapping(mapping_path)
+
+    uuid = post_branch(dvid_server, dvid_repo, f'test_extract_edges_large_gap', '')
+    
+    # Exercise a corner case:
+    # Add a new supervoxel to the body, far away from the others.
+    # (No edge will be added for that supervoxel.)
+    block_99 = 99*np.ones((64,64,64), np.uint64)
+    DVIDNodeService(dvid_server, uuid).put_labels3D('segmentation', block_99, (128,0,0))
+    post_merge(dvid_server, uuid, 'segmentation', 1, [99])
+
+    root_logger = logging.getLogger()
+    oldlevel = root_logger.level
+    try:
+        # Hide warnings for this call; they're intentional.
+        logging.getLogger().setLevel(logging.ERROR)
+        _mutid, dvid_supervoxels, edges, _scores = merge_graph.extract_edges(dvid_server, uuid, 'segmentation', 1)
+    finally:
+        root_logger.setLevel(oldlevel)
+
+    assert (dvid_supervoxels == [1,2,3,4,5,99]).all()
+    assert (orig_merge_table[['id_a', 'id_b']].values == edges).all().all(), \
+        f"Original merge table doesn't match fetched:\n{orig_merge_table}\n\n{edges}\n"
+
+
 
 def _setup_test_append_edges_for_split(labelmap_setup, branch_name):
     dvid_server, dvid_repo, _merge_table_path, _mapping_path, supervoxel_vol = labelmap_setup
