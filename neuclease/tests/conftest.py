@@ -13,7 +13,7 @@ import pandas as pd
 from libdvid import DVIDNodeService
 
 import neuclease
-from neuclease.dvid import create_labelmap_instance
+from neuclease.dvid import fetch_repos_info, create_labelmap_instance, post_commit, post_merge
 
 TEST_DVID_SERVER_PROC = None # Initialized below
 
@@ -82,9 +82,7 @@ def init_test_repo(reuse_existing=True):
     global TEST_REPO
 
     if reuse_existing:
-        r = requests.get(f'http://{TEST_SERVER}/api/repos/info')
-        r.raise_for_status()
-        repos_info = r.json()
+        repos_info = fetch_repos_info(TEST_SERVER)
         for repo_uuid, repo_info in repos_info.items():
             if repo_info["Alias"] == TEST_REPO_ALIAS:
                 TEST_REPO = repo_uuid
@@ -142,8 +140,7 @@ def init_labelmap_nodes():
     supervoxel_block[:1,:3,:15] = supervoxel_vol
     DVIDNodeService(TEST_SERVER, TEST_REPO).put_labels3D('segmentation', supervoxel_block, (0,0,0))
 
-    r = requests.post(f'http://{TEST_SERVER}/api/node/{TEST_REPO}/commit', json={'note': 'supervoxels'})
-    r.raise_for_status()
+    post_commit(TEST_SERVER, TEST_REPO, 'supervoxels')
 
 #     # Create a child node for agglo mappings    
 #     r = requests.post(f'http://{TEST_SERVER}/api/node/{TEST_REPO}/newversion', json={'note': 'agglo'})
@@ -152,8 +149,7 @@ def init_labelmap_nodes():
 
     # Merge everything
     agglo_uuid = TEST_REPO
-    r = requests.post(f'http://{TEST_SERVER}/api/node/{agglo_uuid}/segmentation/merge', json=[1, 2, 3, 4, 5])
-    r.raise_for_status()
+    post_merge(TEST_SERVER, agglo_uuid, 'segmentation', 1, [2, 3, 4, 5])
 
     mapping = np.array([[1,1],[2,1],[3,1],[4,1],[5,1]], np.uint64)
     #mapping = pd.DataFrame(mapping, columns=['sv', 'body']).set_index('sv')['body']
