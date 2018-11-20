@@ -255,6 +255,7 @@ def compute_focused_bodies(server, uuid, instance, synapse_samples, min_tbars, m
     1. Apply synapse-based criteria
       a. Load synapse CSV file
       b. Map synapse SVs -> bodies (if needed)
+        b2. If any SVs are 'retired', update those synapses to use the new IDs.
       c. Calculate synapses (tbars, psds) per body
       d. Initialize set with bodies that have enough synapses
     

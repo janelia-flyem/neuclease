@@ -89,7 +89,7 @@ def check_tarsupervoxels_status_via_missing(server, uuid, tsv_instance, seg_inst
     return df['body']
 
 
-def check_tarsupervoxels_status_via_exists(server, uuid, tsv_instance, seg_instance, bodies):
+def check_tarsupervoxels_status_via_exists(server, uuid, tsv_instance, seg_instance, bodies, mapping=None):
     """
     For the given bodies, query the given tarsupervoxels instance and return a
     DataFrame indicating which supervoxels are 'missing' from the instance.
@@ -104,7 +104,8 @@ def check_tarsupervoxels_status_via_exists(server, uuid, tsv_instance, seg_insta
     sv_body = []
     
     try:
-        mapping = fetch_complete_mappings(server, uuid, seg_instance)
+        if mapping is None:
+            mapping = fetch_complete_mappings(server, uuid, seg_instance)
         
         # Filter out bodies we don't care about,
         # and append unmapped (singleton/identity) bodies
