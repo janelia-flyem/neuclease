@@ -116,7 +116,7 @@ def check_tarsupervoxels_status_via_exists(server, uuid, tsv_instance, seg_insta
         singleton_mapping = pd.Series(index=unmapped_bodies, data=unmapped_bodies)
         mapping = pd.concat((mapping, singleton_mapping))
 
-        BATCH_SIZE = 1000
+        BATCH_SIZE = 10_000
         for start in tqdm_proxy(range(0, len(mapping), BATCH_SIZE)):
             svs = mapping.index[start:start+BATCH_SIZE]
             statuses = fetch_exists(server, uuid, tsv_instance, svs)
