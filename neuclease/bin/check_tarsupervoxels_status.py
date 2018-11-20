@@ -25,6 +25,8 @@ import requests
 import numpy as np
 import pandas as pd
 
+from dvidutils import LabelMapper
+
 from neuclease import configure_default_logging
 from neuclease.util import read_csv_col, tqdm_proxy
 from neuclease.dvid import fetch_missing, fetch_exists
@@ -115,17 +117,21 @@ def check_tarsupervoxels_status_via_exists(server, uuid, tsv_instance, seg_insta
         unmapped_bodies = np.fromiter(unmapped_bodies, np.uint64)
         singleton_mapping = pd.Series(index=unmapped_bodies, data=unmapped_bodies)
         mapping = pd.concat((mapping, singleton_mapping))
+        
+        # Faster than mapping.loc[], apparently
+        mapper = LabelMapper(mapping.index.values.astype(np.uint64),
+                             mapping.values.astype(np.uint64))
 
         BATCH_SIZE = 10_000
         for start in tqdm_proxy(range(0, len(mapping), BATCH_SIZE)):
             svs = mapping.index[start:start+BATCH_SIZE]
             statuses = fetch_exists(server, uuid, tsv_instance, svs)
-            missing_svs = statuses[~statuses].index
+            missing_svs = statuses[~statuses].index.values.astype(np.uint64)
 
             if len(missing_svs) == 0:
                 continue
 
-            missing_bodies = mapping.loc[missing_svs]
+            missing_bodies = mapper.apply(missing_svs, True)
             sv_body += list(zip(missing_svs, missing_bodies))
         
     except KeyboardInterrupt:
