@@ -580,6 +580,7 @@ def fetch_labelarray_voxels(server, uuid, instance, box_zyx, scale=0, throttle=F
 def post_labelarray_blocks(server, uuid, instance, corners_zyx, blocks, scale=0, downres=False, noindexing=False, throttle=False, *, session=None):
     """
     Post voxels to a labelarray instance, from a list of blocks.
+    If the instance is a labelmap, the posted volume is treated as supervoxel data.
     
     Args:
         server:
@@ -595,7 +596,7 @@ def post_labelarray_blocks(server, uuid, instance, corners_zyx, blocks, scale=0,
             The starting coordinates of each block in the list (in full-res voxel coordinates)
         
         blocks:
-            A list of uint64 blocks, each with shape (64,64,64)
+            An iterable of uint64 blocks, each with shape (64,64,64)
         
         scale:
             Which pyramid scale to post this block to.
@@ -621,7 +622,8 @@ def post_labelarray_blocks(server, uuid, instance, corners_zyx, blocks, scale=0,
     corners_zyx = np.asarray(corners_zyx, np.int32)
     assert corners_zyx.ndim == 2
     assert corners_zyx.shape[1] == 3
-    assert len(blocks) == len(corners_zyx)
+    if hasattr(blocks, '__len__'):
+        assert len(blocks) == len(corners_zyx)
     corners_xyz = corners_zyx[:, ::-1].copy('C')
 
     # dvid wants block coordinates, not voxel coordinates

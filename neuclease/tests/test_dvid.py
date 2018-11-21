@@ -10,7 +10,8 @@ import pandas as pd
 
 from neuclease.dvid import (dvid_api_wrapper, DvidInstanceInfo, fetch_supervoxels_for_body, fetch_supervoxel_sizes_for_body,
                             fetch_label_for_coordinate, fetch_mappings, fetch_complete_mappings, fetch_mutation_id,
-                            generate_sample_coordinate, fetch_labelarray_voxels, post_labelarray_blocks, fetch_maxlabel)
+                            generate_sample_coordinate, fetch_labelarray_voxels, post_labelarray_blocks, fetch_maxlabel,
+                            fetch_raw, post_raw)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -143,6 +144,31 @@ def test_post_labelarray_voxels(labelmap_setup):
     assert (complete_voxels[0:64,  0:64,  0:64]  == blocks[0]).all()
     assert (complete_voxels[0:64, 64:128, 0:64]  == blocks[1]).all()
     assert (complete_voxels[0:64,  0:64, 64:128] == blocks[2]).all()
+
+
+def test_fetch_raw(labelmap_setup):
+    dvid_server, dvid_repo, _merge_table_path, _mapping_path, supervoxel_vol = labelmap_setup
+    instance_info = (dvid_server, dvid_repo, 'segmentation')
+
+    # fetch_raw() returns mapped labels
+    voxels = fetch_raw(*instance_info, [(0,0,0), supervoxel_vol.shape], dtype=np.uint64)
+    assert (voxels == 1).all()
+
+
+def test_post_raw(labelmap_setup):
+    dvid_server, dvid_repo, _merge_table_path, _mapping_path, _supervoxel_vol = labelmap_setup
+    instance_info = (dvid_server, dvid_repo, 'segmentation-scratch')
+    
+    # Write some random data and read it back.
+    data = np.random.randint(10, size=(64,64,64*3), dtype=np.uint64)
+    offset_zyx = (0,64,0)
+
+    post_raw(*instance_info, offset_zyx, data)
+    complete_voxels = fetch_labelarray_voxels(*instance_info, [(0,0,0), (128,128,192)], supervoxels=True)
+        
+    assert (complete_voxels[0:64, 64:128,   0:64]  == data[:, :,   0:64]).all()
+    assert (complete_voxels[0:64, 64:128,  64:128] == data[:, :,  64:128]).all()
+    assert (complete_voxels[0:64, 64:128, 128:192] == data[:, :, 128:192]).all()
 
 
 if __name__ == "__main__":

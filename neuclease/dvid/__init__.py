@@ -11,3 +11,4 @@ from .annotation import *
 from .roi import *
 from .tarsupervoxels import *
 from .labelmap import *
+from .voxels import *
