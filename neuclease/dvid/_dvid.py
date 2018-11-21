@@ -1,4 +1,5 @@
 import os
+import copy
 import getpass
 import inspect
 import functools
@@ -97,7 +98,8 @@ def dvid_api_wrapper(f):
                  and len(ex.response.content) <= 200 ):
                 
                 msg = str(ex.args[0]) + "\n" + ex.response.content.decode('utf-8')
-                new_ex = requests.HTTPError(msg, *args[1:])
+                new_ex = copy.copy(ex)
+                new_ex.args = (msg, *ex.args[1:])
                 new_ex.response_content_appended = True
                 raise new_ex from ex
             else:
