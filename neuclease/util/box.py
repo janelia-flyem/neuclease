@@ -33,6 +33,12 @@ def box_to_slicing(start, stop):
     return tuple( starmap( slice, zip(start, stop) ) )
 
 
+def box_as_tuple(box):
+    if isinstance(box, np.ndarray):
+        box = box.tolist()
+    return (tuple(box[0]), tuple(box[1]))
+
+
 def round_coord(coord, grid_spacing, how):
     """
     Round the given coordinate up or down to the nearest grid position.
