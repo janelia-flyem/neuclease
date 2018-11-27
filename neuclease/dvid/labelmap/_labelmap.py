@@ -568,8 +568,11 @@ def fetch_labelarray_voxels(server, uuid, instance, box_zyx, scale=0, throttle=F
 
     r = session.get(f'http://{server}/api/node/{uuid}/{instance}/blocks/{shape_str}/{offset_str}', params=params)
     r.raise_for_status()
-    
-    aligned_volume = DVIDNodeService.inflate_labelarray_blocks3D_from_raw(r.content, aligned_shape, aligned_box[0])
+
+    def inflate_labelarray_blocks():
+        # This is wrapped in a little pure-python function solely to aid profilers 
+        return DVIDNodeService.inflate_labelarray_blocks3D_from_raw(r.content, aligned_shape, aligned_box[0])
+    aligned_volume = inflate_labelarray_blocks()
     
     requested_box_within_aligned = box_zyx - aligned_box[0]
     return extract_subvol(aligned_volume, requested_box_within_aligned )
@@ -628,11 +631,15 @@ def post_labelarray_blocks(server, uuid, instance, corners_zyx, blocks, scale=0,
     # dvid wants block coordinates, not voxel coordinates
     encoded_corners = list(map(bytes, corners_xyz // 64))
 
+    def _encode_label_block(block):
+        # This is wrapped in a little pure-python function solely to aid profilers
+        return encode_label_block(block)
+
     encoded_blocks = []
     for block in blocks:
         assert block.shape == (64,64,64)
         block = np.asarray(block, np.uint64, 'C')
-        encoded_blocks.append( gzip.compress(encode_label_block(block)) )
+        encoded_blocks.append( gzip.compress(_encode_label_block(block)) )
     assert len(encoded_blocks) == len(corners_xyz)
 
     encoded_lengths = np.fromiter(map(len, encoded_blocks), np.int32)
