@@ -779,3 +779,68 @@ def labelmap_kafka_msgs_to_df(kafka_msgs, default_timestamp=DEFAULT_TIMESTAMP):
 
     return df[['timestamp', 'uuid', 'mutid', 'action', 'target_body', 'target_sv', 'msg']]
 
+
+def compute_affected_bodies(kafka_msgs):
+    """
+    Given a list of json messages from a labelmap instance,
+    Compute the set of all bodies that are mentioned in the log as either new, changed, or removed.
+    Also return the set of new supervoxels from 'supervoxel-split' actions.
+    
+    Note: Supervoxels from 'split' actions are not included in new_supervoxels.
+          If you're interested in all supervoxel splits, see fetch_supervoxel_splits().
+    
+    Note:
+        These results do not consider any '-complete' messsages in the list.
+        If an operation failed, it may still be included in these results.   
+
+    See also:
+        neuclease.dvid.kafka.filter_kafka_msgs_by_timerange()
+
+    Args:
+        Kafka log for a labelmap instance, obtained via read_kafka_messages().
+    
+    Returns:
+        new_bodies, changed_bodies, removed_bodies, new_supervoxels
+    
+    Example:
+    
+        >>> # Compute the list of bodies whose meshes are possibly outdated.
+    
+        >>> kafka_msgs = read_kafka_messages(server, uuid, seg_instance)
+        >>> filtered_kafka_msgs = filter_kafka_msgs_by_timerange(kafka_msgs, min_timestamp="2018-11-22")
+        
+        >>> new_bodies, changed_bodies, _removed_bodies, new_supervoxels = compute_affected_bodies(filtered_kafka_msgs)
+        >>> sv_split_bodies = set(fetch_mapping(server, uuid, seg_instance, new_supervoxels)) - set([0])
+
+        >>> possibly_outdated_bodies = (new_bodies | changed_bodies | sv_split_bodies)
+    
+    """
+    new_bodies = set()
+    changed_bodies = set()
+    removed_bodies = set()
+    new_supervoxels = set()
+    
+    for msg in kafka_msgs:
+        if msg['Action'].endswith('complete'):
+            continue
+        
+        if msg['Action'] == 'cleave':
+            changed_bodies.add( msg['OrigLabel'] )
+            new_bodies.add( msg['CleavedLabel'] )
+    
+        if msg['Action'] == 'merge':
+            changed_bodies.add( msg['Target'] )
+            labels = set( msg['Labels'] )
+            removed_bodies |= labels
+            changed_bodies -= labels
+            new_bodies -= labels
+        
+        if msg['Action'] == 'split':
+            changed_bodies.add( msg['Target'] )
+            new_bodies.add( msg['NewLabel'] )
+            
+        if msg['Action'] == 'split-supervoxel':
+            new_supervoxels.add(msg['SplitSupervoxel'])
+            new_supervoxels.add(msg['RemainSupervoxel'])
+
+    return new_bodies, changed_bodies, removed_bodies, new_supervoxels
