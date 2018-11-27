@@ -79,12 +79,11 @@ fetch_body_size = fetch_size
 
 @dvid_api_wrapper
 def fetch_sizes(server, uuid, instance, label_ids, supervoxels=False, *, session=None):
-    # FIXME: Return pd.Series
-    label_ids = list(map(int, label_ids))
+    label_ids = np.asarray(label_ids, np.uint64)
     sv_param = str(bool(supervoxels)).lower()
 
     url = f'http://{server}/api/node/{uuid}/{instance}/sizes?supervoxels={sv_param}'
-    sizes = fetch_generic_json(url, label_ids, session=session)
+    sizes = fetch_generic_json(url, label_ids.tolist(), session=session)
     
     sizes = pd.Series(sizes, index=label_ids, name='size')
     if supervoxels:
