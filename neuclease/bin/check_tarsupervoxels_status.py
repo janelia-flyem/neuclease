@@ -35,7 +35,7 @@ import pandas as pd
 from dvidutils import LabelMapper
 
 from neuclease import configure_default_logging
-from neuclease.util import read_csv_col, tqdm_proxy, parse_timestamp
+from neuclease.util import read_csv_header, read_csv_col, tqdm_proxy, parse_timestamp
 from neuclease.dvid import fetch_missing, fetch_exists, fetch_mapping
 from neuclease.dvid.kafka import read_kafka_messages, filter_kafka_msgs_by_timerange
 from neuclease.dvid.labelmap import fetch_complete_mappings, compute_affected_bodies
@@ -58,7 +58,8 @@ def main():
     parser.add_argument('uuid', help='dvid node')
     parser.add_argument('seg_instance', help='name of a labelmap instance, e.g. segmentation')
     parser.add_argument('tsv_instance', help='name of a tarsupervoxels instance, e.g. segmentation_sv_meshes')
-    parser.add_argument('bodies_csv', nargs='?', help='CSV file whose first column is a list of body IDs. Other columns ignored.')
+    parser.add_argument('bodies_csv', nargs='?', help='CSV containin a column named "body", which will be read.\n'
+                                                      'If no "body" column exists, the first column is used, regardless of the name.')
     args = parser.parse_args()
     
     if not (bool(args.kafka_timestamp) ^ bool(args.bodies_csv)):
@@ -66,8 +67,12 @@ def main():
         sys.exit(1)
 
     kafka_msgs = None
-    if args.bodies_csv:    
-        bodies = read_csv_col(args.bodies_csv, 0, np.uint64)
+    if args.bodies_csv:
+        if 'body' in read_csv_header(args.bodies_csv):
+            bodies = pd.read_csv(args.bodies_csv)['body'].drop_duplicates()
+        else:
+            # Just read the first column, no matter what it's named
+            bodies = read_csv_col(args.bodies_csv, 0, np.uint64).drop_duplicates()
     elif args.kafka_timestamp:
         # Validate timestamp format before fetching kafka log, which takes a while.
         parse_timestamp(args.kafka_timestamp)
