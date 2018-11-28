@@ -66,7 +66,7 @@ def lexsort_inplace(table):
 
 def lexsort_columns(table):
     """
-    Lexsort the given 2D table of the given array, in-place.
+    Lexsort the given 2D table of the given array.
     The table is sorted by the first column (table[:,0]),
     then the second, third, etc.
     """

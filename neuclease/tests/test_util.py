@@ -1,14 +1,15 @@
 import json
 import tempfile
 import textwrap
-import pytest
+from random import shuffle
 from tempfile import TemporaryFile
-from io import BytesIO
 
+import pytest
 import numpy as np
 from neuclease.util import (uuids_match, read_csv_header, read_csv_col, connected_components,
                             connected_components_nonconsecutive, graph_tool_available,
-                            closest_approach, upsample, gen_json_objects)
+                            closest_approach, upsample, is_lexsorted, lexsort_columns,
+                            lexsort_inplace, gen_json_objects)
 
 def test_uuids_match():
     assert uuids_match('abcd', 'abcdef') == True
@@ -209,6 +210,55 @@ def test_upsample():
                 [3,3,4,4]]
 
     assert (upsampled == expected).all()
+
+
+def test_is_lexsorted():
+    data = [[0,0,1],
+            [1,0,1],
+            [1,1,1],
+            [1,2,1],
+            [1,2,1],
+            [2,2,1],
+            [2,2,2]]
+    
+    data = np.asarray(data)
+    
+    assert is_lexsorted(data)
+    assert not is_lexsorted(data[::-1])
+
+
+def test_lexsort_columns():
+    data = [[0,0,1],
+            [1,0,1],
+            [1,1,1],
+            [1,2,1],
+            [1,2,1],
+            [2,2,1],
+            [2,2,2]]
+
+    data = np.asarray(data)
+    np.random.shuffle(data)
+    assert not is_lexsorted(data)
+    
+    sorted_data = lexsort_columns(data)
+    assert is_lexsorted(sorted_data)
+
+
+def test_lexsort_inplace():
+    data = [[0,0,1],
+            [1,0,1],
+            [1,1,1],
+            [1,2,1],
+            [1,2,1],
+            [2,2,1],
+            [2,2,2]]
+
+    data = np.asarray(data)
+    np.random.shuffle(data)
+    assert not is_lexsorted(data)
+    
+    lexsort_inplace(data)
+    assert is_lexsorted(data)
 
 
 def test_gen_json_objects():
