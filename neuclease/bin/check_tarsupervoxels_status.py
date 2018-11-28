@@ -9,20 +9,21 @@ after a given starting timestamp.  See usage examples below.
 
 If you are checking a lot of bodies, try the --use-mapping option,
 which fetches the entire in-memory mapping for the segmentation instance
-and then uses the /exists endpoint (instead of the /missing) endpoint.
-Fetching the entire mapping incurs an initial overhead of ~1 minute or so,
-but the /exists endpoint is MUCH faster than /missing.
+and then uses the /exists endpoint (instead of the /missing endpoint).
+Although fetching the entire mapping incurs an initial overhead of
+~1 minute or so, it pays of for a large list of bodies because
+the /exists endpoint is MUCH faster than /missing.
 
 Examples:
 
-    # Check a couple bodies (from your own list)
+    # Check a couple thousand bodies (from your own list)
     check_tarsupervoxels_status emdata3:8900 54f7 segmentation segmentation_sv_meshes bodies.csv
 
-    # Check a lot of bodies (from your own list)
+    # Check 1,000,000 bodies (from your own list)
     check_tarsupervoxels_status --use-mapping emdata3:8900 54f7 segmentation segmentation_sv_meshes bodies.csv
 
     # Check bodies that have changed since Nov 22 (Don't provide bodies.csv)
-    check_tarsupervoxels_status --kafka-timestamp="2018-11-22" emdata3:8900 54f7 segmentation segmentation_sv_meshes
+    check_tarsupervoxels_status --kafka-timestamp="2018-11-22 00:00:00" emdata3:8900 54f7 segmentation segmentation_sv_meshes
 """
 import sys
 import logging
@@ -52,7 +53,8 @@ def main():
     
     parser.add_argument('--kafka-timestamp', '-k', type=str,
                         help='Alternative to providing your own bodies list.\n'
-                             'Use the kafka log automatically determine the list of bodies that have changed after the given timestamp.')
+                             'Use the kafka log automatically determine the list of bodies that have changed after the given timestamp.\n'
+                             'Examples: -k="2018-11-22" -k="2018-11-22 17:34:00"')
     
     parser.add_argument('server', help='dvid server, e.g. emdata3:8900')
     parser.add_argument('uuid', help='dvid node')
