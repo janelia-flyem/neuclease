@@ -327,7 +327,8 @@ def parse_timestamp(ts, default=DEFAULT_TIMESTAMP):
     Acceptable formats are:
 
         2018-01-01             (date only)
-        2018-01-01 00:00:00    (date and time)
+        2018-01-01 00:00       (date and time)
+        2018-01-01 00:00:00    (date and time with seconds)
         2018-01-01 00:00:00.0  (date and time with microseconds)
     
     """
@@ -340,6 +341,8 @@ def parse_timestamp(ts, default=DEFAULT_TIMESTAMP):
     if isinstance(ts, str):
         if len(ts) == len('2018-01-01'):
             ts = datetime.strptime(ts, '%Y-%m-%d')
+        elif len(ts) == len('2018-01-01 00:00'):
+            ts = datetime.strptime(ts, '%Y-%m-%d %H:%M')
         elif len(ts) == len('2018-01-01 00:00:00'):
             ts = datetime.strptime(ts, '%Y-%m-%d %H:%M:%S')
         elif len(ts) >= len('2018-01-01 00:00:00.0'):
