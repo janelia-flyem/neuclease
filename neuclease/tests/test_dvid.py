@@ -124,11 +124,20 @@ def test_fetch_labelarray_voxels(labelmap_setup):
     dvid_server, dvid_repo, _merge_table_path, _mapping_path, supervoxel_vol = labelmap_setup
     instance_info = DvidInstanceInfo(dvid_server, dvid_repo, 'segmentation')
 
+    # Test raw supervoxels
     voxels = fetch_labelarray_voxels(*instance_info, [(0,0,0), supervoxel_vol.shape], supervoxels=True)
     assert (voxels == supervoxel_vol).all()
     
+    # Test mapped bodies
     voxels = fetch_labelarray_voxels(*instance_info, [(0,0,0), supervoxel_vol.shape], supervoxels=False)
     assert (voxels == 1).all()
+
+    # Test uninflated mode
+    voxels_proxy = fetch_labelarray_voxels(*instance_info, [(0,0,0), supervoxel_vol.shape], supervoxels=True, inflate=False)
+    assert len(voxels_proxy.content) < supervoxel_vol.nbytes, \
+        "Fetched data was apparently not compressed"
+    assert (voxels_proxy() == supervoxel_vol).all()
+
 
 def test_post_labelarray_voxels(labelmap_setup):
     dvid_server, dvid_repo, _merge_table_path, _mapping_path, _supervoxel_vol = labelmap_setup

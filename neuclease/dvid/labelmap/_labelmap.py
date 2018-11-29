@@ -511,7 +511,7 @@ def generate_sample_coordinate(server, uuid, instance, label_id, supervoxels=Fal
 
 
 @dvid_api_wrapper
-def fetch_labelarray_voxels(server, uuid, instance, box_zyx, scale=0, throttle=False, supervoxels=False, *, session=None):
+def fetch_labelarray_voxels(server, uuid, instance, box_zyx, scale=0, throttle=False, supervoxels=False, *, inflate=True, session=None):
     """
     Fetch a volume of voxels from the given instance.
     
@@ -542,6 +542,11 @@ def fetch_labelarray_voxels(server, uuid, instance, box_zyx, scale=0, throttle=F
         
         supervoxels:
             If True, request supervoxel data from the given labelmap instance.
+        
+        inflate:
+            If True, inflate the compressed voxels from DVID and return an ordinary ndarray
+            If False, return a callable proxy that stores the compressed data internally,
+            and that will inflate the data when called.
     
     Returns:
         ndarray, with shape == (box[1] - box[0])
@@ -570,12 +575,16 @@ def fetch_labelarray_voxels(server, uuid, instance, box_zyx, scale=0, throttle=F
     r.raise_for_status()
 
     def inflate_labelarray_blocks():
-        # This is wrapped in a little pure-python function solely to aid profilers 
-        return DVIDNodeService.inflate_labelarray_blocks3D_from_raw(r.content, aligned_shape, aligned_box[0])
-    aligned_volume = inflate_labelarray_blocks()
+        aligned_volume = DVIDNodeService.inflate_labelarray_blocks3D_from_raw(r.content, aligned_shape, aligned_box[0])
+        requested_box_within_aligned = box_zyx - aligned_box[0]
+        return extract_subvol(aligned_volume, requested_box_within_aligned )
+        
+    inflate_labelarray_blocks.content = r.content
     
-    requested_box_within_aligned = box_zyx - aligned_box[0]
-    return extract_subvol(aligned_volume, requested_box_within_aligned )
+    if inflate:
+        return inflate_labelarray_blocks()
+    else:
+        return inflate_labelarray_blocks
 
 
 @dvid_api_wrapper
