@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 
-from ..util import fetch_file, post_file
+from ..util import fetch_file, post_file, tqdm_proxy
 from . import dvid_api_wrapper, fetch_generic_json
 from .repo import create_instance
 
@@ -220,9 +220,9 @@ def fetch_missing(server, uuid, instance, body_id, *, session=None):
         instance:
             dvid tarsupervoxels instance name, e.g. 'segmentation_sv_meshes'
         
-        supervoxel_id:
-            The supervoxel ID whose file will be retrieved.
-    
+        body_id:
+            The body ID for which to check for missing supervoxel files.
+
     Returns:
         np.ndarray of supervoxels that are missing for the given body.
         If no supervoxels are missing, the array will be empty (len 0).
@@ -231,4 +231,50 @@ def fetch_missing(server, uuid, instance, body_id, *, session=None):
     r.raise_for_status()
     return np.array(r.json(), np.uint64)
 
+
+def fetch_missing_from_bodies(server, uuid, instance, body_ids, *, session=None):
+    """
+    For the given list of bodies, fetch the list of supervoxels
+    that are missing from the given tarsupervoxels instance.
+    The supervoxels are returned in a dataframe (columns: sv, body).
+    Also, if any of the given bodies no longer exist (due to merges),
+    a second list is returned.
+
+    Args:
+        server:
+            dvid server, e.g. 'emdata3:8900'
+        
+        uuid:
+            dvid uuid, e.g. 'abc9'
+        
+        instance:
+            dvid tarsupervoxels instance name, e.g. 'segmentation_sv_meshes'
+
+        body_id:
+            The body ID for which to check for missing supervoxel files.
+
+    Returns:
+        (missing_df, retired_bodies), where
+        
+        missing_df:
+            DataFrame of missing sv files and the bodies to which they belong.
+
+        retired_bodies:
+            An array of the body IDs from the input list which no longer exist in
+            the sync'd segmentation instance.        
+    """
+    retired_bodies = []
+    missing = []
     
+    for body in tqdm_proxy(body_ids):
+        try:
+            missing_svs = fetch_missing(server, uuid, instance, body, session=session)
+            missing.extend((sv, body) for sv in missing_svs)
+        except Exception as ex:
+            if 'has no supervoxels' in str(ex):
+                retired_bodies.append(body)
+            else:
+                raise
+    
+    missing_df = pd.DataFrame(missing, columns=['sv', 'body'], dtype=np.uint64)
+    return missing_df, np.array(retired_bodies, dtype=np.uint64)
