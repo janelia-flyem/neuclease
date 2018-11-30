@@ -280,9 +280,15 @@ def kafka_msgs_to_df(msgs, drop_duplicates=False, default_timestamp=DEFAULT_TIME
     msgs_df['timestamp'] = pd.to_datetime(msgs_df['timestamp'])
     msgs_df['uuid'] = [msg['UUID'] for msg in msgs_df['msg']]
     msgs_df['uuid'] = msgs_df['uuid'].astype('category')
-    msgs_df['mutid'] = [msg['MutationID'] for msg in msgs_df['msg']]
     
-    return msgs_df[['timestamp', 'uuid', 'mutid', 'msg']]
+    if 'MutationID' in msgs[0]:
+        msgs_df['mutid'] = [msg['MutationID'] for msg in msgs_df['msg']]
+
+    columns = ['timestamp', 'uuid', 'mutid', 'msg']
+    if 'mutid' not in msgs_df.columns:
+        columns.remove('mutid')
+    
+    return msgs_df[columns]
 
 
 def filter_kafka_msgs_by_timerange(kafka_msgs, min_timestamp=None, max_timestamp=None, min_mutid=None, max_mutid=None):
