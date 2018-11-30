@@ -227,9 +227,9 @@ def _filter_records_for_action(records_and_values, action_filter):
 def kafka_msgs_to_df(msgs, drop_duplicates=False, default_timestamp=DEFAULT_TIMESTAMP):
     """
     Load the messages into a DataFrame with columns for
-    timestamp, uuid, mut_id, and msg (the complete message).
+    timestamp, uuid, mut_id (if present), and msg (the complete message).
     
-    Note:  `neuclease.util.DEFAULT_TIMESTAMP`.
+    Note: See `neuclease.util.DEFAULT_TIMESTAMP`.
     (At the time of this writing, `2018-01-01`).
     
     Args:
