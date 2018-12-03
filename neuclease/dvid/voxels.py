@@ -1,5 +1,11 @@
+import json
+import logging
 import numpy as np
+
+from .node import fetch_instance_info
 from . import dvid_api_wrapper
+
+logger = logging.getLogger(__name__)
 
 @dvid_api_wrapper
 def fetch_raw(server, uuid, instance, box_zyx, throttle=False, *, dtype=np.uint8, session=None):
@@ -83,3 +89,81 @@ def post_raw(server, uuid, instance, offset_zyx, volume, throttle=False, mutate=
                     params=params, data=bytes(volume))
     r.raise_for_status()
 
+
+@dvid_api_wrapper
+def post_extents(server, uuid, instance, box_zyx, *, session=None):
+    """
+    Post new volume extents for the given instance.
+    
+        server:
+            dvid server, e.g. 'emdata3:8900'
+        
+        uuid:
+            dvid uuid, e.g. 'abc9'
+        
+        instance:
+            dvid instance name, e.g. 'grayscale'.
+            Must be a volume type, e.g. 'uint8blk' or 'labelmap', etc.
+
+        box_zyx:
+            The new extents: [[z0,y0,x0], [z1,y1,x1]].
+    """
+    box_zyx = np.asarray(box_zyx)
+    assert box_zyx.shape == (2,3)
+    
+    min_point_xyz = box_zyx[0]
+    max_point_xyz = box_zyx[1] - 1
+
+    extents_json = { "MinPoint": min_point_xyz.tolist(),
+                     "MaxPoint": max_point_xyz.tolist() }
+    
+    url = f'http://{server}/api/node/{uuid}/{instance}/extents'
+    r = session.post(url, json=extents_json)
+    r.raise_for_status()
+
+
+def update_extents(server, uuid, instance, minimal_extents_zyx, *, session=None):
+    """
+    Convenience function. (Not a direct endpoint wrapper.)
+    
+    Ensure that the given data instance has at least the given extents.
+    Update the instance extents metadata along axes that are smaller
+    than the given extents box.
+    
+    Args:
+        server:
+            dvid server, e.g. 'emdata3:8900'
+        
+        uuid:
+            dvid uuid, e.g. 'abc9'
+        
+        instance:
+            dvid instance name, e.g. 'grayscale'
+
+        minimal_box_zyx:
+            3D bounding box [min_zyx, max_zyx] = [(z0,y0,x0), (z1,y1,x1)].
+            If provided, data extents will be at least this large (possibly larger).
+            (The max extent should use python conventions, i.e. the MaxPoint + 1)
+    """
+    minimal_extents_zyx = np.array(minimal_extents_zyx, dtype=int)
+    assert minimal_extents_zyx.shape == (2,3), \
+        "Minimal extents must be provided as a 3D bounding box: [(z0,y0,x0), (z1,y1,x1)]"
+    logger.info(f"Updating extents for {uuid}/{instance}")
+    
+    # Fetch original extents.
+    info = fetch_instance_info(server, uuid, instance, session=session)
+    
+    orig_extents_xyz = np.array( [(1e9, 1e9, 1e9), (-1e9, -1e9, -1e9)], dtype=int )
+    if info["Extended"]["MinPoint"] is not None:
+        orig_extents_xyz[0] = info["Extended"]["MinPoint"]
+
+    if info["Extended"]["MaxPoint"] is not None:
+        orig_extents_xyz[1] = info["Extended"]["MaxPoint"]
+        orig_extents_xyz[1] += 1
+
+    minimal_extents_xyz = minimal_extents_zyx[:, ::-1].copy()
+    minimal_extents_xyz[0] = np.minimum(minimal_extents_xyz[0], orig_extents_xyz[0])
+    minimal_extents_xyz[1] = np.maximum(minimal_extents_xyz[1], orig_extents_xyz[1])
+
+    if (minimal_extents_xyz != orig_extents_xyz).any():
+        post_extents(server, uuid, instance, minimal_extents_xyz[:, ::-1])
