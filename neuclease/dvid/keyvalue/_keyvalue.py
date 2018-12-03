@@ -1,16 +1,21 @@
+import logging
 from io import BytesIO
 from tarfile import TarFile
 from collections.abc import Mapping
 
 import ujson
 import numpy as np
+import requests
 
-from .. import dvid_api_wrapper, fetch_generic_json
 from ...util import tqdm_proxy
+from .. import dvid_api_wrapper, fetch_generic_json
+from ..node import fetch_instance_info
+from ..repo import create_instance
 
 # $ protoc --python_out=. neuclease/dvid/keyvalue/ingest.proto
 from .ingest_pb2 import Keys, KeyValue, KeyValues
 
+logger = logging.getLogger(__name__)
 
 @dvid_api_wrapper
 def fetch_keys(server, uuid, instance, *, session=None):
@@ -112,6 +117,7 @@ def fetch_keyvalues(server, uuid, instance, keys, as_json=False, batch_size=None
         keyvalues.update( batch_kvs )
     
     return keyvalues
+
 
 @dvid_api_wrapper
 def _fetch_keyvalues_via_protobuf(server, uuid, instance, keys, as_json=False, *, use_jsontar=False, session=None):
@@ -216,3 +222,60 @@ def post_keyvalues(server, uuid, instance, keyvalues, batch_size=None, *, sessio
         url = f'http://{server}/api/node/{uuid}/{instance}/keyvalues'
         r = session.post(url, data=proto_keyvalues.SerializeToString())
         r.raise_for_status()
+
+
+def extend_list_value(server, uuid, instance, key, new_list, *, session=None):
+    """
+    Convenience function.
+    
+    For the list stored at the given keyvalue instance and key,
+    extend it with the given new_list.
+    
+    If the keyvalue instance and/or key are missing from the server, create them.
+
+    Note: Duplicates will be removed before posting the new list value.
+
+    Args:
+        server:
+            dvid server, e.g. 'emdata3:8900'
+        
+        uuid:
+            dvid uuid, e.g. 'abc9'
+        
+        instance:
+            keyvalue instance name, e.g. '.meta'.
+            If it doesn't exist yet, it will be created.
+        
+        key:
+            key of the list to extend.  For example, this function is often
+            used for the 'restrictions', or 'neuroglancer' lists.
+        
+        new_list: Items to append to the existing list on the server.
+    """
+    assert isinstance(new_list, list)
+
+    # Ensure the instance exists, create it if not.
+    try:
+        _info = fetch_instance_info(server, uuid, instance, session=session)
+    except requests.HTTPError as ex:
+        if 'invalid data instance name' in str(ex):
+            create_instance(server, uuid, instance, 'keyvalue', session=session)
+        else:
+            raise
+
+    # Fetch the original value (if it exists)
+    try:
+        old_list = fetch_key(server, uuid, instance, key, as_json=True, session=session)
+        if not isinstance(old_list, list):
+            raise RuntimeError(f"Can't extend value: Stored value for key {key} is not a list.")
+    except requests.HTTPError as ex:
+        if ex.response.status_code == 404:
+            old_list = []
+        else:
+            raise
+
+    # Post the new value (if it's different)
+    new_list = list(set(old_list + new_list))
+    if set(new_list) != set(old_list):
+        logger.debug(f"Updating '{instance}/{key}' list from: {old_list} to: {new_list}")
+        post_key(server, uuid, instance, key, json=new_list, session=session)
