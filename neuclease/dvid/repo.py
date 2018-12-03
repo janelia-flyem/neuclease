@@ -37,6 +37,32 @@ def fetch_repos_info(server, *, session=None):
     """
     return fetch_generic_json(f'http://{server}/api/repos/info', session=session)
 
+@dvid_api_wrapper
+def create_repo(server, alias, description, *, session=None):
+    """
+    Create a new repo on the given server.
+    
+    Args:
+        server:
+            dvid server address, e.g. emdata3:8900
+        
+        alias:
+            Short human-readable name for the repo
+        
+        description:
+            Brief description of what you intend to use the repo for.
+    
+    Returns:
+        Repo uuid of the newly created repo, which is also the root UUID of the repo's DAG.
+    """
+    info = {}
+    info['alias'] = alias
+    info['desription'] = description
+    r = session.post(f'http://{server}/api/repos', json=info)
+    r.raise_for_status()
+
+    repo_uuid = r.json()['root']
+    return repo_uuid
 
 @dvid_api_wrapper
 def fetch_repo_info(server, uuid, *, session=None):
