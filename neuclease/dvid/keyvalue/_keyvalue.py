@@ -53,6 +53,8 @@ def fetch_key(server, uuid, instance, key, as_json=False, *, session=None):
 @dvid_api_wrapper
 def post_key(server, uuid, instance, key, data=None, json=None, *, session=None):
     assert data is not None or json is not None, "No data to post"
+    if data is not None:
+        assert isinstance(data, bytes), f"Raw data must be posted as bytes, not {type(data)}"
     r = session.post(f'http://{server}/api/node/{uuid}/{instance}/key/{key}', data=data, json=json)
     r.raise_for_status()
     
@@ -206,7 +208,9 @@ def post_keyvalues(server, uuid, instance, keyvalues, batch_size=None, *, sessio
     
     keyvalues = list(keyvalues.items())
 
-    for start in tqdm_proxy(range(0, len(keyvalues), batch_size), leave=False, disable=(batch_size >= len(keyvalues))):
+    batch_starts = range(0, len(keyvalues), batch_size)
+    progress = tqdm_proxy(batch_starts, leave=False, disable=(batch_size >= len(keyvalues)))
+    for start in progress:
         kvs = []
         for key, value in keyvalues[start:start+batch_size]:
             if not isinstance(value, (bytes, str)):
