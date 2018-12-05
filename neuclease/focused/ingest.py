@@ -118,6 +118,8 @@ def fetch_focused_decisions(server, uuid, instance='segmentation_merged', normal
             If provided, don't fetch all focused decisions;
             only select those whose key matches the given SV ID pairs
             (The left/right order within the pair doesn't matter.)
+            Alternatively, the pairs can be given as exact key strings to retrieve
+            (in the format '{id_1}+{id_2}', e.g. '123+456')
         
         subset_slice:
             If provided, only select from the given slice of the full key set.
@@ -133,10 +135,13 @@ def fetch_focused_decisions(server, uuid, instance='segmentation_merged', normal
     
     keys = fetch_keys(server, uuid, instance)
     if subset_pairs is not None:
-        subset_keys1 = [f'{a}+{b}' for a,b in subset_pairs]
-        subset_keys2 = [f'{a}+{b}' for a,b in subset_pairs]
-        
-        keys = list(set(subset_keys1).intersection(keys) | set(subset_keys2).intersection(keys))
+        subset_pairs = list(subset_pairs)
+        if isinstance(subset_pairs[0], str):
+            keys = list(set(keys).intersection(subset_pairs))
+        else:
+            subset_keys1 = [f'{a}+{b}' for a,b in subset_pairs]
+            subset_keys2 = [f'{b}+{a}' for a,b in subset_pairs]
+            keys = list(set(subset_keys1).intersection(keys) | set(subset_keys2).intersection(keys))
 
     if subset_slice:
         keys = keys[subset_slice]
