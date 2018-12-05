@@ -97,7 +97,7 @@ def load_focused_table(path):
     return df
 
 
-def fetch_focused_decisions(server, uuid, instance, normalize_pairs=None, subset_pairs=None, subset_slice=None):
+def fetch_focused_decisions(server, uuid, instance='segmentation_merged', normalize_pairs=None, subset_pairs=None, subset_slice=None):
     """
     Load focused decisions from a given keyvalue instance
     (e.g. 'segmentation_merged') and return them as a DataFrame,
