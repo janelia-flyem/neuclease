@@ -247,7 +247,7 @@ def body_synapse_counts(synapse_samples):
     return synapse_counts
 
 
-def compute_focused_bodies(server, uuid, instance, synapse_samples, min_tbars, min_psds, root_sv_sizes, min_body_size, sv_classifications=None, marked_bad_bodies=None, return_table=False):
+def compute_focused_bodies(server, uuid, instance, synapse_samples, min_tbars, min_psds, root_sv_sizes, min_body_size, sv_classifications=None, marked_bad_bodies=None, return_table=False, kafka_msgs=None):
     """
     Compute the complete set of focused bodies, based on criteria for
     number of tbars, psds, or overall size, and excluding explicitly
@@ -355,7 +355,7 @@ def compute_focused_bodies(server, uuid, instance, synapse_samples, min_tbars, m
     split_source = 'dvid'
     
     # Load full mapping. It's needed for both synapses and body sizes.
-    mapping = fetch_complete_mappings(server, uuid, instance, include_retired=True)
+    mapping = fetch_complete_mappings(server, uuid, instance, include_retired=True, kafka_msgs=kafka_msgs)
     mapper = LabelMapper(mapping.index.values, mapping.values)
 
     ##
