@@ -1,4 +1,3 @@
-import json
 import logging
 import numpy as np
 
@@ -60,7 +59,6 @@ def fetch_raw(server, uuid, instance, box_zyx, throttle=False, *, dtype=np.uint8
     r.raise_for_status()
 
     if len(r.content) != np.prod(shape_zyx) * np.dtype(dtype).itemsize:
-        from neuclease.dvid import fetch_instance_info
         info = fetch_instance_info(server, uuid, instance)
         typename = info["Base"]["TypeName"]
         msg = ("Buffer from DVID is the wrong length for the requested array.\n"
