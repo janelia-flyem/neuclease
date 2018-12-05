@@ -227,7 +227,7 @@ def _filter_records_for_action(records_and_values, action_filter):
 def kafka_msgs_to_df(msgs, drop_duplicates=False, default_timestamp=DEFAULT_TIMESTAMP):
     """
     Load the messages into a DataFrame with columns for
-    timestamp, uuid, mut_id (if present), and msg (the complete message).
+    timestamp, uuid, mut_id (if present), key (if present), and msg (the complete message).
     
     Note: See `neuclease.util.DEFAULT_TIMESTAMP`.
     (At the time of this writing, `2018-01-01`).
@@ -283,10 +283,17 @@ def kafka_msgs_to_df(msgs, drop_duplicates=False, default_timestamp=DEFAULT_TIME
     
     if 'MutationID' in msgs[0]:
         msgs_df['mutid'] = [msg['MutationID'] for msg in msgs_df['msg']]
+    
+    if 'Key' in msgs[0]:
+        msgs_df['key'] = [msg['Key'] for msg in msgs_df['msg']]
 
-    columns = ['timestamp', 'uuid', 'mutid', 'msg']
+    columns = ['timestamp', 'uuid', 'mutid', 'key', 'msg']
+
     if 'mutid' not in msgs_df.columns:
         columns.remove('mutid')
+
+    if 'key' not in msgs_df.columns:
+        columns.remove('key')
     
     return msgs_df[columns]
 
