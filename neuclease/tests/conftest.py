@@ -26,14 +26,14 @@ TEST_SERVER = f"127.0.0.1:{DVID_PORT}"
 TEST_REPO = None # Initialized below
 TEST_REPO_ALIAS = 'neuclease-test'
 
-DVID_SHUTDOWN_TIMEOUT = 10.0
-#DVID_SHUTDOWN_TIMEOUT = 2.0
+DVID_SHUTDOWN_TIMEOUT = 2.0
 
 DVID_CONFIG = f"""\
 [server]
 httpAddress = ":{DVID_PORT}"
 rpcAddress = ":{DVID_PORT+1}"
 webClient = "{sys.prefix}/http/dvid-web-console"
+shutdownDelay = 0
 
 [logging]
 logfile = "{TEST_DATA_DIR}/dvid.log"
