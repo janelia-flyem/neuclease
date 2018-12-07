@@ -331,6 +331,9 @@ def parse_timestamp(ts, default=DEFAULT_TIMESTAMP):
         2018-01-01 00:00:00    (date and time with seconds)
         2018-01-01 00:00:00.0  (date and time with microseconds)
     
+    Returns:
+        datetime
+    
     """
     if ts is None:
         ts = copy.copy(default)
