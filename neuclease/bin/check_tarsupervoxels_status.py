@@ -187,16 +187,46 @@ def check_tarsupervoxels_status_via_exists(server, uuid, tsv_instance, seg_insta
 ### Useful follow-up:
 ### Write empty files for all missing supervoxels below a certain size.
 ###
-# import tarfile
-# from io import BytesIO
-# from tqdm import tqdm
-# 
-# bio = BytesIO()
-# tf = tarfile.TarFile('empty-svs.tar', 'w', bio)
-# for sv in tqdm(missing_svs):
-#     tf.addfile(tarfile.TarInfo(f'{sv}.drc'), BytesIO())
-# 
-# post_load(*master, 'segmentation_sv_meshes', bio.getvalue())
+### from neuclease.bin.check_tarsupervoxels_status import post_empty_meshes
+###
+def post_empty_meshes(server, uuid, instance='segmentation_sv_meshes', svs=[], permit_large=False):
+    """
+    Given a list of supervoxel ids (presumably for SMALL supervoxels),
+    post an empty .drc file to the tarsupervoxels instance for each one.
+    
+    (By convention, we do not generally store meshes for very tiny meshes.
+    Instead, we store empty mesh files (i.e. 0 bytes) in their place, and
+    our proofreading tools understand this convention.)
+    
+    Since this function is generally supposed to be used with only small supervoxels,
+    it will refuse to write empty files for any supervoxels larger than 100 voxels,
+    unless you pass permit_large=True.
+    """
+    import tarfile
+    from io import BytesIO
+    from tqdm import tqdm
+    from neuclease.dvid import fetch_sizes, post_load, fetch_instance_info
+
+    # Determine segmentation instance
+    info = fetch_instance_info(server, uuid, instance)
+    segmentation_instance = info["Base"]["Syncs"][0]
+
+    sizes = fetch_sizes(server, uuid, segmentation_instance, svs, supervoxels=True)
+    if sizes.any() > 1000:
+        msg = "Some of those supervoxels are large ({sizes.max()} voxels)."
+        if not permit_large:
+            logger.warning(msg)
+        else:
+            msg = f"Error: {msg} Pass permit_large=True if you really mean it."
+            raise RuntimeError(msg)
+
+    bio = BytesIO()
+    tf = tarfile.TarFile('empty-svs.tar', 'w', bio)
+    for sv in tqdm(svs):
+        tf.addfile(tarfile.TarInfo(f'{sv}.drc'), BytesIO())
+     
+    post_load(server, uuid, instance, bio.getvalue())
+    return sizes
 
 if __name__ == "__main__":
     main()
