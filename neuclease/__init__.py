@@ -16,7 +16,7 @@ def configure_default_logging():
     Simple logging configuration.
     Useful for interactive terminal sessions.
     """
-    formatter = logging.Formatter('%(levelname)s [%(asctime)s] %(message)s')
+    formatter = logging.Formatter('[%(asctime)s] %(levelname)s %(message)s')
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(formatter)
 
