@@ -60,7 +60,7 @@ def main():
     parser.add_argument('uuid', help='dvid node')
     parser.add_argument('seg_instance', help='name of a labelmap instance, e.g. segmentation')
     parser.add_argument('tsv_instance', help='name of a tarsupervoxels instance, e.g. segmentation_sv_meshes')
-    parser.add_argument('bodies_csv', nargs='?', help='CSV containin a column named "body", which will be read.\n'
+    parser.add_argument('bodies_csv', nargs='?', help='CSV containing a column named "body", which will be read.\n'
                                                       'If no "body" column exists, the first column is used, regardless of the name.')
     args = parser.parse_args()
     
