@@ -95,11 +95,16 @@ def main():
         decimate_existing_mesh(args.server, args.uuid, args.tsv_instance, body_id, args.fraction, args.format, output_path, output_dvid)
 
 
-def decimate_existing_mesh(server, uuid, instance, body_id, fraction, output_format=None, output_path=None, output_dvid=None):
+def decimate_existing_mesh(server, uuid, instance, body_id, fraction, output_format=None, output_path=None, output_dvid=None, tar_bytes=None):
     """
     Fetch all supervoxel meshes for the given body, combine them into a
     single mesh, and then decimate that mesh at the specified fraction.
     The output will be written to a file, or to a dvid instance (or both).
+    
+    Args:
+        tar_bytes:
+            Optional. You can provide the tarfile contents (as bytes) directly,
+            in which case the input server will not be used.
     """
     if output_path is not None:
         fmt = os.path.splitext(output_path)[1][1:]
@@ -117,8 +122,9 @@ def decimate_existing_mesh(server, uuid, instance, body_id, fraction, output_for
     assert output_path is not None or output_dvid is not None, \
         "No output location specified"
 
-    with Timer(f"Body: {body_id} Fetching tarfile", logger):
-        tar_bytes = fetch_tarfile(server, uuid, instance, body_id)
+    if tar_bytes is None:
+        with Timer(f"Body: {body_id} Fetching tarfile", logger):
+            tar_bytes = fetch_tarfile(server, uuid, instance, body_id)
     
     with Timer(f"Body: {body_id}: Loading mesh for body {body_id}", logger):
         mesh = Mesh.from_tarfile(tar_bytes, keep_normals=False)
