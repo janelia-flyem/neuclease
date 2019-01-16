@@ -424,15 +424,17 @@ def fetch_sparsevol_coarse(server, uuid, instance, label_id, supervoxels=False, 
     return parse_rle_response( r.content )
 
 @dvid_api_wrapper
-def fetch_sparsevol(server, uuid, instance, label, supervoxels=False, scale=0, *, session=None):
+def fetch_sparsevol(server, uuid, instance, label, supervoxels=False, scale=0, dtype=np.int32, *, session=None):
     """
     Return coordinates of all voxels in the given body/supervoxel at the given scale.
+
+    For dtype arg, see parse_rle_response()
 
     Note: At scale 0, this will be a LOT of data for any reasonably large body.
           Use with caution.
     """
     rles = fetch_sparsevol_rles(server, uuid, instance, label, supervoxels, scale, session=session)
-    return parse_rle_response(rles)
+    return parse_rle_response(rles, dtype)
 
 
 def compute_changed_bodies(instance_info_a, instance_info_b, *, session=None):
