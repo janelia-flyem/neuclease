@@ -11,19 +11,23 @@ If you are checking a lot of bodies, try the --use-mapping option,
 which fetches the entire in-memory mapping for the segmentation instance
 and then uses the /exists endpoint (instead of the /missing endpoint).
 Although fetching the entire mapping incurs an initial overhead of
-~1 minute or so, it pays of for a large list of bodies because
+~1 minute or so, it pays off for a large list of bodies because
 the /exists endpoint is MUCH faster than /missing.
 
 Examples:
 
     # Check a couple thousand bodies (from your own list)
-    check_tarsupervoxels_status emdata3:8900 54f7 segmentation segmentation_sv_meshes bodies.csv
+    check_tarsupervoxels_status emdata4:8900 137d segmentation_sv_meshes bodies.csv
 
     # Check 1,000,000 bodies (from your own list)
-    check_tarsupervoxels_status --use-mapping emdata3:8900 54f7 segmentation segmentation_sv_meshes bodies.csv
+    check_tarsupervoxels_status --use-mapping emdata4:8900 137d segmentation_sv_meshes bodies.csv
 
-    # Check bodies that have changed since Nov 22 (Don't provide bodies.csv)
-    check_tarsupervoxels_status --kafka-timestamp="2018-11-22 00:00:00" emdata3:8900 54f7 segmentation segmentation_sv_meshes
+    # Check bodies that have changed recently. (Don't provide bodies.csv)
+    check_tarsupervoxels_status --kafka-timestamp="2019-01-01 00:00:00" emdata4:8900 137d segmentation_sv_meshes
+
+    # If your timestamp of interest occurred a long time ago, there are probably a lot of changed bodies.
+    # Add --use-mapping to speed things up.
+    check_tarsupervoxels_status --use-mapping --kafka-timestamp="2018-11-01" emdata4:8900 137d segmentation_sv_meshes
 """
 import sys
 import logging
@@ -37,7 +41,7 @@ from dvidutils import LabelMapper
 
 from neuclease import configure_default_logging
 from neuclease.util import read_csv_header, read_csv_col, tqdm_proxy, parse_timestamp
-from neuclease.dvid import fetch_missing, fetch_exists, fetch_mapping
+from neuclease.dvid import fetch_missing, fetch_exists, fetch_mapping, fetch_instance_info
 from neuclease.dvid.kafka import read_kafka_messages, filter_kafka_msgs_by_timerange
 from neuclease.dvid.labelmap import fetch_complete_mappings, compute_affected_bodies
 
@@ -58,10 +62,11 @@ def main():
     
     parser.add_argument('server', help='dvid server, e.g. emdata3:8900')
     parser.add_argument('uuid', help='dvid node')
-    parser.add_argument('seg_instance', help='name of a labelmap instance, e.g. segmentation')
-    parser.add_argument('tsv_instance', help='name of a tarsupervoxels instance, e.g. segmentation_sv_meshes')
+    parser.add_argument('tsv_instance', help="Name of a tarsupervoxels instance, e.g. segmentation_sv_meshes.\n"
+                                             "Must be sync'd to a labelmap (segmentation) instance.")
     parser.add_argument('bodies_csv', nargs='?', help='CSV containing a column named "body", which will be read.\n'
-                                                      'If no "body" column exists, the first column is used, regardless of the name.')
+                                                      'If no "body" column exists, the first column is used, regardless of the name.\n'
+                                                      '(Omit this arg if you are using --kafka-timestamp)')
     args = parser.parse_args()
     
     if not (bool(args.kafka_timestamp) ^ bool(args.bodies_csv)):
@@ -78,12 +83,16 @@ def main():
     elif args.kafka_timestamp:
         # Validate timestamp format before fetching kafka log, which takes a while.
         parse_timestamp(args.kafka_timestamp)
+
+        # Determine segmentation instance
+        info = fetch_instance_info(args.server, args.uuid, args.tsv_instance)
+        seg_instance = info["Base"]["Syncs"][0]
         
-        kafka_msgs = read_kafka_messages(args.server, args.uuid, args.seg_instance)
+        kafka_msgs = read_kafka_messages(args.server, args.uuid, seg_instance)
         filtered_kafka_msgs = filter_kafka_msgs_by_timerange(kafka_msgs, min_timestamp=args.kafka_timestamp)
         
         new_bodies, changed_bodies, _removed_bodies, new_supervoxels = compute_affected_bodies(filtered_kafka_msgs)
-        sv_split_bodies = set(fetch_mapping(args.server, args.uuid, args.seg_instance, new_supervoxels)) - set([0])
+        sv_split_bodies = set(fetch_mapping(args.server, args.uuid, seg_instance, new_supervoxels)) - set([0])
         
         bodies = list(new_bodies | changed_bodies | sv_split_bodies)
         bodies = np.asarray(bodies, np.uint64)
@@ -91,16 +100,16 @@ def main():
         raise AssertionError("Shouldn't get here.")
     
     if args.use_mapping:
-        missing_entries = check_tarsupervoxels_status_via_exists(args.server, args.uuid, args.tsv_instance, args.seg_instance, bodies, kafka_msgs=kafka_msgs)
+        missing_entries = check_tarsupervoxels_status_via_exists(args.server, args.uuid, args.tsv_instance, bodies, seg_instance, kafka_msgs=kafka_msgs)
     else:
-        missing_entries = check_tarsupervoxels_status_via_missing(args.server, args.uuid, args.tsv_instance, args.seg_instance, bodies)
+        missing_entries = check_tarsupervoxels_status_via_missing(args.server, args.uuid, args.tsv_instance, bodies)
     
     logger.info(f"Writing to {args.output}")
     missing_entries.to_csv(args.output, index=True, header=True)
     logging.info("DONE")
 
 
-def check_tarsupervoxels_status_via_missing(server, uuid, tsv_instance, seg_instance, bodies):
+def check_tarsupervoxels_status_via_missing(server, uuid, tsv_instance, bodies):
     """
     For the given bodies, query the given tarsupervoxels instance and return a
     DataFrame indicating which supervoxels are 'missing' from the instance.
@@ -132,7 +141,7 @@ def check_tarsupervoxels_status_via_missing(server, uuid, tsv_instance, seg_inst
     return df['body']
 
 
-def check_tarsupervoxels_status_via_exists(server, uuid, tsv_instance, seg_instance, bodies, mapping=None, kafka_msgs=None):
+def check_tarsupervoxels_status_via_exists(server, uuid, tsv_instance, bodies, seg_instance=None, mapping=None, kafka_msgs=None):
     """
     For the given bodies, query the given tarsupervoxels instance and return a
     DataFrame indicating which supervoxels are 'missing' from the instance.
@@ -145,6 +154,11 @@ def check_tarsupervoxels_status_via_exists(server, uuid, tsv_instance, seg_insta
     read in DVID.
     """
     sv_body = []
+    
+    if seg_instance is None:
+        # Determine segmentation instance
+        info = fetch_instance_info(server, uuid, tsv_instance)
+        seg_instance = info["Base"]["Syncs"][0]
     
     try:
         if mapping is None:
@@ -205,7 +219,7 @@ def post_empty_meshes(server, uuid, instance='segmentation_sv_meshes', svs=[], p
     import tarfile
     from io import BytesIO
     from tqdm import tqdm
-    from neuclease.dvid import fetch_sizes, post_load, fetch_instance_info
+    from neuclease.dvid import fetch_sizes, post_load
 
     # Determine segmentation instance
     info = fetch_instance_info(server, uuid, instance)
