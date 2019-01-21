@@ -151,7 +151,8 @@ def decimate_existing_mesh(server, uuid, instance, body_id, fraction, output_for
             else:
                 with open(output_path, 'wb') as f:
                     f.write(mesh_bytes)
-        
+    
+    return len(mesh.vertices_zyx)
 
 if __name__ == "__main__":
     DEBUG = False
