@@ -33,6 +33,7 @@ CSV_DTYPES = { 'body': np.uint64,
                'iou': np.float32,
                'da': np.float32, 'db': np.float32,
                'score': np.float32,
+               'score_a': np.float32, 'score_b': np.float32,
                'jaccard': np.float32,
                'overlap': np.uint32,
                'x': np.int32, 'y': np.int32, 'z': np.int32 }
