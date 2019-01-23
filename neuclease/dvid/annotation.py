@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 
 from . import dvid_api_wrapper, fetch_generic_json
-from .labelmap import fetch_volume_box
+from .voxels import fetch_volume_box
 from ..util import Grid, clipped_boxes_from_grid, round_box, tqdm_proxy, gen_json_objects
 
 logger = logging.getLogger(__name__)

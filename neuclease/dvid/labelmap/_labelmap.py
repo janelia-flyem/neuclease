@@ -479,26 +479,6 @@ def compute_changed_bodies(instance_info_a, instance_info_b, *, session=None):
 
 
 @dvid_api_wrapper
-def fetch_volume_box(server, uuid, instance, *, session=None):
-    """
-    Return the volume extents for the given instance as a box.
-    
-    Returns:
-        np.ndarray [(z0,y0,x0), (z1,y1,x1)]
-    
-    Notes:
-        - Returns *box*, shape=(box[1] - box[0])
-        - Returns ZYX order
-    """
-    info = fetch_instance_info(server, uuid, instance, session=session)
-    box_xyz = np.array((info["Extended"]["MinPoint"], info["Extended"]["MaxPoint"]))
-    box_xyz[1] += 1
-    
-    box_zyx = box_xyz[:,::-1]
-    return box_zyx
-
-
-@dvid_api_wrapper
 def generate_sample_coordinate(server, uuid, instance, label_id, supervoxels=False, *, session=None):
     """
     Return an arbitrary coordinate that lies within the given body.
