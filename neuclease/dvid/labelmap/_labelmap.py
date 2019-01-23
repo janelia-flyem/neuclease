@@ -128,6 +128,11 @@ def fetch_supervoxel_sizes_for_body(server, uuid, instance, body_id, user=None, 
 
 @dvid_api_wrapper
 def fetch_label(server, uuid, instance, coordinate_zyx, supervoxels=False, scale=0, *, session=None):
+    """
+    Fetch the label at a single coordinate.
+    
+    See also: ``fetch_labels()``
+    """
     coord_xyz = np.array(coordinate_zyx)[::-1]
     coord_str = '_'.join(map(str, coord_xyz))
     
@@ -147,6 +152,9 @@ fetch_label_for_coordinate = fetch_label
 
 @dvid_api_wrapper
 def fetch_labels(server, uuid, instance, coordinates_zyx, supervoxels=False, scale=0, *, session=None):
+    """
+    Fetch the labels at a list of coordinates.
+    """
     coordinates_zyx = np.asarray(coordinates_zyx, np.int32)
     assert coordinates_zyx.ndim == 2 and coordinates_zyx.shape[1] == 3
 
