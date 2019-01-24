@@ -1,6 +1,7 @@
 import gzip
 import logging
 from io import BytesIO
+from multiprocessing.pool import ThreadPool
 from collections import defaultdict
 
 import numpy as np
@@ -8,11 +9,10 @@ import pandas as pd
 
 from libdvid import DVIDNodeService, encode_label_block
 
-from ...util import Timer, round_box, extract_subvol, DEFAULT_TIMESTAMP
+from ...util import Timer, round_box, extract_subvol, DEFAULT_TIMESTAMP, tqdm_proxy
 
 from .. import dvid_api_wrapper, fetch_generic_json
 from ..repo import create_voxel_instance
-from ..node import fetch_instance_info
 from ..kafka import read_kafka_messages, kafka_msgs_to_df
 from ..rle import parse_rle_response
 
@@ -172,6 +172,35 @@ def fetch_labels(server, uuid, instance, coordinates_zyx, supervoxels=False, sca
     return labels
 
 
+def fetch_labels_batched(server, uuid, instance, coordinates_zyx, supervoxels=False, scale=0, batch_size=10_000, threads=0):
+    """
+    Like fetch_labels, but fetches in batches, optionally multithreaded.
+    """
+    coords_df = pd.DataFrame(coordinates_zyx, columns=['z', 'y', 'x'], dtype=np.int32)
+    coords_df['label'] = np.uint64(0)
+    
+    def fetch_batch(batch_start):
+        batch_stop = min(batch_start+batch_size, len(coords_df))
+        batch_df = coords_df.iloc[batch_start:batch_stop].copy()
+        batch_coords = batch_df[['z', 'y', 'x']].values
+        # don't pass session: We want a unique session per thread
+        batch_df.loc[:, 'label'] = fetch_labels(server, uuid, instance, batch_coords, supervoxels, scale)
+        return batch_df
+
+    batch_starts = list(range(0, len(coords_df), batch_size))
+    if threads <= 1:
+        batch_dfs = map(fetch_batch, batch_starts)
+        batch_dfs = tqdm_proxy(batch_dfs, total=len(batch_starts), leave=False)
+        batch_dfs = list(batch_dfs)
+    else:
+        with ThreadPool(threads) as pool:
+            batch_dfs = pool.imap_unordered(fetch_batch, batch_starts)
+            batch_dfs = tqdm_proxy(batch_dfs, total=len(batch_starts), leave=False)
+            batch_dfs = list(batch_dfs)
+
+    return pd.concat(batch_dfs).sort_index()['label'].values
+
+    
 @dvid_api_wrapper
 def fetch_sparsevol_rles(server, uuid, instance, label, supervoxels=False, scale=0, *, session=None):
     """
