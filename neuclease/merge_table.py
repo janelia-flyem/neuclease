@@ -691,7 +691,7 @@ def generate_assignments(merge_table, approximate_assignment_size, output_dir, p
         partitions.append( total_size )
 
     os.makedirs(output_dir, exist_ok=True)
-    for i, (start, stop) in tqdm(enumerate(zip(partitions[:-1], partitions[1:])), total=len(partitions)-1):
+    for i, (start, stop) in tqdm_proxy(enumerate(zip(partitions[:-1], partitions[1:])), total=len(partitions)-1, leave=False):
         output_path = output_dir + f'/{prefix}{i:03d}.json'
         generate_focused_assignment(merge_table.iloc[start:stop], output_path)
 
