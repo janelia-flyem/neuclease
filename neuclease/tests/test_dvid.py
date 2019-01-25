@@ -2,7 +2,9 @@
 Test module for the dvid API wrapper functions defined in neuclease.dvid
 """
 import sys
+import time
 import logging
+from multiprocessing.pool import ThreadPool
 
 import pytest
 import numpy as np
@@ -12,6 +14,7 @@ from neuclease.dvid import (dvid_api_wrapper, DvidInstanceInfo, fetch_supervoxel
                             fetch_label_for_coordinate, fetch_mappings, fetch_complete_mappings, fetch_mutation_id,
                             generate_sample_coordinate, fetch_labelarray_voxels, post_labelarray_blocks, fetch_maxlabel,
                             fetch_raw, post_raw)
+from neuclease.dvid._dvid import default_dvid_session
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -21,6 +24,19 @@ logger.addHandler(logging.StreamHandler(sys.stdout))
 ## These tests rely on the global setupfunction 'labelmap_setup',
 ## defined in conftest.py and used here via pytest magic
 ##
+
+def test_default_dvid_session():
+    """
+    Verify that default_dvid_session() really re-uses sessions (one per thread).
+    """
+    def session_id(_):
+        time.sleep(0.01)
+        return id(default_dvid_session())
+    
+    with ThreadPool(2) as pool:
+        ids = list(pool.map(session_id, range(20)))
+    assert len(set(ids)) == 2
+
 
 def test_dvid_api_wrapper():
     f = dvid_api_wrapper(lambda server, uuid, instance, x, *, session=None: (server, uuid, instance, x))
