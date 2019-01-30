@@ -501,6 +501,7 @@ def extract_labels_from_volume(points_df, volume, box_zyx=None, vol_scale=0, lab
                                                   categories=set(label_names.values()),
                                                   ordered=False )
 
+
 def compute_merges(orig_vol, agg_vol):
     """
     Given an original volume and another volume which was generated
@@ -567,6 +568,79 @@ def drop_unordered_duplicates(df, subset=None, keep='first'):
     """
     dupes = unordered_duplicated(df, subset, keep)
     return df.loc[~dupes]
+
+
+def swap_df_cols(df, prefixes=None, swap_rows=None, suffixes=['_a', '_b']):
+    """
+    Swap selected columns of a dataframe, specified as a list of prefixes and two suffixes.
+    Operates IN-PLACE, but incurs a full copy internally of the selected columns.
+    
+    Args:
+        df:
+            Input dataframe, with columns to be swapped.
+        
+        prefixes:
+            columns to swap, minus their suffixes.
+            If not provided, all columns with corresponding suffixes will be swapped.
+        
+        swap_rows:
+            Optional.
+            Specify a subset of rows in the dataframe to apply the swap to.
+            Should be a Series boolean values, or a list of index values. 
+            If this is a Series, it must have the same index as the input dataframe.
+            If not provided, all rows are swapped.
+        
+        suffixes:
+            Used to identify the left/right columns of each swapped pair.
+        
+    Returns:
+        None.  Operates IN-PLACE.
+    
+    Example:
+        >>> df = pd.DataFrame(np.arange(12).reshape(3,4), columns=['x_a', 'x_b', 'y_a', 'y_b'])
+
+        >>> df
+           x_a  x_b  y_a  y_b
+        0    0    1    2    3
+        1    4    5    6    7
+        2    8    9   10   11
+
+        >>> swap_df_cols(df, None, [True, False, True])
+           x_a  x_b  y_a  y_b
+        0    1    0    3    2
+        1    4    5    6    7
+        2    9    8   11   10
+                    
+    """
+    assert len(suffixes) == 2
+
+    if prefixes is None:
+        prefixes = set()
+        suffix_len = len(suffixes[0])
+        assert suffix_len == len(suffixes[1]), "Suffixes are not the same length"
+        for col in df.columns:
+            prefix = col[:-suffix_len]
+            if (prefix + suffixes[0] in df) and (prefix + suffixes[1] in df):
+                prefixes.add(prefix)
+        assert prefixes, "Could not find any column pairs with the given suffixes"
+
+    if swap_rows is None:
+        swap_rows = slice(None)
+    else:
+        assert swap_rows.dtype == np.bool
+
+    all_cols = [p + s for p,s in product(prefixes, suffixes)]
+    missing_cols = set(all_cols) - set(df.columns)
+    assert not missing_cols, \
+        f"The following columns do not exist in the input DataFrame: {list(missing_cols)}"
+
+    orig_df = df[all_cols].copy()
+
+    for prefix in prefixes:
+        col_a = prefix + suffixes[0]
+        col_b = prefix + suffixes[1]
+        df.loc[swap_rows, col_a] = orig_df.loc[swap_rows, col_b]
+        df.loc[swap_rows, col_b] = orig_df.loc[swap_rows, col_a]
 
 
 def tqdm_proxy(iterable, *, logger=None, level=logging.INFO, **kwargs):
