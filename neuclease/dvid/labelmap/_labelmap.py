@@ -570,6 +570,11 @@ def fetch_labelarray_voxels(server, uuid, instance, box_zyx, scale=0, throttle=F
     Returns:
         ndarray, with shape == (box[1] - box[0])
     """
+    box_zyx = np.asarray(box_zyx)
+    assert np.issubdtype(box_zyx.dtype, np.integer), \
+        f"Box has the wrong dtype.  Use an integer type, not {box_zyx.dtype}"
+    assert box_zyx.shape == (2,3)
+
     # Labelarray data can be fetched very efficiently if the request is block-aligned
     # So, block-align the request no matter what.
     aligned_box = round_box(box_zyx, 64, 'out')
@@ -649,6 +654,10 @@ def post_labelarray_blocks(server, uuid, instance, corners_zyx, blocks, scale=0,
     if len(corners_zyx) == 0:
         return
 
+    corners_zyx = np.asarray(corners_zyx)
+    assert np.issubdtype(corners_zyx.dtype, np.integer), \
+        f"corners array has the wrong dtype.  Use an integer type, not {corners_zyx.dtype}"
+    
     corners_zyx = np.asarray(corners_zyx, np.int32)
     assert corners_zyx.ndim == 2
     assert corners_zyx.shape[1] == 3

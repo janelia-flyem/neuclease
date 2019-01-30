@@ -45,6 +45,8 @@ def fetch_raw(server, uuid, instance, box_zyx, throttle=False, *, dtype=np.uint8
         np.ndarray
     """
     box_zyx = np.asarray(box_zyx)
+    assert np.issubdtype(box_zyx.dtype, np.integer), \
+        f"Box has the wrong dtype.  Use an integer type, not {box_zyx.dtype}"
     assert box_zyx.shape == (2,3)
 
     params = {}
@@ -72,7 +74,10 @@ def fetch_raw(server, uuid, instance, box_zyx, throttle=False, *, dtype=np.uint8
 
 @dvid_api_wrapper
 def post_raw(server, uuid, instance, offset_zyx, volume, throttle=False, mutate=True, *, session=None):
-    assert len(offset_zyx) == 3
+    offset_zyx = np.asarray(offset_zyx)
+    assert offset_zyx.shape == (3,)
+    assert np.issubdtype(offset_zyx.dtype, np.integer), \
+        f"Offset has the wrong dtype.  Use an integer type, not {offset_zyx.dtype}"
 
     params = {}
     if throttle:
