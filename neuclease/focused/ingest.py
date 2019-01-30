@@ -203,7 +203,8 @@ def fetch_focused_decisions(server, uuid, instance='segmentation_merged', normal
             df.loc[swap_rows, f'{name}a'] = df_copy.loc[swap_rows, f'{name}b']
             df.loc[swap_rows, f'{name}b'] = df_copy.loc[swap_rows, f'{name}a']
 
-    return df
+    # Return in chronological order
+    return df.sort_values('time').reset_index(drop=True)
 
 
 def drop_previously_reviewed(df, previous_focused_decisions_df):
