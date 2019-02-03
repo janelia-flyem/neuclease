@@ -552,6 +552,19 @@ def unordered_duplicated(df, subset=None, keep='first'):
     Like pd.DataFrame.duplicated(), but sorts each row first, so
     rows can be considered duplicates even if their values don't
     appear in the same order.
+
+    Example:
+    
+        >>> df = pd.DataFrame( [(1, 2, 0.0),
+                                (2, 1, 0.1), # <-- duplicate a/b columns
+                                (3, 4, 0.2)],
+                              columns=['a', 'b', 'score'])
+
+        >>> unordered_duplicated(df, ['a', 'b'])
+        0    False
+        1     True
+        2    False
+        dtype: bool    
     """
     if subset is None:
         subset = list(df.columns)
@@ -564,7 +577,20 @@ def drop_unordered_duplicates(df, subset=None, keep='first'):
     """
     Like pd.DataFrame.drop_duplicates(), but sorts each row first, so
     rows can be considered duplicates even if their values don't
-    appear in the same order. 
+    appear in the same order.
+
+    Example:
+
+        >>> df = pd.DataFrame( [(1, 2, 0.0),
+                                (2, 1, 0.1), # <-- duplicate a/b columns
+                                (3, 4, 0.2)],
+                              columns=['a', 'b', 'score'])
+
+        >>> drop_unordered_duplicates(df, ['a', 'b'])
+           a  b  score
+        0  1  2    0.0
+        2  3  4    0.2
+
     """
     dupes = unordered_duplicated(df, subset, keep)
     return df.loc[~dupes]
