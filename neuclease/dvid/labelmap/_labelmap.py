@@ -9,7 +9,7 @@ import pandas as pd
 
 from libdvid import DVIDNodeService, encode_label_block
 
-from ...util import Timer, round_box, extract_subvol, DEFAULT_TIMESTAMP, tqdm_proxy
+from ...util import Timer, round_box, extract_subvol, DEFAULT_TIMESTAMP, tqdm_proxy, ndrange, box_to_slicing
 
 from .. import dvid_api_wrapper, fetch_generic_json
 from ..repo import create_voxel_instance
@@ -530,7 +530,7 @@ def generate_sample_coordinate(server, uuid, instance, label_id, supervoxels=Fal
 
 
 @dvid_api_wrapper
-def fetch_labelarray_voxels(server, uuid, instance, box_zyx, scale=0, throttle=False, supervoxels=False, *, inflate=True, session=None):
+def fetch_labelmap_voxels(server, uuid, instance, box_zyx, scale=0, throttle=False, supervoxels=False, *, inflate=True, session=None):
     """
     Fetch a volume of voxels from the given instance.
     
@@ -611,11 +611,78 @@ def fetch_labelarray_voxels(server, uuid, instance, box_zyx, scale=0, throttle=F
         return inflate_labelarray_blocks
 
 
-@dvid_api_wrapper
-def post_labelarray_blocks(server, uuid, instance, corners_zyx, blocks, scale=0, downres=False, noindexing=False, throttle=False, *, session=None):
+# Deprecated name
+fetch_labelarray_voxels = fetch_labelmap_voxels
+
+
+def post_labelmap_voxels(server, uuid, instance, offset_zyx, volume, scale=0, downres=False, noindexing=False, throttle=False, *, session=None):
     """
-    Post voxels to a labelarray instance, from a list of blocks.
-    If the instance is a labelmap, the posted volume is treated as supervoxel data.
+    Post a supervoxel segmentation subvolume to a labelmap instance.
+    Internally, breaks the volume into blocks and uses the ``/blocks``
+    endpoint to post the data, so the volume must be block-aligned.
+    
+    Args:
+        server:
+            dvid server, e.g. 'emdata3:8900'
+        
+        uuid:
+            dvid uuid, e.g. 'abc9'
+        
+        instance:
+            dvid instance name, e.g. 'segmentation'
+
+        offset_zyx:
+            The upper-left coordinate of the volume to be written.
+            Must be block-aligned, in ``(z,y,x)`` order.
+        
+        volume:
+            Data to post, ``uint64``.  Shape must be divisible by DVID's blockshape for labelmap instance.
+        
+        scale:
+            Which pyramid scale to post this block to.
+
+        downres:
+            Specifies whether the given write should trigger regeneration
+            of donwres pyramids for this block on the DVID server.
+            Only permitted for scale 0 posts.
+        
+        noindexing:
+            If True, will not compute label indices from the received voxel data.
+            Normally only used during initial ingestion, when an external tool is
+            used to overwrite the label indexes en masse.
+            (See ``neuclease/bin/ingest_label_indexes.py``)
+        
+        throttle:
+            If True, passed via the query string to DVID, in which case DVID might return a '503' error
+            if the server is too busy to service the request.
+            It is your responsibility to catch DVIDExceptions in that case.
+        
+        supervoxels:
+            If True, request supervoxel data from the given labelmap instance.
+    """
+    offset_zyx = np.asarray(offset_zyx)
+    shape = np.array(volume.shape)
+
+    assert (offset_zyx % 64 == 0).all(), "Data must be block-aligned"
+    assert (shape % 64 == 0).all(), "Data must be block-aligned"
+    
+    corners = []
+    blocks = []
+    for corner in ndrange(offset_zyx, offset_zyx + shape, (64,64,64)):
+        corners.append(corner)
+        vol_corner = corner - offset_zyx
+        block = volume[box_to_slicing(vol_corner, vol_corner+64)]
+        blocks.append( block )
+
+    post_labelarray_blocks(server, uuid, instance, corners, blocks, scale, downres, noindexing, throttle, session=session)
+
+# Deprecated name
+post_labelarray_voxels = post_labelmap_voxels
+
+@dvid_api_wrapper
+def post_labelmap_blocks(server, uuid, instance, corners_zyx, blocks, scale=0, downres=False, noindexing=False, throttle=False, *, session=None):
+    """
+    Post supervoxel data to a labelmap instance, from a list of blocks.
     
     Args:
         server:
@@ -643,7 +710,9 @@ def post_labelarray_blocks(server, uuid, instance, corners_zyx, blocks, scale=0,
         
         noindexing:
             If True, will not compute label indices from the received voxel data.
-            Normally only used during initial ingestion.
+            Normally only used during initial ingestion, when an external tool is
+            used to overwrite the label indexes en masse.
+            (See ``neuclease/bin/ingest_label_indexes.py``)
 
         throttle:
             If True, passed via the query string to DVID, in which case DVID might return a '503' error
@@ -651,8 +720,9 @@ def post_labelarray_blocks(server, uuid, instance, corners_zyx, blocks, scale=0,
             It is your responsibility to catch DVIDExceptions in that case.
     """
     assert not downres or scale == 0, "downres option is only valid for scale 0"
-    if len(corners_zyx) == 0:
-        return
+
+# Deprecated name
+post_labelarray_blocks = post_labelmap_blocks
 
     corners_zyx = np.asarray(corners_zyx)
     assert np.issubdtype(corners_zyx.dtype, np.integer), \
@@ -698,7 +768,6 @@ def post_labelarray_blocks(server, uuid, instance, corners_zyx, blocks, scale=0,
 
     r = session.post(f'http://{server}/api/node/{uuid}/{instance}/blocks', params=params, data=body_data)
     r.raise_for_status()
-
 
 @dvid_api_wrapper
 def post_cleave(server, uuid, instance, body_id, supervoxel_ids, *, session=None):

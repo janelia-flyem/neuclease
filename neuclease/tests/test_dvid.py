@@ -12,8 +12,8 @@ import pandas as pd
 
 from neuclease.dvid import (dvid_api_wrapper, DvidInstanceInfo, fetch_supervoxels_for_body, fetch_supervoxel_sizes_for_body,
                             fetch_label_for_coordinate, fetch_mappings, fetch_complete_mappings, fetch_mutation_id,
-                            generate_sample_coordinate, fetch_labelarray_voxels, post_labelarray_blocks, fetch_maxlabel,
-                            fetch_raw, post_raw)
+                            generate_sample_coordinate, fetch_labelmap_voxels, post_labelmap_blocks, post_labelmap_voxels,
+                            fetch_maxlabel, fetch_raw, post_raw)
 from neuclease.dvid._dvid import default_dvid_session
 
 logger = logging.getLogger(__name__)
@@ -136,26 +136,26 @@ def test_generate_sample_coordinate(labelmap_setup):
     assert label == 2
 
 
-def test_fetch_labelarray_voxels(labelmap_setup):
+def test_fetch_labelmap_voxels(labelmap_setup):
     dvid_server, dvid_repo, _merge_table_path, _mapping_path, supervoxel_vol = labelmap_setup
     instance_info = DvidInstanceInfo(dvid_server, dvid_repo, 'segmentation')
 
     # Test raw supervoxels
-    voxels = fetch_labelarray_voxels(*instance_info, [(0,0,0), supervoxel_vol.shape], supervoxels=True)
+    voxels = fetch_labelmap_voxels(*instance_info, [(0,0,0), supervoxel_vol.shape], supervoxels=True)
     assert (voxels == supervoxel_vol).all()
     
     # Test mapped bodies
-    voxels = fetch_labelarray_voxels(*instance_info, [(0,0,0), supervoxel_vol.shape], supervoxels=False)
+    voxels = fetch_labelmap_voxels(*instance_info, [(0,0,0), supervoxel_vol.shape], supervoxels=False)
     assert (voxels == 1).all()
 
     # Test uninflated mode
-    voxels_proxy = fetch_labelarray_voxels(*instance_info, [(0,0,0), supervoxel_vol.shape], supervoxels=True, inflate=False)
+    voxels_proxy = fetch_labelmap_voxels(*instance_info, [(0,0,0), supervoxel_vol.shape], supervoxels=True, inflate=False)
     assert len(voxels_proxy.content) < supervoxel_vol.nbytes, \
         "Fetched data was apparently not compressed"
     assert (voxels_proxy() == supervoxel_vol).all()
 
 
-def test_post_labelarray_voxels(labelmap_setup):
+def test_post_labelmap_blocks(labelmap_setup):
     dvid_server, dvid_repo, _merge_table_path, _mapping_path, _supervoxel_vol = labelmap_setup
     instance_info = DvidInstanceInfo(dvid_server, dvid_repo, 'segmentation-scratch')
     
@@ -163,12 +163,26 @@ def test_post_labelarray_voxels(labelmap_setup):
     blocks = np.random.randint(10, size=(3,64,64,64), dtype=np.uint64)
     corners_zyx = [[0,0,0], [0,64,0], [0,0,64]]
 
-    post_labelarray_blocks(dvid_server, dvid_repo, 'segmentation-scratch', corners_zyx, blocks, 0)
-    complete_voxels = fetch_labelarray_voxels(*instance_info, [(0,0,0), (128,128,128)], supervoxels=True)
+    post_labelmap_blocks(dvid_server, dvid_repo, 'segmentation-scratch', corners_zyx, blocks, 0)
+    complete_voxels = fetch_labelmap_voxels(*instance_info, [(0,0,0), (128,128,128)], supervoxels=True)
         
     assert (complete_voxels[0:64,  0:64,  0:64]  == blocks[0]).all()
     assert (complete_voxels[0:64, 64:128, 0:64]  == blocks[1]).all()
     assert (complete_voxels[0:64,  0:64, 64:128] == blocks[2]).all()
+
+
+def test_post_labelmap_voxels(labelmap_setup):
+    dvid_server, dvid_repo, _merge_table_path, _mapping_path, _supervoxel_vol = labelmap_setup
+    instance_info = DvidInstanceInfo(dvid_server, dvid_repo, 'segmentation-scratch')
+    
+    # Write some random data and read it back.
+    vol = np.random.randint(10, size=(128,128,128), dtype=np.uint64)
+    offset = (64,64,64)
+
+    post_labelmap_voxels(dvid_server, dvid_repo, 'segmentation-scratch', offset, vol, 0)
+    complete_voxels = fetch_labelmap_voxels(*instance_info, [(0,0,0), (256,256,256)], supervoxels=True)
+    
+    assert (complete_voxels[64:192, 64:192, 64:192] == vol).all()
 
 
 def test_fetch_raw(labelmap_setup):
@@ -189,7 +203,7 @@ def test_post_raw(labelmap_setup):
     offset_zyx = (0,64,0)
 
     post_raw(*instance_info, offset_zyx, data)
-    complete_voxels = fetch_labelarray_voxels(*instance_info, [(0,0,0), (128,128,192)], supervoxels=True)
+    complete_voxels = fetch_labelmap_voxels(*instance_info, [(0,0,0), (128,128,192)], supervoxels=True)
         
     assert (complete_voxels[0:64, 64:128,   0:64]  == data[:, :,   0:64]).all()
     assert (complete_voxels[0:64, 64:128,  64:128] == data[:, :,  64:128]).all()
