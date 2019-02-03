@@ -71,6 +71,23 @@ def round_box(box, grid_spacing, how='out'):
                        round_coord(box[1], grid_spacing, directions[how][1]) ] )
 
 
+def choose_pyramid_depth(bounding_box, top_level_max_dim=512):
+    """
+    If a 3D volume pyramid were generated to encompass the given bounding box,
+    determine how many pyramid levels you would need such that the top
+    level of the pyramid is no wider than `top_level_max_dim` in any dimension.
+    """
+    from numpy import ceil, log2
+    bounding_box = np.asarray(bounding_box)
+    global_shape = bounding_box[1] - bounding_box[0]
+
+    full_res_max_dim = float(global_shape.max())
+    assert full_res_max_dim > 0.0, "Subvolumes encompass no volume!"
+    
+    depth = int(ceil(log2(full_res_max_dim / top_level_max_dim)))
+    return max(depth, 0)
+
+
 def box_intersection(box_A, box_B):
     """
     Compute the intersection of the two given boxes.
