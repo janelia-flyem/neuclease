@@ -269,6 +269,13 @@ split_supervoxel = post_split_supervoxel
 
 @dvid_api_wrapper
 def fetch_mapping(server, uuid, instance, supervoxel_ids, *, session=None):
+    """
+    For each of the given supervoxels, ask DVID what body they belong to.
+    If the supervoxel no longer exists, it will map to label 0.
+    
+    Returns:
+        pd.Series, with index named 'sv' and values named 'body'
+    """
     supervoxel_ids = list(map(int, supervoxel_ids))
     body_ids = fetch_generic_json(f'http://{server}/api/node/{uuid}/{instance}/mapping', json=supervoxel_ids, session=session)
     mapping = pd.Series(body_ids, index=np.asarray(supervoxel_ids, np.uint64), dtype=np.uint64, name='body')
