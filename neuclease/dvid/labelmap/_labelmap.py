@@ -51,7 +51,7 @@ def fetch_maxlabel(server, uuid, instance, *, session=None):
 
 
 @dvid_api_wrapper
-def fetch_supervoxels_for_body(server, uuid, instance, body_id, user=None, *, session=None):
+def fetch_supervoxels(server, uuid, instance, body_id, user=None, *, session=None):
     # FIXME: Rename to 'fetch_supervoxels()'
     # FIXME: Remove 'user' in favor of session arg
     query_params = {}
@@ -65,6 +65,8 @@ def fetch_supervoxels_for_body(server, uuid, instance, body_id, user=None, *, se
     supervoxels.sort()
     return supervoxels
 
+# Deprecated name
+fetch_supervoxels_for_body = fetch_supervoxels 
 
 @dvid_api_wrapper
 def fetch_size(server, uuid, instance, label_id, supervoxels=False, *, session=None):
