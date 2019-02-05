@@ -688,6 +688,7 @@ def post_labelmap_voxels(server, uuid, instance, offset_zyx, volume, scale=0, do
 # Deprecated name
 post_labelarray_voxels = post_labelmap_voxels
 
+
 @dvid_api_wrapper
 def post_labelmap_blocks(server, uuid, instance, corners_zyx, blocks, scale=0, downres=False, noindexing=False, throttle=False, *, session=None):
     """
@@ -730,9 +731,54 @@ def post_labelmap_blocks(server, uuid, instance, corners_zyx, blocks, scale=0, d
     """
     assert not downres or scale == 0, "downres option is only valid for scale 0"
 
+    body_data = encode_labelarray_blocks(corners_zyx, blocks)
+    if not body_data:
+        return # No blocks
+
+    # These options are already false by default, so we'll only include them if we have to.
+    opts = { 'downres': downres, 'noindexing': noindexing, 'throttle': throttle }
+
+    params = { 'scale': str(scale) }
+    for opt, value in opts.items():
+        if value:
+            params[opt] = str(bool(value)).lower()
+
+    r = session.post(f'http://{server}/api/node/{uuid}/{instance}/blocks', params=params, data=body_data)
+    r.raise_for_status()
+
 # Deprecated name
 post_labelarray_blocks = post_labelmap_blocks
 
+
+def encode_labelarray_blocks(corners_zyx, blocks):
+    """
+    Encode a sequence of labelmap blocks to bytes, in the
+    format expected by dvid's ``/blocks`` endpoint.
+
+    The format for each block is:
+    - 12 bytes for the block (X,Y,Z) location (its upper corner)
+    - 4 bytes for the length of the encoded block data (N)
+    - N bytes for the encoded block data, which consists of labelmap-compressed
+      data, which is then further compressed using gzip after that.
+    
+    Args:
+        corners_zyx:
+            List or array of corners at which each block starts.
+            Corners must be block-aligned.
+        
+        blocks:
+            Iterable of blocks to encode.
+            Each block must be 64px wide, uint64.
+    
+    Returns:
+        bytes
+    """
+    if not hasattr(corners_zyx, '__len__'):
+        corners_zyx = list(corners_zyx)
+
+    if len(corners_zyx) == 0:
+        return b''
+    
     corners_zyx = np.asarray(corners_zyx)
     assert np.issubdtype(corners_zyx.dtype, np.integer), \
         f"corners array has the wrong dtype.  Use an integer type, not {corners_zyx.dtype}"
@@ -742,13 +788,15 @@ post_labelarray_blocks = post_labelmap_blocks
     assert corners_zyx.shape[1] == 3
     if hasattr(blocks, '__len__'):
         assert len(blocks) == len(corners_zyx)
+
     corners_xyz = corners_zyx[:, ::-1].copy('C')
 
     # dvid wants block coordinates, not voxel coordinates
-    encoded_corners = list(map(bytes, corners_xyz // 64))
+    encoded_corners = map(bytes, corners_xyz // 64)
 
     def _encode_label_block(block):
-        # This is wrapped in a little pure-python function solely to aid profilers
+        # We wrap the C++ call in this little pure-python function
+        # solely for the sake of nice profiler output.
         return encode_label_block(block)
 
     encoded_blocks = []
@@ -756,6 +804,7 @@ post_labelarray_blocks = post_labelmap_blocks
         assert block.shape == (64,64,64)
         block = np.asarray(block, np.uint64, 'C')
         encoded_blocks.append( gzip.compress(_encode_label_block(block)) )
+        del block
     assert len(encoded_blocks) == len(corners_xyz)
 
     encoded_lengths = np.fromiter(map(len, encoded_blocks), np.int32)
@@ -765,18 +814,45 @@ post_labelarray_blocks = post_labelmap_blocks
         stream.write(corner_buf)
         stream.write(len_buf)
         stream.write(block_buf)
+
     body_data = stream.getbuffer()
+    return body_data
 
-    params = { 'scale': str(scale) }
 
-    # These options are already false by default, so we'll only include them if we have to.
-    opts = { 'downres': downres, 'noindexing': noindexing, 'throttle': throttle }
-    for opt, value in opts.items():
-        if value:
-            params[opt] = str(bool(value)).lower()
+def encode_labelarray_volume(offset_zyx, volume):
+    """
+    Encode a uint64 volume as labelarray data, located at the given offset coordinate.
+    The coordinate and volume shape must be 64-px aligned.
+    
+    See ``encode_labelarray_volume()`` for the corresponding decode function.
+    """
+    offset_zyx = np.asarray(offset_zyx)
+    shape = np.array(volume.shape)
 
-    r = session.post(f'http://{server}/api/node/{uuid}/{instance}/blocks', params=params, data=body_data)
-    r.raise_for_status()
+    assert (offset_zyx % 64 == 0).all(), "Data must be block-aligned"
+    assert (shape % 64 == 0).all(), "Data must be block-aligned"
+    
+    corners_zyx = list(ndrange(offset_zyx, offset_zyx + volume.shape, (64,64,64)))
+
+    def gen_blocks():
+        for corner in corners_zyx:
+            vol_corner = corner - offset_zyx
+            block = volume[box_to_slicing(vol_corner, vol_corner+64)]
+            yield block
+            del block
+
+    return encode_labelarray_blocks(corners_zyx, gen_blocks())
+
+
+def decode_labelarray_volume(box_zyx, encoded_data):
+    """
+    Decode the payload from the labelmap instance ``GET /blocks`` endpoint,
+    or from the output of ``encode_labelarray_volume()``.
+    """
+    box_zyx = np.asarray(box_zyx)
+    shape = box_zyx[1] - box_zyx[0]
+    return DVIDNodeService.inflate_labelarray_blocks3D_from_raw(encoded_data, shape, box_zyx[0])
+
 
 @dvid_api_wrapper
 def post_cleave(server, uuid, instance, body_id, supervoxel_ids, *, session=None):

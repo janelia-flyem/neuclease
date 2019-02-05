@@ -10,10 +10,12 @@ import pytest
 import numpy as np
 import pandas as pd
 
+from libdvid import DVIDNodeService
+
 from neuclease.dvid import (dvid_api_wrapper, DvidInstanceInfo, fetch_supervoxels_for_body, fetch_supervoxel_sizes_for_body,
                             fetch_label_for_coordinate, fetch_mappings, fetch_complete_mappings, fetch_mutation_id,
                             generate_sample_coordinate, fetch_labelmap_voxels, post_labelmap_blocks, post_labelmap_voxels,
-                            fetch_maxlabel, fetch_raw, post_raw)
+                            encode_labelarray_volume, fetch_maxlabel, fetch_raw, post_raw)
 from neuclease.dvid._dvid import default_dvid_session
 
 logger = logging.getLogger(__name__)
@@ -134,6 +136,16 @@ def test_generate_sample_coordinate(labelmap_setup):
     coord_zyx = generate_sample_coordinate(*instance_info, 2, supervoxels=True)
     label = fetch_label_for_coordinate(*instance_info, coord_zyx.tolist(), supervoxels=True)
     assert label == 2
+
+
+def test_encode_labelarray_volume():
+    vol = np.random.randint(1000,2000, size=(128,128,128), dtype=np.uint64)
+    vol[:64,:64,:64] = 0
+    vol[-64:, -64:, -64:] = 0
+    
+    encoded = encode_labelarray_volume((512,1024,2048), vol)
+    inflated = DVIDNodeService.inflate_labelarray_blocks3D_from_raw(encoded, (128,128,128), (512,1024,2048))
+    assert (inflated == vol).all()
 
 
 def test_fetch_labelmap_voxels(labelmap_setup):
