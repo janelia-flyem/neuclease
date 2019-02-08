@@ -359,7 +359,7 @@ def parse_timestamp(ts, default=DEFAULT_TIMESTAMP):
     return ts
 
 
-def closest_approach(sv_vol, id_a, id_b):
+def closest_approach(sv_vol, id_a, id_b, check_present=True):
     """
     Given a segmentation volume and two label IDs which it contains,
     Find the two coordinates within id_a and id_b, respectively,
@@ -371,7 +371,7 @@ def closest_approach(sv_vol, id_a, id_b):
     mask_a = (sv_vol == id_a)
     mask_b = (sv_vol == id_b)
 
-    if not mask_a.any() or not mask_b.any():
+    if check_present and (not mask_a.any() or not mask_b.any()):
         # If either object is not present, there is no closest approach
         return (-1,-1,-1), (-1,-1,-1), np.inf
     
