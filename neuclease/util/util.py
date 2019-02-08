@@ -368,6 +368,12 @@ def closest_approach(sv_vol, id_a, id_b, check_present=True):
     
     Returns (coord_a, coord_b, distance)
     """
+    assert id_a != 0 and id_b != 0, \
+        "Can't use label 0 as an object ID in closest_approach()"
+    
+    assert sv_vol.dtype not in (np.uint64, np.int64, np.int32), \
+        f"Volume type {sv_vol.dtype} is not convertible to uint32 without precision loss"
+    
     mask_a = (sv_vol == id_a)
     mask_b = (sv_vol == id_b)
 
@@ -392,9 +398,10 @@ def closest_approach(sv_vol, id_a, id_b, check_present=True):
 
     # Find the point within id_a with the smallest vector
     point_a = np.unravel_index(np.argmin(to_b_distances), to_b_distances.shape)
+    point_a = tuple(np.array(point_a, np.int32))
 
     # Its closest point id_b is indicated by the corresponding vector
-    point_b = tuple((point_a + to_b_vectors[point_a]).astype(int))
+    point_b = tuple((point_a + to_b_vectors[point_a]).astype(np.int32))
 
     return (point_a, point_b, to_b_distances[point_a])
 
