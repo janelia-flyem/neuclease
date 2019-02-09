@@ -469,6 +469,25 @@ def fetch_sparsevol_coarse(server, uuid, instance, label_id, supervoxels=False, 
     
     return parse_rle_response( r.content )
 
+
+def fetch_sparsevol_coarse_threaded(server, uuid, instance, labels, supervoxels=False, num_threads=2):
+    """
+    Call fetch_sparsevol_coarse() for a list of threads using a ThreadPool.
+    
+    Returns:
+        dict of { label: coords }
+    """
+    def fetch_coords(label_id):
+        coords = fetch_sparsevol_coarse(server, uuid, instance, label_id, supervoxels)
+        return (label_id, coords)
+    
+    with ThreadPool(num_threads) as pool:
+        labels_coords = pool.imap_unordered(fetch_coords, labels)
+        labels_coords = list(tqdm_proxy(labels_coords, total=len(labels)))
+    
+    return dict(labels_coords)
+
+
 @dvid_api_wrapper
 def fetch_sparsevol(server, uuid, instance, label, supervoxels=False, scale=0, dtype=np.int32, *, session=None):
     """
