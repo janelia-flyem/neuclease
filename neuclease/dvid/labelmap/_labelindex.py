@@ -97,6 +97,15 @@ def convert_labelindex_to_pandas(labelindex):
                              labelindex.last_mod_user )
 
 
+@dvid_api_wrapper
+def fetch_sparsevol_coarse_via_labelindex(server, uuid, instance, label, *, session=None):
+    labelindex = fetch_labelindex(server, uuid, instance, label, session=session)
+    encoded_block_coords = np.fromiter(labelindex.blocks.keys(), np.uint64, len(labelindex.blocks))
+    coords_zyx = decode_labelindex_blocks(encoded_block_coords)
+    return coords_zyx // (2**6)
+
+
+
 @jit(nopython=True, nogil=True)
 def decode_labelindex_blocks(encoded_blocks):
     """
