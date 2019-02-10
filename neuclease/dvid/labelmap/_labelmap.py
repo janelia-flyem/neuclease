@@ -6,6 +6,7 @@ from collections import defaultdict
 
 import numpy as np
 import pandas as pd
+from requests import HTTPError
 
 from libdvid import DVIDNodeService, encode_label_block
 
@@ -476,10 +477,17 @@ def fetch_sparsevol_coarse_threaded(server, uuid, instance, labels, supervoxels=
     
     Returns:
         dict of { label: coords }
+        If any of the sparsevols can't be found due to error 404,
+        'coords' for that label will be None.
     """
     def fetch_coords(label_id):
-        coords = fetch_sparsevol_coarse(server, uuid, instance, label_id, supervoxels)
-        return (label_id, coords)
+        try:
+            coords = fetch_sparsevol_coarse(server, uuid, instance, label_id, supervoxels)
+            return (label_id, coords)
+        except HTTPError as ex:
+            if (ex.response is not None and ex.response.status_code == 404):
+                return (label_id, None)
+            raise
     
     with ThreadPool(num_threads) as pool:
         labels_coords = pool.imap_unordered(fetch_coords, labels)
