@@ -98,7 +98,7 @@ def is_lexsorted(columns):
     return (nondecreasing[:, 1:] | increasing[:,:-1]).all()
 
 
-@jit(nopython=True)
+@jit(nopython=True, nogil=True)
 def groupby_presorted(a, sorted_cols):
     """
     Given an array of data and some sorted reference columns to use for grouping,
@@ -163,7 +163,7 @@ def groupby_presorted(a, sorted_cols):
     yield a[start:len(sorted_cols)]
 
 
-@jit(nopython=True)
+@jit(nopython=True, nogil=True)
 def groupby_spans_presorted(sorted_cols):
     """
     Similar to groupby_presorted(), but yields only the (start, stop)
@@ -203,7 +203,7 @@ def group_sums_presorted(a, sorted_cols):
     assert a.shape[0] == sorted_cols.shape[0]
 
     # Two passes: first to get len
-    @jit(nopython=True)
+    @jit(nopython=True, nogil=True)
     def count_groups():
         num_groups = 0
         for _ in groupby_presorted(a, sorted_cols):
@@ -219,7 +219,7 @@ def group_sums_presorted(a, sorted_cols):
     results_shape = (num_groups,) + a.shape[1:]
     agg_results = np.zeros(results_shape, dtype=a.dtype)
     
-    @jit(nopython=True)
+    @jit(nopython=True, nogil=True)
     def _agg(a, sorted_cols, groups, agg_results):
         pos = 0
         for i, group_rows in enumerate(groupby_presorted(a, sorted_cols)):

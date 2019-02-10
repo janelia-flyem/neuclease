@@ -257,7 +257,7 @@ def gen_json_objects(f, batch_size=None, parse=True):
         yield from iter_batches(it, batch_size)
 
 
-@jit(nopython=True)
+@jit(nopython=True, nogil=True)
 def _gen_json_objects(text_array):
     """
     Generator.
@@ -764,7 +764,7 @@ class TqdmToLogger(io.StringIO):
         self.logger.log(self.level, self.buf)
 
 
-@jit(nopython=True)
+@jit(nopython=True, nogil=True)
 def encode_coords_to_uint64(coords):
     """
     Encode an array of (N,3) int32 into an array of (N,) uint64,
@@ -786,7 +786,7 @@ def encode_coords_to_uint64(coords):
     return encoded_coords
 
 
-@jit(nopython=True)
+@jit(nopython=True, nogil=True)
 def decode_coords_from_uint64(encoded_coords):
     """
     The reciprocal to encoded_coords_to_uint64(), above.

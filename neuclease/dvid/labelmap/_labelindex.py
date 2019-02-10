@@ -97,7 +97,7 @@ def convert_labelindex_to_pandas(labelindex):
                              labelindex.last_mod_user )
 
 
-@jit(nopython=True)
+@jit(nopython=True, nogil=True)
 def decode_labelindex_blocks(encoded_blocks):
     """
     Calls decode_labelindex_block() on a 1-D array of encoded coordinates.
@@ -109,7 +109,7 @@ def decode_labelindex_blocks(encoded_blocks):
     return decoded_blocks
 
 
-@jit(nopython=True)
+@jit(nopython=True, nogil=True)
 def decode_labelindex_block(encoded_block):
     """
     Helper function.
