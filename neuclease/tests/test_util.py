@@ -1,7 +1,6 @@
 import json
 import tempfile
 import textwrap
-from random import shuffle
 from tempfile import TemporaryFile
 
 import pytest
@@ -9,7 +8,7 @@ import numpy as np
 from neuclease.util import (uuids_match, read_csv_header, read_csv_col, connected_components,
                             connected_components_nonconsecutive, graph_tool_available,
                             closest_approach, upsample, is_lexsorted, lexsort_columns,
-                            lexsort_inplace, gen_json_objects)
+                            lexsort_inplace, gen_json_objects, ndrange)
 
 def test_uuids_match():
     assert uuids_match('abcd', 'abcdef') == True
@@ -166,7 +165,7 @@ def test_closest_approach():
            [3,3,3,_,_],
            [_,_,_,_,_],]
 
-    img = np.asarray(img, np.uint64)
+    img = np.asarray(img, np.uint32)
 
     point_a, point_b, distance = closest_approach(img, 1, 2)
     assert point_a == (0,1)
@@ -296,6 +295,22 @@ def test_gen_json_objects():
         f.write(s2)
         it = gen_json_objects(f)
         assert list(it) == json.loads(s2)
+
+
+def test_ndrange():
+    r = ndrange((1,2,3), (3,5,6), (1,2,2))
+    expected = [(1, 2, 3),
+                (1, 2, 5),
+                (1, 4, 3),
+                (1, 4, 5),
+                (2, 2, 3),
+                (2, 2, 5),
+                (2, 4, 3),
+                (2, 4, 5)]
+
+    assert len(r) == len(expected)
+    assert list(r) == expected
+
 
 if __name__ == "__main__":
     pytest.main(['-s', '--tb=native', '--pyargs', 'neuclease.tests.test_util'])

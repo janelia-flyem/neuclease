@@ -151,7 +151,7 @@ def post_file(url, f, *, session=None):
     r.raise_for_status()
 
 
-def ndrange(start, stop=None, step=None):
+class ndrange:
     """
     Generator.
 
@@ -171,18 +171,29 @@ def ndrange(start, stop=None, step=None):
     (6, 12, 3)
     (6, 12, 18)
     """
-    if stop is None:
-        stop = start
-        start = (0,)*len(stop)
 
-    if step is None:
-        step = (1,)*len(stop)
+    def __init__(self, start, stop=None, step=None):
+        if stop is None:
+            stop = start
+            start = (0,)*len(stop)
+    
+        if step is None:
+            step = (1,)*len(stop)
+    
+        assert len(start) == len(stop) == len(step), \
+            f"tuple lengths don't match: ndrange({start}, {stop}, {step})"
 
-    assert len(start) == len(stop) == len(step), \
-        f"tuple lengths don't match: ndrange({start}, {stop}, {step})"
+        self.start = start
+        self.stop = stop
+        self.step = step
+    
+    def __iter__(self):
+        return product(*starmap(range, zip(self.start, self.stop, self.step)))
 
-    yield from product(*starmap(range, zip(start, stop, step)))
-
+    def __len__(self):
+        span = (np.array(self.stop) - self.start)
+        step = np.array(self.step)
+        return np.prod( (span + step-1) // step )
 
 class NumpyConvertingEncoder(json.JSONEncoder):
     """
