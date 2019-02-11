@@ -539,7 +539,7 @@ def compute_merges(orig_vol, agg_vol):
         in any way to the label IDs in the original.
     """
     # Compute the set of unique orig-agg pairs, and the size of each
-    df = pd.DataFrame({'orig': orig_vol.flat, 'agg': agg_vol.flat})
+    df = pd.DataFrame({'orig': orig_vol.reshape(-1), 'agg': agg_vol.reshape(-1)})
     paired_seg_voxels = df.groupby(['orig', 'agg']).size().rename('voxels')
     paired_seg_voxels = pd.DataFrame(paired_seg_voxels)
 

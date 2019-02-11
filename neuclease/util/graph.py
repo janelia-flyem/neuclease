@@ -137,7 +137,7 @@ class SparseNodeGraph:
     
         assert edge_array.dtype in (np.uint32, np.uint64)
     
-        self.node_ids = pd.unique(edge_array.flat)
+        self.node_ids = pd.unique(edge_array.reshape(-1))
         self.cons_node_ids = np.arange(len(self.node_ids), dtype=np.uint32)
     
         self.mapper = LabelMapper(self.node_ids, self.cons_node_ids)
