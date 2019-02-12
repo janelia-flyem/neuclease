@@ -397,8 +397,12 @@ def closest_approach(sv_vol, id_a, id_b, check_present=True):
         first_point = tuple(np.transpose(mask_a.nonzero())[0])
         return first_point, first_point, 0.0
     
+    # Wrapper function just for visibility to profilers
+    def vectorDistanceTransform():
+        return vigra.filters.vectorDistanceTransform(mask_b.astype(np.uint32))
+
     # For all voxels, find the shortest vector toward id_b
-    to_b_vectors = vigra.filters.vectorDistanceTransform(mask_b.astype(np.uint32))
+    to_b_vectors = vectorDistanceTransform()
     
     # Magnitude of those vectors == distance to id_b
     to_b_distances = np.linalg.norm(to_b_vectors, axis=-1)
