@@ -15,8 +15,9 @@ from libdvid import DVIDNodeService
 from neuclease.dvid import (dvid_api_wrapper, DvidInstanceInfo, fetch_supervoxels_for_body, fetch_supervoxel_sizes_for_body,
                             fetch_label_for_coordinate, fetch_mappings, fetch_complete_mappings, fetch_mutation_id,
                             generate_sample_coordinate, fetch_labelmap_voxels, post_labelmap_blocks, post_labelmap_voxels,
-                            encode_labelarray_volume, fetch_maxlabel, fetch_raw, post_raw)
+                            encode_labelarray_volume, encode_nonaligned_labelarray_volume, fetch_maxlabel, fetch_raw, post_raw)
 from neuclease.dvid._dvid import default_dvid_session
+from neuclease.util.box import box_to_slicing
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -146,6 +147,22 @@ def test_encode_labelarray_volume():
     encoded = encode_labelarray_volume((512,1024,2048), vol)
     inflated = DVIDNodeService.inflate_labelarray_blocks3D_from_raw(encoded, (128,128,128), (512,1024,2048))
     assert (inflated == vol).all()
+
+
+def test_encode_nonaligned_labelarray_volume():
+    nonaligned_box = np.array([(520,1050,2050), (620,1150,2150)])
+    nonaligned_vol = np.random.randint(1000,2000, size=(100,100,100), dtype=np.uint64)
+    
+    aligned_start = np.array((512,1024,2048))
+    aligned_box = np.array([aligned_start, aligned_start+128])
+    aligned_vol = np.zeros( (128,128,128), dtype=np.uint64 )
+    aligned_vol[box_to_slicing(*(nonaligned_box - aligned_box[0]))] = nonaligned_vol
+    
+    encoded_box, encoded_vol = encode_nonaligned_labelarray_volume(nonaligned_box[0], nonaligned_vol)
+    inflated = DVIDNodeService.inflate_labelarray_blocks3D_from_raw(encoded_vol, (128,128,128), aligned_start)
+    
+    assert (encoded_box == aligned_box).all()
+    assert (inflated == aligned_vol).all()
 
 
 def test_fetch_labelmap_voxels(labelmap_setup):

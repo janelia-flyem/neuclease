@@ -851,7 +851,7 @@ def encode_labelarray_volume(offset_zyx, volume):
     Encode a uint64 volume as labelarray data, located at the given offset coordinate.
     The coordinate and volume shape must be 64-px aligned.
     
-    See ``encode_labelarray_volume()`` for the corresponding decode function.
+    See ``decode_labelarray_volume()`` for the corresponding decode function.
     """
     offset_zyx = np.asarray(offset_zyx)
     shape = np.array(volume.shape)
@@ -870,6 +870,51 @@ def encode_labelarray_volume(offset_zyx, volume):
 
     return encode_labelarray_blocks(corners_zyx, gen_blocks())
 
+
+def encode_nonaligned_labelarray_volume(offset_zyx, volume):
+    """
+    Encode a uint64 volume as labelarray data, located at the given offset coordinate.
+    The volume need not be aligned to 64-px blocks, but the encoded result will be
+    padded with zeros to ensure alignment.
+    
+    Returns:
+        aligned_box, encoded_data
+        where aligned_box indicates the extent of the encoded result.
+    """
+    offset_zyx = np.asarray(offset_zyx)
+    shape = np.array(volume.shape)
+    box_zyx = np.array([offset_zyx, offset_zyx + shape])
+    
+    from ...util import Grid, boxes_from_grid
+    
+    full_boxes = boxes_from_grid(box_zyx, Grid((64,64,64)), clipped=False)
+    clipped_boxes = boxes_from_grid(box_zyx, Grid((64,64,64)), clipped=True)
+
+    full_boxes = np.array(list(full_boxes))
+    clipped_boxes = np.array(list(clipped_boxes))
+
+    def gen_blocks():
+        for full_box, clipped_box in zip(full_boxes, clipped_boxes):
+            if (full_box == clipped_box).all():
+                vol_corner = full_box[0] - offset_zyx
+                block = volume[box_to_slicing(vol_corner, vol_corner+64)]
+                yield block
+                del block
+            else:
+                # Must extract clipped and copy it into a full box.
+                vol_box = clipped_box - offset_zyx
+                clipped_block = volume[box_to_slicing(*vol_box)]
+                full_block = np.zeros((64,64,64), np.uint64)
+                full_block[box_to_slicing(*(clipped_box - full_box[0]))] = clipped_block
+                yield full_block
+                del full_block
+                del clipped_block
+
+    aligned_box = np.array( (full_boxes[:,0,:].min(axis=0), 
+                             full_boxes[:,1,:].max(axis=0)) )
+    
+    return aligned_box, encode_labelarray_blocks(full_boxes[:,0,:], gen_blocks())
+    
 
 def decode_labelarray_volume(box_zyx, encoded_data):
     """
