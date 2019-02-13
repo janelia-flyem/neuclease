@@ -219,7 +219,7 @@ def fetch_sparsevol_rles(server, uuid, instance, label, supervoxels=False, scale
 
 
 @dvid_api_wrapper
-def post_split_supervoxel(server, uuid, instance, supervoxel, rle_payload_bytes, *, split_id=None, remain_id=None, session=None):
+def post_split_supervoxel(server, uuid, instance, supervoxel, rle_payload_bytes, downres=True, *, split_id=None, remain_id=None, session=None):
     """
     Split the given supervoxel according to the provided RLE payload,
     as specified in DVID's split-supervoxel docs.
@@ -252,6 +252,10 @@ def post_split_supervoxel(server, uuid, instance, supervoxel, rle_payload_bytes,
         raise RuntimeError(msg)
     
     params = {}
+    if not downres:
+        # true by default; not supported in older versions of dvid.
+        params['downres'] = 'false'
+    
     if split_id is not None:
         params['split'] = str(split_id)
     if remain_id is not None:
