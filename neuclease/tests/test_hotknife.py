@@ -1,36 +1,7 @@
 import pytest
-
 import numpy as np
-import pandas as pd
 
-from neuclease.focused.hotknife import contingency_table, compute_cc, region_coordinates, match_overlaps
-
-
-def test_contingency_table():
-    left =  np.array([[0,0,0,1,1,1,2,2,2,3,3,3,4]])
-    right = np.array([[0,0,5,5,5,6,6,6,7,7,7,8,0]])
-    
-    table = contingency_table(left, right)
-    assert isinstance(table, pd.Series)
-    assert (np.array(table.index.values.tolist()) == [(0,0), (0,5), (1,5), (1,6), (2,6), (2,7), (3,7), (3,8), (4,0)]).all()
-    assert (table == [2,1,2,1,2,1,2,1,1]).all()
-
-
-def test_compute_cc():
-    img = [[0,0,1,1,0,0,3,3,3,0,5]]
-    img = np.asarray(img, dtype=np.uint64)
-    cc, mapping = compute_cc(img)
-    assert (cc[0, 2:4] == 1).all()
-    assert (cc[0, 6:9] == 2).all()
-    assert (cc[0, 10] == 3)
-
-    assert isinstance(mapping, pd.Series)
-    assert mapping.index.name == 'cc'
-    assert mapping.name == 'orig'
-    assert mapping.loc[0] == 0
-    assert mapping.loc[1] == 1
-    assert mapping.loc[2] == 3
-    assert mapping.loc[3] == 5
+from neuclease.focused.hotknife import region_coordinates, match_overlaps
 
 
 def test_region_coordinates():
