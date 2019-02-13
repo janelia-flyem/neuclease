@@ -8,6 +8,7 @@ import vigra
 import logging
 import inspect
 import contextlib
+from multiprocessing.pool import Pool, ThreadPool
 from collections import defaultdict
 from datetime import datetime, timedelta
 from itertools import product, starmap
@@ -326,6 +327,51 @@ def iter_batches(it, batch_size):
         finally:
             if batch:
                 yield batch
+
+
+def compute_parallel(func, iterable, chunksize=1, threads=None, processes=None, ordered=True):
+    """
+    Use the given function to process the given iterable in a ThreadPool or process Pool,
+    showing progress using tqdm.
+    
+    Args:
+        func:
+            The function to process each item with.
+        iterable:
+            The items to process.
+        chunksize:
+            Send items to the pool in chunks of this size.
+        threads:
+            If given use a ThreadPool with this many threads.
+        processes
+            If given use a multiprocessing Pool with this many processes.
+        ordered:
+            If True, process the items in order, and return results
+            in the same order as provded in the input.
+            If False, process the items as quickly as possible,
+            meaning that some results will be presented out-of-order,
+            depending on how long they took to complete relative to the
+            other items in the pool.
+    """
+    assert bool(threads) ^ bool(processes), \
+        "Specify either threads or processes (not both)"
+
+    if threads:
+        pool = ThreadPool(threads)
+    elif processes:
+        pool = Pool(processes)
+
+    total = None
+    if hasattr(iterable, '__len__'):
+        total = len(iterable)
+
+    with pool:
+        if ordered:
+            items = pool.imap(func, iterable, chunksize)
+        else:
+            items = pool.imap_unordered(func, iterable, chunksize)
+        items = tqdm_proxy(items, total=total, leave=False)
+        return list(items)
 
 
 DEFAULT_TIMESTAMP = datetime.strptime('2018-01-01 00:00:00', '%Y-%m-%d %H:%M:%S')

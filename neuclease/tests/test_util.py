@@ -8,7 +8,7 @@ import numpy as np
 from neuclease.util import (uuids_match, read_csv_header, read_csv_col, connected_components,
                             connected_components_nonconsecutive, graph_tool_available,
                             closest_approach, upsample, is_lexsorted, lexsort_columns,
-                            lexsort_inplace, gen_json_objects, ndrange)
+                            lexsort_inplace, gen_json_objects, ndrange, compute_parallel)
 
 def test_uuids_match():
     assert uuids_match('abcd', 'abcdef') == True
@@ -310,6 +310,20 @@ def test_ndrange():
 
     assert len(r) == len(expected)
     assert list(r) == expected
+
+
+def _double(x):
+    return 2*x
+
+
+def test_compute_parallel():
+    items = list(range(100))
+    results = compute_parallel(_double, items, threads=2)
+    assert results == list(range(0,200,2))
+
+    items = list(range(100))
+    results = compute_parallel(_double, items, processes=2)
+    assert results == list(range(0,200,2))
 
 
 if __name__ == "__main__":
