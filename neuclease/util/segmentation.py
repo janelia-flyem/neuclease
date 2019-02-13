@@ -16,7 +16,9 @@ def contingency_table(left_vol, right_vol):
         pd.Series of sizes with a multi-level index (left,right)
     """
     assert left_vol.shape == right_vol.shape
-    df = pd.DataFrame({"left": left_vol.flat, "right": right_vol.flat}, dtype=left_vol.dtype)
+    df = pd.DataFrame( {"left": left_vol.reshape(-1),
+                        "right": right_vol.reshape(-1)},
+                       dtype=left_vol.dtype )
     sizes = df.groupby(['left', 'right']).size()
     sizes.name = 'voxel_count'
     return sizes
