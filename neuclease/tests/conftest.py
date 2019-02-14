@@ -49,7 +49,7 @@ max_log_age = 30   # days
 @pytest.fixture(scope="session")
 def labelmap_setup():
     global TEST_DVID_SERVER_PROC
-    TEST_DVID_SERVER_PROC = launch_dvid_server()
+    TEST_DVID_SERVER_PROC = _launch_dvid_server()
     try:
         # Can't reuse previous repos because we lock the repo node
         # (and somehow -fullwrite doesn't work?)
@@ -58,25 +58,30 @@ def labelmap_setup():
         yield TEST_SERVER, TEST_REPO, merge_table_path, mapping_path, supervoxel_vol
     finally:
         print("\nTerminating DVID test server...")
+        print("\nTerminating DVID test server...")
         TEST_DVID_SERVER_PROC.send_signal(signal.SIGTERM)
+        stdout = TEST_DVID_SERVER_PROC.communicate(timeout=1.0)
         try:
             TEST_DVID_SERVER_PROC.wait(DVID_SHUTDOWN_TIMEOUT)
         except subprocess.TimeoutExpired:
+            print(stdout)
             print("DVID test server did not shut down cleanly.  Killing...")
             TEST_DVID_SERVER_PROC.send_signal(signal.SIGKILL)
         print("DVID test server is terminated.")
 
 
-def launch_dvid_server():
+def _launch_dvid_server():
     os.makedirs(DVID_STORE_PATH, exist_ok=True)
     with open(DVID_CONFIG_PATH, 'w') as f:
         f.write(DVID_CONFIG)
 
-    dvid_proc = subprocess.Popen(f'dvid -verbose -fullwrite serve {DVID_CONFIG_PATH}', shell=True)
+    dvid_proc = subprocess.Popen(f'dvid -verbose -fullwrite serve {DVID_CONFIG_PATH}',
+                                 shell=True, stdout=subprocess.PIPE) # Hide output ("Sending log messages to...")
     time.sleep(1.0)
     if dvid_proc.poll() is not None:
         raise RuntimeError(f"dvid couldn't be launched.  Exited with code: {dvid_proc.returncode}")
     return dvid_proc
+
 
 def init_test_repo(reuse_existing=True):
     global TEST_REPO
