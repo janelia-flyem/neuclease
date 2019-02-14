@@ -17,7 +17,8 @@ from neuclease.dvid import (dvid_api_wrapper, DvidInstanceInfo, fetch_supervoxel
                             fetch_label_for_coordinate, fetch_mappings, fetch_complete_mappings, fetch_mutation_id,
                             generate_sample_coordinate, fetch_labelmap_voxels, post_labelmap_blocks, post_labelmap_voxels,
                             encode_labelarray_volume, encode_nonaligned_labelarray_volume, fetch_maxlabel, fetch_raw, post_raw,
-                            fetch_labelindex, post_labelindex, create_labelindex, PandasLabelIndex)
+                            fetch_labelindex, post_labelindex, create_labelindex, PandasLabelIndex,
+                            fetch_maxlabel, post_maxlabel, fetch_nextlabel, post_nextlabel)
 from neuclease.dvid._dvid import default_dvid_session
 from neuclease.util import box_to_slicing, extract_subvol, ndrange
 
@@ -292,6 +293,32 @@ def test_labelindex(labelmap_setup):
     post_labelindex(*instance_info, sv, labelindex)
     dvid_labelindex = fetch_labelindex(*instance_info, sv, format='protobuf')
     assert compare_proto_blocks(labelindex, dvid_labelindex)
+
+
+def test_maxlabel_and_friends(labelmap_setup):
+    dvid_server, dvid_repo, _merge_table_path, _mapping_path, _supervoxel_vol = labelmap_setup
+    instance_info = (dvid_server, dvid_repo, 'segmentation-scratch')
+
+    max_label = fetch_maxlabel(*instance_info)
+    next_label = fetch_nextlabel(*instance_info)
+    assert max_label+1 == next_label
+    
+    start, end = post_nextlabel(*instance_info, 5)
+    assert start == max_label+1
+    assert end == start + 5-1
+
+    max_label = fetch_maxlabel(*instance_info)
+    next_label = fetch_nextlabel(*instance_info)
+    assert next_label == max_label+1 == end+1
+
+    new_max = next_label+10
+    post_maxlabel(*instance_info, new_max)
+    
+    max_label = fetch_maxlabel(*instance_info)
+    assert max_label == new_max
+
+    next_label = fetch_nextlabel(*instance_info)
+    assert max_label+1 == next_label
 
 
 if __name__ == "__main__":

@@ -9,11 +9,8 @@ import pytest
 import numpy as np
 import pandas as pd
 
-
-from libdvid import DVIDNodeService
-
 import neuclease
-from neuclease.dvid import fetch_repos_info, create_labelmap_instance, post_commit, post_merge
+from neuclease.dvid import fetch_repos_info, create_labelmap_instance, post_merge, post_labelmap_voxels
 
 TEST_DVID_SERVER_PROC = None # Initialized below
 
@@ -143,11 +140,12 @@ def init_labelmap_nodes():
     # Expand to 64**3
     supervoxel_block = np.zeros((64,64,64), np.uint64)
     supervoxel_block[:1,:3,:15] = supervoxel_vol
-    DVIDNodeService(TEST_SERVER, TEST_REPO).put_labels3D('segmentation', supervoxel_block, (0,0,0))
-
-    post_commit(TEST_SERVER, TEST_REPO, 'supervoxels')
+    post_labelmap_voxels(TEST_SERVER, TEST_REPO, 'segmentation', (0,0,0), supervoxel_block)
+    post_labelmap_voxels(TEST_SERVER, TEST_REPO, 'segmentation-scratch', (0,0,0), supervoxel_block)
 
 #     # Create a child node for agglo mappings    
+#     post_commit(TEST_SERVER, TEST_REPO, 'supervoxels')
+
 #     r = requests.post(f'http://{TEST_SERVER}/api/node/{TEST_REPO}/newversion', json={'note': 'agglo'})
 #     r.raise_for_status()
 #     agglo_uuid = r.json["child"]

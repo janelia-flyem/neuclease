@@ -52,6 +52,78 @@ def fetch_maxlabel(server, uuid, instance, *, session=None):
 
 
 @dvid_api_wrapper
+def post_maxlabel(server, uuid, instance, maxlabel, *, session=None):
+    """
+    Update the MaxLabel for the given segmentation instance at the given node.
+    Usually DVID auto-updates the MaxLabel for an instance upon cleave/split/split-supervoxel,
+    so there is rarely any need to use this function.
+    But it is useful when you are writing raw supervoxel data "under DVID's feet".
+    
+    Note:
+        It is an error to post a smaller maxlabel value than the
+        current MaxLabel value for the instance.
+        See ``fetch_maxlabel()``
+    """
+    url = f'http://{server}/api/node/{uuid}/{instance}/maxlabel/{maxlabel}'
+    r = session.post(url)
+    r.raise_for_status()
+
+
+@dvid_api_wrapper
+def fetch_nextlabel(server, uuid, instance, *, session=None):
+    url = f'http://{server}/api/node/{uuid}/{instance}/nextlabel'
+    r_json = fetch_generic_json(url, session=session)
+    return r_json['nextlabel']
+
+
+@dvid_api_wrapper
+def post_nextlabel(server, uuid, instance, num_labels, *, session=None):
+    """
+    Ask DVID to reserve a number of new label IDs that are not yet
+    present in the given labelmap instance.
+    For typical merge/cleave/split operations, this is not necessary.
+    DVID handles the generation of label IDs as needed.
+    
+    But in the (very rare) case where you want to overwrite segmentation supervoxels directly,
+    you should use this function to reserve a number of unique IDs that you can
+    use without conflicting with existing objects in the volume.
+    
+    Args:
+        server:
+            dvid server, e.g. 'emdata3:8900'
+        
+        uuid:
+            dvid uuid, e.g. 'abc9'
+        
+        instance:
+            dvid instance name, e.g. 'segmentation'
+        
+        num_labels:
+            How many labels to reserve
+    
+    Returns:
+        (start, end), where start and end represent the first and last
+        labels in a contiguous block of label IDs that have been reserved.
+        
+        Note:
+            The returned range is INCLUSIVE, meaning 'end' is reserved
+            (unlike python's range() function).
+    """
+    url = f'http://{server}/api/node/{uuid}/{instance}/nextlabel/{num_labels}'
+    r = session.post(url)
+    r.raise_for_status()
+    d = r.json()
+    start, end = d["start"], d["end"]
+    
+    num_reserved = end-start+1
+    assert num_reserved == num_labels, \
+        "Unexpected response from DVID. "\
+        f"Requested {num_labels}, but received {num_reserved} labels ({start}, {end})"
+    
+    return (np.uint64(start), np.uint64(end))
+
+
+@dvid_api_wrapper
 def fetch_supervoxels(server, uuid, instance, body_id, user=None, *, session=None):
     # FIXME: Rename to 'fetch_supervoxels()'
     # FIXME: Remove 'user' in favor of session arg
