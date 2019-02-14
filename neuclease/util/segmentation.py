@@ -1,6 +1,55 @@
 import vigra
 import numpy as np
 import pandas as pd
+from collections import OrderedDict
+
+from . import Grid, boxes_from_grid, box_intersection, box_to_slicing
+
+BLOCK_STATS_DTYPES = OrderedDict([ ('segment_id', np.uint64),
+                                   ('z', np.int32),
+                                   ('y', np.int32),
+                                   ('x', np.int32),
+                                   ('count', np.uint32) ])
+
+
+def block_stats_for_volume(block_shape, volume, physical_box):
+    """
+    Get the count of voxels for each segment (excluding segment 0)
+    in each block within the given volume, returned as a DataFrame.
+    
+    Returns a DataFrame with the following columns:
+        ['segment_id', 'z', 'y', 'x', 'count']
+        where z,y,z are the starting coordinates of each block.
+    """
+    block_grid = Grid(block_shape)
+    
+    block_dfs = []
+    block_boxes = boxes_from_grid(physical_box, block_grid)
+    for box in block_boxes:
+        clipped_box = box_intersection(box, physical_box) - physical_box[0]
+        block_vol = volume[box_to_slicing(*clipped_box)]
+        counts = pd.Series(block_vol.reshape(-1)).value_counts(sort=False)
+        segment_ids = counts.index.values
+        counts = counts.values.astype(np.uint32)
+
+        box = box.astype(np.int32)
+
+        block_df = pd.DataFrame( { 'segment_id': segment_ids,
+                                   'count': counts,
+                                   'z': box[0][0],
+                                   'y': box[0][1],
+                                   'x': box[0][2] } )
+
+        # Exclude segment 0 from output
+        block_df = block_df[block_df['segment_id'] != 0]
+
+        block_dfs.append(block_df)
+
+    brick_df = pd.concat(block_dfs, ignore_index=True)
+    brick_df = brick_df[['segment_id', 'z', 'y', 'x', 'count']]
+    assert list(brick_df.columns) == list(BLOCK_STATS_DTYPES.keys())
+    return brick_df
+
 
 def contingency_table(left_vol, right_vol):
     """
