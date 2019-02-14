@@ -4,6 +4,7 @@ Test module for the dvid API wrapper functions defined in neuclease.dvid
 import sys
 import time
 import logging
+import datetime
 from multiprocessing.pool import ThreadPool
 
 import pytest
@@ -15,9 +16,10 @@ from libdvid import DVIDNodeService
 from neuclease.dvid import (dvid_api_wrapper, DvidInstanceInfo, fetch_supervoxels_for_body, fetch_supervoxel_sizes_for_body,
                             fetch_label_for_coordinate, fetch_mappings, fetch_complete_mappings, fetch_mutation_id,
                             generate_sample_coordinate, fetch_labelmap_voxels, post_labelmap_blocks, post_labelmap_voxels,
-                            encode_labelarray_volume, encode_nonaligned_labelarray_volume, fetch_maxlabel, fetch_raw, post_raw)
+                            encode_labelarray_volume, encode_nonaligned_labelarray_volume, fetch_maxlabel, fetch_raw, post_raw,
+                            fetch_labelindex, post_labelindex, create_labelindex, PandasLabelIndex)
 from neuclease.dvid._dvid import default_dvid_session
-from neuclease.util.box import box_to_slicing
+from neuclease.util import box_to_slicing, extract_subvol, ndrange
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -237,6 +239,59 @@ def test_post_raw(labelmap_setup):
     assert (complete_voxels[0:64, 64:128,   0:64]  == data[:, :,   0:64]).all()
     assert (complete_voxels[0:64, 64:128,  64:128] == data[:, :,  64:128]).all()
     assert (complete_voxels[0:64, 64:128, 128:192] == data[:, :, 128:192]).all()
+
+
+def test_labelindex(labelmap_setup):
+    dvid_server, dvid_repo, _merge_table_path, _mapping_path, _supervoxel_vol = labelmap_setup
+    instance_info = (dvid_server, dvid_repo, 'segmentation-scratch')
+    
+    # Write some random data
+    sv = 99
+    vol = sv*np.random.randint(2, size=(128,128,128), dtype=np.uint64)
+    offset = np.array((64,64,64))
+    
+    # DVID will generate the index.
+    post_labelmap_voxels(*instance_info, offset, vol)
+
+    # Compute labelindex table from scratch
+    rows = []
+    for block_coord in ndrange(offset, offset+vol.shape, (64,64,64)):
+        block_coord = np.array(block_coord)
+        block_box = np.array((block_coord, block_coord+64))
+        block = extract_subvol(vol, block_box - offset)
+        
+        count = (block == sv).sum()
+        rows.append( [*block_coord, sv, count] )
+    
+    index_df = pd.DataFrame( rows, columns=['z', 'y', 'x', 'sv', 'count'])
+    
+    # Check DVID's generated labelindex table against expected
+    labelindex_tuple = fetch_labelindex(*instance_info, sv, format='pandas')
+    assert labelindex_tuple.label == sv
+
+    labelindex_tuple.blocks.sort_values(['z', 'y', 'x', 'sv'], inplace=True)
+    labelindex_tuple.blocks.reset_index(drop=True, inplace=True)
+    assert (labelindex_tuple.blocks == index_df).all().all()
+
+    # Check our protobuf against DVID's
+    index_tuple = PandasLabelIndex(index_df, sv, 1, datetime.datetime.now().isoformat(), 'someuser')
+    labelindex = create_labelindex(index_tuple)
+    
+    # Since labelindex block entries are not required to be sorted,
+    # dvid might return them in a different order.
+    # Hence this comparison function which sorts them first.
+    def compare_proto_blocks(left, right):
+        left_blocks = sorted(left.blocks.items())
+        right_blocks = sorted(right.blocks.items())
+        return left_blocks == right_blocks
+    
+    dvid_labelindex = fetch_labelindex(*instance_info, sv, format='protobuf')
+    assert compare_proto_blocks(labelindex, dvid_labelindex)
+    
+    # Check post/get roundtrip
+    post_labelindex(*instance_info, sv, labelindex)
+    dvid_labelindex = fetch_labelindex(*instance_info, sv, format='protobuf')
+    assert compare_proto_blocks(labelindex, dvid_labelindex)
 
 
 if __name__ == "__main__":

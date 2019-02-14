@@ -459,7 +459,7 @@ def fetch_sparsevol_coarse(server, uuid, instance, label_id, supervoxels=False, 
     This is similar to the sparsevol representation at scale=6,
     EXCEPT that it is generated from the label index, so no blocks
     are lost from downsampling.
-
+    
     Return an array of coordinates of the form:
 
         [[Z,Y,X],
@@ -467,6 +467,8 @@ def fetch_sparsevol_coarse(server, uuid, instance, label_id, supervoxels=False, 
          [Z,Y,X],
          ...
         ]
+    
+    See also: ``fetch_sparsevol_coarse_via_labelindex()``
     """
     supervoxels = str(bool(supervoxels)).lower()
     r = session.get(f'http://{server}/api/node/{uuid}/{instance}/sparsevol-coarse/{label_id}?supervoxels={supervoxels}')

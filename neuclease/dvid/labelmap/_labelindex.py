@@ -35,6 +35,8 @@ def fetch_labelindex(server, uuid, instance, label, format='protobuf', *, sessio
 @dvid_api_wrapper
 def post_labelindex(server, uuid, instance, label, proto_index, *, session=None):
     """
+    Post a protobuf LabelIndex object for the given
+    label to the specified DVID labelmap instance.
     """
     assert isinstance(proto_index, LabelIndex)
     assert proto_index.label == label
@@ -97,13 +99,110 @@ def convert_labelindex_to_pandas(labelindex):
                              labelindex.last_mod_user )
 
 
+def create_labelindex(pandas_labelindex):
+    """
+    Create a protobuf LabelIndex structure from a PandasLabelIndex tuple.
+    
+    In the PandasLabelIndex tuple, the ``blocks`` member is a pd.DataFrame 
+    with the following columns: ['z', 'y', 'x', 'sv', 'count'].
+    
+    Note that the block coordinates are given in VOXEL units.
+    That is, all coordinates in the table are multiples of 64.
+    (The coordinates will be converted to DVID block coordinates here
+    when they are encoded into the LabelIndex protobuf structure.)
+    
+    Args:
+        pandas_labelindex:
+            Instance of PandasLabelIndex (a namedtuple)
+        
+    Returns:
+        neuclease.dvid.labelmap.labelops_pb2.LabelIndex
+        (a protobuf structure), suitable for ``post_labelindex()``
+    """
+    pli = pandas_labelindex
+    assert isinstance(pli, PandasLabelIndex)
+    labelindex = LabelIndex()
+    labelindex.label = pli.label
+    labelindex.last_mutid = pli.last_mutid
+    labelindex.last_mod_time = pli.last_mod_time
+    labelindex.last_mod_user = pli.last_mod_user
+    
+    assert (pli.blocks.columns == ['z', 'y', 'x', 'sv', 'count']).all()
+
+    block_ids = encode_block_coords(pli.blocks[['z', 'y', 'x']].values)
+    pli.blocks['block_id'] = block_ids
+    
+    for block_id, df in pli.blocks.groupby('block_id'):
+        labelindex.blocks[block_id].counts.update( zip(df['sv'].values, df['count'].values) )
+    
+    del pli.blocks['block_id']
+    return labelindex
+
+
 @dvid_api_wrapper
 def fetch_sparsevol_coarse_via_labelindex(server, uuid, instance, label, *, session=None):
+    """
+    Equivalent to fetch_sparsevol_coarse, but uses the raw /labelindex endpoint
+    to obtain the coordinate list, rather than requesting sparsevol RLEs from dvid.
+    """
     labelindex = fetch_labelindex(server, uuid, instance, label, session=session)
     encoded_block_coords = np.fromiter(labelindex.blocks.keys(), np.uint64, len(labelindex.blocks))
     coords_zyx = decode_labelindex_blocks(encoded_block_coords)
     return coords_zyx // (2**6)
 
+
+def encode_block_coords(coords):
+    """
+    Encodes a coordinate array into an array of uint64,
+    in the format DVID expects.
+    
+    Args:
+        coords:
+            2D array with shape (N,3) (each row is Z,Y,X)
+            
+            Note:
+                The coords should be specified in full-resolution units,
+                i.e. each coord must be 64-px block-aligned.
+                Internally, these will be divided by 64 to generate
+                a block ID as DVID expects.
+
+    Returns:
+        1D array, dtype uint64, shape (N,)
+    """
+    coords = np.asarray(coords, np.int32, 'C')
+    assert (coords % 64 == 0).all(), \
+        "Block coordinates are not 64-px aligned!"
+
+    record_dtype = [('z', np.int32), ('y', np.int32), ('x', np.int32)]
+    coord_records = coords.view(record_dtype).reshape(-1)
+    return encode_labelindex_block_ids(coord_records)
+
+
+@jit(nopython=True)
+def encode_labelindex_block_ids(coord_records):
+    """
+    Encodes a coord list (1-D array of structured array elements)
+    into an array of uint64, in the format DVID expects.
+    
+    The dtype of coord_records should be:
+    [('z', np.int32), ('y', np.int32), ('x', np.int32)]
+    """
+    results = np.empty(len(coord_records), np.uint64)
+    for i, rec in enumerate(coord_records):
+        results[i] = encode_labelindex_block_id(rec)
+    return results
+
+@jit(nopython=True)
+def encode_labelindex_block_id(coord_record):
+    """
+    Encodes a coord (structured array of z,y,x)
+    into a uint64, in the format DVID expects.
+    """
+    encoded_block_id = np.uint64(0)
+    encoded_block_id |= np.uint64(coord_record.z // 64) << 42
+    encoded_block_id |= np.uint64(coord_record.y // 64) << 21
+    encoded_block_id |= np.uint64(coord_record.x // 64)
+    return encoded_block_id
 
 
 @jit(nopython=True, nogil=True)
