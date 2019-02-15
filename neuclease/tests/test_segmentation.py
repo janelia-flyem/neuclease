@@ -53,12 +53,6 @@ def test_split_disconnected_bodies():
     
     split, mapping = split_disconnected_bodies(orig)
     
-    # Due to undocumented requirements in Evaluate.py, the mapping
-    # returned by split_disconnected_bodies() must contain plain Python integers,
-    # not np.uint64, etc.
-    assert all(type(k) == int and type(v) == int for k,v in mapping.items()), \
-        "Returned mapping does not contain plain Python int types"
-    
     assert ((orig == 20) == (split == 20)).all(), \
         "Label 2 is a single component and therefore should remain untouched in the output"
 

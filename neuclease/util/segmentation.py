@@ -152,6 +152,8 @@ def split_disconnected_bodies(labels_orig):
             which maps new segment IDs to the segments they came from.
             Segments that were not split at all are not mentioned in this mapping,
             for split segments, every mapping pair for the split is returned, including the k->k (identity) pair.
+        
+        
     """
     # Compute connected components and cast back to original dtype
     labels_cc = skm.label(labels_orig, background=0, connectivity=1)
@@ -187,9 +189,7 @@ def split_disconnected_bodies(labels_orig):
     emitted_mapping_rows = overlap_table_df['orig'].duplicated(keep=False)
     emitted_mapping_pairs = overlap_table_df.loc[emitted_mapping_rows, ['final_cc', 'orig']].values
 
-    # Use tolist() to ensure plain Python int types
-    # (This is required by some client code in Evaluate.py)
-    new_to_orig = dict(emitted_mapping_pairs.tolist())
+    new_to_orig = dict(emitted_mapping_pairs)
     
     return labels_cc, new_to_orig
 
