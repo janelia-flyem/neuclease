@@ -8,6 +8,7 @@ from .. import dvid_api_wrapper
 
 # $ protoc --python_out=. neuclease/dvid/labelmap/labelops.proto
 from .labelops_pb2 import LabelIndex
+from . import fetch_mapping
 
 @dvid_api_wrapper
 def fetch_labelindex(server, uuid, instance, label, format='protobuf', *, session=None): # @ReservedAssignment
@@ -140,14 +141,24 @@ def create_labelindex(pandas_labelindex):
 
 
 @dvid_api_wrapper
-def fetch_sparsevol_coarse_via_labelindex(server, uuid, instance, label, *, session=None):
+def fetch_sparsevol_coarse_via_labelindex(server, uuid, instance, label, supervoxels=False, *, session=None):
     """
     Equivalent to fetch_sparsevol_coarse, but uses the raw /labelindex endpoint
     to obtain the coordinate list, rather than requesting sparsevol RLEs from dvid.
     """
-    labelindex = fetch_labelindex(server, uuid, instance, label, session=session)
-    encoded_block_coords = np.fromiter(labelindex.blocks.keys(), np.uint64, len(labelindex.blocks))
-    coords_zyx = decode_labelindex_blocks(encoded_block_coords)
+    if supervoxels:
+        # LabelIndexes are stored by body, so fetch the full label
+        # index and find the blocks that contain the supervoxel of interest.
+        [body] = fetch_mapping(server, uuid, instance, [label], session=session)
+        labelindex = fetch_labelindex(server, uuid, instance, body, session=session)
+        filtered_block_ids = (block_id for block_id, blockdata in labelindex.blocks.items()
+                              if label in blockdata.counts.keys())
+        block_ids = np.fromiter(filtered_block_ids, np.uint64)
+    else:
+        labelindex = fetch_labelindex(server, uuid, instance, label, session=session)
+        block_ids = np.fromiter(labelindex.blocks.keys(), np.uint64, len(labelindex.blocks))
+
+    coords_zyx = decode_labelindex_blocks(block_ids)
     return coords_zyx // (2**6)
 
 
