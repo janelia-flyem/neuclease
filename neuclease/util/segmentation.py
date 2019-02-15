@@ -66,7 +66,8 @@ def contingency_table(left_vol, right_vol):
             np.ndarrays of equal shape
     
     Returns:
-        pd.Series of sizes with a multi-level index (left,right)
+        pd.Series of sizes with a multi-level index (left,right),
+        named 'voxel_count'.
     """
     assert left_vol.shape == right_vol.shape
     df = pd.DataFrame( {"left": left_vol.reshape(-1),
@@ -153,6 +154,11 @@ def split_disconnected_bodies(labels_orig):
             Segments that were not split at all are not mentioned in this mapping,
             for split segments, every mapping pair for the split is returned, including the k->k (identity) pair.
         
+        new_unique_labels:
+            An array of all label IDs in the newly relabeled volume.
+            The original label set can be selected via:
+            
+                new_unique_labels[new_unique_labels < min(new_to_orig.keys())]
         
     """
     # Compute connected components and cast back to original dtype
@@ -190,6 +196,9 @@ def split_disconnected_bodies(labels_orig):
     emitted_mapping_pairs = overlap_table_df.loc[emitted_mapping_rows, ['final_cc', 'orig']].values
 
     new_to_orig = dict(emitted_mapping_pairs)
+
+    new_unique_labels = pd.unique(overlap_table_df['final_cc'].values)
+    new_unique_labels.sort()
     
-    return labels_cc, new_to_orig
+    return labels_cc, new_to_orig, new_unique_labels
 

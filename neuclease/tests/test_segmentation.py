@@ -51,7 +51,10 @@ def test_split_disconnected_bodies():
     orig = np.array(orig).astype(np.uint64)
     orig *= 10
     
-    split, mapping = split_disconnected_bodies(orig)
+    split, mapping, split_unique = split_disconnected_bodies(orig)
+    
+    # New IDs are generated starting after the original max value
+    assert (split_unique == [0,10,20,30,40,41,42,43]).all()
     
     assert ((orig == 20) == (split == 20)).all(), \
         "Label 2 is a single component and therefore should remain untouched in the output"
@@ -80,7 +83,7 @@ def test_split_disconnected_bodies():
     assert (split[-3:,-3:] == lower_right_label).all()
     assert (split[-2:,4:6] == bottom_center_label).all()
 
-    assert set(mapping.keys()) == set([10,30,41,42,43]), "mapping: {}".format( mapping )
+    assert set(mapping.keys()) == set([10,30,41,42,43]), f"mapping: {mapping}"
 
     mapper = LabelMapper(np.fromiter(mapping.keys(), np.uint64), np.fromiter(mapping.values(), np.uint64))
     assert (mapper.apply(split, True) == orig).all(), \
