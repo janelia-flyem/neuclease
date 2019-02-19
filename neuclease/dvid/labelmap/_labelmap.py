@@ -13,7 +13,7 @@ from libdvid import DVIDNodeService, encode_label_block
 from ...util import Timer, round_box, extract_subvol, DEFAULT_TIMESTAMP, tqdm_proxy, ndrange, box_to_slicing
 
 from .. import dvid_api_wrapper, fetch_generic_json
-from ..repo import create_voxel_instance
+from ..repo import create_voxel_instance, fetch_repo_dag
 from ..kafka import read_kafka_messages, kafka_msgs_to_df
 from ..rle import parse_rle_response
 
@@ -43,13 +43,51 @@ def create_labelmap_instance(server, uuid, instance, versioned=True, tags=[], bl
 
 
 @dvid_api_wrapper
-def fetch_maxlabel(server, uuid, instance, *, session=None):
+def fetch_maxlabel(server, uuid, instance, *, session=None, dag=None):
     """
     Read the MaxLabel for the given segmentation instance at the given node.
+    
+    This implementation includes a workaround for issue 284:
+    
+      - https://github.com/janelia-flyem/dvid/issues/284
+    
+    If the ``/maxlabel`` endpoint returns an error stating "No maximum label",
+    we recursively check the parent node(s) for a valid maxlabel until we find one.
     """
     url = f'http://{server}/api/node/{uuid}/{instance}/maxlabel'
-    return fetch_generic_json(url, session=session)["maxlabel"]
+    
+    try:
+        return fetch_generic_json(url, session=session)["maxlabel"]
+    except HTTPError as ex:
+        if ex.response is None or 'No maximum label' not in ex.response.content.decode('utf-8'):
+            raise
 
+        # Oops, Issue 284
+        # Search upwards in the DAG for a uuid with a valid max label
+        if dag is None:
+            dag = fetch_repo_dag(server, uuid)
+
+        # Check the parent nodes
+        parents = list(dag.predecessors(uuid))
+        if not parents:
+            # No parents to check
+            raise
+
+        # Find the maxlabel of all parents
+        # (In theory, there can be more than one.)
+        parent_maxes = []
+        for parent_uuid in parents:
+            try:
+                parent_maxes.append( fetch_maxlabel(server, parent_uuid, instance, dag=dag) )
+            except HTTPError as ex:
+                parent_maxes.append(0)
+        
+        parent_max = max(parent_maxes)
+        if parent_max == 0:
+            # Could not find a max label for any parent.
+            raise
+
+        return parent_max
 
 @dvid_api_wrapper
 def post_maxlabel(server, uuid, instance, maxlabel, *, session=None):
