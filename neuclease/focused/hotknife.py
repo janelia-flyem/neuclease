@@ -11,7 +11,7 @@ from ..logging_setup import PrefixedLogger
 from ..util import Timer
 from ..util.box import box_to_slicing, round_box, overwrite_subvol
 from ..util.grid import boxes_from_grid
-from ..util.segmentation import contingency_table, compute_cc
+from ..util.segmentation import contingency_table
 from ..dvid import fetch_volume_box, fetch_labelarray_voxels, fetch_mappings
 
 logger = logging.getLogger(__name__)
@@ -50,6 +50,53 @@ HEMIBRAIN_WIDTH = HEMIBRAIN_TAB_BOUNDARIES[-1] - HEMIBRAIN_TAB_BOUNDARIES[0]
 
 # (These are X coordinates)
 assert HEMIBRAIN_TAB_BOUNDARIES.tolist() == [0, 2655, 5251, 7920, 10600, 13229, 15895, 18489, 21204, 24041, 26853, 29743, 32360, 34427]
+
+
+def compute_cc(img, min_component=1):
+    """
+    Compute the connected components of the given label image,
+    and return a pd.Series that maps from the CC label back to the original label.
+    
+    Pixels of value 0 are treated as background and not labeled.
+    
+    Args:
+        img:
+            ND label image, either np.uint8, np.uint32, or np.uint64
+        
+        min_component:
+            Output components will be indexed starting with this value
+            (but 0 is not affected)
+        
+    Returns:
+        img_cc, cc_mapping, where:
+            - img_cc is the connected components image (as np.uint32)
+            - cc_mapping is pd.Series, indexed by CC labels, data is original labels.
+    """
+    assert min_component > 0
+    if img.dtype in (np.uint8, np.uint32):
+        img_cc = vigra.analysis.labelMultiArrayWithBackground(img)
+    elif img.dtype == np.uint64:
+        # Vigra's labelMultiArray() can't handle np.uint64,
+        # so we must convert it to np.uint32 first.
+        # We can't simply truncate the label values,
+        # so we "consecutivize" them.
+        img32 = np.zeros_like(img, dtype=np.uint32, order='C')
+        _, _, _ = vigra.analysis.relabelConsecutive(img, out=img32)
+        img_cc = vigra.analysis.labelMultiArrayWithBackground(img32)
+    else:
+        raise AssertionError(f"Invalid label dtype: {img.dtype}")    
+    
+    cc_mapping_df = pd.DataFrame( { 'orig': img.flat, 'cc': img_cc.flat } )
+    cc_mapping_df.drop_duplicates(inplace=True)
+    
+    if min_component > 1:
+        img_cc[img_cc != 0] += np.uint32(min_component-1)
+        cc_mapping_df.loc[cc_mapping_df['cc'] != 0, 'cc'] += np.uint32(min_component-1)
+
+    cc_mapping = cc_mapping_df.set_index('cc')['orig']
+    return img_cc, cc_mapping
+    
+
 
 
 def find_all_hotknife_edges_for_plane(server, uuid, instance, plane_center_coord_s0, tile_shape_s0, plane_spacing_s0, min_overlap_s0=1, min_jaccard=0.0, *, scale=0, mapping=None):
