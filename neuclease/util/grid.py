@@ -26,8 +26,10 @@ class Grid:
         
         self.halo_shape = np.zeros_like(self.block_shape)
         self.halo_shape[:] = halo
-        assert (self.halo_shape < self.block_shape).all(), \
-            f"Halo shape must be smaller than the block shape in all dimensions: {self.halo_shape} vs {self.block_shape}"
+        
+        # FIXME: Why is this assertion necessary?
+        assert (self.halo_shape <= self.block_shape).all(), \
+            f"Halo shape must be <= than the block shape in all dimensions: {self.halo_shape} vs {self.block_shape}"
 
     def equivalent_to(self, other_grid):
         """
