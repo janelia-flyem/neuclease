@@ -496,7 +496,8 @@ def extract_labels_from_volume(points_df, volume, box_zyx=None, vol_scale=0, lab
     
     - Points outside the volume extents are handled gracefully (they remain unlabeled).
     - The volume can be offset from the origin (doesn't start at (0,0,0)).
-    - The volume can be downscaled.
+    - The volume can be provided in downscaled form, in which case the
+      given points will be downscaled before sampling is performed.
     - Both label values (ints) and label names are output, if the label names were specified.
     
     Args:

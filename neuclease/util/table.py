@@ -51,7 +51,7 @@ def lexsort_inplace(table):
     Equivalent to:
     
         order = np.lexsort(table.transpose()[::-1])
-        table = table[order]
+        table[:] = table[order]
     
     But should (in theory) be faster and use less RAM.
     

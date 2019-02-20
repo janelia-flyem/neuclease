@@ -7,6 +7,19 @@ def read_csv_header(csv_path):
     """
     Open the CSV file at the given path and return it's header column names as a list.
     If it has no header (as determined by csv.Sniffer), return None.
+    
+    This function handles a special case that Python's ``csv.Sniffer``
+    does not handle properly: The case of a single-column csv file.
+    In that case, if the first column begins with a non-number,
+    it is assumed to have a header; otherwise not.
+    
+    Note:
+        If the file contains a single column of strings,
+        it is assumed that the first row is the header.
+    
+    Returns:
+        If the file has no header row, None.
+        Otherwise, returns a list of strings.
     """
     with open(csv_path, 'r') as csv_file:
         first_line = csv_file.readline()
@@ -34,14 +47,31 @@ def read_csv_header(csv_path):
 def csv_has_header(csv_path):
     """
     Return True if the CSV file at the given path
-    appears to have a header row, False otherwise. 
+    appears to have a header row, False otherwise.
+
+    Note:
+        If the file contains a single column of strings,
+        it is assumed that the first row is the header.
     """
     return (read_csv_header(csv_path) is not None)
 
 
 def read_csv_col(csv_path, col=0, dtype=np.uint64):
     """
-    Read a single column from a CSV file as a pd.Series.
+    Read a single column from a CSV file as a ``pd.Series``.
+    
+    Args:
+        csv_path:
+            Path to the CSV file to open
+        
+        col:
+            Index of the desired column to read
+        
+        dtype:
+            The dtype of the returned Series.
+    
+    Returns:
+        ``pd.Series``, named according to the column's header (if any).
     """
     int(col) # must be an int
     header_names = read_csv_header(csv_path)

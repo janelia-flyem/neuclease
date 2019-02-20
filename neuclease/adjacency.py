@@ -2,7 +2,6 @@ from itertools import combinations
 
 import numpy as np
 import pandas as pd
-from skimage.morphology import dilation
 
 from dvidutils import LabelMapper
 
@@ -27,6 +26,9 @@ def find_missing_adjacencies(server, uuid, instance, body, known_edges, svs=None
        for the adjacencies.
     
     Notes:
+        - Requires scikit-image (which, currently, is not otherwise
+          listed as a dependency of neuclease's conda-recipe).
+        
         - This function does not attempt to find ALL adjacencies between supervoxels;
           it stops looking as soon as they form a single connected component.
 
@@ -78,6 +80,8 @@ def find_missing_adjacencies(server, uuid, instance, body, known_edges, svs=None
         Ideally, final_num_cc == 1, but in some cases the body's supervoxels may not be
         directly adjacent, or the adjacencies were not detected.  (See notes above.)
     """
+    from skimage.morphology import dilation
+    
     BLOCK_TABLE_COLS = ['z', 'y', 'x', 'sv_a', 'sv_b', 'cc_a', 'cc_b', 'detected', 'applied']
     known_edges = np.asarray(known_edges, np.uint64)
     if svs is None:

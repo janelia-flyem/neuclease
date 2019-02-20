@@ -145,6 +145,14 @@ def fetch_sparsevol_coarse_via_labelindex(server, uuid, instance, label, supervo
     """
     Equivalent to fetch_sparsevol_coarse, but uses the raw /labelindex endpoint
     to obtain the coordinate list, rather than requesting sparsevol RLEs from dvid.
+    
+    This method of fetching coarse sparsevols minimizes workload on DVID,
+    but requires more work on the client side (about 5x more time).
+    It is well suited for fetching thousands or millions of coarse sparsevols
+    in a cluster-computing workflow, in which DVID is a bottleneck,
+    and you have more than 5 workers.
+    
+    Note: The returned coordinates are not necessarily sorted.
     """
     if supervoxels:
         # LabelIndexes are stored by body, so fetch the full label

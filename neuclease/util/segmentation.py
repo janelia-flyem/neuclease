@@ -1,9 +1,7 @@
 from collections import OrderedDict
 
-import vigra
 import numpy as np
 import pandas as pd
-import skimage.measure as skm
 
 from dvidutils import LabelMapper
 
@@ -88,6 +86,10 @@ def split_disconnected_bodies(labels_orig):
     the original body label.
 
     Special exception: Segments with label 0 are not relabeled.
+    
+    Note:
+        Requires scikit-image (which, currently, is not otherwise
+        listed as a dependency of neuclease's conda-recipe).
 
     Args:
         labels_orig (numpy.array): 3D array of labels
@@ -116,6 +118,7 @@ def split_disconnected_bodies(labels_orig):
                 new_unique_labels[new_unique_labels < min(new_to_orig.keys())]
         
     """
+    import skimage.measure as skm
     # Compute connected components and cast back to original dtype
     labels_cc = skm.label(labels_orig, background=0, connectivity=1)
     assert labels_cc.dtype == np.int64

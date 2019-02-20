@@ -579,6 +579,8 @@ def fetch_sparsevol_coarse(server, uuid, instance, label_id, supervoxels=False, 
         ]
     
     See also: ``fetch_sparsevol_coarse_via_labelindex()``
+    
+    Note: The returned coordinates are not necessarily sorted.
     """
     supervoxels = str(bool(supervoxels)).lower()
     r = session.get(f'http://{server}/api/node/{uuid}/{instance}/sparsevol-coarse/{label_id}?supervoxels={supervoxels}')
