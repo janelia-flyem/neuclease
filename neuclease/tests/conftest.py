@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 
 import neuclease
-from neuclease.dvid import fetch_repos_info, create_labelmap_instance, post_merge, post_labelmap_voxels
+from neuclease.dvid import fetch_repos_info, create_labelmap_instance, post_merge, post_labelmap_voxels, post_commit
 
 TEST_DVID_SERVER_PROC = None # Initialized below
 
@@ -57,11 +57,13 @@ def labelmap_setup():
         print("\nTerminating DVID test server...")
         print("\nTerminating DVID test server...")
         TEST_DVID_SERVER_PROC.send_signal(signal.SIGTERM)
-        stdout = TEST_DVID_SERVER_PROC.communicate(timeout=1.0)
+        stdout = None
         try:
+            stdout = TEST_DVID_SERVER_PROC.communicate(timeout=1.0)
             TEST_DVID_SERVER_PROC.wait(DVID_SHUTDOWN_TIMEOUT)
         except subprocess.TimeoutExpired:
-            print(stdout)
+            if stdout:
+                print(stdout)
             print("DVID test server did not shut down cleanly.  Killing...")
             TEST_DVID_SERVER_PROC.send_signal(signal.SIGKILL)
         print("DVID test server is terminated.")
@@ -143,9 +145,9 @@ def init_labelmap_nodes():
     post_labelmap_voxels(TEST_SERVER, TEST_REPO, 'segmentation', (0,0,0), supervoxel_block)
     post_labelmap_voxels(TEST_SERVER, TEST_REPO, 'segmentation-scratch', (0,0,0), supervoxel_block)
 
-#     # Create a child node for agglo mappings    
-#     post_commit(TEST_SERVER, TEST_REPO, 'supervoxels')
+    post_commit(TEST_SERVER, TEST_REPO, 'supervoxels')
 
+#     # Create a child node for agglo mappings
 #     r = requests.post(f'http://{TEST_SERVER}/api/node/{TEST_REPO}/newversion', json={'note': 'agglo'})
 #     r.raise_for_status()
 #     agglo_uuid = r.json["child"]

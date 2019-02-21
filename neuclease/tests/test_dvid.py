@@ -19,7 +19,7 @@ from neuclease.dvid import (dvid_api_wrapper, DvidInstanceInfo, fetch_supervoxel
                             encode_labelarray_volume, encode_nonaligned_labelarray_volume, fetch_raw, post_raw,
                             fetch_labelindex, post_labelindex, create_labelindex, PandasLabelIndex,
                             fetch_maxlabel, post_maxlabel, fetch_nextlabel, post_nextlabel, create_labelmap_instance,
-                            post_merge, fetch_sparsevol_coarse, fetch_sparsevol_coarse_via_labelindex)
+                            post_merge, fetch_sparsevol_coarse, fetch_sparsevol_coarse_via_labelindex, post_branch)
 from neuclease.dvid._dvid import default_dvid_session
 from neuclease.util import box_to_slicing, extract_subvol, ndrange
 
@@ -243,10 +243,42 @@ def test_post_raw(labelmap_setup):
     assert (complete_voxels[0:64, 64:128, 128:192] == data[:, :, 128:192]).all()
 
 
+def test_maxlabel_and_friends(labelmap_setup):
+    dvid_server, dvid_repo, _merge_table_path, _mapping_path, _supervoxel_vol = labelmap_setup
+    
+    # Need an unlocked node to test these posts
+    uuid = post_branch(dvid_server, dvid_repo, 'test_maxlabel_and_friends', 'test_maxlabel_and_friends')
+    instance_info = (dvid_server, uuid, 'segmentation-scratch')
+
+    max_label = fetch_maxlabel(*instance_info)
+    next_label = fetch_nextlabel(*instance_info)
+    assert max_label+1 == next_label
+    
+    start, end = post_nextlabel(*instance_info, 5)
+    assert start == max_label+1
+    assert end == start + 5-1
+
+    max_label = fetch_maxlabel(*instance_info)
+    next_label = fetch_nextlabel(*instance_info)
+    assert next_label == max_label+1 == end+1
+
+    new_max = next_label+10
+    post_maxlabel(*instance_info, new_max)
+    
+    max_label = fetch_maxlabel(*instance_info)
+    assert max_label == new_max
+
+    next_label = fetch_nextlabel(*instance_info)
+    assert max_label+1 == next_label
+
+
 def test_labelindex(labelmap_setup):
     dvid_server, dvid_repo, _merge_table_path, _mapping_path, _supervoxel_vol = labelmap_setup
-    instance_info = (dvid_server, dvid_repo, 'segmentation-scratch')
-    
+
+    # Need an unlocked node to test these posts
+    uuid = post_branch(dvid_server, dvid_repo, 'test_labelindex', 'test_labelindex')
+    instance_info = (dvid_server, uuid, 'segmentation-scratch')
+
     # Write some random data
     sv = 99
     vol = sv*np.random.randint(2, size=(128,128,128), dtype=np.uint64)
@@ -294,32 +326,6 @@ def test_labelindex(labelmap_setup):
     post_labelindex(*instance_info, sv, labelindex)
     dvid_labelindex = fetch_labelindex(*instance_info, sv, format='protobuf')
     assert compare_proto_blocks(labelindex, dvid_labelindex)
-
-
-def test_maxlabel_and_friends(labelmap_setup):
-    dvid_server, dvid_repo, _merge_table_path, _mapping_path, _supervoxel_vol = labelmap_setup
-    instance_info = (dvid_server, dvid_repo, 'segmentation-scratch')
-
-    max_label = fetch_maxlabel(*instance_info)
-    next_label = fetch_nextlabel(*instance_info)
-    assert max_label+1 == next_label
-    
-    start, end = post_nextlabel(*instance_info, 5)
-    assert start == max_label+1
-    assert end == start + 5-1
-
-    max_label = fetch_maxlabel(*instance_info)
-    next_label = fetch_nextlabel(*instance_info)
-    assert next_label == max_label+1 == end+1
-
-    new_max = next_label+10
-    post_maxlabel(*instance_info, new_max)
-    
-    max_label = fetch_maxlabel(*instance_info)
-    assert max_label == new_max
-
-    next_label = fetch_nextlabel(*instance_info)
-    assert max_label+1 == next_label
 
 
 def test_fetch_sparsevol_coarse_via_labelindex(labelmap_setup):
