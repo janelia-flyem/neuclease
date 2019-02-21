@@ -233,7 +233,7 @@ def create_voxel_instance(server, uuid, instance, typename, versioned=True, comp
     if background is not None:
         assert typename in ("uint8blk", "uint16blk", "uint32blk", "uint64blk", "float32blk"), \
             "Background value is only valid for block-based instance types."
-        type_specific_settings["Background"] = background
+        type_specific_settings["Background"] = str(background)
     
     create_instance(server, uuid, instance, typename, versioned, compression, tags, type_specific_settings, session=session)
 

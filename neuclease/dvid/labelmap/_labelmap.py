@@ -39,7 +39,7 @@ def create_labelmap_instance(server, uuid, instance, versioned=True, tags=[], bl
     """
     type_specific_settings = { "IndexedLabels": str(enable_index).lower(), "CountLabels": str(enable_index).lower(), "MaxDownresLevel": str(max_scale) }
     create_voxel_instance( server, uuid, instance, 'labelmap', versioned, tags=tags, block_size=block_size, voxel_size=voxel_size,
-                       voxel_units=voxel_units, type_specific_settings=type_specific_settings, session=session )
+                           voxel_units=voxel_units, type_specific_settings=type_specific_settings, session=session )
 
 
 @dvid_api_wrapper
