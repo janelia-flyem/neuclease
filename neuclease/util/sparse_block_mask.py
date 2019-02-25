@@ -39,6 +39,19 @@ class SparseBlockMask:
             "Note: box should be specified in FULL resolution coordinates."
 
 
+    def change_resolution(self, new_resolution):
+        """
+        Without changing the mask data,
+        change interpretation of the mask data's resolution and bounding box.
+        """
+        if (new_resolution == self.resolution).all():
+            return
+
+        factor = (new_resolution // self.resolution)
+        self.box[:] *= factor
+        self.resolution = new_resolution
+
+
     def get_fullres_mask(self, requested_box_fullres):
         """
         Sample a subvolume of the mask, using full-resolution
@@ -96,7 +109,6 @@ class SparseBlockMask:
         
         # Return the full-res voxels
         return result_mask_fullres
-
 
 
     def sparse_boxes( self, brick_grid, halo=0, return_logical_boxes=False ):
