@@ -53,6 +53,38 @@ def block_stats_for_volume(block_shape, volume, physical_box):
     return brick_df
 
 
+def mask_for_labels(volume, label_ids):
+    """
+    Given a label volume and a subset of labels to keep,
+    return a boolean mask indicating which voxels fall on the given label_ids.
+    """
+    if volume.flags.c_contiguous:
+        flatvol = volume.reshape(-1)
+    else:
+        flatvol = volume.copy('C').reshape(-1)
+
+    valid_positions = pd.DataFrame(flatvol, columns=['label']).eval('label in @label_ids')
+    return valid_positions.values.reshape(volume.shape)
+
+
+def apply_mask_for_labels(volume, label_ids, inplace=False):
+    """
+    Given a label volume and a subset of labels to keep,
+    mask out all voxels that do not fall on the given label_ids
+    (i.e. set them to 0).
+    """
+    if inplace:
+        assert volume.flags.c_contiguous
+        flatvol = volume.reshape(-1)
+    else:
+        flatvol = volume.copy('C').reshape(-1)
+
+    erase_positions = pd.DataFrame(flatvol, columns=['label']).eval('label not in @label_ids')
+
+    flatvol[erase_positions.values] = 0
+    return flatvol.reshape(volume.shape)
+
+
 def contingency_table(left_vol, right_vol):
     """
     Overlay left_vol and right_vol and compute the table of

@@ -5,7 +5,32 @@ import numpy as np
 import pandas as pd
 
 from dvidutils import LabelMapper
-from neuclease.util import contingency_table, split_disconnected_bodies
+from neuclease.util import mask_for_labels, apply_mask_for_labels, contingency_table, split_disconnected_bodies
+
+def test_mask_for_labels():
+    volume = [[0,2,3], [4,5,0]]
+
+    volume = np.asarray(volume)
+
+    masked_volume = mask_for_labels(volume, {2,5,9})
+    expected = [[0,1,0], [0,1,0]]
+    assert (masked_volume == expected).all()
+    
+
+
+def test_apply_mask_for_labels():
+    volume = [[0,2,3], [4,5,0]]
+
+    volume = np.asarray(volume)
+
+    masked_volume = apply_mask_for_labels(volume, {2,5,9})
+    expected = [[0,2,0], [0,5,0]]
+    assert (masked_volume == expected).all()
+    
+    apply_mask_for_labels(volume, {2,5,9}, inplace=True)
+    expected = [[0,2,0], [0,5,0]]
+    assert (volume == expected).all()
+    
 
 def test_contingency_table_simple():
     left =  np.array([[0,0,0,1,1,1,2,2,2,3,3,3,4]])
