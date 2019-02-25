@@ -36,7 +36,8 @@ EXAMPLE_ASSIGNMENT = {
 
 def generate_mergereview_assignment(server, uuid, instance, sv_groups, focused_bodies, output_path=None):
     d = os.path.dirname(output_path)
-    os.makedirs(d, exist_ok=True)
+    if d:
+        os.makedirs(d, exist_ok=True)
     
     focused_bodies = set(focused_bodies)
     all_svs = set(chain(*sv_groups.values()))
@@ -63,7 +64,7 @@ def generate_mergereview_assignment(server, uuid, instance, sv_groups, focused_b
     assignment = {
         "file type":"Neu3 task list",
         "file version":1,
-        "task list ": tasks
+        "task list": tasks
     }
     
     if output_path:
