@@ -164,6 +164,9 @@ def post_nextlabel(server, uuid, instance, num_labels, *, session=None):
 
 @dvid_api_wrapper
 def fetch_supervoxels(server, uuid, instance, body_id, user=None, *, session=None):
+    """
+    Fetch the list of supervoxel IDs that are associated with the given body.
+    """
     # FIXME: Rename to 'fetch_supervoxels()'
     # FIXME: Remove 'user' in favor of session arg
     query_params = {}
