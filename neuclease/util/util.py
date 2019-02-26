@@ -337,14 +337,20 @@ def compute_parallel(func, iterable, chunksize=1, threads=None, processes=None, 
     Args:
         func:
             The function to process each item with.
+
         iterable:
             The items to process.
+
         chunksize:
             Send items to the pool in chunks of this size.
+
         threads:
-            If given use a ThreadPool with this many threads.
+            If given, use a ThreadPool with this many threads.
+
         processes
-            If given use a multiprocessing Pool with this many processes.
+            If given, use a multiprocessing Pool with this many processes.
+            Note: When using a process pool, your function and iterable items must be pickleable.
+
         ordered:
             If True, process the items in order, and return results
             in the same order as provded in the input.
@@ -738,7 +744,7 @@ def swap_df_cols(df, prefixes=None, swap_rows=None, suffixes=['_a', '_b']):
         df.loc[swap_rows, col_b] = orig_df.loc[swap_rows, col_a]
 
 
-def tqdm_proxy(iterable, *, logger=None, level=logging.INFO, **kwargs):
+def tqdm_proxy(iterable=None, *, logger=None, level=logging.INFO, **kwargs):
     """
     Useful as an (almost) drop-in replacement for tqdm which can be used
     in EITHER an interactive console OR a script that logs to file.
@@ -755,7 +761,7 @@ def tqdm_proxy(iterable, *, logger=None, level=logging.INFO, **kwargs):
         "There's no reason to use this function if you are providing your own output stream"
 
     # Special case for tqdm_proxy(range(...))
-    if isinstance(iterable, range) and 'total' not in kwargs:
+    if iterable is not None and isinstance(iterable, range) and 'total' not in kwargs:
         kwargs['total'] = (iterable.stop - iterable.start) // iterable.step
     
     try:
