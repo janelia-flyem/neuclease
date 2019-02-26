@@ -7,7 +7,7 @@ from numba import jit
 from .. import dvid_api_wrapper
 
 # $ protoc --python_out=. neuclease/dvid/labelmap/labelops.proto
-from .labelops_pb2 import LabelIndex
+from .labelops_pb2 import LabelIndex, LabelIndices
 from . import fetch_mapping
 
 @dvid_api_wrapper
@@ -46,6 +46,27 @@ def post_labelindex(server, uuid, instance, label, proto_index, *, session=None)
     r = session.post(f'http://{server}/api/node/{uuid}/{instance}/index/{label}', data=payload)
     r.raise_for_status()
     
+
+@dvid_api_wrapper
+def post_labelindex_batch(server, uuid, instance, batch_indexes, *, session=None):
+    """
+    Send a batch (list) of LabelIndex objects to dvid.
+    
+    Args:
+        A list of LabelIndex (protobuf) objects
+    """
+    label_indices = LabelIndices()
+    label_indices.indices.extend(batch_indexes)
+    if len(label_indices.indices) == 0:
+        # This can happen when tombstone_mode == 'only'
+        # and a label contained only one supervoxel.
+        return
+    payload = label_indices.SerializeToString()
+
+    endpoint = f'{server}/api/node/{uuid}/{instance}/indices'
+    r = session.post(endpoint, data=payload)
+    r.raise_for_status()
+
 
 PandasLabelIndex = namedtuple("PandasLabelIndex", "blocks label last_mutid last_mod_time last_mod_user")
 def convert_labelindex_to_pandas(labelindex):
@@ -168,7 +189,6 @@ def fetch_sparsevol_coarse_via_labelindex(server, uuid, instance, label, supervo
 
     coords_zyx = decode_labelindex_blocks(block_ids)
     return coords_zyx // (2**6)
-
 
 def encode_block_coords(coords):
     """
