@@ -122,7 +122,16 @@ def test_post_mappings(labelmap_setup):
     new_mapping = orig_mapping.copy()
     new_mapping[:] = 2
     new_mapping.sort_index(inplace=True)
-    post_mappings(*instance_info, new_mapping, mutid=1)
+    
+    # Post all but sv 5
+    post_mappings(*instance_info, new_mapping.iloc[:-1], mutid=1)
+    fetched_mapping = fetch_mappings(*instance_info).sort_index()
+    assert (fetched_mapping.index == [3,4,5]).all()
+    assert (fetched_mapping.iloc[:-1] == 2).all()
+    assert (fetched_mapping.iloc[-1:] == 1).all()
+
+    # Now post sv 5, too
+    post_mappings(*instance_info, new_mapping.iloc[-1:], mutid=1)
     fetched_mapping = fetch_mappings(*instance_info).sort_index()
     assert (fetched_mapping.index == [3,4,5]).all()
     assert (fetched_mapping == 2).all()
