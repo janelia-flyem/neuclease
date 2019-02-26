@@ -179,6 +179,9 @@ def fetch_sparsevol_coarse_via_labelindex(server, uuid, instance, label, supervo
         # LabelIndexes are stored by body, so fetch the full label
         # index and find the blocks that contain the supervoxel of interest.
         [body] = fetch_mapping(server, uuid, instance, [label], session=session)
+        if body == 0:
+            raise RuntimeError(f"Can't compute coarse sparsevol supervoxel {label}: "
+                               "It does not map to any body in DVID and therefore has no associated LabelIndex.")
         labelindex = fetch_labelindex(server, uuid, instance, body, session=session)
         filtered_block_ids = (block_id for block_id, blockdata in labelindex.blocks.items()
                               if label in blockdata.counts.keys())
