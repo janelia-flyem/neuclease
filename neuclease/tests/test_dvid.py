@@ -14,7 +14,7 @@ import pandas as pd
 from libdvid import DVIDNodeService
 
 from neuclease.dvid import (dvid_api_wrapper, DvidInstanceInfo, fetch_supervoxels_for_body, fetch_supervoxel_sizes_for_body,
-                            fetch_label_for_coordinate, fetch_mappings, fetch_complete_mappings, fetch_mutation_id,
+                            fetch_label_for_coordinate, fetch_mappings, fetch_complete_mappings, post_mappings, fetch_mutation_id,
                             generate_sample_coordinate, fetch_labelmap_voxels, post_labelmap_blocks, post_labelmap_voxels,
                             encode_labelarray_volume, encode_nonaligned_labelarray_volume, fetch_raw, post_raw,
                             fetch_labelindex, post_labelindex, create_labelindex, PandasLabelIndex,
@@ -105,6 +105,41 @@ def test_fetch_mappings(labelmap_setup):
     assert (sorted(mapping.index) == [2,3,4,5]) # Does not include 'identity' row for SV 1. See docstring.
     assert (mapping == 1).all() # see initialization in conftest.py
 
+
+def test_post_mappings(labelmap_setup):
+    """
+    Test the wrapper function for the /mappings DVID API.
+    """
+    dvid_server, dvid_repo, _merge_table_path, _mapping_path, _supervoxel_vol = labelmap_setup
+    instance_info = DvidInstanceInfo(dvid_server, dvid_repo, 'segmentation')
+    
+    # Fetch the original mapping
+    orig_mapping = fetch_mappings(*instance_info).sort_index()
+    assert (orig_mapping.index == [2,3,4,5]).all()
+    assert (orig_mapping == 1).all() # see initialization in conftest.py
+    
+    # Now post a new mapping and read it back.
+    new_mapping = orig_mapping.copy()
+    new_mapping[:] = 2
+    new_mapping.sort_index(inplace=True)
+    post_mappings(*instance_info, new_mapping, mutid=1)
+    fetched_mapping = fetch_mappings(*instance_info).sort_index()
+    assert (fetched_mapping.index == [3,4,5]).all()
+    assert (fetched_mapping == 2).all()
+
+    # Try batched
+    new_mapping = pd.Series(index=[1,2,3,4,5], data=[1,1,1,2,2])
+    post_mappings(*instance_info, new_mapping, mutid=1, batch_size=4)
+    fetched_mapping = fetch_mappings(*instance_info).sort_index()
+    assert (fetched_mapping.index == [2,3,4,5]).all()
+    assert (fetched_mapping == [1,1,2,2]).all(), f"{fetched_mapping} != {[1,1,2,2]}"
+    
+    # Restore the original mapping
+    post_mappings(*instance_info, orig_mapping, 1)
+    fetched_mapping = fetch_mappings(*instance_info).sort_index()
+    assert (fetched_mapping.index == [2,3,4,5]).all()
+    assert (fetched_mapping == 1).all()
+    
 
 def test_fetch_complete_mappings(labelmap_setup):
     """
@@ -366,4 +401,6 @@ def test_fetch_sparsevol_coarse_via_labelindex(labelmap_setup):
 
 
 if __name__ == "__main__":
-    pytest.main(['-s', '--tb=native', '--pyargs', 'neuclease.tests.test_dvid'])
+    args = ['-s', '--tb=native', '--pyargs', 'neuclease.tests.test_dvid']
+    #args = ['-k', 'post_mappings'] + args
+    pytest.main(args)

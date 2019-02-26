@@ -18,6 +18,7 @@ from ..kafka import read_kafka_messages, kafka_msgs_to_df
 from ..rle import parse_rle_response
 
 from ._split import SplitEvent, fetch_supervoxel_splits_from_kafka
+from .labelops_pb2 import LabelIndex, LabelIndices, MappingOps, MappingOp
 
 logger = logging.getLogger(__name__)
 
@@ -554,6 +555,76 @@ def fetch_complete_mappings(server, uuid, instance, include_retired=True, kafka_
     assert s.dtype == np.uint64
 
     return s
+
+
+@dvid_api_wrapper
+def post_mappings(server, uuid, instance, mappings, mutid, *, batch_size=None, session=None):
+    """
+    Post a list of SV-to-body mappings to DVID, provided as a ``pd.Series``.
+    Will be converted to protobuf structures for upload.
+    
+    Note:
+        This is not intended for general use. It is used to initialize
+        the mapping after an initial ingestion of supervoxels.
+
+    Args:
+        server:
+            dvid server, e.g. 'emdata3:8900'
+        
+        uuid:
+            dvid uuid, e.g. 'abc9'
+        
+        instance:
+            dvid instance name, e.g. 'segmentation'
+        
+        mappings:
+            ``pd.Series``, indexed by sv, bodies as value
+        
+        mutid:
+            The mutation ID to use when posting the mappings
+        
+        batch_size:
+            If provided, the mappings will be sent in batches, whose sizes will
+            roughly correspond to the given size, in terms of the number of
+            supervoxels in the batch.
+    """
+    assert isinstance(mappings, pd.Series)
+    df = pd.DataFrame(mappings, columns=['body'])
+    df.index.name = 'sv'
+    df = df.reset_index()
+
+    def _post_mapping_ops(ops_list):
+        ops = MappingOps()
+        ops.mappings.extend(ops_list)
+        payload = ops.SerializeToString()
+        r = session.post(f'http://{server}/api/node/{uuid}/{instance}/mappings', data=payload)
+        r.raise_for_status()
+
+    progress_bar = tqdm_proxy(total=len(df), disable=(batch_size is None), logger=logger)
+
+    batch_ops_so_far = 0
+    ops_list = []
+    for body_id, body_df in df.groupby('body'):
+        op = MappingOp()
+        op.mutid = mutid
+        op.mapped = body_id
+        op.original.extend( body_df['sv'] )
+
+        # Add to this chunk of ops
+        ops_list.append(op)
+        batch_ops_so_far += len(op.original)
+
+        # Send if chunk is full
+        if (batch_size is not None) and (batch_ops_so_far >= batch_size):
+            _post_mapping_ops(ops_list)
+            progress_bar.update(batch_ops_so_far)
+            ops_list = [] # reset
+            batch_ops_so_far = 0
+
+    # send last chunk, if there are leftovers
+    if ops_list:
+        _post_mapping_ops(ops_list)
+        progress_bar.update(batch_ops_so_far)
 
 
 @dvid_api_wrapper
