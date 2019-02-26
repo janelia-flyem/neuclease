@@ -168,6 +168,10 @@ def _boxes_from_grid_no_offset(bounding_box, block_shape, halo):
     Assuming an ND grid with boxes of size block_shape, and aligned at the origin (0,0,...),
     iterate over all boxes of the grid that fall within or intersect the given bounding_box.
     
+    For the purposes of determining whether or not a grid section intersects the bounding_box,
+    the halo is not used.  The halo is supplied only if the box's internal ("logical") portion
+    intersects the bounding box.
+    
     Note: The returned boxes are not clipped to fall within the bounding_box.
           If either bounding_box[0] or bounding_box[1] is not aligned with the grid
           (i.e. they are not a multiple of block_shape),
@@ -179,8 +183,8 @@ def _boxes_from_grid_no_offset(bounding_box, block_shape, halo):
     halo_shape[:] = halo
 
     # round down, round up
-    aligned_start = ((bounding_box[0] - halo_shape) // block_shape) * block_shape
-    aligned_stop = ((bounding_box[1] + halo_shape + block_shape-1) // block_shape) * block_shape
+    aligned_start = ((bounding_box[0]) // block_shape) * block_shape
+    aligned_stop = ((bounding_box[1] + block_shape-1) // block_shape) * block_shape
 
     for block_start in ndrange( aligned_start, aligned_stop, block_shape ):
         yield np.array((block_start - halo_shape,
@@ -197,7 +201,7 @@ def _clipped_boxes_from_grid(bounding_box, grid, include_halos=True):
     Returned boxes that would intersect the edge of the bounding_box are clipped so as not
     to extend beyond the bounding_box.
     """
-    for box in boxes_from_grid(bounding_box, grid, include_halos):
+    for box in _boxes_from_grid(bounding_box, grid, include_halos):
         yield box_intersection(box, bounding_box)
 
 
