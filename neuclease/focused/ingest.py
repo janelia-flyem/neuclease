@@ -295,7 +295,7 @@ def compute_focused_bodies(server, uuid, instance, synapse_samples, min_tbars, m
         min_body_size = int(10e6)
 
         sv_classifications = '/nrs/flyem/bergs/sv-classifications.h5'
-        marked_bad_bodies = '/nrs/flyem/bergs/complete-ffn-agglo/bad-bodies-2018-10-01.csv'
+        marked_bad_bodies = '/nrs/flyem/bergs/complete-ffn-agglo/bad-bodies-2019-02-26.csv'
         
         table_description = f'{uuid}-{min_tbars}tbars-{min_psds}psds-{min_body_size / 1e6:.1f}Mv'
         focused_table = compute_focused_bodies(server, uuid, instance, synapse_samples, min_tbars, min_psds, root_sv_sizes, min_body_size, sv_classifications, marked_bad_bodies, return_table=True)
