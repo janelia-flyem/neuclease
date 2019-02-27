@@ -118,6 +118,10 @@ def test_post_mappings(labelmap_setup):
     assert (orig_mapping.index == [2,3,4,5]).all()
     assert (orig_mapping == 1).all() # see initialization in conftest.py
     
+    # Make sure post_mappings does not REQUIRE the Series to be named
+    orig_mapping.index.name = 'barfoo'
+    orig_mapping.name = 'foobar'
+    
     # Now post a new mapping and read it back.
     new_mapping = orig_mapping.copy()
     new_mapping[:] = 2

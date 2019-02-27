@@ -592,7 +592,7 @@ def post_mappings(server, uuid, instance, mappings, mutid, *, batch_size=None, s
             supervoxels in the batch.
     """
     assert isinstance(mappings, pd.Series)
-    df = pd.DataFrame(mappings, columns=['body'])
+    df = pd.DataFrame(mappings.rename('body'))
     df.index.name = 'sv'
     df = df.reset_index()
 
