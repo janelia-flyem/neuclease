@@ -63,7 +63,7 @@ def post_labelindex_batch(server, uuid, instance, batch_indexes, *, session=None
         return
     payload = label_indices.SerializeToString()
 
-    endpoint = f'{server}/api/node/{uuid}/{instance}/indices'
+    endpoint = f'http://{server}/api/node/{uuid}/{instance}/indices'
     r = session.post(endpoint, data=payload)
     r.raise_for_status()
 
