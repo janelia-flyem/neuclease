@@ -1,4 +1,4 @@
-from collections import namedtuple
+from collections import namedtuple, Iterable
 
 import numpy as np
 import pandas as pd
@@ -162,10 +162,17 @@ def create_labelindex(pandas_labelindex):
 
 
 @dvid_api_wrapper
-def fetch_sparsevol_coarse_via_labelindex(server, uuid, instance, label, supervoxels=False, *, session=None):
+def fetch_sparsevol_coarse_via_labelindex(server, uuid, instance, labels, supervoxels=False, *, session=None):
     """
     Equivalent to fetch_sparsevol_coarse, but uses the raw /labelindex endpoint
     to obtain the coordinate list, rather than requesting sparsevol RLEs from dvid.
+    
+    You can provide a list of labels to this function,
+    and the output will include all blocks that any of the given labels intersect.
+
+    When fetching coarse sparsevols for a list of supervoxels, some of which may
+    share the same parent body, this function efficiently fetches each body's
+    labelindex only once.
     
     This method of fetching coarse sparsevols minimizes workload on DVID,
     but requires more work on the client side (about 5x more time).
@@ -173,25 +180,63 @@ def fetch_sparsevol_coarse_via_labelindex(server, uuid, instance, label, supervo
     in a cluster-computing workflow, in which DVID is a bottleneck,
     and you have more than 5 workers.
     
-    Note: The returned coordinates are not necessarily sorted.
-    """
-    if supervoxels:
-        # LabelIndexes are stored by body, so fetch the full label
-        # index and find the blocks that contain the supervoxel of interest.
-        [body] = fetch_mapping(server, uuid, instance, [label], session=session)
-        if body == 0:
-            raise RuntimeError(f"Can't compute coarse sparsevol supervoxel {label}: "
-                               "It does not map to any body in DVID and therefore has no associated LabelIndex.")
-        labelindex = fetch_labelindex(server, uuid, instance, body, session=session)
-        filtered_block_ids = (block_id for block_id, blockdata in labelindex.blocks.items()
-                              if label in blockdata.counts.keys())
-        block_ids = np.fromiter(filtered_block_ids, np.uint64)
-    else:
-        labelindex = fetch_labelindex(server, uuid, instance, label, session=session)
-        block_ids = np.fromiter(labelindex.blocks.keys(), np.uint64, len(labelindex.blocks))
+    Args:
+        server:
+            dvid server, e.g. 'emdata3:8900'
+        
+        uuid:
+            dvid uuid, e.g. 'abc9'
+        
+        instance:
+            dvid labelmap instance name, e.g. 'segmentation'
 
+        labels:
+            A label ID or a list of label IDs, which will be interpreted as either
+            body labels or supervoxel labels depending on the value of ``supervoxels``.
+        
+        supervoxels:
+            If True, interpret the given labels are supervoxel IDs, otherwise body IDs.
+
+    Returns:
+        An array of coordinates of the form:
+    
+            [[Z,Y,X],
+             [Z,Y,X],
+             [Z,Y,X],
+             ...
+            ]
+        
+        See also: ``fetch_sparsevol_coarse()``
+    
+    Note:
+        The returned coordinates are not necessarily sorted.
+    """
+    if np.issubdtype(type(labels), np.integer):
+        labels = np.asarray([labels], np.uint64)
+    else:
+        assert isinstance(labels, Iterable), \
+            "Please provide an iterable of labels, or a single label."
+        labels = np.asarray(labels, np.uint64)
+
+    block_ids = set()
+    if supervoxels:
+        bodies = fetch_mapping(server, uuid, instance, labels)
+        for body, mapping_df in bodies.reset_index().groupby('body'):
+            if body == 0:
+                continue
+            svs = set(mapping_df['sv'])
+            labelindex = fetch_labelindex(server, uuid, instance, body, session=session)
+            block_ids |= set( block_id for block_id, blockdata in labelindex.blocks.items()
+                           if svs & blockdata.counts.keys() )
+    else:
+        for body in labels:
+            labelindex = fetch_labelindex(server, uuid, instance, body, session=session)
+            block_ids |= labelindex.blocks.keys()
+
+    block_ids = np.fromiter(block_ids, np.uint64, len(block_ids))
     coords_zyx = decode_labelindex_blocks(block_ids)
     return coords_zyx // (2**6)
+
 
 def encode_block_coords(coords):
     """

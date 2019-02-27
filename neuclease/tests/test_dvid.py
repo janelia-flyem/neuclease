@@ -411,5 +411,5 @@ def test_fetch_sparsevol_coarse_via_labelindex(labelmap_setup):
 
 if __name__ == "__main__":
     args = ['-s', '--tb=native', '--pyargs', 'neuclease.tests.test_dvid']
-    #args = ['-k', 'post_mappings'] + args
+    #args = ['-k', 'fetch_sparsevol_coarse_via_labelindex'] + args
     pytest.main(args)
