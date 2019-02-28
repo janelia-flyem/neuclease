@@ -404,14 +404,21 @@ def test_fetch_sparsevol_coarse_via_labelindex(labelmap_setup):
     
     post_merge(*instance_info, 2, [3,4,5])
     
-    body_svc = fetch_sparsevol_coarse_via_labelindex(*instance_info, 2)
+    body_svc = fetch_sparsevol_coarse_via_labelindex(*instance_info, 2, method='protobuf')
     expected_body_svc = fetch_sparsevol_coarse(*instance_info, 2)
     assert sorted(body_svc.tolist()) == sorted(expected_body_svc.tolist())
 
-    sv_svc = fetch_sparsevol_coarse_via_labelindex(*instance_info, 3, supervoxels=True)
+    body_svc = fetch_sparsevol_coarse_via_labelindex(*instance_info, 2, method='pandas')
+    expected_body_svc = fetch_sparsevol_coarse(*instance_info, 2)
+    assert sorted(body_svc.tolist()) == sorted(expected_body_svc.tolist())
+
+    sv_svc = fetch_sparsevol_coarse_via_labelindex(*instance_info, 3, supervoxels=True, method='protobuf')
     expected_sv_svc = fetch_sparsevol_coarse(*instance_info, 3, supervoxels=True)
     assert sorted(sv_svc.tolist()) == sorted(expected_sv_svc.tolist())
 
+    sv_svc = fetch_sparsevol_coarse_via_labelindex(*instance_info, 3, supervoxels=True, method='pandas')
+    expected_sv_svc = fetch_sparsevol_coarse(*instance_info, 3, supervoxels=True)
+    assert sorted(sv_svc.tolist()) == sorted(expected_sv_svc.tolist())
 
 if __name__ == "__main__":
     args = ['-s', '--tb=native', '--pyargs', 'neuclease.tests.test_dvid']

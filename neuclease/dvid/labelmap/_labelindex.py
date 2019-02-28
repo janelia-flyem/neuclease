@@ -162,7 +162,7 @@ def create_labelindex(pandas_labelindex):
 
 
 @dvid_api_wrapper
-def fetch_sparsevol_coarse_via_labelindex(server, uuid, instance, labels, supervoxels=False, *, session=None):
+def fetch_sparsevol_coarse_via_labelindex(server, uuid, instance, labels, supervoxels=False, *, method='pandas', session=None):
     """
     Equivalent to fetch_sparsevol_coarse, but uses the raw /labelindex endpoint
     to obtain the coordinate list, rather than requesting sparsevol RLEs from dvid.
@@ -175,7 +175,7 @@ def fetch_sparsevol_coarse_via_labelindex(server, uuid, instance, labels, superv
     labelindex only once.
     
     This method of fetching coarse sparsevols minimizes workload on DVID,
-    but requires more work on the client side (about 5x more time).
+    but requires more work on the client side (about 5x more time if not using grouped supervoxels).
     It is well suited for fetching thousands or millions of coarse sparsevols
     in a cluster-computing workflow, in which DVID is a bottleneck,
     and you have more than 5 workers.
@@ -196,6 +196,12 @@ def fetch_sparsevol_coarse_via_labelindex(server, uuid, instance, labels, superv
         
         supervoxels:
             If True, interpret the given labels are supervoxel IDs, otherwise body IDs.
+        
+        method:
+            This function can extract the block IDs directly from
+            protobuf (using Python set operations), or by converting to pandas first.
+            This option is here just for testing and performance analysis.
+            It may be removed in the future.
 
     Returns:
         An array of coordinates of the form:
@@ -211,6 +217,7 @@ def fetch_sparsevol_coarse_via_labelindex(server, uuid, instance, labels, superv
     Note:
         The returned coordinates are not necessarily sorted.
     """
+    assert method in ('pandas', 'protobuf')
     if np.issubdtype(type(labels), np.integer):
         labels = np.asarray([labels], np.uint64)
     else:
@@ -225,16 +232,26 @@ def fetch_sparsevol_coarse_via_labelindex(server, uuid, instance, labels, superv
             if body == 0:
                 continue
             svs = set(mapping_df['sv'])
-            labelindex = fetch_labelindex(server, uuid, instance, body, session=session)
-            block_ids |= set( block_id for block_id, blockdata in labelindex.blocks.items()
-                           if svs & blockdata.counts.keys() )
+            if method == 'pandas':
+                labelindex_df = fetch_labelindex(server, uuid, instance, body, 'pandas', session=session).blocks
+                coords_zyx = labelindex_df.query('sv in @svs')[['z', 'y', 'x']].drop_duplicates().values
+            else:
+                labelindex = fetch_labelindex(server, uuid, instance, body, session=session)
+                block_ids |= set( block_id for block_id, blockdata in labelindex.blocks.items()
+                               if svs & blockdata.counts.keys() )                
+                block_ids = np.fromiter(block_ids, np.uint64, len(block_ids))
+                coords_zyx = decode_labelindex_blocks(block_ids)
     else:
         for body in labels:
-            labelindex = fetch_labelindex(server, uuid, instance, body, session=session)
-            block_ids |= labelindex.blocks.keys()
+            if method == 'pandas':
+                labelindex_df = fetch_labelindex(server, uuid, instance, body, 'pandas', session=session).blocks
+                coords_zyx = labelindex_df[['z', 'y', 'x']].drop_duplicates().values
+            else:
+                labelindex = fetch_labelindex(server, uuid, instance, body, session=session)
+                block_ids |= labelindex.blocks.keys()
+                block_ids = np.fromiter(block_ids, np.uint64, len(block_ids))
+                coords_zyx = decode_labelindex_blocks(block_ids)
 
-    block_ids = np.fromiter(block_ids, np.uint64, len(block_ids))
-    coords_zyx = decode_labelindex_blocks(block_ids)
     return coords_zyx // (2**6)
 
 
