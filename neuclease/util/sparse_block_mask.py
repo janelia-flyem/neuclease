@@ -4,6 +4,7 @@ import numpy as np
 from .view_as_blocks import view_as_blocks
 from .box import box_intersection, box_to_slicing
 from .grid import Grid, boxes_from_grid
+from .segmentation import compute_nonzero_box
 
 class SparseBlockMask:
     """
@@ -38,6 +39,8 @@ class SparseBlockMask:
             f"Inconsistent mask shape ({lowres_mask.shape}) and box {self.box.tolist()} for the given resolution ({resolution}).\n"\
             "Note: box should be specified in FULL resolution coordinates."
 
+        self.nonzero_box = compute_nonzero_box(self.lowres_mask)
+        self.nonzero_box += self.box[0]
 
     def change_resolution(self, new_resolution):
         """
@@ -48,9 +51,9 @@ class SparseBlockMask:
             return
 
         factor = (new_resolution // self.resolution)
-        self.box[:] *= factor
         self.resolution = new_resolution
-
+        self.box[:] *= factor
+        self.nonzero_box[:] *= factor
 
     def get_fullres_mask(self, requested_box_fullres):
         """

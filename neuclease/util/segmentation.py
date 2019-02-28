@@ -2,6 +2,7 @@ from collections import OrderedDict
 
 import numpy as np
 import pandas as pd
+from numba import njit
 
 from dvidutils import LabelMapper
 
@@ -83,6 +84,64 @@ def apply_mask_for_labels(volume, label_ids, inplace=False):
 
     flatvol[erase_positions.values] = 0
     return flatvol.reshape(volume.shape)
+
+
+def compute_nonzero_box(mask, save_ram=False):
+    """
+    Given a mask image, return the bounding box of the nonzero voxels in the mask.
+    
+    Equivalent to:
+    
+        coords = np.transpose(np.nonzero(mask))
+        if len(coords) == 0:
+            return np.zeros((2, mask.ndim))
+        box = np.array([coords.min(axis=0), 1+coords.max(axis=0)])
+        return box
+    
+    but if save_ram=True, this function allocating
+    the coords array, but performs slightly worse than the simple
+    implementation unless your array is so very large and dense
+    that allocating the coordinate list is a problem.
+    """
+    if save_ram:
+        box = _compute_nonzero_box(mask)
+    
+        # If the volume is completely empty,
+        # the helper returns an invalid box.
+        # In that case, return zeros
+        if (box[1] <= box[0]).any():
+            return np.zeros_like(box)
+
+        return box
+
+    else:
+        coords = np.transpose(np.nonzero(mask))
+        if len(coords) == 0:
+            return np.zeros((2, mask.ndim))
+        box = np.array([coords.min(axis=0), 1+coords.max(axis=0)])
+        return box
+
+
+@njit
+def _compute_nonzero_box(mask):
+    """
+    Helper for compute_nonzero_box().
+
+    Note:
+        If the mask has no nonzero voxels, an "invalid" box is returned,
+        i.e. the start is above the stop.
+    """
+    box = np.zeros((2, mask.ndim), np.int32)
+    box[0, :] = mask.shape
+
+    c = np.zeros((mask.ndim,), np.int32)
+    for i, val in np.ndenumerate(mask):
+        if val != 0:
+            c[:] = i
+            box[0] = np.minimum(c, box[0])
+            box[1] = np.maximum(c, box[1])
+    box[1] += 1
+    return box
 
 
 def contingency_table(left_vol, right_vol):
