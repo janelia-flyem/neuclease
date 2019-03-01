@@ -1250,7 +1250,7 @@ def post_hierarchical_cleaves(server, uuid, instance, body_id, group_mapping, *,
 
     cleaves_posted = 0
     progress_bar = tqdm_proxy(total=num_cleaves, logger=logger)
-    progress_bar.update(cleaves_posted)
+    progress_bar.update(0)
 
     def _cleave_groups(body, li_df, bodies):
         """
@@ -1297,7 +1297,7 @@ def post_hierarchical_cleaves(server, uuid, instance, body_id, group_mapping, *,
         
         nonlocal cleaves_posted
         cleaves_posted += 1
-        progress_bar.update(cleaves_posted)
+        progress_bar.update(1)
         
         # Update the shared body column (a view)
         top_bodies[:] = top_body
@@ -1318,7 +1318,7 @@ def post_hierarchical_cleaves(server, uuid, instance, body_id, group_mapping, *,
         li_df['body'] = bodies
 
         cleaves_posted += 1
-        progress_bar.update(cleaves_posted)
+        progress_bar.update(1)
 
     assert cleaves_posted == num_cleaves
     progress_bar.close()
