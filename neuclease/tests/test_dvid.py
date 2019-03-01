@@ -469,6 +469,8 @@ def test_post_hierarchical_cleaves(labelmap_setup):
 
 
 if __name__ == "__main__":
+    #from neuclease import configure_default_logging
+    #configure_default_logging()
     args = ['-s', '--tb=native', '--pyargs', 'neuclease.tests.test_dvid']
     #args = ['-k', 'post_hierarchical_cleaves'] + args
     pytest.main(args)

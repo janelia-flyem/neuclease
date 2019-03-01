@@ -1244,6 +1244,14 @@ def post_hierarchical_cleaves(server, uuid, instance, body_id, group_mapping, *,
 
     bodies = body_id * np.ones(len(li_df), np.uint64)
 
+    num_cleaves = int(li_df['mark'].sum())
+    if skip_last_group:
+        num_cleaves -= 1
+
+    cleaves_posted = 0
+    progress_bar = tqdm_proxy(total=num_cleaves, logger=logger)
+    progress_bar.update(cleaves_posted)
+
     def _cleave_groups(body, li_df, bodies):
         """
         Recursively split the given DF (a view of the above li_df) in half,
@@ -1287,6 +1295,10 @@ def post_hierarchical_cleaves(server, uuid, instance, body_id, group_mapping, *,
         top_svs = np.sort(pd.unique(top_df['sv'].values))
         top_body = post_cleave(server, uuid, instance, body, top_svs, session=session)
         
+        nonlocal cleaves_posted
+        cleaves_posted += 1
+        progress_bar.update(cleaves_posted)
+        
         # Update the shared body column (a view)
         top_bodies[:] = top_body
         
@@ -1301,9 +1313,16 @@ def post_hierarchical_cleaves(server, uuid, instance, body_id, group_mapping, *,
         assert bodies[-1] == body_id
         last_svs = li_df.query('body == @body_id')['sv'].values
         last_body = post_cleave(server, uuid, instance, body_id, last_svs, session=session)
+        
         bodies[-len(last_svs):] = last_body
         li_df['body'] = bodies
-    
+
+        cleaves_posted += 1
+        progress_bar.update(cleaves_posted)
+
+    assert cleaves_posted == num_cleaves
+    progress_bar.close()
+
     return li_df[['sv', 'group', 'body']].drop_duplicates('sv').set_index('sv')
 
 
