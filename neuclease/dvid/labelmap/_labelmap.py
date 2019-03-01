@@ -1154,6 +1154,150 @@ def post_cleave(server, uuid, instance, body_id, supervoxel_ids, *, session=None
 
 
 @dvid_api_wrapper
+def post_hierarchical_cleaves(server, uuid, instance, body_id, group_mapping, *, session=None):
+    """
+    When you want to perform a lot of cleaves on a single
+    body (e.g. a "frankenbody") whose labelindex is really big,
+    it is more efficient to perform some coarse cleaves at first,
+    which will iteratively divide the labelindex into big chunks,
+    and then re-cleave the coarsely cleaved objects.
+    That will run faster thank cleaving off little bits at a time,
+    thanks to the reduced labelindex sizes at each step.
+    
+    Given a set of N supervoxel groups that belong to a single body,
+    this function will issue N cleaves to leave each group as its own body,
+    but using a strategy that should be more efficient than naively cleaving
+    each group in turn.
+    
+    Note:
+        If the given groups include all supervoxels in the body, then
+        one of the groups (the last one) will be left with the original
+        body ID. Otherwise, every group will be given a new body ID.
+    
+    Args:
+        server:
+            dvid server, e.g. 'emdata3:8900'
+        
+        uuid:
+            dvid uuid, e.g. 'abc9'
+        
+        instance:
+            dvid instance name, e.g. 'segmentation'
+
+        body_id:
+            The body ID from which to cleave the supervoxels.
+            All supervoxels in the ``group_mapping`` index must belong to this body.
+        
+        group_mapping:
+            A ``pd.Series`` whose index is supervoxel IDs of the cleave,
+            and whose values are arbitrary component IDs indicating the final
+            supervoxel grouping for the cleaves that will be performed.
+            (The actual value of the group IDs are not used in the cleave operation.)
+
+    Returns:
+        A DataFrame indexed by the SVs in your group_mapping (though not necessarily in the same order),
+        with columns for the group you provided and the new body ID it now maps to after cleaving.
+    """
+    from . import fetch_labelindex # late import to avoid recursive import
+
+    assert isinstance(group_mapping, pd.Series)
+    assert group_mapping.index.dtype == np.uint64
+    group_mapping = group_mapping.rename('group', copy=False)
+    group_mapping = group_mapping.rename_axis('sv', copy=False)
+    
+    bodies = fetch_mapping(server, uuid, instance, group_mapping.index.values, session=session)
+    assert (bodies == body_id).all(), \
+        "All supervoxels in the group_mapping index must map (in DVID) to the given body_id"
+
+    group_df = pd.DataFrame(group_mapping)
+    assert group_df.index.duplicated().sum() == 0, \
+        "Your group_mapping includes duplicate values for some supervoxels."
+    
+    li_df = fetch_labelindex(server, uuid, instance, body_id, format='pandas', session=session).blocks
+    orig_len = len(li_df)
+    
+    li_df = li_df.query('sv in @group_df.index')
+    
+    # If the provided groups include every single SV in the body,
+    # then one object will keep the original body ID (the last group),
+    # since we can't cleave away ALL supervoxels from the body
+    skip_last_group = (len(li_df) == orig_len)
+    
+    li_df = li_df.merge(group_df, 'left', 'sv')
+    li_df = li_df.sort_values(['group', 'sv']).reset_index(drop=True).copy()
+
+    # Mark the first row of each group
+    groups = li_df['group'].values
+    li_df['mark'] = False
+    li_df.loc[0, 'mark'] = True
+    li_df.loc[1:, 'mark'] = (groups[1:] != groups[:-1])
+
+    bodies = body_id * np.ones(len(li_df), np.uint64)
+
+    def _cleave_groups(body, li_df, bodies):
+        """
+        Recursively split the given DF (a view of the above li_df) in half,
+        and post a cleave to split the SVs in the top half from the bottom half in DVID.
+        The 'bodies' parameter is a view of the above 'bodies' array,
+        and will be overwritten to with the body IDs that DVID returns.
+        """
+        assert (bodies == body).all()
+        if li_df['mark'].sum() == 1:
+            # Only one group present; no cleaves necessary
+            assert (li_df['group'] == li_df['group'].iloc[0]).all()
+            return
+        
+        # Choose a marked row that approximately divides the DF in half
+        N = len(li_df)
+        (h1_marked_rows,) = li_df['mark'].iloc[:N//2].values.nonzero()
+        (h2_marked_rows,) = li_df['mark'].iloc[N//2:].values.nonzero()
+        h2_marked_rows += N//2
+        
+        if len(h1_marked_rows) == 0:
+            # Top half has no marks, choose first mark in bottom half
+            split_row = h2_marked_rows[0]
+        elif len(h2_marked_rows) == 0:
+            # Bottom half has no marks, choose last mark of top half
+            split_row = h1_marked_rows[-1]
+        else:
+            # Both halves have marks, choose either the last-of-top or first-of-bottom,
+            # depending on which one yields a closer split.
+            if h1_marked_rows[-1] < (N-h2_marked_rows[0]):
+                split_row = h2_marked_rows[0]
+            else:
+                split_row = h1_marked_rows[-1]
+
+        top_df = li_df.iloc[:split_row]
+        bottom_df = li_df.iloc[split_row:]
+        
+        top_bodies = bodies[:split_row]
+        bottom_bodies = bodies[split_row:]
+        
+        # Cleave the top away
+        top_svs = np.sort(pd.unique(top_df['sv'].values))
+        top_body = post_cleave(server, uuid, instance, body, top_svs, session=session)
+        
+        # Update the shared body column (a view)
+        top_bodies[:] = top_body
+        
+        # Recurse
+        _cleave_groups(top_body, top_df, top_bodies)
+        _cleave_groups(body, bottom_df, bottom_bodies)
+
+    _cleave_groups(body_id, li_df, bodies)
+
+    li_df['body'] = bodies
+    if not skip_last_group:
+        assert bodies[-1] == body_id
+        last_svs = li_df.query('body == @body_id')['sv'].values
+        last_body = post_cleave(server, uuid, instance, body_id, last_svs, session=session)
+        bodies[-len(last_svs):] = last_body
+        li_df['body'] = bodies
+    
+    return li_df[['sv', 'group', 'body']].drop_duplicates('sv').set_index('sv')
+
+
+@dvid_api_wrapper
 def post_merge(server, uuid, instance, main_label, other_labels, *, session=None):
     """
     Merges multiple bodies together.
@@ -1174,6 +1318,9 @@ def post_merge(server, uuid, instance, main_label, other_labels, *, session=None
         other_labels:
             List of labels to merge into the main_label
     """
+    assert main_label not in other_labels, \
+        (f"Can't merge {main_label} with itself.  "
+        "DVID does not behave correctly if you attempt to merge a body into itself!")
     main_label = int(main_label)
     other_labels = list(map(int, other_labels))
     

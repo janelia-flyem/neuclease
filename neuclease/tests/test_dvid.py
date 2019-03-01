@@ -19,7 +19,9 @@ from neuclease.dvid import (dvid_api_wrapper, DvidInstanceInfo, fetch_supervoxel
                             encode_labelarray_volume, encode_nonaligned_labelarray_volume, fetch_raw, post_raw,
                             fetch_labelindex, post_labelindex, create_labelindex, PandasLabelIndex,
                             fetch_maxlabel, post_maxlabel, fetch_nextlabel, post_nextlabel, create_labelmap_instance,
-                            post_merge, fetch_sparsevol_coarse, fetch_sparsevol_coarse_via_labelindex, post_branch)
+                            post_merge, fetch_sparsevol_coarse, fetch_sparsevol_coarse_via_labelindex, post_branch,
+                            post_hierarchical_cleaves, fetch_mapping)
+
 from neuclease.dvid._dvid import default_dvid_session
 from neuclease.util import box_to_slicing, extract_subvol, ndrange
 
@@ -420,7 +422,53 @@ def test_fetch_sparsevol_coarse_via_labelindex(labelmap_setup):
     expected_sv_svc = fetch_sparsevol_coarse(*instance_info, 3, supervoxels=True)
     assert sorted(sv_svc.tolist()) == sorted(expected_sv_svc.tolist())
 
+
+def test_post_hierarchical_cleaves(labelmap_setup):
+    dvid_server, dvid_repo, _merge_table_path, _mapping_path, _supervoxel_vol = labelmap_setup
+
+    uuid = post_branch(dvid_server, dvid_repo, 'segmentation-post_hierarchical_cleaves', '')    
+    instance_info = dvid_server, uuid, 'segmentation-post_hierarchical_cleaves'
+    create_labelmap_instance(*instance_info)
+
+    svs    = [1,2,3,4,5,6,7,8,9,10]
+    groups = [1,1,2,2,3,3,3,3,3,4]
+
+    svs = np.asarray(svs, np.uint64)
+
+    sv_vol = np.zeros((64,64,64), np.uint64)
+    sv_vol[0,0,:len(svs)] = svs
+    
+    post_labelmap_voxels(*instance_info, (0,0,0), sv_vol)
+
+    post_merge(*instance_info, 1, svs[1:])
+    
+    group_mapping = pd.Series(index=svs, data=groups)
+    final_table = post_hierarchical_cleaves(*instance_info, 1, group_mapping)
+    
+    assert (fetch_mapping(*instance_info, svs) == final_table['body'].values).all()
+    assert (final_table.drop_duplicates(['group']) == final_table.drop_duplicates(['group', 'body'])).all().all()
+    assert (final_table.drop_duplicates(['body']) == final_table.drop_duplicates(['group', 'body'])).all().all()
+    
+    # Since the mapping included all supervoxels in the body,
+    # the last group is left with the original label.
+    assert final_table.iloc[-1]['body'] == 1
+
+    # Now merge them all together and try again, but leave
+    # two supevoxels out of the groups this time.
+    merges = set(pd.unique(final_table['body'].values)) - set([1])
+    post_merge(*instance_info, 1, list(merges))
+    
+    group_mapping = pd.Series(index=svs[:-2], data=groups[:-2])
+    final_table = post_hierarchical_cleaves(*instance_info, 1, group_mapping)
+
+    assert len(final_table.query('body == 1')) == 0, "Did not expect any of the groups to retain the original body ID!"    
+    assert (fetch_mapping(*instance_info, svs[:-2]) == final_table['body'].values).all()
+    assert (final_table.drop_duplicates(['group']) == final_table.drop_duplicates(['group', 'body'])).all().all()
+    assert (final_table.drop_duplicates(['body']) == final_table.drop_duplicates(['group', 'body'])).all().all()
+    assert (fetch_mapping(*instance_info, svs[-2:]) == 1).all()
+
+
 if __name__ == "__main__":
     args = ['-s', '--tb=native', '--pyargs', 'neuclease.tests.test_dvid']
-    #args = ['-k', 'fetch_sparsevol_coarse_via_labelindex'] + args
+    #args = ['-k', 'post_hierarchical_cleaves'] + args
     pytest.main(args)
