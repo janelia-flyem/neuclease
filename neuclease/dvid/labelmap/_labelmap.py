@@ -1360,7 +1360,10 @@ def labelmap_kafka_msgs_to_df(kafka_msgs, default_timestamp=DEFAULT_TIMESTAMP):
     # i.e. the mutation ID was not unique in our earlier logs.
     for msg in df['msg'].values:
         action = msg['Action']
-        mutid = msg['MutationID']
+        try:
+            mutid = msg['MutationID']
+        except KeyError:
+            mutid = 0
 
         if not action.endswith('complete'):
             target_body = 0

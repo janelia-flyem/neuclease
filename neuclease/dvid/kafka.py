@@ -282,7 +282,13 @@ def kafka_msgs_to_df(msgs, drop_duplicates=False, default_timestamp=DEFAULT_TIME
     msgs_df['uuid'] = msgs_df['uuid'].astype('category')
     
     if 'MutationID' in msgs[0]:
-        msgs_df['mutid'] = [msg['MutationID'] for msg in msgs_df['msg']]
+        mutids = []
+        for msg in msgs_df['msg']:
+            try:
+                mutids.append( msg['MutationID'] )
+            except KeyError:
+                mutids.append( 0 )
+        msgs_df['mutid'] = mutids
     
     if 'Key' in msgs[0]:
         msgs_df['key'] = [msg['Key'] for msg in msgs_df['msg']]
