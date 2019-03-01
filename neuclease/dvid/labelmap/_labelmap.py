@@ -1161,7 +1161,7 @@ def post_hierarchical_cleaves(server, uuid, instance, body_id, group_mapping, *,
     it is more efficient to perform some coarse cleaves at first,
     which will iteratively divide the labelindex into big chunks,
     and then re-cleave the coarsely cleaved objects.
-    That will run faster thank cleaving off little bits at a time,
+    That will run faster than cleaving off little bits one at a time,
     thanks to the reduced labelindex sizes at each step.
     
     Given a set of N supervoxel groups that belong to a single body,
@@ -1197,6 +1197,16 @@ def post_hierarchical_cleaves(server, uuid, instance, body_id, group_mapping, *,
     Returns:
         A DataFrame indexed by the SVs in your group_mapping (though not necessarily in the same order),
         with columns for the group you provided and the new body ID it now maps to after cleaving.
+    
+    Example:
+
+        .. code-block:: python
+        
+            body_id = 20
+            svs    = [1,2,3,4,5,6,7,8,9,10]
+            groups = [1,1,2,2,3,3,3,3,3,4] # Arbitrary IDs (not body IDs)
+            group_mapping = pd.Series(index=svs, data=groups)
+            final_mapping_df = post_hierarchical_cleaves(server, uuid, instance, body_id, group_mapping)
     """
     from . import fetch_labelindex # late import to avoid recursive import
 
