@@ -203,7 +203,7 @@ def check_tarsupervoxels_status_via_exists(server, uuid, tsv_instance, bodies, s
 ###
 ### from neuclease.bin.check_tarsupervoxels_status import post_empty_meshes
 ###
-def post_empty_meshes(server, uuid, instance='segmentation_sv_meshes', svs=[], permit_large=False):
+def post_empty_meshes(server, uuid, instance='segmentation_sv_meshes', svs=[], permit_large=False, check_sizes=True):
     """
     Given a list of supervoxel ids (presumably for SMALL supervoxels),
     post an empty .drc file to the tarsupervoxels instance for each one.
@@ -225,14 +225,16 @@ def post_empty_meshes(server, uuid, instance='segmentation_sv_meshes', svs=[], p
     info = fetch_instance_info(server, uuid, instance)
     segmentation_instance = info["Base"]["Syncs"][0]
 
-    sizes = fetch_sizes(server, uuid, segmentation_instance, svs, supervoxels=True)
-    if sizes.any() > 1000:
-        msg = "Some of those supervoxels are large ({sizes.max()} voxels)."
-        if not permit_large:
-            logger.warning(msg)
-        else:
-            msg = f"Error: {msg} Pass permit_large=True if you really mean it."
-            raise RuntimeError(msg)
+    sizes = None
+    if check_sizes:
+        sizes = fetch_sizes(server, uuid, segmentation_instance, svs, supervoxels=True)
+        if sizes.any() > 1000:
+            msg = "Some of those supervoxels are large ({sizes.max()} voxels)."
+            if not permit_large:
+                logger.warning(msg)
+            else:
+                msg = f"Error: {msg} Pass permit_large=True if you really mean it."
+                raise RuntimeError(msg)
 
     bio = BytesIO()
     tf = tarfile.TarFile('empty-svs.tar', 'w', bio)
