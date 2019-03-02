@@ -7,3 +7,4 @@ from .grid import *
 from .sparse_block_mask import *
 from .graph import *
 from .segmentation import *
+from .downsample_with_numba import *
