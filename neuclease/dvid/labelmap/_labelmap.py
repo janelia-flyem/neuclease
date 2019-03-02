@@ -1174,6 +1174,12 @@ def post_hierarchical_cleaves(server, uuid, instance, body_id, group_mapping, *,
         one of the groups (the last one) will be left with the original
         body ID. Otherwise, every group will be given a new body ID.
     
+    Performance:
+        One infamous "frankenbody" in the hemibrain dataset,
+        which had 100k supervoxels touching 400k blocks, required 75k cleaves.
+        With this function, those 75k cleaves can be completed in 8 minutes.
+        (A naive series of cleaves would have taken 20-40 hours.)
+    
     Args:
         server:
             dvid server, e.g. 'emdata3:8900'
@@ -1215,7 +1221,8 @@ def post_hierarchical_cleaves(server, uuid, instance, body_id, group_mapping, *,
     group_mapping = group_mapping.rename('group', copy=False)
     group_mapping = group_mapping.rename_axis('sv', copy=False)
     
-    bodies = fetch_mapping(server, uuid, instance, group_mapping.index.values, session=session)
+    dvid_mapping = fetch_mapping(server, uuid, instance, group_mapping.index.values, session=session)
+    bodies = dvid_mapping.values
     assert (bodies == body_id).all(), \
         "All supervoxels in the group_mapping index must map (in DVID) to the given body_id"
 
@@ -1223,41 +1230,21 @@ def post_hierarchical_cleaves(server, uuid, instance, body_id, group_mapping, *,
     assert group_df.index.duplicated().sum() == 0, \
         "Your group_mapping includes duplicate values for some supervoxels."
     
-    li_df = fetch_labelindex(server, uuid, instance, body_id, format='pandas', session=session).blocks
-    orig_len = len(li_df)
-    
-    li_df = li_df.query('sv in @group_df.index')
-    
-    # If the provided groups include every single SV in the body,
-    # then one object will keep the original body ID (the last group),
-    # since we can't cleave away ALL supervoxels from the body
-    skip_last_group = (len(li_df) == orig_len)
-    
-    li_df = li_df.merge(group_df, 'left', 'sv')
-    li_df = li_df.sort_values(['group', 'sv']).reset_index(drop=True).copy()
-
-    # Mark the first row of each group
-    groups = li_df['group'].values
-    li_df['mark'] = False
-    li_df.loc[0, 'mark'] = True
-    li_df.loc[1:, 'mark'] = (groups[1:] != groups[:-1])
-
-    bodies = body_id * np.ones(len(li_df), np.uint64)
-
-    num_cleaves = int(li_df['mark'].sum())
-    if skip_last_group:
-        num_cleaves -= 1
-
-    cleaves_posted = 0
-    progress_bar = tqdm_proxy(total=num_cleaves, logger=logger)
-    progress_bar.update(0)
-
     def _cleave_groups(body, li_df, bodies):
         """
-        Recursively split the given DF (a view of the above li_df) in half,
+        Recursively split the given dataframe (a view of li_df, defined below) in half,
         and post a cleave to split the SVs in the top half from the bottom half in DVID.
-        The 'bodies' parameter is a view of the above 'bodies' array,
-        and will be overwritten to with the body IDs that DVID returns.
+
+        Args:
+            li_df:
+                A slice view of li_df (defined below).
+                It has the same columns as a labelindex dataframe,
+                but it's sorted by group, and has an extra column to
+                mark the group boundaries.
+            
+            bodies: 
+                A slice view of the above 'bodies' array (defined below),
+                and will be overwritten to with the body IDs that DVID returns.
         """
         assert (bodies == body).all()
         if li_df['mark'].sum() == 1:
@@ -1295,8 +1282,6 @@ def post_hierarchical_cleaves(server, uuid, instance, body_id, group_mapping, *,
         top_svs = np.sort(pd.unique(top_df['sv'].values))
         top_body = post_cleave(server, uuid, instance, body, top_svs, session=session)
         
-        nonlocal cleaves_posted
-        cleaves_posted += 1
         progress_bar.update(1)
         
         # Update the shared body column (a view)
@@ -1306,22 +1291,44 @@ def post_hierarchical_cleaves(server, uuid, instance, body_id, group_mapping, *,
         _cleave_groups(top_body, top_df, top_bodies)
         _cleave_groups(body, bottom_df, bottom_bodies)
 
-    _cleave_groups(body_id, li_df, bodies)
 
-    li_df['body'] = bodies
-    if not skip_last_group:
-        assert bodies[-1] == body_id
-        last_svs = li_df.query('body == @body_id')['sv'].values
-        last_body = post_cleave(server, uuid, instance, body_id, last_svs, session=session)
-        
-        bodies[-len(last_svs):] = last_body
+    li_df = fetch_labelindex(server, uuid, instance, body_id, format='pandas', session=session).blocks
+    orig_len = len(li_df)
+    li_df = li_df.query('sv in @group_df.index')
+    
+    # If we the groups don't include every supervoxel in the body,
+    # then start by cleaving the entire set out from its body, for two reasons:
+    # 1. _cleave_groups() below terminates once all groups have unique body IDs,
+    #   so the last group will get skipped, (unless we follow-up with a final cleave),
+    #   leaving it with the main body ID (not what we wanted).
+    # 2. If the non-cleaved supervoxels in the body are large, then they will
+    #   add a lot of overhead in the subsequent cleaves if we don't cleave them away first.
+    need_initial_cleave = (len(li_df) != orig_len)
+    
+    li_df = li_df.merge(group_df, 'left', 'sv')
+    li_df = li_df.sort_values(['group', 'sv']).reset_index(drop=True).copy()
+
+    # Mark the first row of each group
+    groups = li_df['group'].values
+    li_df['mark'] = True
+    li_df.loc[1:, 'mark'] = (groups[1:] != groups[:-1])
+
+    num_cleaves = int(li_df['mark'].sum())
+    if not need_initial_cleave:
+        num_cleaves -= 1
+
+    with tqdm_proxy(total=num_cleaves, logger=logger) as progress_bar:
+        progress_bar.update(0)
+    
+        if need_initial_cleave:
+            body_id = post_cleave(server, uuid, instance, body_id, pd.unique(li_df['sv'].values), session=session)
+            progress_bar.update(1)
+            bodies[:] = body_id
+    
+        # Perform the hierarchical (recursive) cleaves
+        _cleave_groups(body_id, li_df, bodies)
+    
         li_df['body'] = bodies
-
-        cleaves_posted += 1
-        progress_bar.update(1)
-
-    assert cleaves_posted == num_cleaves
-    progress_bar.close()
 
     return li_df[['sv', 'group', 'body']].drop_duplicates('sv').set_index('sv')
 
