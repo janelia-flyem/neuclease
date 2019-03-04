@@ -1222,8 +1222,7 @@ def post_hierarchical_cleaves(server, uuid, instance, body_id, group_mapping, *,
     group_mapping = group_mapping.rename_axis('sv', copy=False)
     
     dvid_mapping = fetch_mapping(server, uuid, instance, group_mapping.index.values, session=session)
-    bodies = dvid_mapping.values
-    assert (bodies == body_id).all(), \
+    assert (dvid_mapping == body_id).all(), \
         "All supervoxels in the group_mapping index must map (in DVID) to the given body_id"
 
     group_df = pd.DataFrame(group_mapping)
@@ -1313,6 +1312,8 @@ def post_hierarchical_cleaves(server, uuid, instance, body_id, group_mapping, *,
     li_df['mark'] = True
     li_df.loc[1:, 'mark'] = (groups[1:] != groups[:-1])
 
+    bodies = np.full(len(li_df), body_id, np.uint64)
+
     num_cleaves = int(li_df['mark'].sum())
     if not need_initial_cleave:
         num_cleaves -= 1
@@ -1324,7 +1325,7 @@ def post_hierarchical_cleaves(server, uuid, instance, body_id, group_mapping, *,
             body_id = post_cleave(server, uuid, instance, body_id, pd.unique(li_df['sv'].values), session=session)
             progress_bar.update(1)
             bodies[:] = body_id
-    
+
         # Perform the hierarchical (recursive) cleaves
         _cleave_groups(body_id, li_df, bodies)
     

@@ -435,8 +435,11 @@ def test_post_hierarchical_cleaves(labelmap_setup):
 
     svs = np.asarray(svs, np.uint64)
 
-    sv_vol = np.zeros((64,64,64), np.uint64)
+    # Post some supervoxels in multiple blocks, just to prove that post_hierarchical_cleaves()
+    # doesn't assume that the labelindex has the same length as the mapping.
+    sv_vol = np.zeros((128,64,64), np.uint64)
     sv_vol[0,0,:len(svs)] = svs
+    sv_vol[64,0,0:len(svs):2] = svs[::2]
     
     post_labelmap_voxels(*instance_info, (0,0,0), sv_vol)
 
