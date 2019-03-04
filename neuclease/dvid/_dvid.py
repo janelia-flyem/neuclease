@@ -20,6 +20,8 @@ def default_dvid_session(appname=None, user=None):
     """
     Return a default requests.Session() object that automatically appends the
     'u' and 'app' query string parameters to every request.
+    The Session object is cached, so this function will return the same Session
+    object if called again from the same thread with the same arguments.
     """
     if appname is None:
         appname = DEFAULT_APPNAME
@@ -43,6 +45,11 @@ def default_dvid_session(appname=None, user=None):
 
 
 def default_node_service(server, uuid, appname=None, user=None):
+    """
+    Return a DVIDNodeService for the given server and uuid.
+    The object is cached, so this function will return the same service
+    object if called again from the same thread with the same arguments.
+    """
     if appname is None:
         appname = DEFAULT_APPNAME
 
@@ -57,6 +64,7 @@ def default_node_service(server, uuid, appname=None, user=None):
         ns = DEFAULT_DVID_NODE_SERVICES[(appname, user, thread_id, pid, server, uuid)]
     except KeyError:
         ns = DVIDNodeService(server, str(uuid), user, appname)
+        DEFAULT_DVID_NODE_SERVICES[(appname, user, thread_id, pid, server, uuid)] = ns
 
     return ns
 
