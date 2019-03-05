@@ -10,7 +10,7 @@ from requests import HTTPError
 
 from libdvid import DVIDNodeService, encode_label_block
 
-from ...util import Timer, round_box, extract_subvol, DEFAULT_TIMESTAMP, tqdm_proxy, ndrange, box_to_slicing
+from ...util import Timer, round_box, extract_subvol, DEFAULT_TIMESTAMP, tqdm_proxy, ndrange, box_to_slicing, compute_parallel
 
 from .. import dvid_api_wrapper, fetch_generic_json
 from ..repo import create_voxel_instance, fetch_repo_dag
@@ -248,7 +248,7 @@ def fetch_label(server, uuid, instance, coordinate_zyx, supervoxels=False, scale
     """
     Fetch the label at a single coordinate.
     
-    See also: ``fetch_labels()``
+    See also: ``fetch_labels()``, ``fectch_labels_batched()``
     """
     coord_xyz = np.array(coordinate_zyx)[::-1]
     coord_str = '_'.join(map(str, coord_xyz))
@@ -271,6 +271,8 @@ fetch_label_for_coordinate = fetch_label
 def fetch_labels(server, uuid, instance, coordinates_zyx, supervoxels=False, scale=0, *, session=None):
     """
     Fetch the labels at a list of coordinates.
+
+    See also: ``fetch_label()``, ``fectch_labels_batched()``
     """
     coordinates_zyx = np.asarray(coordinates_zyx, np.int32)
     assert coordinates_zyx.ndim == 2 and coordinates_zyx.shape[1] == 3
@@ -289,10 +291,13 @@ def fetch_labels(server, uuid, instance, coordinates_zyx, supervoxels=False, sca
     return labels
 
 
-def fetch_labels_batched(server, uuid, instance, coordinates_zyx, supervoxels=False, scale=0, batch_size=10_000, threads=0):
+def fetch_labels_batched(server, uuid, instance, coordinates_zyx, supervoxels=False, scale=0, batch_size=10_000, threads=0, processes=0):
     """
-    Like fetch_labels, but fetches in batches, optionally multithreaded.
+    Like fetch_labels, but fetches in batches, optionally multithreaded or multiprocessed.
+
+    See also: ``fetch_label()``, ``fectch_labels()``
     """
+    assert not threads or not processes, "Choose either threads or processes (not both)"
     coords_df = pd.DataFrame(coordinates_zyx, columns=['z', 'y', 'x'], dtype=np.int32)
     coords_df['label'] = np.uint64(0)
     
@@ -305,15 +310,12 @@ def fetch_labels_batched(server, uuid, instance, coordinates_zyx, supervoxels=Fa
         return batch_df
 
     batch_starts = list(range(0, len(coords_df), batch_size))
-    if threads <= 1:
+    if threads <= 1 and processes <= 1:
         batch_dfs = map(fetch_batch, batch_starts)
         batch_dfs = tqdm_proxy(batch_dfs, total=len(batch_starts), leave=False)
         batch_dfs = list(batch_dfs)
     else:
-        with ThreadPool(threads) as pool:
-            batch_dfs = pool.imap_unordered(fetch_batch, batch_starts)
-            batch_dfs = tqdm_proxy(batch_dfs, total=len(batch_starts), leave=False)
-            batch_dfs = list(batch_dfs)
+        batch_dfs = compute_parallel(fetch_batch, batch_starts, 1, threads, processes, ordered=False, leave_progress=False)
 
     return pd.concat(batch_dfs).sort_index()['label'].values
 
