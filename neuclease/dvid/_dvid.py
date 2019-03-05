@@ -97,15 +97,17 @@ def dvid_api_wrapper(f):
 
         try:
             return f(server, *args, **kwargs, session=session)
-        except requests.HTTPError as ex:
+        except requests.RequestException as ex:
             # If the error response had content (and it's not super-long),
             # show that in the traceback, too.  DVID error messages are often helpful.
-            if ( not hasattr(ex, 'response_content_appended')
-                 and ex.response is not None
-                 and ex.response.content
-                 and len(ex.response.content) <= 200 ):
+            if not hasattr(ex, 'response_content_appended') and (ex.response is not None or ex.request is not None):
+                msg = ""
+                if (ex.request is not None):
+                    msg += f"Error accessing {ex.request.response.method} {ex.request.url}\n"
                 
-                msg = str(ex.args[0]) + "\n" + ex.response.content.decode('utf-8')
+                if (ex.response is not None and ex.response.content and len(ex.response.content) <= 200):
+                    msg += str(ex.args[0]) + "\n" + ex.response.content.decode('utf-8') + "\n"
+
                 new_ex = copy.copy(ex)
                 new_ex.args = (msg, *ex.args[1:])
                 new_ex.response_content_appended = True
