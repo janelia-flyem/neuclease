@@ -103,7 +103,7 @@ def dvid_api_wrapper(f):
             if not hasattr(ex, 'response_content_appended') and (ex.response is not None or ex.request is not None):
                 msg = ""
                 if (ex.request is not None):
-                    msg += f"Error accessing {ex.request.response.method} {ex.request.url}\n"
+                    msg += f"Error accessing {ex.request.method} {ex.request.url}\n"
                 
                 if (ex.response is not None and ex.response.content and len(ex.response.content) <= 200):
                     msg += str(ex.args[0]) + "\n" + ex.response.content.decode('utf-8') + "\n"
