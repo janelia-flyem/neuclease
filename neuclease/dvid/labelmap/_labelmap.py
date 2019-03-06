@@ -760,7 +760,7 @@ def generate_sample_coordinate(server, uuid, instance, label_id, supervoxels=Fal
 
 
 @dvid_api_wrapper
-def fetch_labelmap_voxels(server, uuid, instance, box_zyx, scale=0, throttle=False, supervoxels=False, *, inflate=True, session=None):
+def fetch_labelmap_voxels(server, uuid, instance, box_zyx, scale=0, throttle=False, supervoxels=False, *, format='array', session=None):
     """
     Fetch a volume of voxels from the given instance.
     
@@ -792,18 +792,24 @@ def fetch_labelmap_voxels(server, uuid, instance, box_zyx, scale=0, throttle=Fal
         supervoxels:
             If True, request supervoxel data from the given labelmap instance.
         
-        inflate:
-            If True, inflate the compressed voxels from DVID and return an ordinary ndarray
-            If False, return a callable proxy that stores the compressed data internally,
+        format:
+            If 'array', inflate the compressed voxels from DVID and return an ordinary ndarray
+            If 'lazy-array', return a callable proxy that stores the compressed data internally,
             and that will inflate the data when called.
+            If 'raw-response', return DVID's raw response buffer without inflating it.
     
     Returns:
         ndarray, with shape == (box[1] - box[0])
     """
+    assert format in ('array', 'lazy-array', 'raw-response')
     box_zyx = np.asarray(box_zyx)
     assert np.issubdtype(box_zyx.dtype, np.integer), \
         f"Box has the wrong dtype.  Use an integer type, not {box_zyx.dtype}"
     assert box_zyx.shape == (2,3)
+
+    if format == 'raw-response':
+        assert (box_zyx % 64 == 0).all(), \
+            f"If requesting raw-response, the requested box must be block-aligned, not {box_zyx.tolist()}."
 
     # Labelarray data can be fetched very efficiently if the request is block-aligned
     # So, block-align the request no matter what.
@@ -835,10 +841,14 @@ def fetch_labelmap_voxels(server, uuid, instance, box_zyx, scale=0, throttle=Fal
         
     inflate_labelarray_blocks.content = r.content
     
-    if inflate:
+    if format == 'array':
         return inflate_labelarray_blocks()
-    else:
+    elif format == 'lazy-array':
         return inflate_labelarray_blocks
+    elif format == 'raw-response':
+        return r.content
+    else:
+        raise AssertionError(f"Unknown format: {format}")
 
 
 # Deprecated name
@@ -904,14 +914,14 @@ def post_labelmap_voxels(server, uuid, instance, offset_zyx, volume, scale=0, do
         block = volume[box_to_slicing(vol_corner, vol_corner+64)]
         blocks.append( block )
 
-    post_labelarray_blocks(server, uuid, instance, corners, blocks, scale, downres, noindexing, throttle, session=session)
+    post_labelmap_blocks(server, uuid, instance, corners, blocks, scale, downres, noindexing, throttle, session=session)
 
 # Deprecated name
 post_labelarray_voxels = post_labelmap_voxels
 
 
 @dvid_api_wrapper
-def post_labelmap_blocks(server, uuid, instance, corners_zyx, blocks, scale=0, downres=False, noindexing=False, throttle=False, *, session=None):
+def post_labelmap_blocks(server, uuid, instance, corners_zyx, blocks, scale=0, downres=False, noindexing=False, throttle=False, *, is_raw=False, session=None):
     """
     Post supervoxel data to a labelmap instance, from a list of blocks.
     
@@ -949,10 +959,20 @@ def post_labelmap_blocks(server, uuid, instance, corners_zyx, blocks, scale=0, d
             If True, passed via the query string to DVID, in which case DVID might return a '503' error
             if the server is too busy to service the request.
             It is your responsibility to catch DVIDExceptions in that case.
+        
+        is_raw:
+            If you have already encoded the blocks in DVID's compressed labelmap format
+            (or fetched them directly from another node), you may pass them as a raw buffer,
+            and set ``is_raw`` to True, and set corners_zyx to ``None``.
     """
     assert not downres or scale == 0, "downres option is only valid for scale 0"
 
-    body_data = encode_labelarray_blocks(corners_zyx, blocks)
+    if is_raw:
+        assert isinstance(blocks, bytes)
+        body_data = blocks
+    else:
+        body_data = encode_labelarray_blocks(corners_zyx, blocks)
+    
     if not body_data:
         return # No blocks
 
