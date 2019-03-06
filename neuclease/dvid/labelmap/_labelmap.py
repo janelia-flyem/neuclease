@@ -796,7 +796,7 @@ def fetch_labelmap_voxels(server, uuid, instance, box_zyx, scale=0, throttle=Fal
             If 'array', inflate the compressed voxels from DVID and return an ordinary ndarray
             If 'lazy-array', return a callable proxy that stores the compressed data internally,
             and that will inflate the data when called.
-            If 'raw-response', return DVID's raw response buffer without inflating it.
+            If 'raw-response', return DVID's raw /blocks response buffer without inflating it.
     
     Returns:
         ndarray, with shape == (box[1] - box[0])
@@ -1138,6 +1138,65 @@ def decode_labelarray_volume(box_zyx, encoded_data):
     box_zyx = np.asarray(box_zyx)
     shape = box_zyx[1] - box_zyx[0]
     return DVIDNodeService.inflate_labelarray_blocks3D_from_raw(encoded_data, shape, box_zyx[0])
+
+
+def parse_labelarray_data(encoded_data):
+    """
+    For a buffer of encoded labelarray/labelmap data,
+    extract the block IDs and label list for each block,
+    and return them, along with the spans of the buffer
+    in which each block resides.
+    
+    Args:
+        encoded_data:
+            Raw gzip-labelarray-compressed block data as returned from dvid via
+            ``GET .../blocks?compression=blocks``,
+            e.g. via ``fetch_labelmap_voxels(..., format='raw-response')``
+    
+    Returns:
+        list-of-tuples ``[(block_id, labels, span), ...]``,
+        where ``block_id`` is a tuple (z,y,x), ``labels`` is an array of the label IDs in the block,
+        and ``span`` is a tuple (start, stop) indicating where the block's data
+        resides in the ``encoded_data`` buffer.
+    """
+    # The format for each block is:
+    # - 12 bytes for the block (X,Y,Z) location (its upper corner)
+    # - 4 bytes for the length of the encoded block data (N)
+    # - N bytes for the encoded block data, which consists of labelmap-compressed
+    #   data, which is then further compressed using gzip after that.
+    # 
+    # The N bytes of the encoded block data is gzip-compressed.
+    # After unzipping, it starts with:
+    # 
+    #   3 * uint32      values of gx, gy, and gz
+    #   uint32          # of labels (L), cannot exceed uint32.
+    #   L * uint64      packed labels in little-endian format.  Label 0 can be used to represent
+    #                       deleted labels, e.g., after a merge operation to avoid changing all
+    #                       sub-block indices.
+    # 
+    # See dvid's ``POST .../blocks`` documentation for more details.
+
+    assert isinstance(encoded_data, (bytes, memoryview))
+    
+    results = []
+    pos = 0
+    while pos < len(encoded_data):
+        start_pos = pos
+        x, y, z, num_bytes = np.frombuffer(encoded_data[pos:pos+16], np.int32)
+        pos += 16
+        end_pos = pos + num_bytes
+        span = (start_pos, end_pos)
+
+        block_data = gzip.decompress( encoded_data[pos:end_pos] )
+        gx, gy, gz, num_labels = np.frombuffer(block_data[:16], np.uint32)
+        assert gx == gy == gz == 8, "Invalid block data"
+        
+        labels = np.frombuffer(block_data[16:16+8*num_labels], np.uint64)
+        pos = end_pos
+    
+        results.append( ((z, y, x), labels, span) )
+
+    return results
 
 
 @dvid_api_wrapper

@@ -68,7 +68,8 @@ def delete_key(server, uuid, instance, key, *, session=None):
 @dvid_api_wrapper
 def fetch_keyvalues(server, uuid, instance, keys, as_json=False, batch_size=None, *, use_jsontar=False, session=None):
     """
-    Fetch a list of values from a keyvalue instance in a single batch call.
+    Fetch a list of values from a keyvalue instance in a single batch call,
+    or split across multiple batches.
     The result is returned as a dict `{ key : value }`.
     If as_json is True, any keys that do not exist in the instance will
     appear in the results with a value of None.
