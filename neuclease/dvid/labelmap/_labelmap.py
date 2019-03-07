@@ -1140,7 +1140,7 @@ def decode_labelarray_volume(box_zyx, encoded_data):
     return DVIDNodeService.inflate_labelarray_blocks3D_from_raw(encoded_data, shape, box_zyx[0])
 
 
-def parse_labelarray_data(encoded_data):
+def parse_labelarray_data(encoded_data, extract_labels=True):
     """
     For a buffer of encoded labelarray/labelmap data,
     extract the block IDs and label list for each block,
@@ -1152,12 +1152,17 @@ def parse_labelarray_data(encoded_data):
             Raw gzip-labelarray-compressed block data as returned from dvid via
             ``GET .../blocks?compression=blocks``,
             e.g. via ``fetch_labelmap_voxels(..., format='raw-response')``
+        
+        extract_labels:
+            If True, extract the list of labels contained within the block.
+            This is somewhat expensive because it requires decompressing the block's
+            gzip-compressed portion.
     
     Returns:
-        list-of-tuples ``[(block_id, labels, span), ...]``,
-        where ``block_id`` is a tuple (z,y,x), ``labels`` is an array of the label IDs in the block,
-        and ``span`` is a tuple (start, stop) indicating where the block's data
-        resides in the ``encoded_data`` buffer.
+        spans, or (spans, labels) depending on whether or not extract_labels is True,
+        where spans and labels are both dicts using block_ids as keys:
+            spans: { block_id: (start, stop) }
+            labels: { block_id: label_ids }
     """
     # The format for each block is:
     # - 12 bytes for the block (X,Y,Z) location (its upper corner)
@@ -1177,26 +1182,31 @@ def parse_labelarray_data(encoded_data):
     # See dvid's ``POST .../blocks`` documentation for more details.
 
     assert isinstance(encoded_data, (bytes, memoryview))
-    
-    results = []
+
+    spans = {}
+    labels = {}
+
     pos = 0
     while pos < len(encoded_data):
         start_pos = pos
         x, y, z, num_bytes = np.frombuffer(encoded_data[pos:pos+16], np.int32)
         pos += 16
         end_pos = pos + num_bytes
-        span = (start_pos, end_pos)
+        spans[(z, y, x)] = (start_pos, end_pos)
 
-        block_data = gzip.decompress( encoded_data[pos:end_pos] )
-        gx, gy, gz, num_labels = np.frombuffer(block_data[:16], np.uint32)
-        assert gx == gy == gz == 8, "Invalid block data"
+        if extract_labels:
+            block_data = gzip.decompress( encoded_data[pos:end_pos] )
+            gx, gy, gz, num_labels = np.frombuffer(block_data[:16], np.uint32)
+            assert gx == gy == gz == 8, "Invalid block data"
+            block_labels = np.frombuffer(block_data[16:16+8*num_labels], np.uint64)
+            labels[(z, y, x)] = block_labels
         
-        labels = np.frombuffer(block_data[16:16+8*num_labels], np.uint64)
         pos = end_pos
-    
-        results.append( ((z, y, x), labels, span) )
 
-    return results
+    if extract_labels:
+        return (spans, labels)
+    else:
+        return spans
 
 
 @dvid_api_wrapper
