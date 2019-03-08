@@ -7,10 +7,10 @@ import pandas as pd
 
 from dvidutils import LabelMapper
 
-from ..util import read_csv_header, Timer
+from ..util import read_csv_header, Timer, swap_df_cols
 from ..util.csv import read_csv_col
 from ..merge_table import load_all_supervoxel_sizes, compute_body_sizes
-from ..dvid import fetch_keys, fetch_complete_mappings, fetch_keyvalues
+from ..dvid import fetch_keys, fetch_complete_mappings, fetch_keyvalues, fetch_labels_batched, fetch_mapping
 from ..dvid.annotation import load_synapses_from_csv
 from ..dvid.labelmap import fetch_supervoxel_fragments, fetch_labels
 
@@ -98,7 +98,7 @@ def load_focused_table(path):
     return df
 
 
-def fetch_focused_decisions(server, uuid, instance='segmentation_merged', normalize_pairs=None, subset_pairs=None, subset_slice=None, drop_invalid=True):
+def fetch_focused_decisions(server, uuid, instance='segmentation_merged', normalize_pairs=None, subset_pairs=None, subset_slice=None, drop_invalid=True, update_with_instance='segmentation'):
     """
     Load focused decisions from a given keyvalue instance
     (e.g. 'segmentation_merged') and return them as a DataFrame,
@@ -178,7 +178,6 @@ def fetch_focused_decisions(server, uuid, instance='segmentation_merged', normal
     if 'time zone' in df:
         df['time zone'] = pd.Series(df['time zone'], dtype='category')
 
-
     if drop_invalid:
         invalid = df['sv_a'].isnull()
         for col in ['sv_a', 'sv_b', 'body_a', 'body_b', 'xa', 'ya', 'za', 'xb', 'yb', 'zb']:
@@ -190,24 +189,29 @@ def fetch_focused_decisions(server, uuid, instance='segmentation_merged', normal
         for col in ['xa', 'ya', 'za', 'xb', 'yb', 'zb']:
             df[col] = df[col].astype(np.int32)
 
-    if normalize_pairs is None:
-        return df
-    
-    if normalize_pairs == 'sv':
-        swap_rows = (df['sv_a'] > df['sv_b'])
-    elif normalize_pairs == 'body':
-        swap_rows = (df['body_a'] > df['body_b'])
-    else:
-        raise AssertionError(f"bad 'normalize_pairs' setting: {normalize_pairs}")
+    if update_with_instance:
+        if isinstance(update_with_instance, str):
+            update_with_instance = (server, uuid, update_with_instance)
+        else:
+            assert len(update_with_instance) == 3
 
-    # Swap A/B cols to "normalize" id pairs
-    cols = ['sv_a', 'sv_b', 'body_a', 'body_b', 'xa', 'ya', 'za', 'xb', 'yb', 'zb']
-    cols = filter(lambda col: col in df, cols)
-    df_copy = df[list(cols)].copy()
-    for name in ['sv_', 'body_', 'x', 'y', 'z']:
-        if f'{name}a' in df:
-            df.loc[swap_rows, f'{name}a'] = df_copy.loc[swap_rows, f'{name}b']
-            df.loc[swap_rows, f'{name}b'] = df_copy.loc[swap_rows, f'{name}a']
+        coords_a = df[['za', 'ya', 'xa']].values
+        coords_b = df[['zb', 'yb', 'xb']].values
+        svs_a = fetch_labels_batched(*update_with_instance, coords_a, True, 0, 20_000, threads=8)
+        svs_b = fetch_labels_batched(*update_with_instance, coords_b, True, 0, 20_000, threads=8)
+        bodies_a = fetch_mapping(*update_with_instance, svs_a).values
+        bodies_b = fetch_mapping(*update_with_instance, svs_b).values
+        
+        df['sv_a'] = svs_a
+        df['sv_b'] = svs_b
+        df['body_a'] = bodies_a
+        df['body_b'] = bodies_b
+
+    assert normalize_pairs in (None, 'sv', 'body')
+    if normalize_pairs == 'sv':
+        swap_df_cols(df, None, (df['sv_a'] > df['sv_b']), ['a', 'b'])
+    elif normalize_pairs == 'body':
+        swap_df_cols(df, None, (df['body_a'] > df['body_b']), ['a', 'b'])
 
     # Return in chronological order
     return df.sort_values('time').reset_index(drop=True)
