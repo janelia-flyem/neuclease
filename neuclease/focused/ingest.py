@@ -126,6 +126,20 @@ def fetch_focused_decisions(server, uuid, instance='segmentation_merged', normal
             If provided, only select from the given slice of the full key set.
             Must be a slice object, e.g. slice(1000,2000), or np.s_[1000:2000]
 
+        drop_invalid:
+            If True, remove any rows with missing/invalid fields for sv id or coordinates.
+        
+        update_with_instance:
+            Focused decisions are recorded with the supervoxel and body IDs that existed
+            under their coordinates at the time the decision was made, but those IDs may
+            have changed in the meantime.
+            If ``update_with_instance`` is provided, update the supervoxel IDs and body IDs
+            using the coordinates in each row and fetching the corresponding IDs from the
+            given segmentation instance.
+            Should be provided as an instance name (in which case the server and uuid
+            are assumed to be the same as the given keyvalue instance),
+            or a complete tuple of ``(server, uuid, instance)`` to use instead.
+
     Returns:
         DataFrame with columns:
         ['body_a', 'body_b', 'result', 'sv_a', 'sv_b',
@@ -214,7 +228,10 @@ def fetch_focused_decisions(server, uuid, instance='segmentation_merged', normal
         swap_df_cols(df, None, (df['body_a'] > df['body_b']), ['a', 'b'])
 
     # Return in chronological order
-    return df.sort_values('time').reset_index(drop=True)
+    if 'time' in df:
+        return df.sort_values('time').reset_index(drop=True)
+    else:
+        return df.reset_index(drop=True)
 
 
 def drop_previously_reviewed(df, previous_focused_decisions_df):

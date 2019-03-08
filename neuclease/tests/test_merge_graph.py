@@ -227,9 +227,11 @@ def test_append_edges_for_focused_merges(labelmap_setup):
     post_key(dvid_server, dvid_repo, decision_instance, '1+5',
              json={'supervoxel ID 1': 1,
                    'supervoxel ID 2': 5,
+                   'body ID 1': 1,
+                   'body ID 2': 1,
                    'result': 'merge',
-                   'supervoxel point 1': [0,0,0],
-                   'supervoxel point 2': [0,0,4]})
+                   'supervoxel point 1': [0,0,0],   # xyz
+                   'supervoxel point 2': [12,0,0]}) # xyz
 
     merge_graph = LabelmapMergeGraph(merge_table_path)
     merge_graph.append_edges_for_focused_merges(dvid_server, dvid_repo, decision_instance)
