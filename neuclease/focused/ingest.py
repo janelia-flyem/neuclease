@@ -184,6 +184,11 @@ def fetch_focused_decisions(server, uuid, instance='segmentation_merged', normal
             df[col].fillna(0.0, inplace=True)
             df[col] = df[col].astype(np.uint64)
 
+    for col in ['xa', 'ya', 'za', 'xb', 'yb', 'zb']:
+        if col in df:
+            df[col].fillna(-999999, inplace=True)
+            df[col] = df[col].astype(np.int32)
+
     if normalize_pairs is None:
         return df
     
