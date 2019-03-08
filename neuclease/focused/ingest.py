@@ -98,7 +98,7 @@ def load_focused_table(path):
     return df
 
 
-def fetch_focused_decisions(server, uuid, instance='segmentation_merged', normalize_pairs=None, subset_pairs=None, subset_slice=None):
+def fetch_focused_decisions(server, uuid, instance='segmentation_merged', normalize_pairs=None, subset_pairs=None, subset_slice=None, drop_invalid=True):
     """
     Load focused decisions from a given keyvalue instance
     (e.g. 'segmentation_merged') and return them as a DataFrame,
@@ -178,15 +178,16 @@ def fetch_focused_decisions(server, uuid, instance='segmentation_merged', normal
     if 'time zone' in df:
         df['time zone'] = pd.Series(df['time zone'], dtype='category')
 
-    # Replace NaN and fix dtypes
-    for col in ['sv_a', 'sv_b', 'body_a', 'body_b']:
-        if col in df:
-            df[col].fillna(0.0, inplace=True)
-            df[col] = df[col].astype(np.uint64)
 
-    for col in ['xa', 'ya', 'za', 'xb', 'yb', 'zb']:
-        if col in df:
-            df[col].fillna(-999999, inplace=True)
+    if drop_invalid:
+        invalid = df['sv_a'].isnull()
+        for col in ['sv_a', 'sv_b', 'body_a', 'body_b', 'xa', 'ya', 'za', 'xb', 'yb', 'zb']:
+            invalid |= df[col].isnull()
+        df = df[~invalid]
+
+        for col in ['sv_a', 'sv_b', 'body_a', 'body_b']:
+            df[col] = df[col].astype(np.uint64)
+        for col in ['xa', 'ya', 'za', 'xb', 'yb', 'zb']:
             df[col] = df[col].astype(np.int32)
 
     if normalize_pairs is None:
