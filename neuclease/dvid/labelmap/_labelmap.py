@@ -1,6 +1,7 @@
 import gzip
 import logging
 from io import BytesIO
+from functools import partial
 from multiprocessing.pool import ThreadPool
 from collections import defaultdict
 
@@ -300,26 +301,36 @@ def fetch_labels_batched(server, uuid, instance, coordinates_zyx, supervoxels=Fa
     assert not threads or not processes, "Choose either threads or processes (not both)"
     coords_df = pd.DataFrame(coordinates_zyx, columns=['z', 'y', 'x'], dtype=np.int32)
     coords_df['label'] = np.uint64(0)
-    
-    def fetch_batch(batch_start):
+
+    fetch_batch = partial(_fetch_labels_batch, server, uuid, instance, supervoxels, scale)
+
+    batch_dfs = []
+    for batch_start in range(0, len(coords_df), batch_size):
         batch_stop = min(batch_start+batch_size, len(coords_df))
         batch_df = coords_df.iloc[batch_start:batch_stop].copy()
-        batch_coords = batch_df[['z', 'y', 'x']].values
-        # don't pass session: We want a unique session per thread
-        batch_df.loc[:, 'label'] = fetch_labels(server, uuid, instance, batch_coords, supervoxels, scale)
-        return batch_df
+        batch_dfs.append(batch_df)
 
     batch_starts = list(range(0, len(coords_df), batch_size))
     if threads <= 1 and processes <= 1:
-        batch_dfs = map(fetch_batch, batch_starts)
-        batch_dfs = tqdm_proxy(batch_dfs, total=len(batch_starts), leave=False)
-        batch_dfs = list(batch_dfs)
+        batch_result_dfs = map(fetch_batch, batch_dfs)
+        batch_result_dfs = tqdm_proxy(batch_result_dfs, total=len(batch_starts), leave=False)
+        batch_result_dfs = list(batch_result_dfs)
     else:
-        batch_dfs = compute_parallel(fetch_batch, batch_starts, 1, threads, processes, ordered=False, leave_progress=False)
+        batch_result_dfs = compute_parallel(fetch_batch, batch_dfs, 1, threads, processes, ordered=False, leave_progress=False)
 
-    return pd.concat(batch_dfs).sort_index()['label'].values
+    return pd.concat(batch_result_dfs).sort_index()['label'].values
 
+
+def _fetch_labels_batch(server, uuid, instance, supervoxels, scale, batch_df):
+    """
+    Helper for fetch_labels_batched(), defined at top-level so it can be pickled.
+    """
+    batch_coords = batch_df[['z', 'y', 'x']].values
+    # don't pass session: We want a unique session per thread
+    batch_df.loc[:, 'label'] = fetch_labels(server, uuid, instance, batch_coords, supervoxels, scale)
+    return batch_df
     
+
 @dvid_api_wrapper
 def fetch_sparsevol_rles(server, uuid, instance, label, supervoxels=False, scale=0, *, session=None):
     """

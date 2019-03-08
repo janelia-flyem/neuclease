@@ -376,8 +376,10 @@ def compute_parallel(func, iterable, chunksize=1, threads=None, processes=None, 
             items = pool.imap(func, iterable, chunksize)
         else:
             items = pool.imap_unordered(func, iterable, chunksize)
-        items = tqdm_proxy(items, total=total, leave=leave_progress)
-        return list(items)
+        items_progress = tqdm_proxy(items, total=total, leave=leave_progress)
+        items = list(items_progress)
+        items_progress.close()
+        return items
 
 
 DEFAULT_TIMESTAMP = datetime.strptime('2018-01-01 00:00:00', '%Y-%m-%d %H:%M:%S')

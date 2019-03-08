@@ -14,8 +14,8 @@ import pandas as pd
 from libdvid import DVIDNodeService
 
 from neuclease.dvid import (dvid_api_wrapper, DvidInstanceInfo, fetch_supervoxels_for_body, fetch_supervoxel_sizes_for_body,
-                            fetch_label_for_coordinate, fetch_mappings, fetch_complete_mappings, post_mappings, fetch_mutation_id,
-                            generate_sample_coordinate, fetch_labelmap_voxels, post_labelmap_blocks, post_labelmap_voxels,
+                            fetch_label, fetch_labels, fetch_labels_batched, fetch_mappings, fetch_complete_mappings, post_mappings,
+                            fetch_mutation_id, generate_sample_coordinate, fetch_labelmap_voxels, post_labelmap_blocks, post_labelmap_voxels,
                             encode_labelarray_volume, encode_nonaligned_labelarray_volume, fetch_raw, post_raw,
                             fetch_labelindex, post_labelindex, create_labelindex, PandasLabelIndex,
                             fetch_maxlabel, post_maxlabel, fetch_nextlabel, post_nextlabel, create_labelmap_instance,
@@ -80,17 +80,57 @@ def test_fetch_supervoxel_sizes_for_body(labelmap_setup):
     assert (sv_sizes == 9).all() # see initialization in conftest.py
 
 
-def test_fetch_label_for_coordinate(labelmap_setup):
+def test_fetch_label(labelmap_setup):
     dvid_server, dvid_repo, _merge_table_path, _mapping_path, _supervoxel_vol = labelmap_setup
     instance_info = DvidInstanceInfo(dvid_server, dvid_repo, 'segmentation')
     
-    label = fetch_label_for_coordinate(*instance_info, (0, 1, 3), supervoxels=False)
+    label = fetch_label(*instance_info, (0, 1, 3), supervoxels=False)
     assert isinstance(label, np.uint64)
     assert label == 1
 
-    label = fetch_label_for_coordinate(*instance_info, (0, 1, 3), supervoxels=True)
+    label = fetch_label(*instance_info, (0, 1, 3), supervoxels=True)
     assert isinstance(label, np.uint64)
     assert label == 2
+
+
+def test_fetch_labels(labelmap_setup):
+    dvid_server, dvid_repo, _merge_table_path, _mapping_path, _supervoxel_vol = labelmap_setup
+    instance_info = DvidInstanceInfo(dvid_server, dvid_repo, 'segmentation')
+
+    coords = [[0,0,0], [0,0,1], [0,0,2],
+              [0,0,3], [0,0,4], [0,0,4]]
+    
+    labels = fetch_labels(*instance_info, coords, supervoxels=False)
+    assert labels.dtype == np.uint64
+    assert (labels == 1).all() # See init_labelmap_nodes() in conftest.py
+
+    labels = fetch_labels(*instance_info, coords, supervoxels=True)
+    assert labels.dtype == np.uint64
+    assert (labels == [1,1,1,2,2,2]).all() # See init_labelmap_nodes() in conftest.py
+
+
+def test_fetch_labels_batched(labelmap_setup):
+    dvid_server, dvid_repo, _merge_table_path, _mapping_path, _supervoxel_vol = labelmap_setup
+    instance_info = DvidInstanceInfo(dvid_server, dvid_repo, 'segmentation')
+
+    coords = [[0,0,0], [0,0,1], [0,0,2],
+              [0,0,3], [0,0,4], [0,0,4]]
+    
+    labels = fetch_labels_batched(*instance_info, coords, supervoxels=False, batch_size=2, threads=2)
+    assert labels.dtype == np.uint64
+    assert (labels == 1).all() # See init_labelmap_nodes() in conftest.py
+
+    labels = fetch_labels_batched(*instance_info, coords, supervoxels=True, batch_size=2, threads=2)
+    assert labels.dtype == np.uint64
+    assert (labels == [1,1,1,2,2,2]).all() # See init_labelmap_nodes() in conftest.py
+
+    labels = fetch_labels_batched(*instance_info, coords, supervoxels=False, batch_size=2, processes=2)
+    assert labels.dtype == np.uint64
+    assert (labels == 1).all() # See init_labelmap_nodes() in conftest.py
+
+    labels = fetch_labels_batched(*instance_info, coords, supervoxels=True, batch_size=2, processes=2)
+    assert labels.dtype == np.uint64
+    assert (labels == [1,1,1,2,2,2]).all() # See init_labelmap_nodes() in conftest.py
 
 
 def test_fetch_mappings(labelmap_setup):
@@ -185,11 +225,11 @@ def test_generate_sample_coordinate(labelmap_setup):
     instance_info = DvidInstanceInfo(dvid_server, dvid_repo, 'segmentation')
 
     coord_zyx = generate_sample_coordinate(*instance_info, 1)
-    label = fetch_label_for_coordinate(*instance_info, coord_zyx.tolist())
+    label = fetch_label(*instance_info, coord_zyx.tolist())
     assert label == 1
 
     coord_zyx = generate_sample_coordinate(*instance_info, 2, supervoxels=True)
-    label = fetch_label_for_coordinate(*instance_info, coord_zyx.tolist(), supervoxels=True)
+    label = fetch_label(*instance_info, coord_zyx.tolist(), supervoxels=True)
     assert label == 2
 
 
@@ -232,7 +272,7 @@ def test_fetch_labelmap_voxels(labelmap_setup):
     assert (voxels == 1).all()
 
     # Test uninflated mode
-    voxels_proxy = fetch_labelmap_voxels(*instance_info, [(0,0,0), supervoxel_vol.shape], supervoxels=True, inflate=False)
+    voxels_proxy = fetch_labelmap_voxels(*instance_info, [(0,0,0), supervoxel_vol.shape], supervoxels=True, format='lazy-array')
     assert len(voxels_proxy.content) < supervoxel_vol.nbytes, \
         "Fetched data was apparently not compressed"
     assert (voxels_proxy() == supervoxel_vol).all()
@@ -475,5 +515,5 @@ if __name__ == "__main__":
     #from neuclease import configure_default_logging
     #configure_default_logging()
     args = ['-s', '--tb=native', '--pyargs', 'neuclease.tests.test_dvid']
-    #args = ['-k', 'post_hierarchical_cleaves'] + args
+    #args = ['-k', 'fetch_labels_batched'] + args
     pytest.main(args)
