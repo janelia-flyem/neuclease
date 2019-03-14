@@ -17,7 +17,7 @@ from neuclease.dvid import (dvid_api_wrapper, DvidInstanceInfo, fetch_supervoxel
                             fetch_label, fetch_labels, fetch_labels_batched, fetch_mappings, fetch_complete_mappings, post_mappings,
                             fetch_mutation_id, generate_sample_coordinate, fetch_labelmap_voxels, post_labelmap_blocks, post_labelmap_voxels,
                             encode_labelarray_volume, encode_nonaligned_labelarray_volume, fetch_raw, post_raw,
-                            fetch_labelindex, post_labelindex, create_labelindex, PandasLabelIndex,
+                            fetch_labelindex, post_labelindex, fetch_labelindices, create_labelindex, PandasLabelIndex,
                             fetch_maxlabel, post_maxlabel, fetch_nextlabel, post_nextlabel, create_labelmap_instance,
                             post_merge, fetch_sparsevol_coarse, fetch_sparsevol_coarse_via_labelindex, post_branch,
                             post_hierarchical_cleaves, fetch_mapping)
@@ -418,6 +418,41 @@ def test_labelindex(labelmap_setup):
     assert compare_proto_blocks(labelindex, dvid_labelindex)
 
 
+def test_fetch_labelindices(labelmap_setup):
+    dvid_server, dvid_repo, _merge_table_path, _mapping_path, _supervoxel_vol = labelmap_setup
+
+    # Need an unlocked node to test these posts
+    uuid = post_branch(dvid_server, dvid_repo, 'test_labelindices', 'test_labelindices')
+    instance_info = (dvid_server, uuid, 'segmentation-scratch')
+
+    # Write some random data
+    vol = np.random.randint(1, 10, size=(128,128,128), dtype=np.uint64)
+    offset = np.array((64,64,64))
+    
+    # DVID will generate the index.
+    post_labelmap_voxels(*instance_info, offset, vol)
+
+    labelindices = fetch_labelindices(*instance_info, list(range(1,10)))
+    for sv, li in zip(range(1,10), labelindices.indices):
+        # This function is already tested elsewhere, so we'll use it as a reference
+        li2 = fetch_labelindex(*instance_info, sv)
+        assert li == li2
+
+    labelindices = fetch_labelindices(*instance_info, list(range(1,10)), format='list-of-protobuf')
+    for sv, li in zip(range(1,10), labelindices):
+        # This function is already tested elsewhere, so we'll use it as a reference
+        li2 = fetch_labelindex(*instance_info, sv)
+        assert li == li2
+
+    labelindices = fetch_labelindices(*instance_info, list(range(1,10)), format='pandas')
+    for sv, li in zip(range(1,10), labelindices):
+        # This function is already tested elsewhere, so we'll use it as a reference
+        li2 = fetch_labelindex(*instance_info, sv, format='pandas')
+        li_df = li.blocks.sort_values(['z', 'y', 'x']).reset_index(drop=True)
+        li2_df = li2.blocks.sort_values(['z', 'y', 'x']).reset_index(drop=True)
+        assert (li_df == li2_df).all().all()
+
+
 def test_fetch_sparsevol_coarse_via_labelindex(labelmap_setup):
     dvid_server, dvid_repo, _merge_table_path, _mapping_path, _supervoxel_vol = labelmap_setup
 
@@ -515,5 +550,5 @@ if __name__ == "__main__":
     #from neuclease import configure_default_logging
     #configure_default_logging()
     args = ['-s', '--tb=native', '--pyargs', 'neuclease.tests.test_dvid']
-    #args = ['-k', 'fetch_labels_batched'] + args
+    #args += ['-k', 'fetch_labelindices']
     pytest.main(args)

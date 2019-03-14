@@ -32,6 +32,41 @@ def fetch_labelindex(server, uuid, instance, label, format='protobuf', *, sessio
     elif format == 'pandas':
         return convert_labelindex_to_pandas(labelindex)
 
+@dvid_api_wrapper
+def fetch_labelindices(server, uuid, instance, labels, *, format='protobuf', session=None): # @ReservedAssignment
+    """
+    Fetch a batch of label indexes via a single call to dvid.
+
+    Args:
+        labels:
+            A list of label IDs to fetch indices for.
+    
+    Returns:
+        If format='protobuf', a LabelIndices (protobuf) object containing all the
+        requested LabelIndex (protobuf) objects.
+        If format='list-of-protobuf', a list of LabelIndex (protobuf) objects.
+        If format='pandas', a list of PandasLabelIndex (tuple) objects,
+        which each contain a DataFrame representation of the labelindex.
+    """
+    assert format in ('protobuf', 'list-of-protobuf', 'pandas')
+    if isinstance(labels, np.ndarray):
+        labels = labels.tolist()
+    elif not isinstance(labels, list):
+        labels = list(labels)
+    
+    endpoint = f'http://{server}/api/node/{uuid}/{instance}/indices'
+    r = session.get(endpoint, json=labels)
+    r.raise_for_status()
+
+    labelindices = LabelIndices()
+    labelindices.ParseFromString(r.content)
+    if format == 'protobuf':
+        return labelindices
+    if format == 'list-of-protobuf':
+        return list(labelindices.indices)
+    if format == 'pandas':
+        return list(map(convert_labelindex_to_pandas, labelindices.indices))
+    
 
 @dvid_api_wrapper
 def post_labelindex(server, uuid, instance, label, proto_index, *, session=None):
@@ -48,25 +83,39 @@ def post_labelindex(server, uuid, instance, label, proto_index, *, session=None)
     
 
 @dvid_api_wrapper
-def post_labelindex_batch(server, uuid, instance, batch_indexes, *, session=None):
+def post_labelindices(server, uuid, instance, indices, *, session=None):
     """
     Send a batch (list) of LabelIndex objects to dvid.
     
     Args:
-        A list of LabelIndex (protobuf) objects
+        indices:
+            A list of LabelIndex (protobuf) objects,
+            or a pre-loaded LabelIndices protobuf object.
     """
-    label_indices = LabelIndices()
-    label_indices.indices.extend(batch_indexes)
+    if isinstance(indices, LabelIndices):
+        label_indices = indices
+    else:
+        label_indices = LabelIndices()
+        label_indices.indices.extend(indices)
+
     if len(label_indices.indices) == 0:
         # This can happen when tombstone_mode == 'only'
         # and a label contained only one supervoxel.
         return
-    payload = label_indices.SerializeToString()
 
+    payload = label_indices.SerializeToString()
     endpoint = f'http://{server}/api/node/{uuid}/{instance}/indices'
     r = session.post(endpoint, data=payload)
     r.raise_for_status()
 
+
+# Deprecated name
+post_labelindex_batch = post_labelindices
+
+def copy_labelindexes(src_triple, dest_triple, labels, *, session=None):
+    """
+    Copy many labelindexes from a 
+    """
 
 PandasLabelIndex = namedtuple("PandasLabelIndex", "blocks label last_mutid last_mod_time last_mod_user")
 def convert_labelindex_to_pandas(labelindex):
