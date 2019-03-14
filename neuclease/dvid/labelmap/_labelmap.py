@@ -13,13 +13,13 @@ from libdvid import DVIDNodeService, encode_label_block
 
 from ...util import Timer, round_box, extract_subvol, DEFAULT_TIMESTAMP, tqdm_proxy, ndrange, box_to_slicing, compute_parallel
 
-from .. import dvid_api_wrapper, fetch_generic_json
+from .. import dvid_api_wrapper, fetch_generic_json, fetch_repo_info
 from ..repo import create_voxel_instance, fetch_repo_dag
 from ..kafka import read_kafka_messages, kafka_msgs_to_df
 from ..rle import parse_rle_response
 
 from ._split import SplitEvent, fetch_supervoxel_splits_from_kafka
-from .labelops_pb2 import LabelIndex, LabelIndices, MappingOps, MappingOp
+from .labelops_pb2 import MappingOps, MappingOp
 
 logger = logging.getLogger(__name__)
 
@@ -642,6 +642,32 @@ def post_mappings(server, uuid, instance, mappings, mutid, *, batch_size=None, s
         _post_mapping_ops(ops_list)
         progress_bar.update(batch_ops_so_far)
 
+
+def copy_mappings(src_info, dest_info, batch_size=None, *, session=None):
+    """
+    Copy the complete in-memory mapping from one server to another,
+    performed in batches and with a progress display.
+
+    Args:
+        src_triple:
+            tuple (server, uuid, instance) to copy from
+        
+        dest_triple:
+            tuple (server, uuid, instance) to copy to
+
+        batch_size:
+            If provided, the mappings will be sent in batches, whose sizes will
+            roughly correspond to the given size, in terms of the number of
+            supervoxels in the batch.
+    """
+    # Pick the higher mutation id between the source and destination
+    src_mutid = fetch_repo_info(*src_info[:2])["MutationID"]
+    dest_mutid = fetch_repo_info(*dest_info[:2])["MutationID"]
+    mutid = max(src_mutid, dest_mutid)
+    
+    mappings = fetch_mappings(*src_info)
+    post_mappings(*dest_info, mappings, mutid, batch_size=batch_size, session=session)
+    
 
 @dvid_api_wrapper
 def fetch_mutation_id(server, uuid, instance, body_id, *, session=None):
