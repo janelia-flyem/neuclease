@@ -18,6 +18,7 @@ from neuclease.dvid import (dvid_api_wrapper, DvidInstanceInfo, fetch_supervoxel
                             fetch_mutation_id, generate_sample_coordinate, fetch_labelmap_voxels, post_labelmap_blocks, post_labelmap_voxels,
                             encode_labelarray_volume, encode_nonaligned_labelarray_volume, fetch_raw, post_raw,
                             fetch_labelindex, post_labelindex, fetch_labelindices, create_labelindex, PandasLabelIndex,
+                            copy_labelindices,
                             fetch_maxlabel, post_maxlabel, fetch_nextlabel, post_nextlabel, create_labelmap_instance,
                             post_merge, fetch_sparsevol_coarse, fetch_sparsevol_coarse_via_labelindex, post_branch,
                             post_hierarchical_cleaves, fetch_mapping)
@@ -451,6 +452,10 @@ def test_fetch_labelindices(labelmap_setup):
         li_df = li.blocks.sort_values(['z', 'y', 'x']).reset_index(drop=True)
         li2_df = li2.blocks.sort_values(['z', 'y', 'x']).reset_index(drop=True)
         assert (li_df == li2_df).all().all()
+
+    # Test the copy function (just do a round-trip -- hopefully I didn't swap src and dest anywhere...)
+    copy_labelindices(instance_info, instance_info, list(range(1,10)), batch_size=2)
+    copy_labelindices(instance_info, instance_info, list(range(1,10)), batch_size=2, processes=2)
 
 
 def test_fetch_sparsevol_coarse_via_labelindex(labelmap_setup):

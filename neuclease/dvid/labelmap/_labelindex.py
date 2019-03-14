@@ -1,9 +1,11 @@
+from functools import partial
 from collections import namedtuple, Iterable
 
 import numpy as np
 import pandas as pd
 from numba import jit
 
+from ...util import tqdm_proxy, compute_parallel
 from .. import dvid_api_wrapper
 
 # $ protoc --python_out=. neuclease/dvid/labelmap/labelops.proto
@@ -112,10 +114,62 @@ def post_labelindices(server, uuid, instance, indices, *, session=None):
 # Deprecated name
 post_labelindex_batch = post_labelindices
 
-def copy_labelindexes(src_triple, dest_triple, labels, *, session=None):
+
+def copy_labelindices(src_triple, dest_triple, labels, *, batch_size=10_000, threads=None, processes=None):
     """
-    Copy many labelindexes from a 
+    Copy many labelindexes from one dvid repo to another, in batches.
+    
+    Note:
+        There is no special error handling in this function.
+        If any single labelindex cannot be fetched or posted, the entire copy fails.
+    
+    Args:
+        src_triple:
+            tuple (server, uuid, instance) to copy from
+        
+        dest_triple:
+            tuple (server, uuid, instance) to copy to
+        
+        labels:
+            Array of label IDs indicating which indexes to copy.
+            The given labels must be body IDs, not supervoxel IDs
+            (There are no independent label indexes for supervoxels
+            that are part of a body.)
+        
+        batch_size:
+            The labels will be sent in batches, optionally from multiple threads/processes.
+            This batch_size indicates how many indexes will be copied per batch.
+        
+        threads:
+            If provided, use multiple threads to fetch/post the indexes.
+        
+        processes:
+            If provided, use multiple processes to fetch/post the indexes.
     """
+    labels = np.asarray(labels)
+    label_batches = []
+    for batch_start in range(0, len(labels), batch_size):
+        batch = labels[batch_start:batch_start+batch_size]
+        label_batches.append(batch)
+
+    if threads is None and processes is None:
+        for batch in tqdm_proxy(label_batches, leave=True):
+            _copy_labelindex_batch(src_triple, dest_triple, batch)
+    else:
+        assert not threads or not processes, "Choose either threads or processes (not both)"
+        f = partial(_copy_labelindex_batch, src_triple, dest_triple)
+        compute_parallel(f, label_batches, 1, threads, processes, ordered=False, leave_progress=True)
+
+
+def _copy_labelindex_batch(src_triple, dest_triple, labels_batch):
+    """
+    Helper for copy_labelindexes(), above.
+    Defined here at the module top-level to allow it to be
+    pickled when using multiprocessing.
+    """
+    indexes_batch = fetch_labelindices(*src_triple, labels_batch)
+    post_labelindices(*dest_triple, indexes_batch)
+
 
 PandasLabelIndex = namedtuple("PandasLabelIndex", "blocks label last_mutid last_mod_time last_mod_user")
 def convert_labelindex_to_pandas(labelindex):
