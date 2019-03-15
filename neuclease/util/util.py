@@ -748,11 +748,18 @@ def swap_df_cols(df, prefixes=None, swap_rows=None, suffixes=['_a', '_b']):
 
 def tqdm_proxy(iterable=None, *, logger=None, level=logging.INFO, **kwargs):
     """
-    Useful as an (almost) drop-in replacement for tqdm which can be used
+    Useful as an (almost) drop-in replacement for ``tqdm`` which can be used
     in EITHER an interactive console OR a script that logs to file.
     
     Automatically detects whether or not sys.stdout is a file or a console,
     and configures tqdm accordingly.
+    
+    - If your code is running from an interactive console, this acts like plain ``tqdm``.
+    - If your code is running from an ipython notebook, this acts like ``tqdm_notebook``.
+    - If your code is running from a batch script (i.e. printing to a log file, not the console),
+      this code uses the supplied logger periodically output a textual progress bar.
+      If no logger is supplied, a logger is automatically created using the name of
+      the calling module. 
     
     Example:
 
