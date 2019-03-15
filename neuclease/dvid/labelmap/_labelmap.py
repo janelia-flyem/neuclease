@@ -313,7 +313,7 @@ def fetch_labels_batched(server, uuid, instance, coordinates_zyx, supervoxels=Fa
     batch_starts = list(range(0, len(coords_df), batch_size))
     if threads <= 1 and processes <= 1:
         batch_result_dfs = map(fetch_batch, batch_dfs)
-        batch_result_dfs = tqdm_proxy(batch_result_dfs, total=len(batch_starts), leave=False)
+        batch_result_dfs = tqdm_proxy(batch_result_dfs, total=len(batch_starts), leave=False, logger=logger)
         batch_result_dfs = list(batch_result_dfs)
     else:
         batch_result_dfs = compute_parallel(fetch_batch, batch_dfs, 1, threads, processes, ordered=False, leave_progress=False)
@@ -617,6 +617,7 @@ def post_mappings(server, uuid, instance, mappings, mutid, *, batch_size=None, s
         r.raise_for_status()
 
     progress_bar = tqdm_proxy(total=len(df), disable=(batch_size is None), logger=logger)
+    progress_bar.update(0)
 
     batch_ops_so_far = 0
     ops_list = []
@@ -722,7 +723,7 @@ def fetch_sparsevol_coarse_threaded(server, uuid, instance, labels, supervoxels=
     
     with ThreadPool(num_threads) as pool:
         labels_coords = pool.imap_unordered(fetch_coords, labels)
-        labels_coords = list(tqdm_proxy(labels_coords, total=len(labels)))
+        labels_coords = list(tqdm_proxy(labels_coords, total=len(labels)), logger=logger)
     
     return dict(labels_coords)
 
