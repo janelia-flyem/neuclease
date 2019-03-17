@@ -1,5 +1,6 @@
 from collections import Iterable
 
+import pandas as pd
 import networkx as nx
 
 from ..util import uuids_match
@@ -374,3 +375,38 @@ def find_master(server, repo_uuid=None):
     if len(master_nodes) == 0:
         raise RuntimeError(f"Could not find master branch on server {server}, repo {repo_uuid}")
     return master_nodes[-1]
+
+
+def find_parent(server, uuids, dag=None):
+    """
+    Determine the parent node for one or more UUIDs.
+    
+    Args:
+        server:
+            dvid server, e.g. 'emdata3:8900'
+        uuids:
+            A single uuid or a list of uuids.
+        dag:
+            Optional. If not provided, it will be fetched from the server.
+
+    Returns:
+        If a uuids was given as a list, a pd.Series is returned.
+        If a single uuid was given as a string, a string is returned.
+    """
+    if isinstance(uuids, str):
+        first_uuid = uuids
+    else:
+        first_uuid =  uuids[0]
+    
+    if dag is None:
+        dag = fetch_repo_dag(server, first_uuid)
+    
+    if isinstance(uuids, str):
+        first_uuid = expand_uuid(server, first_uuid)
+        return next(dag.predecessors(first_uuid))
+    
+    uuids = [expand_uuid(server, u) for u in uuids]
+    s = pd.Series(index=uuids, data=[next(dag.predecessors(u)) for u in uuids])
+    s.name = 'parent'
+    s.index.name = 'child'
+    return s
