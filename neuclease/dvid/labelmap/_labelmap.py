@@ -780,6 +780,29 @@ def generate_sample_coordinate(server, uuid, instance, label_id, supervoxels=Fal
     """
     Return an arbitrary coordinate that lies within the given body.
     Usually faster than fetching all the RLEs.
+    
+    This function fetches the sparsevol-coarse to select a block
+    in which the body of interest can be found, then it fetches the segmentation
+    for that block and picks a point within it that lies within the body of interest.
+    
+    Args:
+        server:
+            dvid server, e.g. 'emdata3:8900'
+        
+        uuid:
+            dvid uuid, e.g. 'abc9'
+        
+        instance:
+            dvid instance name, e.g. 'segmentation'
+        
+        label_id:
+            A body or supervoxel ID (if supervoxels=True)
+        
+        supervoxels:
+            If True, treat ``label_id`` as a supervoxel ID.
+    
+    Returns:
+        [Z,Y,X] -- An arbitrary point within the body of interest.
     """
     SCALE = 6 # sparsevol-coarse is always scale 6
     coarse_block_coords = fetch_sparsevol_coarse(server, uuid, instance, label_id, supervoxels, session=session)
