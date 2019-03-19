@@ -148,7 +148,14 @@ def fetch_focused_decisions(server, uuid, instance='segmentation_merged', normal
     """
     assert normalize_pairs in (None, 'sv', 'body')
     
-    keys = fetch_keys(server, uuid, instance)
+    with Timer(f"Fetching keys from '{instance}'", logger):
+        # FIXME: Unless subset_pairs is used, it's probably faster
+        #        to just fetch all the key/values at once,
+        #        rather than fetching the keys, then the values.
+        #        (On the server side, fetching keys in leveldb is just as
+        #        expensive as fetching the values too.)
+        keys = fetch_keys(server, uuid, instance)
+
     if subset_pairs is not None:
         subset_pairs = list(subset_pairs)
         if isinstance(subset_pairs[0], str):
@@ -160,8 +167,9 @@ def fetch_focused_decisions(server, uuid, instance='segmentation_merged', normal
 
     if subset_slice:
         keys = keys[subset_slice]
-    
-    task_values = list(fetch_keyvalues(server, uuid, instance, keys, as_json=True).values())
+
+    with Timer(f"Fetching values from '{instance}'"):
+        task_values = list(fetch_keyvalues(server, uuid, instance, keys, as_json=True).values())
 
     # Flatten coords before loading into dataframe
     for value in task_values:
