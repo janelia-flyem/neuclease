@@ -2,12 +2,13 @@ import sys
 import logging
 from itertools import chain
 
+import ujson
 import numpy as np
 import pandas as pd
 
 from . import dvid_api_wrapper, fetch_generic_json
 from .voxels import fetch_volume_box
-from ..util import Grid, clipped_boxes_from_grid, round_box, tqdm_proxy, gen_json_objects
+from ..util import Grid, clipped_boxes_from_grid, round_box, tqdm_proxy, gen_json_objects, encode_coords_to_uint64, compute_parallel
 
 logger = logging.getLogger(__name__)
 
@@ -504,5 +505,92 @@ def compute_weighted_edge_table(relationships_df, synapses_df):
     return weighted_edge_table.reset_index()
 
 
+def load_gary_synapse_json(path, processes=8, batch_size=100_000):
+    """
+    Load a synapse json file from Gary's format into two tables.
+    
+    Args:
+        path:
+            A path to a .json file.
+            See ``neuclease/tests/test_annotation.py`` for an example.
+        
+        processes:
+            How many processes to use in parallel to load the data.
+
+        batch_size:
+            The size (number of t-bars) to processes per batch during multiprocessing.
+    
+    Returns:
+        point_df:
+            One row for every t-bar and psd in the file.
+            Columns: ['z', 'y', 'x', 'confidence', 'kind']
+            Index: np.uint64, an encoded version of [z,y,x]
+        
+        partner_df:
+            Indicates which T-bar each PSD is associated with.
+            One row for every psd in the file.
+            Columns: ['psd_id', 'tbar_id']
+            where the values correspond to the index of point_df.
+    """
+    logger.info(f"Loading JSON data from {path}")
+    with open(path, 'r') as f:
+        data = ujson.load(f)["data"]
+    
+    if processes == 0:
+        logger.info("Generating tables in the main process (not parallel).")
+        return _load_gary_synapse_data(data)
+    
+    batches = []
+    for batch_start in range(0, len(data), batch_size):
+        batches.append(data[batch_start:batch_start+batch_size])
+
+    logger.info(f"Converting via {len(batches)} batches (using {processes} processes).")    
+    results = compute_parallel(_load_gary_synapse_data, batches, processes=processes)
+    point_dfs, partner_dfs = zip(*results)
+
+    logger.info("Combining results")
+    point_df = pd.concat(point_dfs)
+    partner_df = pd.concat(partner_dfs, ignore_index=True)
+    return point_df, partner_df
 
 
+def _load_gary_synapse_data(data):
+    """
+    Helper for load_gary_synapse_json()
+    """
+    point_table = []
+    confidences = []
+    kinds = []
+    partner_table = []
+    
+    for syn in data:
+        tx, ty, tz = syn["T-bar"]["location"]
+        confidence = float(syn["T-bar"]["confidence"])
+        point_table.append( (tz, ty, tx) )
+        confidences.append( confidence )
+        kinds.append('tbar')
+
+        for partner in syn["partners"]:
+            px, py, pz = partner["location"]
+            confidence = float(partner["confidence"])
+
+            point_table.append( (pz, py, px) )
+            confidences.append(confidence)
+            kinds.append('psd')
+            partner_table.append( (tz, ty, tx, pz, py, px) )
+
+    points = np.array(point_table, np.int32)
+    point_df = pd.DataFrame(points, columns=['z', 'y', 'x'], dtype=np.int32)
+    point_df['confidence'] = np.array(confidences, np.float32)
+    point_df['kind'] = pd.Series(kinds, dtype='category')
+
+    point_ids = encode_coords_to_uint64(points)
+    point_df.index = point_ids
+    point_df.index.name = 'point_id'
+
+    partner_points = np.array(partner_table, dtype=np.int32)
+    tbar_partner_ids = encode_coords_to_uint64(partner_points[:,:3])
+    psd_partner_ids = encode_coords_to_uint64(partner_points[:,3:])
+    partner_df = pd.DataFrame({'psd_id': psd_partner_ids, 'tbar_id': tbar_partner_ids})
+    
+    return point_df, partner_df
