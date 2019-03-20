@@ -284,8 +284,15 @@ def load_synapses_as_dataframe(elements):
     confs = []
     users = []
     
+    if 'Pos' in elements[0]:
+        poscol = 'Pos'
+    if 'location' in elements[0]:
+        poscol = 'location'
+    else:
+        raise RuntimeError("Could not find either 'Pos' or 'location' in the json elements")
+    
     for e in elements:
-        x,y,z = e['Pos']
+        x,y,z = e[poscol]
         
         xs.append(x)
         ys.append(y)
