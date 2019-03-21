@@ -341,7 +341,7 @@ def fetch_labels(server, uuid, instance, coordinates_zyx, supervoxels=False, sca
     return labels
 
 
-def fetch_labels_batched(server, uuid, instance, coordinates_zyx, supervoxels=False, scale=0, batch_size=10_000, threads=0, processes=0):
+def fetch_labels_batched(server, uuid, instance, coordinates_zyx, supervoxels=False, scale=0, batch_size=10_000, threads=0, processes=0, presort=True):
     """
     Like fetch_labels, but fetches in batches, optionally multithreaded or multiprocessed.
 
@@ -350,6 +350,18 @@ def fetch_labels_batched(server, uuid, instance, coordinates_zyx, supervoxels=Fa
     assert not threads or not processes, "Choose either threads or processes (not both)"
     coords_df = pd.DataFrame(coordinates_zyx, columns=['z', 'y', 'x'], dtype=np.int32)
     coords_df['label'] = np.uint64(0)
+    
+    if presort:
+        with Timer("Pre-sorting coordinates by block index.", logger):
+            # Sort coordinates by their block index,
+            # so DVID will be able to service the requests faster.
+            coords_df['bz'] = coords_df['z'] // 64
+            coords_df['by'] = coords_df['y'] // 64
+            coords_df['bx'] = coords_df['x'] // 64
+            coords_df.sort_values(['bz', 'by', 'bx'], inplace=True)
+            del coords_df['bz']
+            del coords_df['by']
+            del coords_df['bx']
 
     fetch_batch = partial(_fetch_labels_batch, server, uuid, instance, supervoxels, scale)
 
