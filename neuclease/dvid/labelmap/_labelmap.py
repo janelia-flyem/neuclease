@@ -248,8 +248,32 @@ def fetch_supervoxel_sizes_for_body(server, uuid, instance, body_id, user=None, 
 def fetch_label(server, uuid, instance, coordinate_zyx, supervoxels=False, scale=0, *, session=None):
     """
     Fetch the label at a single coordinate.
+
+    Args:
+        server:
+            dvid server, e.g. 'emdata3:8900'
+        
+        uuid:
+            dvid uuid, e.g. 'abc9'
+        
+        instance:
+            dvid instance name, e.g. 'segmentation'
+        
+        coordinate_zyx:
+            A single coordinate ``[z,y,x]``
+        
+        supervoxels:
+            If True, read supervoxel IDs from DVID, not body IDs.
+        
+        scale:
+            Which scale of the data to read from.
+            (Your coordinates must be correspondingly scaled.)
+
+    Returns:
+        ``np.uint64``
     
-    See also: ``fetch_labels()``, ``fectch_labels_batched()``
+    See also:
+        ``fetch_labels()``, ``fectch_labels_batched()``
     """
     coord_xyz = np.array(coordinate_zyx)[::-1]
     coord_str = '_'.join(map(str, coord_xyz))
@@ -273,7 +297,32 @@ def fetch_labels(server, uuid, instance, coordinates_zyx, supervoxels=False, sca
     """
     Fetch the labels at a list of coordinates.
 
-    See also: ``fetch_label()``, ``fectch_labels_batched()``
+    Args:
+        server:
+            dvid server, e.g. 'emdata3:8900'
+        
+        uuid:
+            dvid uuid, e.g. 'abc9'
+        
+        instance:
+            dvid instance name, e.g. 'segmentation'
+        
+        coordinates_zyx:
+            array of shape (N,3) with coordinates to sample.
+            Rows must be ``[[z,y,x], [z,y,x], ...``
+        
+        supervoxels:
+            If True, read supervoxel IDs from DVID, not body IDs.
+        
+        scale:
+            Which scale of the data to read from.
+            (Your coordinates must be correspondingly scaled.)
+
+    Returns:
+        ndarray of N labels
+
+    See also:
+        ``fetch_label()``, ``fectch_labels_batched()``
     """
     coordinates_zyx = np.asarray(coordinates_zyx, np.int32)
     assert coordinates_zyx.ndim == 2 and coordinates_zyx.shape[1] == 3
