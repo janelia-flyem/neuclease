@@ -47,14 +47,14 @@ def test_load_gary_synapse_json(sample_gary_synapse_json):
     point_df, partner_df = load_gary_synapse_json(path, processes=2, batch_size=2)
 
     tbar_locations = [syn["T-bar"]["location"] for syn in sample_gary_synapse_json["data"]]
-    assert (point_df.query('kind == "tbar"')[['x', 'y', 'z']].values == tbar_locations).all().all() 
-    assert len(point_df.query('kind == "tbar"')) == 5
-    assert len(point_df.query('kind == "psd"')) == 18
+    assert (point_df.query('kind == "PreSyn"')[['x', 'y', 'z']].values == tbar_locations).all().all() 
+    assert len(point_df.query('kind == "PreSyn"')) == 5
+    assert len(point_df.query('kind == "PostSyn"')) == 18
 
     assert len(partner_df) == 18
     assert set(point_df.index) == set(partner_df.values.reshape(-1))
-    assert len(set(partner_df['tbar_id'])) == 5
-    assert len(set(partner_df['psd_id'])) == 18
+    assert len(set(partner_df['pre_id'])) == 5
+    assert len(set(partner_df['post_id'])) == 18
 
 if __name__ == "__main__":
     #from neuclease import configure_default_logging

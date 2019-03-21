@@ -1,6 +1,7 @@
 import sys
 import logging
 from itertools import chain
+from functools import partial
 
 import ujson
 import numpy as np
@@ -8,7 +9,7 @@ import pandas as pd
 
 from . import dvid_api_wrapper, fetch_generic_json
 from .voxels import fetch_volume_box
-from ..util import Grid, clipped_boxes_from_grid, round_box, tqdm_proxy, gen_json_objects, encode_coords_to_uint64, compute_parallel
+from ..util import Grid, boxes_from_grid, tqdm_proxy, gen_json_objects, encode_coords_to_uint64, compute_parallel
 
 logger = logging.getLogger(__name__)
 
@@ -259,7 +260,7 @@ def fetch_blocks(server, uuid, instance, box_zyx, *, session=None):
     return fetch_generic_json(url, session=session)
 
 
-def load_synapses_as_dataframe(elements):
+def load_synapses_as_dataframes(elements):
     """
     Load the given JSON elements as synapses a DataFrame.
     
@@ -269,10 +270,26 @@ def load_synapses_as_dataframe(elements):
             fetch_elements(), etc.
 
     Returns:
-        DataFrame with columns ['x', 'y', 'z', 'kind', 'conf', 'user']
+        point_df:
+            One row for every t-bar and psd in the file, indicating its
+            location, confidence, and synapse type (PostSyn or PreSyn)
+            Columns: ['z', 'y', 'x', 'conf', 'kind', 'user']
+            Index: np.uint64, an encoded version of [z,y,x]
+        
+        partner_df:
+            Indicates which T-bar each PSD is associated with.
+            One row for every psd in the file.
+            Columns: ['post_id', 'pre_id']
+            where the values correspond to the index of point_df.
+            Note:
+                It can generally be assumed that for the synapses we
+                load into dvid, every PSD (PostSyn) is
+                associated with exactly one T-bar (PreSyn).
     """
     if not elements:
-        return pd.DataFrame([], columns=['x', 'y', 'z', 'kind', 'conf', 'user'])
+        point_df = pd.DataFrame([], columns=['x', 'y', 'z', 'kind', 'conf', 'user'])
+        partner_df = pd.DataFrame([], columns=['post_id', 'pre_id'], dtype=np.uint64)
+        return point_df, partner_df
 
     # Accumulating separate lists for each column ought to be
     # faster than building a list-of-tuples, I think.
@@ -285,15 +302,12 @@ def load_synapses_as_dataframe(elements):
     confs = []
     users = []
     
-    if 'Pos' in elements[0]:
-        poscol = 'Pos'
-    if 'location' in elements[0]:
-        poscol = 'location'
-    else:
-        raise RuntimeError("Could not find either 'Pos' or 'location' in the json elements")
+    # Relationship coordinates
+    # [(pre_z, pre_y, pre_x, post_z, post_y, post_x), ...]
+    rel_points = []
     
     for e in elements:
-        x,y,z = e[poscol]
+        x,y,z = e['Pos']
         
         xs.append(x)
         ys.append(y)
@@ -302,27 +316,51 @@ def load_synapses_as_dataframe(elements):
         kinds.append( e['Kind'] )
         confs.append( float(e.get('Prop', {}).get('conf', 0.0)) )
         users.append( e.get('Prop', {}).get('user', '') )
+        
+        if 'Rels' in e:
+            for rel in e['Rels']:
+                rx, ry, rz = rel['To']
+                if e['Kind'] == 'PreSyn':
+                    rel_points.append( (z,y,x, rz,ry,rx) )
+                else:
+                    rel_points.append( (rz,ry,rx, z,y,x) )
 
-    df = pd.DataFrame( {'x': xs, 'y': ys, 'z': zs}, dtype=np.int32 )
-    df['kind'] = pd.Series(kinds, dtype='category')
-    df['conf'] = pd.Series(confs, dtype=np.float32)
-    df['user'] = pd.Series(users, dtype='category')
-    return df
+    point_df = pd.DataFrame( {'z': zs, 'y': ys, 'x': xs}, dtype=np.int32 )
+    point_df['kind'] = pd.Series(kinds, dtype='category')
+    point_df['conf'] = pd.Series(confs, dtype=np.float32)
+    point_df['user'] = pd.Series(users, dtype='category')
+    point_df.index = encode_coords_to_uint64(point_df[['z', 'y', 'x']].values)
+    point_df.index.name = 'point_id'
+    
+    rel_points = np.array(rel_points, np.int32)
+    pre_partner_ids = encode_coords_to_uint64(rel_points[:,:3])
+    post_partner_ids = encode_coords_to_uint64(rel_points[:,3:])
+    partner_df = pd.DataFrame({'post_id': post_partner_ids, 'pre_id': pre_partner_ids})
+    
+    # For synapses near block borders, maybe only the PreSyn or
+    # only the PostSyn happens to be in the given elements.
+    # But in most cases, both PreSyn and PostSyn are present,
+    # and therefore the relationship is probably listed twice.
+    # Drop duplicates.
+    partner_df.drop_duplicates(inplace=True)
+    
+    return point_df, partner_df
 
 
-@dvid_api_wrapper
-def fetch_synapses_in_batches(server, uuid, synapses_instance, bounding_box_zyx, batch_shape_zyx=(64,64,64000),
-                              format='json', endpoint='blocks', *, session=None): #@ReservedAssignment
+def fetch_synapses_in_batches(server, uuid, synapses_instance, bounding_box_zyx, batch_shape_zyx=(256,256,64000),
+                              format='pandas', endpoint='blocks', processes=8): #@ReservedAssignment
     """
     Fetch all synapse annotations for the given labelmap volume (or subvolume) and synapse instance.
     Box-shaped regions are queried in batches according to the given batch shape.
     Returns either the raw JSON or a pandas DataFrame.
     
-    Note: The DataFrame format discards relationship information.
+    Note:
+        On the hemibrain dataset (~70 million points),
+        this function takes ~4 minutes if you use 32 processes.
     
-    Warning: For large volumes with many synapses, the 'json' format requires a lot of RAM,
-             and is not particularly convenient to save/load.  If you don't need relationship info,
-             use the 'pandas' format.
+    Warning:
+        For large volumes with many synapses, the 'json' format requires a lot of RAM,
+        and is not particularly convenient to save/load.
     
     Args:
         server:
@@ -348,20 +386,19 @@ def fetch_synapses_in_batches(server, uuid, synapses_instance, bounding_box_zyx,
         
         format:
             Either 'json' or 'pandas'. If 'pandas, return a DataFrame.
-            Note: The DataFrame format discards relationship information.
         
         endpoint:
             Either 'blocks' (faster) or 'elements' (supported on older servers).
     
     Returns:
         If format == 'json', a list of JSON elements.
-        If format == 'pandas', a DataFrame with columns ['x', 'y', 'z', 'kind', 'conf', 'user'].
-        Note: The pandas format discards relationship information.
+        If format == 'pandas', returns two dataframes.
+        (See ``load_synapses_as_dataframes()`` for details.)
     """
     assert format in ('pandas', 'json')
     assert endpoint in ('blocks', 'elements')
     if isinstance(bounding_box_zyx, str):
-        bounding_box_zyx = fetch_volume_box(server, uuid, bounding_box_zyx, session=session)
+        bounding_box_zyx = fetch_volume_box(server, uuid, bounding_box_zyx)
     else:
         bounding_box_zyx = np.asarray(bounding_box_zyx)
         assert (bounding_box_zyx % 64 == 0).all(), "box must be block-aligned"
@@ -369,36 +406,43 @@ def fetch_synapses_in_batches(server, uuid, synapses_instance, bounding_box_zyx,
     batch_shape_zyx = np.asarray(batch_shape_zyx)
     assert (batch_shape_zyx % 64 == 0).all(), "batch shape must be block-aligned"
 
-    results = []
-    aligned_bounding_box = round_box(bounding_box_zyx, batch_shape_zyx, 'out')
-    num_batches = np.prod((aligned_bounding_box[1] - aligned_bounding_box[0]) // batch_shape_zyx)
-    
-    boxes = clipped_boxes_from_grid(bounding_box_zyx, Grid(batch_shape_zyx))
-    for box in tqdm_proxy(boxes, logger=logger, total=num_batches):
-        if endpoint == 'blocks':
-            elements = fetch_blocks(server, uuid, synapses_instance, box, session=session)
-            elements = list(chain(*elements.values()))
-        elif endpoint == 'elements':
-            elements = fetch_elements(server, uuid, synapses_instance, box, session=session)
-        else:
-            raise AssertionError("Invalid endpoint choice")
-
-        if len(elements) == 0:
-            continue
-
-        if format == 'json':
-            results.extend(elements)
-        elif format == 'pandas':
-            df = load_synapses_as_dataframe(elements)
-            if len(df) > 0:
-                results.append(df)
+    boxes = boxes_from_grid(bounding_box_zyx, Grid(batch_shape_zyx))
+    fn = partial(_fetch_synapse_batch, server, uuid, synapses_instance, format=format, endpoint=endpoint)
+    results = compute_parallel(fn, boxes, processes=processes, ordered=False, leave_progress=True)
 
     if format == 'json':
-        return results
+        return list(chain(*results))
     elif format == 'pandas':
-        return pd.concat(results)
+        point_dfs, partner_dfs = zip(*results)
+        
+        # Any zero-length dataframes might have the wrong dtypes,
+        # which would screw up the concat step.  Remove them.
+        point_dfs = filter(len, point_dfs)
+        partner_dfs = filter(len, partner_dfs)
 
-    raise AssertionError("Shouldn't get here")
+        point_df = pd.concat(point_dfs)
+        partner_df = pd.concat(partner_dfs, ignore_index=True)
+        partner_df.drop_duplicates(inplace=True)
+        return point_df, partner_df
+
+
+def _fetch_synapse_batch(server, uuid, synapses_instance, batch_box, format='json', endpoint='blocks'): # @ReservedAssignment
+    """
+    Helper for fetch_synapses_in_batches(), above.
+    """
+    if endpoint == 'blocks':
+        elements = fetch_blocks(server, uuid, synapses_instance, batch_box)
+        elements = list(chain(*elements.values()))
+    elif endpoint == 'elements':
+        elements = fetch_elements(server, uuid, synapses_instance, batch_box)
+    else:
+        raise AssertionError("Invalid endpoint choice")
+
+    if format == 'json':
+        return elements
+    elif format == 'pandas':
+        point_df, partner_df = load_synapses_as_dataframes(elements)
+        return (point_df, partner_df)
 
 
 def load_synapses_from_csv(csv_path):
@@ -420,19 +464,27 @@ def load_synapses_from_csv(csv_path):
 
 def load_synapses_from_json(json_path, batch_size=1000):
     """
-    Load the synapses to a dataframe from a JSON file.
+    Load the synapses to a dataframe from a JSON file
+    (which must have the same structure as the elements response from DVID).
     The JSON file is consumed in batches, avoiding the need
     to load the entire JSON document in RAM at once.
     """
-    results = []
+    point_dfs = []
+    partner_dfs = []
     try:
         with open(json_path, 'r') as f:
             for elements in tqdm_proxy( gen_json_objects(f, batch_size) ):
-                df = load_synapses_as_dataframe(elements)
-                results.append(df)
+                point_df, partner_df = load_synapses_as_dataframes(elements)
+                point_dfs.append(point_df)
+                partner_dfs.append(partner_df)
+                
     except KeyboardInterrupt:
-        sys.stderr.write(f"Stopping early due to KeyboardInterrupt. ({len(results)} batches completed)\n")
-    return pd.concat(results)
+        msg = f"Stopping early due to KeyboardInterrupt. ({len(point_dfs)} batches completed)\n"
+        sys.stderr.write(msg)
+
+    point_df = pd.concat(point_dfs)
+    partner_df = pd.concat(partner_dfs)
+    return point_df, partner_df
 
 
 def load_relationships(elements, kind=None):
@@ -477,7 +529,6 @@ def load_relationships(elements, kind=None):
                         }, dtype=np.int32 )
 
     df['rel'] = pd.Series(rels, dtype='category')
-
     return df
 
 
@@ -529,8 +580,11 @@ def load_gary_synapse_json(path, processes=8, batch_size=100_000):
         partner_df:
             Indicates which T-bar each PSD is associated with.
             One row for every psd in the file.
-            Columns: ['psd_id', 'tbar_id']
+            Columns: ['post_id', 'pre_id']
             where the values correspond to the index of point_df.
+            Note:
+                Gary guarantees that every PSD (PostSyn) is
+                associated with exactly 1 T-bar (PreSyn).
     """
     logger.info(f"Loading JSON data from {path}")
     with open(path, 'r') as f:
@@ -568,7 +622,7 @@ def _load_gary_synapse_data(data):
         confidence = float(syn["T-bar"]["confidence"])
         point_table.append( (tz, ty, tx) )
         confidences.append( confidence )
-        kinds.append('tbar')
+        kinds.append('PreSyn')
 
         for partner in syn["partners"]:
             px, py, pz = partner["location"]
@@ -576,12 +630,12 @@ def _load_gary_synapse_data(data):
 
             point_table.append( (pz, py, px) )
             confidences.append(confidence)
-            kinds.append('psd')
+            kinds.append('PostSyn')
             partner_table.append( (tz, ty, tx, pz, py, px) )
 
     points = np.array(point_table, np.int32)
     point_df = pd.DataFrame(points, columns=['z', 'y', 'x'], dtype=np.int32)
-    point_df['confidence'] = np.array(confidences, np.float32)
+    point_df['conf'] = np.array(confidences, np.float32)
     point_df['kind'] = pd.Series(kinds, dtype='category')
 
     point_ids = encode_coords_to_uint64(points)
@@ -591,6 +645,6 @@ def _load_gary_synapse_data(data):
     partner_points = np.array(partner_table, dtype=np.int32)
     tbar_partner_ids = encode_coords_to_uint64(partner_points[:,:3])
     psd_partner_ids = encode_coords_to_uint64(partner_points[:,3:])
-    partner_df = pd.DataFrame({'psd_id': psd_partner_ids, 'tbar_id': tbar_partner_ids})
+    partner_df = pd.DataFrame({'post_id': psd_partner_ids, 'pre_id': tbar_partner_ids})
     
     return point_df, partner_df
