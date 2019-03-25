@@ -42,6 +42,42 @@ class SparseBlockMask:
         self.nonzero_box = compute_nonzero_box(self.lowres_mask)
         self.nonzero_box += self.box[0]
 
+    @classmethod
+    def create_empty(cls, resolution, corner=[0,0,0]):
+        empty_box = np.array([corner, corner])
+        empty_mask = np.zeros((0,)*len(empty_box[0]), dtype=bool)
+        return SparseBlockMask(empty_mask, empty_box, resolution)
+
+    @classmethod
+    def create_from_lowres_coords(cls, coords_zyx, resolution):
+        """
+        Convenience constructor.
+        Create a SparseBlockMask from an array of block coordinates
+        (i.e. 'lowres' coordinates).
+        
+        Args:
+            coords_zyx:
+                ndarray, shape (N,3), indicating the 'blocks' that are masked.
+            resolution:
+                The width (or shape) of each lowres voxel in FULL-RES coordinates.
+        Returns:
+            SparseBlockMask
+        """
+        if len(coords_zyx) == 0:
+            return SparseBlockMask.create_empty(resolution)
+
+        min_coord = coords_zyx.min(axis=0)
+        max_coord = coords_zyx.max(axis=0)
+        mask_box = np.array((min_coord, 1+max_coord))
+        mask_shape = mask_box[1] - mask_box[0]
+        mask = np.zeros(mask_shape, dtype=bool)
+
+        mask_coords = coords_zyx - mask_box[0]
+        mask[(*mask_coords.transpose(),)] = True
+
+        return SparseBlockMask(mask, resolution*mask_box, resolution)
+
+    
     def change_resolution(self, new_resolution):
         """
         Without changing the mask data,
@@ -54,6 +90,7 @@ class SparseBlockMask:
         self.resolution = new_resolution
         self.box[:] *= factor
         self.nonzero_box[:] *= factor
+
 
     def get_fullres_mask(self, requested_box_fullres):
         """
