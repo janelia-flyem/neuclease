@@ -307,7 +307,7 @@ def fetch_sparsevol_coarse_via_labelindex(server, uuid, instance, labels, superv
             It may be removed in the future.
 
     Returns:
-        An array of coordinates of the form:
+        An array of coordinates (at scale 6) of the form:
     
             [[Z,Y,X],
              [Z,Y,X],
