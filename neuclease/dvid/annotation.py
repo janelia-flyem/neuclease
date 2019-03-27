@@ -46,8 +46,12 @@ def post_sync(server, uuid, instance, sync_instances, replace=False, *, session=
     r = session.post(f'http://{server}/api/node/{uuid}/{instance}/sync', json=body, params=params)
     r.raise_for_status()
 
+# Synonym
+post_annotation_sync = post_sync
+
+
 @dvid_api_wrapper
-def post_reload(server, uuid, instance, *, check=False, inmemory=True, session=None):
+def post_reload(server, uuid, instance, *, check=False, inmemory=True, session=None): # Note: See wrapper_proxies.post_reload()
     """
     Forces asynchronous recreation of its tag and label indexed denormalizations.
     Can be used to initialize a newly added instance.
@@ -88,6 +92,9 @@ def post_reload(server, uuid, instance, *, check=False, inmemory=True, session=N
     
     r = session.post(f'http://{server}/api/node/{uuid}/{instance}/reload', params=params)
     r.raise_for_status()
+
+# Synonym
+post_annotation_reload = post_reload
 
 
 @dvid_api_wrapper

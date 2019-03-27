@@ -72,6 +72,8 @@ from . import dvid_api_wrapper
 from .server import fetch_server_info
 from .repo import fetch_repo_info
 from .node import fetch_instance_info
+from .annotation import post_annotation_sync, post_annotation_reload
+
 
 @dvid_api_wrapper
 def fetch_info(server, uuid=None, instance=None, *, session=None):
@@ -89,3 +91,29 @@ def fetch_info(server, uuid=None, instance=None, *, session=None):
         return fetch_repo_info(server, uuid, session=session)
 
     return fetch_server_info(server, session=session)
+
+
+@dvid_api_wrapper
+def post_sync(server, uuid, instance, sync_instances, replace=False, *, session=None):
+    """
+    Convenience wrapper for POST .../sync, which is an endpoint that is supported by multiple instance types.
+    
+    See also:
+        - ``neuclease.dvid.annotation.post_sync()``
+        - ``neuclease.dvid.labelsz.post_sync()``
+    """
+    # It turns out that the POST .../sync arguments and options are the same for annotations and labelsz,
+    # so it doesn't actually matter which one we call.
+    post_annotation_sync(server, uuid, instance, sync_instances, replace=replace, session=session)
+
+
+@dvid_api_wrapper
+def post_reload(server, uuid, instance, *, session=None, **kwargs):
+    """
+    Convenience wrapper for both ``labelsz.post_reload()`` and ``annotation.post_reload()``
+    """
+    # Only the annotation version of post_reload() supports extra options,
+    # so if the user supplied any, they must be posting to an annotations instance.
+    # Aside from that, labelsz reload and annotation reload calls are identical,
+    # so it doesn't matter which wrapper we call.
+    post_annotation_reload(server, uuid, instance, **kwargs, session=session)
