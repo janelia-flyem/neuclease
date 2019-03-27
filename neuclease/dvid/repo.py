@@ -66,12 +66,16 @@ def create_repo(server, alias, description, *, session=None):
     return repo_uuid
 
 @dvid_api_wrapper
-def fetch_repo_info(server, uuid, *, session=None):
+def fetch_info(server, uuid, *, session=None):
     """
     Wrapper for the .../api/repo/<uuid>/info endpoint.
+
+    See also: ``neuclease.dvid.wrapper_proxies.fetch_info()``
     """
     return fetch_generic_json(f'http://{server}/api/repo/{uuid}/info', session=session)
-    
+
+# Synonym
+fetch_repo_info = fetch_info
 
 @dvid_api_wrapper
 def expand_uuid(server, uuid, repo_uuid=None, repo_info=None, *, session=None):

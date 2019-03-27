@@ -1,12 +1,16 @@
 from . import dvid_api_wrapper, fetch_generic_json
 
 @dvid_api_wrapper
-def fetch_instance_info(server, uuid, instance, *, session=None):
+def fetch_info(server, uuid, instance, *, session=None):
     """
     Returns the full JSON instance info from DVID
+
+    See also: ``neuclease.dvid.wrapper_proxies.fetch_info()``
     """
     return fetch_generic_json(f'http://{server}/api/node/{uuid}/{instance}/info', session=session)
 
+# Synonym
+fetch_instance_info = fetch_info
 
 @dvid_api_wrapper
 def post_commit(server, uuid, note, log=[], *, session=None):
