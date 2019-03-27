@@ -46,6 +46,49 @@ def post_sync(server, uuid, instance, sync_instances, replace=False, *, session=
     r = session.post(f'http://{server}/api/node/{uuid}/{instance}/sync', json=body, params=params)
     r.raise_for_status()
 
+@dvid_api_wrapper
+def post_reload(server, uuid, instance, *, check=False, inmemory=True, session=None):
+    """
+    Forces asynchronous recreation of its tag and label indexed denormalizations.
+    Can be used to initialize a newly added instance.
+    
+    Notes:
+        - This call merely triggers the reload and returns immediately.
+          For sufficiently large volumes, the reloading process on DVID will take hours.
+          The only way to determine that the reloading process has completed is to
+          monitor the dvid log file for a message that includes the
+          words ``Finished denormalization``.
+
+        - The instance will return errors for any POST request
+          while denormalization is ongoing.
+
+    Args:
+        server:
+            dvid server, e.g. 'emdata4:8900'
+        
+        uuid:
+            dvid uuid, e.g. 'abc9'
+        
+        instance:
+            dvid annotations instance name, e.g. 'synapses'
+        
+        check:
+            If True, check denormalizations, writing to log when issues
+            are detected, and only replacing denormalization when it is incorrect.
+        
+        inmemory:
+            If True, use in-memory reload, which assumes the server
+            has enough memory to hold all annotations in memory.
+    """
+    params = {}
+    if check:
+        params['check'] = "true"
+    if not inmemory:
+        params['inmemory'] = "false"
+    
+    r = session.post(f'http://{server}/api/node/{uuid}/{instance}/reload', params=params)
+    r.raise_for_status()
+
 
 @dvid_api_wrapper
 def fetch_label(server, uuid, instance, label, relationships=False, *, session=None):
