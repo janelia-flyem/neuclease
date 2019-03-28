@@ -1,4 +1,6 @@
 import logging
+from itertools import chain
+from functools import partial
 
 import numpy as np
 import pandas as pd
@@ -8,11 +10,11 @@ from dvidutils import LabelMapper
 
 from .favorites import compute_favorites, mark_favorites, extract_favorites
 from ..logging_setup import PrefixedLogger
-from ..util import Timer
+from ..util import Timer, tqdm_proxy, Grid, compute_parallel
 from ..util.box import box_to_slicing, round_box, overwrite_subvol
 from ..util.grid import boxes_from_grid
 from ..util.segmentation import contingency_table
-from ..dvid import fetch_volume_box, fetch_labelarray_voxels, fetch_mappings
+from ..dvid import fetch_volume_box, fetch_labelarray_voxels, fetch_mappings, fetch_labelmap_voxels
 
 logger = logging.getLogger(__name__)
 
@@ -466,3 +468,52 @@ def match_overlaps(left_img, right_img, min_overlap=1, min_jaccard=0.0, crossove
 
     logger.info(f"Returning {len(cc_overlap_sizes)} edges")
     return cc_overlap_sizes
+
+
+def find_severed_hotknife_bodies(server, uuid, instance, bodies, scale=2, slice_offset=8, tile_width=1024):
+    """
+    For a given subset of bodies in the hemibrain,
+    figure out which of them might be "severed" across any of the hotknife boundaries.
+    A body is presumed to be "severed" if it can be found on the left side of a hot-knife stitch,
+    but not the right side.
+    """
+    bodies = set(bodies)
+    seg_instance = (server, uuid, instance)
+    
+    scaled_full_box = fetch_volume_box(*seg_instance) // (2**scale)
+    
+    scaled_tab_boundaries = np.array(HEMIBRAIN_TAB_BOUNDARIES[1:-1]) // (2**scale)
+    scaled_slice_offset= slice_offset // (2**scale)
+    
+    left_bodies = set()
+    right_bodies = set()
+    severed_bodies = set()
+    
+    _fetch_body_ids = partial(fetch_body_ids, *seg_instance, scale=scale)
+
+    for x_hn in tqdm_proxy(scaled_tab_boundaries):
+        x_left = x_hn - scaled_slice_offset
+        x_right = x_hn + scaled_slice_offset
+    
+        left_box = scaled_full_box.copy()
+        right_box = scaled_full_box.copy()
+    
+        left_box[:,2] = (x_left, x_left+1)
+        right_box[:,2] = (x_right, x_right+1)
+
+        left_tiles = boxes_from_grid(left_box, Grid((tile_width, tile_width, 1)), clipped=True)
+        all_left_bodies = set(chain(*compute_parallel(_fetch_body_ids, left_tiles, processes=32, ordered=False)))
+        left_bodies |= (all_left_bodies & bodies)
+
+        right_tiles = boxes_from_grid(right_box, Grid((tile_width, tile_width, 1)), clipped=True)
+        all_right_bodies = set(chain(*compute_parallel(_fetch_body_ids, right_tiles, processes=32, ordered=False)))
+        right_bodies |= (all_right_bodies & bodies)
+
+        severed_bodies |= (left_bodies ^ right_bodies)
+    
+    return left_bodies, right_bodies, severed_bodies
+
+def fetch_body_ids(server, uuid, instance, box, scale):
+    tile = fetch_labelmap_voxels(server, uuid, instance, box, scale)
+    return set(pd.unique(tile.reshape(-1)))
+    
