@@ -1,5 +1,4 @@
 from .view_as_blocks import view_as_blocks
-from .util import *
 from .csv import *
 from .table import *
 from .box import *
@@ -8,3 +7,4 @@ from .sparse_block_mask import *
 from .graph import *
 from .segmentation import *
 from .downsample_with_numba import *
+from .util import *

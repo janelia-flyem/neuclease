@@ -7,7 +7,7 @@ import pytest
 import numpy as np
 from neuclease.util import (uuids_match, read_csv_header, read_csv_col, connected_components,
                             connected_components_nonconsecutive, graph_tool_available,
-                            closest_approach, upsample, is_lexsorted, lexsort_columns,
+                            closest_approach, approximate_closest_approach, upsample, is_lexsorted, lexsort_columns,
                             lexsort_inplace, gen_json_objects, ndrange, compute_parallel)
 
 def test_uuids_match():
@@ -194,7 +194,24 @@ def test_closest_approach():
     assert distance == np.inf
     point_a, point_b, distance = closest_approach(img, 99, 1)
     assert distance == np.inf
+
+
+def test_approximate_closest_approach():
+    _ = 0
     
+    img = [[[1,1,2,2,2],
+            [_,_,_,_,_],
+            [3,_,_,4,_],
+            [3,3,3,_,_],
+            [_,_,_,_,_]]]
+
+    img = np.asarray(img, np.uint32)
+    
+    point_a, point_b, distance = approximate_closest_approach(img, 2, 4, scale=1)
+    assert point_a == (0,0,2)
+    assert point_b == (0,2,3)
+    assert distance == np.sqrt(2**2 + 1**2)
+
 
 def test_upsample():
     img = [[1,2],

@@ -26,6 +26,8 @@ import numpy as np
 import pandas as pd
 from numba import jit
 
+from .downsample_with_numba import downsample_binary_3d_suppress_zero
+from .box import extract_subvol, box_intersection
 from .view_as_blocks import view_as_blocks
 
 logger = logging.getLogger(__name__)
@@ -427,7 +429,7 @@ def parse_timestamp(ts, default=DEFAULT_TIMESTAMP):
 def closest_approach(sv_vol, id_a, id_b, check_present=True):
     """
     Given a segmentation volume and two label IDs which it contains,
-    Find the two coordinates within id_a and id_b, respectively,
+    find the two coordinates within id_a and id_b, respectively,
     which mark the two objects' closest approach, i.e. where the objects
     come closest to touching, even if they don't actually touch.
     
@@ -450,7 +452,17 @@ def closest_approach(sv_vol, id_a, id_b, check_present=True):
         # IDs are identical.  Choose an arbitrary point.
         first_point = tuple(np.transpose(mask_a.nonzero())[0])
         return first_point, first_point, 0.0
-    
+
+    return closest_approach_between_masks(mask_a, mask_b)
+
+
+def closest_approach_between_masks(mask_a, mask_b):
+    """
+    Given two non-overlapping binary masks,
+    find the two coordinates within mask_a and mask_b, respectively,
+    which mark the two objects' closest approach, i.e. where the objects
+    come closest to touching, even if they don't actually touch.
+    """
     # Wrapper function just for visibility to profilers
     def vectorDistanceTransform():
         return vigra.filters.vectorDistanceTransform(mask_b.astype(np.uint32))
@@ -473,6 +485,39 @@ def closest_approach(sv_vol, id_a, id_b, check_present=True):
     point_b = tuple((point_a + to_b_vectors[point_a]).astype(np.int32))
 
     return (point_a, point_b, to_b_distances[point_a])
+
+
+def approximate_closest_approach(vol, id_a, id_b, scale=1):
+    """
+    Like closest_approach(), but first downsamples the data (for speed).
+    
+    The returned coordinates may not be precisely what closest_approach would have returned,
+    but they are still guaranteed to reside within the objects of interest.
+    """
+    mask_a = (vol == id_a)
+    mask_b = (vol == id_b)
+
+    scaled_mask_a, _ = downsample_binary_3d_suppress_zero(mask_a, (2**scale))
+    scaled_mask_b, _ = downsample_binary_3d_suppress_zero(mask_b, (2**scale))
+
+    scaled_point_a, scaled_point_b, _ = closest_approach_between_masks(scaled_mask_a, scaled_mask_b)
+
+    scaled_point_a = np.asarray(scaled_point_a)
+    scaled_point_b = np.asarray(scaled_point_b)
+
+    # Compute the full-res box that corresponds to the downsampled points
+    point_box_a = np.array([scaled_point_a, 1+scaled_point_a]) * (2**scale)
+    point_box_b = np.array([scaled_point_b, 1+scaled_point_b]) * (2**scale)
+    
+    point_box_a = box_intersection(point_box_a, [(0,0,0), vol.shape])
+    point_box_b = box_intersection(point_box_b, [(0,0,0), vol.shape])
+
+    # Select the first non-zero point in the full-res box
+    point_a = np.transpose(extract_subvol(mask_a, point_box_a).nonzero())[0] + point_box_a[0]
+    point_b = np.transpose(extract_subvol(mask_b, point_box_b).nonzero())[0] + point_box_b[0]
+
+    distance = np.linalg.norm(point_b - point_a)
+    return (tuple(point_a), tuple(point_b), distance)
 
 
 def upsample(orig_data, upsample_factor):
