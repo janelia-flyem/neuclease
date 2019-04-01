@@ -64,6 +64,9 @@ def mask_for_labels(volume, label_ids):
     else:
         flatvol = volume.copy('C').reshape(-1)
 
+    if not isinstance(label_ids, (set, pd.Index)):
+        label_ids = set(label_ids)
+
     valid_positions = pd.DataFrame(flatvol, columns=['label']).eval('label in @label_ids')
     return valid_positions.values.reshape(volume.shape)
 
@@ -79,6 +82,9 @@ def apply_mask_for_labels(volume, label_ids, inplace=False):
         flatvol = volume.reshape(-1)
     else:
         flatvol = volume.copy('C').reshape(-1)
+
+    if not isinstance(label_ids, (set, pd.Index)):
+        label_ids = set(label_ids)
 
     erase_positions = pd.DataFrame(flatvol, columns=['label']).eval('label not in @label_ids')
 
