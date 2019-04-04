@@ -11,7 +11,7 @@ from ..util import read_csv_header, Timer, swap_df_cols
 from ..util.csv import read_csv_col
 from ..merge_table import load_all_supervoxel_sizes, compute_body_sizes
 from ..dvid import fetch_keys, fetch_complete_mappings, fetch_keyvalues, fetch_labels_batched, fetch_mapping
-from ..dvid.annotation import load_synapses_from_csv
+from ..dvid.annotation import load_synapses_from_csv, body_synapse_counts
 from ..dvid.labelmap import fetch_supervoxel_fragments, fetch_labels
 
 # Load new table. Normalize.
@@ -257,31 +257,6 @@ def drop_previously_reviewed(df, previous_focused_decisions_df):
 
     keep_rows = (in_prev['side'] == 'left_only')
     return df[keep_rows.values]
-
-
-def body_synapse_counts(synapse_samples):
-    """
-    Given a DataFrame of sampled synapses (or a path to a CSV file),
-    Tally synapse totals (by kind) for each body.
-    
-    Returns:
-        DataFrame with columns: ['body', 'PreSyn', 'PostSyn'],
-        (The PreSyn/PostSyn columns are synapse counts.)
-    """
-    if isinstance(synapse_samples, str):
-        synapse_samples = pd.read_csv(synapse_samples)
-    
-    assert 'body' in synapse_samples.columns, "Samples must have a 'body' col."
-    assert 'kind' in synapse_samples.columns, "Samples must have a 'kind' col"
-    
-    synapse_samples = synapse_samples[['body', 'kind']]
-    synapse_counts = synapse_samples.pivot_table(index='body', columns='kind', aggfunc='size')
-    synapse_counts.fillna(0.0, inplace=True)
-
-    if 0 in synapse_counts.index:
-        logger.warning("*** Synapse table includes body 0 and was therefore probably generated from out-of-date data. ***")
-    
-    return synapse_counts
 
 
 def compute_focused_bodies(server, uuid, instance, synapse_samples, min_tbars, min_psds, root_sv_sizes, min_body_size, sv_classifications=None, marked_bad_bodies=None, return_table=False, kafka_msgs=None):

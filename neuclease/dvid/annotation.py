@@ -698,3 +698,28 @@ def _load_gary_synapse_data(data):
     partner_df = pd.DataFrame({'post_id': psd_partner_ids, 'pre_id': tbar_partner_ids})
     
     return point_df, partner_df
+
+
+def body_synapse_counts(synapse_samples):
+    """
+    Given a DataFrame of sampled synapses (or a path to a CSV file),
+    Tally synapse totals (by kind) for each body.
+    
+    Returns:
+        DataFrame with columns: ['PreSyn', 'PostSyn'], indexed by 'body'.
+        (The PreSyn/PostSyn columns are synapse counts.)
+    """
+    if isinstance(synapse_samples, str):
+        synapse_samples = pd.read_csv(synapse_samples)
+    
+    assert 'body' in synapse_samples.columns, "Samples must have a 'body' col."
+    assert 'kind' in synapse_samples.columns, "Samples must have a 'kind' col"
+    
+    synapse_samples = synapse_samples[['body', 'kind']]
+    synapse_counts = synapse_samples.pivot_table(index='body', columns='kind', aggfunc='size')
+    synapse_counts.fillna(0.0, inplace=True)
+
+    if 0 in synapse_counts.index:
+        logger.warning("*** Synapse table includes body 0 and was therefore probably generated from out-of-date data. ***")
+    
+    return synapse_counts
