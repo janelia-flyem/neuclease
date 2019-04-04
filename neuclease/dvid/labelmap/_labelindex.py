@@ -20,12 +20,39 @@ def fetch_labelindex(server, uuid, instance, label, format='protobuf', *, sessio
     structure that encodes all block counts into a single big DataFrame.
     (See convert_labelindex_to_pandas())
     
-    Note that selecting the 'pandas' format takes ~10x longer.
+    
+    Args:
+        server:
+            dvid server, e.g. 'emdata4:8900'
+        
+        uuid:
+            dvid uuid, e.g. 'abc9'
+        
+        instance:
+            dvid labelmap instance name, e.g. 'segmentation'
+        
+        label:
+            A body ID
+        
+        format:
+            How to return the data. Choices are:
+              - ``raw`` (raw bytes of the DVID response, i.e. the raw bytes of the protobuf structure)
+              - ``protobuf`` (A ``LabelIndex`` protobuf structure.)
+              - ``pandas`` (See description in ``convert_labelindex_to_pandas()``)
+
+            The 'pandas' format is slowest, but is most convenient to analyze.
+    
+    Returns:
+        See 'format' description.
     """
-    assert format in ('protobuf', 'pandas')
+    assert format in ('protobuf', 'pandas', 'raw')
 
     r = session.get(f'http://{server}/api/node/{uuid}/{instance}/index/{label}')
     r.raise_for_status()
+
+    if format == 'raw':
+        return r.content
+
     labelindex = LabelIndex()
     labelindex.ParseFromString(r.content)
 
