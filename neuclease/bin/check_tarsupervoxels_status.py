@@ -73,6 +73,10 @@ def main():
         print("You must provide either --kafka-timestamp or a bodies list (not both)", file=sys.stderr)
         sys.exit(1)
 
+    # Determine segmentation instance
+    info = fetch_instance_info(args.server, args.uuid, args.tsv_instance)
+    seg_instance = info["Base"]["Syncs"][0]
+    
     kafka_msgs = None
     if args.bodies_csv:
         if 'body' in read_csv_header(args.bodies_csv):
@@ -84,10 +88,6 @@ def main():
         # Validate timestamp format before fetching kafka log, which takes a while.
         parse_timestamp(args.kafka_timestamp)
 
-        # Determine segmentation instance
-        info = fetch_instance_info(args.server, args.uuid, args.tsv_instance)
-        seg_instance = info["Base"]["Syncs"][0]
-        
         kafka_msgs = read_kafka_messages(args.server, args.uuid, seg_instance)
         filtered_kafka_msgs = filter_kafka_msgs_by_timerange(kafka_msgs, min_timestamp=args.kafka_timestamp)
         
