@@ -2,6 +2,8 @@
 Example script for ingesting synapses into a DVID annotation instance
 and syncing it to a DVID segmentation instance.
 
+(See the code comments in ingest_synapses.py for more details.)
+
 Here, we assume you have already prepared a JSON file in DVID's
 expected format (see dvid's /api/help/annotation page for details),
 and you already have your segmentation loaded into a 'labelmap' instance,
@@ -42,7 +44,7 @@ def main():
     server = args.server
     uuid = args.uuid
     syn_instance = args.annotation_instance
-    seg_instance = args.segmentation_instance
+    seg_instance = args.labelmap_instance
 
     with open(args.elements_json, 'r') as f:
         elements = ujson.load(f)
@@ -93,7 +95,7 @@ def main():
     ##    which allows you to ask for the largest N bodies (by synapse count).
     ##
     ##
-    if args.labelsz:
+    if args.labelsz_instance:
         create_instance(server, uuid, args.labelsz_instance, 'labelsz')
         post_sync(server, uuid, args.labelsz_instance, [seg_instance])
         post_reload(server, uuid, args.labelsz_instance)
