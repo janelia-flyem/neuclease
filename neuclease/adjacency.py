@@ -72,11 +72,18 @@ def find_missing_adjacencies(server, uuid, instance, body, known_edges, svs=None
             unify the body).
     
     Returns:
-        (new_edges, orig_num_cc, final_num_cc),
-        Where new_edges are the new edges found via inspection of supervoxel adjacencies,
-        orig_num_cc is the number of disjoint components in the given merge graph before
-        this function runs, and final_num_cc is the number of disjoint components after
-        adding the new_edges.
+        (new_edges, orig_num_cc, final_num_cc, block_tables),
+        Where:
+            new_edges are the new edges found via inspection of supervoxel adjacencies,
+            
+            orig_num_cc is the number of disjoint components in the given merge graph before
+                this function runs,
+            
+            final_num_cc is the number of disjoint components after adding the new_edges,
+            
+            block_tables contains debug information about the adjacencies found in each
+                block of analyzed segmentation
+                
         Ideally, final_num_cc == 1, but in some cases the body's supervoxels may not be
         directly adjacent, or the adjacencies were not detected.  (See notes above.)
     """
@@ -124,7 +131,10 @@ def find_missing_adjacencies(server, uuid, instance, body, known_edges, svs=None
         searched_block_svs[(*coord_zyx,)] = block_svs
         
         # Not used in the search; only returned for debug purposes.
-        block_adj_table = _init_adj_table(coord_zyx, block_svs, cc_mapper)
+        try:
+            block_adj_table = _init_adj_table(coord_zyx, block_svs, cc_mapper)
+        except:
+            raise
 
         block_vol = fetch_block_vol(server, uuid, instance, coord_zyx, svs_set)
         if search_distance > 0:
@@ -316,11 +326,19 @@ if __name__ == "__main__":
 
     pd.set_option('display.max_columns', 10)
     
-    test_node = ('emdata3:8900', 'ef1da')
+    test_node = ('emdata4:8900', 'a0df')
     test_seg = (*test_node, 'segmentation')
-    body = 739917109
-    edges = np.load(f'/tmp/edges-{body}.npy').astype(np.uint64)
-    
-    missing_edges, orig_num_cc, final_num_cc, block_table = find_missing_adjacencies(*test_seg, body, edges, search_distance=2, connect_non_adjacent=True)
+    body = 1138501508
+
+    #edges = np.load(f'/tmp/edges-{body}.npy').astype(np.uint64)
+
+    # Find edges from scratch
+    edges, orig_num_cc, final_num_cc, block_table = \
+        find_missing_adjacencies(*test_seg, body, np.zeros((0,2), dtype=np.uint64), svs=None, search_distance=10, connect_non_adjacent=True)
+
+    # Try again, but leave out most of the edges
+    missing_edges, orig_num_cc, final_num_cc, block_table = \
+        find_missing_adjacencies(*test_seg, body, edges[:10], svs=None, search_distance=10, connect_non_adjacent=True)
+
     print(orig_num_cc, final_num_cc)
     print(block_table)
