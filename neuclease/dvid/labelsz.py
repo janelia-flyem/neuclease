@@ -24,7 +24,7 @@ def create_labelsz_instance(server, uuid, instance, *, ROI=None, session=None):
 
 
 @dvid_api_wrapper
-def fetch_count(server, uuid, instance, label, index_type, *, session=session):
+def fetch_count(server, uuid, instance, label, index_type, *, session=None):
     """
     Returns the count of the given annotation element type for the given label.
 

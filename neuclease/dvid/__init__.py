@@ -11,5 +11,6 @@ from .roi import *
 from .tarsupervoxels import *
 from .labelmap import *
 from .voxels import *
+from .labelsz import *
 
 from .wrapper_proxies import *
