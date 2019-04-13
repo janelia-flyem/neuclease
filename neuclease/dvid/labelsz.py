@@ -138,16 +138,19 @@ def fetch_threshold(server, uuid, instance, threshold, index_type, offset=0, n=1
         instance:
             dvid labelsz instance name
 
+        threshold:
+            bodies of this size or greater will be returned
+
         offset:
             Which rank to start returning labels for (0 by default)
-        
-        n:
-            The number of labels to return counts for.
         
         index_type:
             The index type may be any annotation element type ("PostSyn", "PreSyn", "Gap", "Note"),
             or the catch-all for synapses "AllSyn", or the number of voxels "Voxels".
     
+        n:
+            The number of labels to return counts for.
+        
     Returns:
         JSON. For example: ``[{ "Label": 21847,  "PreSyn": 81 }, { "Label": 23, "PreSyn": 65 }, ...]``
     """
