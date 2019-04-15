@@ -292,6 +292,104 @@ def create_labelindex(pandas_labelindex):
 
 
 @dvid_api_wrapper
+def fetch_sizes_via_labelindex(server, uuid, instance, labels, supervoxels=False, *, batch_size=None, threads=None, processes=None, session=None):
+    """
+    Equivalent to fetch_sizes(), but uses the raw /labelindex endpoint
+    to obtain the sizes, rather than requesting the sizes from dvid.
+
+    In a single thread, this will be slower than simply callying fetch_sizes(),
+    but if you have more CPU cores than DVID does (or you want to save DVID a little bit of CPU load),
+    then you can use this function, which will compute the sizes from the labelindexes without
+    requiring DVID to do it.  Perhaps this is most useful when supervoxels=True.
+    
+    The disadvantage is that DVID will have to send the entire label index to the client,
+    so the network connection will be more heavily used.
+    
+    Args:
+        server:
+            dvid server, e.g. 'emdata3:8900'
+        
+        uuid:
+            dvid uuid, e.g. 'abc9'
+        
+        instance:
+            dvid labelmap instance name, e.g. 'segmentation'
+
+        labels:
+            A label ID or a list of label IDs, which will be interpreted as either
+            body labels or supervoxel labels depending on the value of ``supervoxels``.
+        
+        supervoxels:
+            If True, interpret the given labels are supervoxel IDs, otherwise body IDs.
+            Note, if supervoxels=True in conjunction with threads (or processes),
+            there is a chance that some labelindexes will be fetched more than once
+            (if the supervoxels for a particular body happen to span across multiple batches).
+
+        batch_size:
+            If using threads or processes, the labels will be analyzed in batches.
+            This parameter specifies the size of the batches (in number of labels).
+        
+        threads:
+            Integer. If provided, use a thread pool to fetch labelindex batches in parallel.
+        
+        processes:
+            Integer. If provided, use a process pool to fetch labelindex batches in parallel.
+        
+    Returns:
+        pd.Series, indexed by label (named either 'body' or 'sv',
+        depending on the value of ``supervoxels``).
+    """
+    if batch_size is None:
+        assert threads is None and processes is None
+        return _fetch_sizes_via_labelindex(server, uuid, instance, labels, supervoxels=supervoxels, session=session)
+    
+    if threads is None and processes is None:
+        threads = 1
+    
+    batches = []
+    for batch_start in range(0, len(labels), batch_size):
+        batches.append( labels[batch_start:batch_start+batch_size] )
+    
+    f = partial(_fetch_sizes_via_labelindex, server, uuid, instance, supervoxels=supervoxels) # No session
+    batch_sizes = compute_parallel(f, batches, 1, threads, processes, ordered=False, leave_progress=True)
+    sizes = pd.concat(batch_sizes)
+    
+    return sizes.loc[labels] # re-order according to the user's input
+
+
+def _fetch_sizes_via_labelindex(server, uuid, instance, labels, supervoxels=False, *, session=None):
+    """
+    Helper for fetch_sizes_via_labelindex()
+    """
+    if supervoxels:
+        mapping = fetch_mapping(server, uuid, instance, labels)
+        bodies = pd.unique(mapping.values)
+        indices = fetch_labelindices(server, uuid, instance, bodies, format='pandas')
+        df = pd.concat([index.blocks for index in indices])
+
+        _supervoxel_set = set(labels)
+        df = df.query('sv in @_supervoxel_set')
+        sizes = df.groupby('sv')['count'].sum().astype(np.uint32)
+        sizes.name = 'size'
+        return sizes
+    else:
+        labelindices = fetch_labelindices(server, uuid, instance, labels, format='protobuf')
+
+        bodies = []
+        sizes = []
+        for index in labelindices.indices:
+            bodies.append(index.label)
+            block_sums = (sum(block_svs.counts.values()) for block_svs in index.blocks.values())
+            total_sum = sum(block_sums)
+            sizes.append(total_sum)
+        
+        bodies = np.fromiter(bodies, np.uint64)
+        sizes = pd.Series(sizes, index=bodies, dtype=np.uint32, name='size')
+        sizes.index.name = 'body'
+        return sizes
+
+
+@dvid_api_wrapper
 def fetch_sparsevol_coarse_via_labelindex(server, uuid, instance, labels, supervoxels=False, *, method='pandas', session=None):
     """
     Equivalent to fetch_sparsevol_coarse, but uses the raw /labelindex endpoint
