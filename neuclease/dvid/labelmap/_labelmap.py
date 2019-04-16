@@ -184,8 +184,35 @@ def fetch_supervoxels(server, uuid, instance, body_id, user=None, *, session=Non
 # Deprecated name
 fetch_supervoxels_for_body = fetch_supervoxels 
 
+
 @dvid_api_wrapper
 def fetch_size(server, uuid, instance, label_id, supervoxels=False, *, session=None):
+    """
+    Wrapper for DVID's /size endpoint.
+    Returns the size (voxel count) of a single body (or supervoxel)
+    which DVID obtains by reading the body's label indexes.
+    
+    Args:
+        server:
+            dvid server, e.g. 'emdata3:8900'
+        
+        uuid:
+            dvid uuid, e.g. 'abc9'
+        
+        instance:
+            dvid instance name, e.g. 'segmentation'
+        
+        label_id:
+            A single label ID to fetch size of.
+            Should be a body ID, unless supervoxels=True,
+            in which case it should be a supervoxel ID.
+        
+        supervoxels:
+            If True, interpret label_id as supervoxel ID,
+            and return a supervoxel size, not a body size.
+    Returns:
+        The voxel count of the given body/supervoxel, as an integer.
+    """
     supervoxels = str(bool(supervoxels)).lower()
     url = f'http://{server}/api/node/{uuid}/{instance}/size/{label_id}?supervoxels={supervoxels}'
     response = fetch_generic_json(url, session=session)
@@ -197,6 +224,33 @@ fetch_body_size = fetch_size
 
 @dvid_api_wrapper
 def fetch_sizes(server, uuid, instance, label_ids, supervoxels=False, *, session=None):
+    """
+    Wrapper for DVID's /sizes endpoint.
+    Returns the size (voxel count) of the given bodies (or supervoxels),
+    which DVID obtains by reading the bodies' label indexes.
+    
+    Args:
+        server:
+            dvid server, e.g. 'emdata3:8900'
+        
+        uuid:
+            dvid uuid, e.g. 'abc9'
+        
+        instance:
+            dvid instance name, e.g. 'segmentation'
+        
+        label_ids:
+            List of label IDs to fetch sizes for.
+            Should be a list of body IDs, unless supervoxels=True,
+            in which case it should be a list of supervoxel IDs.
+        
+        supervoxels:
+            If True, interpret label_ids as a list of supervoxel IDs,
+            and return supervoxel sizes, not body sizes.
+    Returns:
+        pd.Series, of the size results, in the same order as the labels passed in.
+        Indexed by label ID.
+    """
     label_ids = np.asarray(label_ids, np.uint64)
     sv_param = str(bool(supervoxels)).lower()
 
