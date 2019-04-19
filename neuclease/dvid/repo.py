@@ -414,3 +414,13 @@ def find_parent(server, uuids, dag=None):
     s.name = 'parent'
     s.index.name = 'child'
     return s
+
+
+def is_locked(server, uuid):
+    """
+    Determine whether or not the given UUID
+    is locked (via fetching the repo info).
+    """
+    repo_info = fetch_repo_info(server, uuid)
+    uuid = expand_uuid(server, uuid, repo_info=repo_info)
+    return repo_info['DAG']['Nodes'][uuid]['Locked']
