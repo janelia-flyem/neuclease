@@ -1,3 +1,9 @@
+import os
+import glob
+import tarfile
+from io import BytesIO
+from contextlib import closing
+
 import numpy as np
 import pandas as pd
 
@@ -77,15 +83,56 @@ def fetch_tarfile(server, uuid, instance, body_id, output=None, *, session=None)
     Returns:
         None, unless no output file object/path is provided,
         in which case the tarfile bytes are returned.
+    
+    See also: ``tar_to_dict()``
     """
     url = f'http://{server}/api/node/{uuid}/{instance}/tarfile/{body_id}'
     return fetch_file(url, output, session=session)
+
+
+def tar_to_dict(tar_bytes, exts=None):
+    """
+    Utility function.
+    Convert a tarfile (given as bytes) into a dict of {name: bytes}
+    Avoids a common mis-use of Python's tarfile API that could lead
+    to O(N**2) behavior when reading tarfiles with many files.
+    
+    Args:
+        tar_bytes:
+            bytes which encode a tar file.
+            The tar must have completely 'flat' structure,
+            i.e. it does not contain any directories.
+        exts:
+            Optional. Extensions of the files of interest.
+            Only files with the given extensions will be read;
+            others will be ignored.
+            If not provided, all files are read.
+    Returns:
+      dict of {filename: bytes}
+    """
+    tf = tarfile.TarFile(fileobj=BytesIO(tar_bytes))
+    members = sorted(tf.getmembers(), key=lambda m: m.name)
+
+    if exts is not None:
+        exts = [ext[1:] if ext.startswith('.') else ext for ext in exts]
+
+    data = {}
+    for member in members:
+        ext = member.name[-4:]
+        if (not exts or ext in exts) and member.size > 0:
+            data[member.name] = tf.extractfile(member).read()
+    return data
 
 
 @dvid_api_wrapper
 def post_load(server, uuid, instance, tar, *, session=None):
     """
     Load a group of supervoxel files (e.g. .drc files) into the tarsupervoxels filestore.
+
+    The given tar data should contain files named with the pattern <supervoxel-id>.<extension>,
+    where the extension matches the extension specified in the tarsupervoxels instance metadata.
+    For example:1234.drc
+    (The tarfile should contain no directories.)
 
     Args:
         server:
@@ -98,22 +145,61 @@ def post_load(server, uuid, instance, tar, *, session=None):
             dvid tarsupervoxels instance name, e.g. 'segmentation_sv_meshes'
         
         tar:
-            Tarfile contents.  Either a path to a .tar file, a (binary) file object,
-            or a bytes object with the contents of a .tar file.
-            The tarfile should contain files named with the pattern <supervoxel-id>.<extension>,
-            where the extension matches the extension specified in the tarsupervoxels instance metadata.
-            For example:1234.drc
-            (The tarfile should contain no directories.)
+            Tarfile contents.  For convenience the following types are supported:
+              - A (binary) file object (such as BytesIO)
+              - A path to a .tar file
+              - A dictionary of {name: (binary) file object} with which to construct a tarfile
+              - A dictionary of {name: path strings} with which to construct a tarfile
+
+        Examples:
+            tsv_instance = ('mydvid:8000', 'abc123', 'segmentation_sv_meshes')
+
+            # Provide a .tar file from disk:
+            subprocess.check_call('tar -cf ../supervoxel-meshes.tar 123.drc 456.drc 789.drc',
+                                  shell=True, cwd=/path/to/meshes)
+            post_load(*tsv_instance, 'supervoxel-meshes.tar')
             
-        Example:
-        
-            subprocess.check_call('tar -cf supervoxel-meshes.tar 123.drc 456.drc 789.drc', shell=True)
-            post_load('mydvid:8000', 'abc123', 'segmentation_sv_meshes', 'supervoxel-meshes.tar')
+            # Provide the .tar binary contents as a stream:
+            post_load(*tsv_instance, open('supervoxel-meshes.tar', 'rb'))
+
+            # Provide a dict of names and paths:
+            post_load(*tsv_instance, {'123.drc': '/path/to/meshes/123.drc',
+                                      '456.drc': '/path/to/meshes/456.drc'})
     """
     url = f'http://{server}/api/node/{uuid}/{instance}/load'
+    
     if isinstance(tar, str):
-        assert tar.endswith('.tar'), "Data to .../load must be a .tar file"
+        if os.path.isdir(tar):
+            paths = sorted(glob.glob(tar))
+            names = [os.path.basename(p) for p in paths]
+
+            if len(paths) == 0:
+                raise RuntimeError(f"Won't make tarfile from empty directory: {tar}")
+            exts = [os.path.splitext(p)[1] for p in paths]
+            assert len(set(exts)) == 1, \
+                f"All files in the tar must have the same extension.  Found extensions: {set(exts)}"
+            tar = dict(zip(names, paths))
+        else:
+            assert tar.endswith('.tar'), "Data to .../load must be a .tar file"
+
+    if isinstance(tar, dict):
+        tar = _create_tar_from_dict(tar)
+
     post_file(url, tar, session=session)
+
+
+def _create_tar_from_dict(d, tar_name='meshes.tar'):
+    tar_stream = BytesIO()
+    with closing(tarfile.open(tar_name, 'w', tar_stream)) as tf:
+        for (name, data) in d.items():
+            f_info = tarfile.TarInfo(name)
+            f_info.size = len(data)
+            
+            if isinstance(data, bytes):
+                tf.addfile(f_info, BytesIO(data))
+            elif isinstance(data, str):
+                tf.addfile(f_info, open(data, 'rb'))
+    return tar_stream.getbuffer()
 
 
 @dvid_api_wrapper
