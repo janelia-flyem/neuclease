@@ -19,11 +19,11 @@ build:
 
 requirements:
   build:
-    - python >=3.6,{{PY_VER}}*
+    - python >=3.6,{{ python }}*
     - setuptools
 
   run:
-    - python {{PY_VER}}*
+    - python {{ python }}*
     - requests
     - flask >=1.0
     - numpy
@@ -45,8 +45,8 @@ requirements:
 test:
   requires:
     - pytest
-    - dvid >=dvid-0.8.17
-    - libdvid-cpp >=0.3.post51
+    - dvid >=dvid-0.8.24
+    - libdvid-cpp >=0.3.post83
 
   imports:
     - neuclease
