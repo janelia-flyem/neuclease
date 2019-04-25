@@ -29,7 +29,7 @@ def make_blockwise_reducer_3d(reducer_func, nopython=True):
     Implemented according to guidelines in numba FAQ:
     http://numba.pydata.org/numba-doc/dev/user/faq.html#can-i-pass-a-function-as-an-argument-to-a-jitted-function
     """
-    @jit(nopython=nopython, cache=True)
+    @jit(nopython=nopython)
     def _reduce_blockwise_compiled(data, block_shape, data_box, reduced_box):
         _output_shape = reduced_box[1] - reduced_box[0]
         output_shape = (_output_shape[0], _output_shape[1], _output_shape[2])
