@@ -134,8 +134,8 @@ def post_extents(server, uuid, instance, box_zyx, *, session=None):
     box_zyx = np.asarray(box_zyx)
     assert box_zyx.shape == (2,3)
     
-    min_point_xyz = box_zyx[0]
-    max_point_xyz = box_zyx[1] - 1
+    min_point_xyz = box_zyx[0, ::-1]
+    max_point_xyz = box_zyx[1, ::-1] - 1
 
     extents_json = { "MinPoint": min_point_xyz.tolist(),
                      "MaxPoint": max_point_xyz.tolist() }
