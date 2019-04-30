@@ -228,7 +228,7 @@ def post_empty_meshes(server, uuid, instance='segmentation_sv_meshes', svs=[], p
     sizes = None
     if check_sizes:
         sizes = fetch_sizes(server, uuid, segmentation_instance, svs, supervoxels=True)
-        if sizes.any() > 1000:
+        if (sizes > 1000).any():
             msg = "Some of those supervoxels are large ({sizes.max()} voxels)."
             if not permit_large:
                 logger.warning(msg)
