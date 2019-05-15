@@ -58,7 +58,7 @@ def create_repo(server, alias, description, *, session=None):
     """
     info = {}
     info['alias'] = alias
-    info['desription'] = description
+    info['description'] = description
     r = session.post(f'http://{server}/api/repos', json=info)
     r.raise_for_status()
 
