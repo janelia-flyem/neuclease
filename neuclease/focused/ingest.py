@@ -296,6 +296,11 @@ def compute_focused_bodies(server, uuid, instance, synapse_samples, min_tbars, m
         min_psds = 10
 
         # old repo supervoxels (before server rebase)
+        #
+        # Note: This was taken from node 5501ae83e31247498303a159eef824d8, which is from a different repo.
+        #       But that segmentation was eventually copied to the production repo as root node a776af.
+        #       See /groups/flyem/data/scratchspace/copyseg-configs/labelmaps/hemibrain/8nm/copy-fixed-from-emdata2-to-emdata3-20180402.214505
+        #
         #root_sv_sizes_dir = '/groups/flyem/data/scratchspace/copyseg-configs/labelmaps/hemibrain/8nm/compute-8nm-extended-fixed-STATS-ONLY-20180402.192015'
         #root_sv_sizes = f'{root_sv_sizes_dir}/supervoxel-sizes.h5'
         
