@@ -1,0 +1,11 @@
+#
+# This is a conda build config file.
+#
+# For details on these settings, see:
+# https://docs.conda.io/projects/conda-build/en/latest/resources/variants.html
+
+python:
+  - 3.6
+
+pin_run_as_build:
+  python: x.x
