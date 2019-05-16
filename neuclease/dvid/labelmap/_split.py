@@ -206,7 +206,27 @@ def split_events_to_graph(events):
     return g
 
 
-def split_events_to_dataframe(events):
+def split_events_to_dataframe(events, drop_duplicates=True, sort=True):
+    """
+    Convert the SplitEvents dictionary from ``fetch_supervoxel_splits_from_dvid()``
+    into a pandas DataFrame.
+    
+    Args:
+        events:
+            SplitEvents dict, as returned by ``fetch_supervoxel_splits_from_dvid()``
+
+        drop_duplicates:
+            Drop duplicate rows in the dataframe.
+            This is only necessary because some DVID servers return duplicate events.
+            See https://github.com/janelia-flyem/dvid/issues/315
+        
+        sort:
+            Sort by the mutation ID column.
+    
+    Returns:
+        DataFrame with columns:
+        ``['uuid', 'mutid', 'old', 'remain', 'split', 'type']``
+    """
     df = pd.DataFrame(list(chain(*events.values())), columns=SplitEvent._fields)
     df['uuid'] = ''
     
@@ -216,7 +236,15 @@ def split_events_to_dataframe(events):
         i += len(table)
     
     df['uuid'] = df['uuid'].astype('category')
-    return df[['uuid'] + list(df.columns[:-1])]
+    df = df[['uuid'] + list(df.columns[:-1])]
+    
+    if drop_duplicates:
+        df = df.drop_duplicates()
+    
+    if sort:
+        df = df.sort_values('mutid')
+
+    return df.reset_index(drop=True)
 
 
 def extract_split_tree(events, sv_id):
@@ -524,4 +552,5 @@ def extract_and_render_splits(split_events, svs, display=False):
             print(r + "\n")
 
     return rendered_trees
+
 
