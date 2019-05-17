@@ -46,7 +46,7 @@ test:
   requires:
     - pytest
     - dvid >=dvid-0.8.24
-    - libdvid-cpp >=0.3.post83
+    - libdvid-cpp
 
   imports:
     - neuclease
