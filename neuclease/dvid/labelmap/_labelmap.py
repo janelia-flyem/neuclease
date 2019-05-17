@@ -1,3 +1,4 @@
+import re
 import gzip
 import logging
 from io import BytesIO
@@ -20,6 +21,7 @@ from ..rle import parse_rle_response
 
 from ._split import SplitEvent, fetch_supervoxel_splits_from_kafka
 from .labelops_pb2 import MappingOps, MappingOp
+from neuclease.dvid.server import fetch_server_info
 
 logger = logging.getLogger(__name__)
 
@@ -531,7 +533,7 @@ def fetch_mapping(server, uuid, instance, supervoxel_ids, *, session=None):
 
 
 @dvid_api_wrapper
-def fetch_mappings(server, uuid, instance, as_array=False, *, session=None):
+def fetch_mappings(server, uuid, instance, as_array=False, *, format=None, session=None): # @ReservedAssignment
     """
     Fetch the complete sv-to-label in-memory mapping table
     from DVID and return it as a numpy array or a pandas Series (indexed by sv).
@@ -548,21 +550,52 @@ def fetch_mappings(server, uuid, instance, as_array=False, *, session=None):
             If True, return the mapping as an array with shape (N,2),
             where supervoxel is the first column and body is the second.
             Otherwise, return a  pd.Series
-    
+        
+        format:
+            The format in which dvid should return the data, either 'csv' or 'binary'.
+            By default, the DVID server version is checked to see if 'binary' is supported,
+            and 'binary' is used if possible.  (The 'binary' format saves some time,
+            since there is no need to parse CSV.)
+
     Returns:
         pd.Series(index=sv, data=body), unless as_array is True
     """
-    # This takes ~30 seconds so it's nice to log it.
-    uri = f"http://{server}/api/node/{uuid}/{instance}/mappings"
-    with Timer(f"Fetching {uri}", logger):
-        r = session.get(uri)
-        r.raise_for_status()
+    if format is None:
+        # The first DVID version to support the 'binary' format is v0.8.24-15-g40b8b77
+        dvid_version = fetch_server_info(server)["DVID Version"]
+        assert dvid_version.startswith('v')
+        parts = re.split(r'[.-]', dvid_version[1:])
+        parts = parts[:4]
+        parts = tuple(int(p) for p in parts)
+        if parts >= (0, 8, 24, 15):
+            format = 'binary' # @ReservedAssignment
+        else:
+            format = 'csv' # @ReservedAssignment
 
-    with Timer(f"Parsing mapping", logger), BytesIO(r.content) as f:
-        df = pd.read_csv(f, sep=' ', header=None, names=['sv', 'body'], engine='c', dtype=np.uint64)
+    if format == 'binary':
+        # This takes ~30 seconds so it's nice to log it.
+        uri = f"http://{server}/api/node/{uuid}/{instance}/mappings?format=binary"
+        with Timer(f"Fetching {uri}", logger):
+            r = session.get(uri)
+            r.raise_for_status()
+        
+        a = np.frombuffer(r.content, np.uint64).reshape(-1,2)
+        if as_array:
+            return a
 
-    if as_array:
-        return df.values
+        df = pd.DataFrame(a, columns=['sv', 'body'])
+
+    else:
+        # This takes ~30 seconds so it's nice to log it.
+        uri = f"http://{server}/api/node/{uuid}/{instance}/mappings"
+        with Timer(f"Fetching {uri}", logger):
+            r = session.get(uri)
+            r.raise_for_status()
+    
+        with Timer(f"Parsing mapping", logger), BytesIO(r.content) as f:
+            df = pd.read_csv(f, sep=' ', header=None, names=['sv', 'body'], engine='c', dtype=np.uint64)
+            if as_array:
+                return df.values
 
     df.set_index('sv', inplace=True)
     
