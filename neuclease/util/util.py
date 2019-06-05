@@ -810,6 +810,16 @@ def tqdm_proxy(iterable=None, *, logger=None, level=logging.INFO, **kwargs):
 
         for i in tqdm_proxy(range(1000)):
             # do some stuff
+
+    Note for JupyterLab users:
+    
+        If you get errors in this function, you need to run the following commands:
+        
+            conda install -c conda-forge ipywidgets
+            jupyter nbextension enable --py widgetsnbextension
+            jupyter labextension install @jupyter-widgets/jupyterlab-manager
+        
+        ...and then reload your jupyterlab session, and restart your kernel.
     """
     assert 'file' not in kwargs, \
         "There's no reason to use this function if you are providing your own output stream"
@@ -891,6 +901,10 @@ def encode_coords_to_uint64(coords):
     """
     Encode an array of (N,3) int32 into an array of (N,) uint64,
     giving 21 bits per coord (20 bits plus a sign bit for each).
+    
+    FIXME: As it stands right now, this function doesn't work
+           properly for negative coordinates.
+           This should return int64, anyway.  
     """
     assert coords.shape[1] == 3
     
