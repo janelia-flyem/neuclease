@@ -32,8 +32,8 @@ requirements:
     - numba
     - vigra
     - nifty
-    - libdvid-cpp
-    - dvidutils
+    - libdvid-cpp >=0.3.post83
+    - dvidutils >=0.0.post81
     - tqdm
     - ujson
     - pykafka
