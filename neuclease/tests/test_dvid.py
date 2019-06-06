@@ -239,8 +239,14 @@ def test_encode_labelarray_volume():
     vol[:64,:64,:64] = 0
     vol[-64:, -64:, -64:] = 0
     
-    encoded = encode_labelarray_volume((512,1024,2048), vol)
+    encoded = encode_labelarray_volume((512,1024,2048), vol, gzip_level=0)
+    encoded2 = encode_labelarray_volume((512,1024,2048), vol, gzip_level=9)
+    assert len(encoded) > len(encoded2)
+
     inflated = DVIDNodeService.inflate_labelarray_blocks3D_from_raw(encoded, (128,128,128), (512,1024,2048))
+    assert (inflated == vol).all()
+
+    inflated = DVIDNodeService.inflate_labelarray_blocks3D_from_raw(encoded2, (128,128,128), (512,1024,2048))
     assert (inflated == vol).all()
 
 

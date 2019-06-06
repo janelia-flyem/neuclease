@@ -1130,7 +1130,7 @@ post_labelarray_voxels = post_labelmap_voxels
 
 
 @dvid_api_wrapper
-def post_labelmap_blocks(server, uuid, instance, corners_zyx, blocks, scale=0, downres=False, noindexing=False, throttle=False, *, is_raw=False, session=None):
+def post_labelmap_blocks(server, uuid, instance, corners_zyx, blocks, scale=0, downres=False, noindexing=False, throttle=False, *, is_raw=False, gzip_level=6, session=None):
     """
     Post supervoxel data to a labelmap instance, from a list of blocks.
     
@@ -1173,14 +1173,17 @@ def post_labelmap_blocks(server, uuid, instance, corners_zyx, blocks, scale=0, d
             If you have already encoded the blocks in DVID's compressed labelmap format
             (or fetched them directly from another node), you may pass them as a raw buffer,
             and set ``is_raw`` to True, and set corners_zyx to ``None``.
+
+        gzip_level:
+            The level of gzip compression to use, from 0 (no compression) to 9.
     """
     assert not downres or scale == 0, "downres option is only valid for scale 0"
 
     if is_raw:
-        assert isinstance(blocks, bytes)
+        assert isinstance(blocks, (bytes, memoryview))
         body_data = blocks
     else:
-        body_data = encode_labelarray_blocks(corners_zyx, blocks)
+        body_data = encode_labelarray_blocks(corners_zyx, blocks, gzip_level)
     
     if not body_data:
         return # No blocks
@@ -1200,7 +1203,7 @@ def post_labelmap_blocks(server, uuid, instance, corners_zyx, blocks, scale=0, d
 post_labelarray_blocks = post_labelmap_blocks
 
 
-def encode_labelarray_blocks(corners_zyx, blocks):
+def encode_labelarray_blocks(corners_zyx, blocks, gzip_level=6):
     """
     Encode a sequence of labelmap blocks to bytes, in the
     format expected by dvid's ``/blocks`` endpoint.
@@ -1219,9 +1222,12 @@ def encode_labelarray_blocks(corners_zyx, blocks):
         blocks:
             Iterable of blocks to encode.
             Each block must be 64px wide, uint64.
+        
+        gzip_level:
+            The level of gzip compression to use, from 0 (no compression) to 9.
     
     Returns:
-        bytes
+        memoryview
     """
     if not hasattr(corners_zyx, '__len__'):
         corners_zyx = list(corners_zyx)
@@ -1253,7 +1259,7 @@ def encode_labelarray_blocks(corners_zyx, blocks):
     for block in blocks:
         assert block.shape == (64,64,64)
         block = np.asarray(block, np.uint64, 'C')
-        encoded_blocks.append( gzip.compress(_encode_label_block(block)) )
+        encoded_blocks.append( gzip.compress(_encode_label_block(block), gzip_level) )
         del block
     assert len(encoded_blocks) == len(corners_xyz)
 
@@ -1269,10 +1275,21 @@ def encode_labelarray_blocks(corners_zyx, blocks):
     return body_data
 
 
-def encode_labelarray_volume(offset_zyx, volume):
+def encode_labelarray_volume(offset_zyx, volume, gzip_level=6):
     """
     Encode a uint64 volume as labelarray data, located at the given offset coordinate.
     The coordinate and volume shape must be 64-px aligned.
+
+    Args:
+        offset_zyx:
+            The upper-left coordinate of the volume to be written.
+            Must be block-aligned, in ``(z,y,x)`` order.
+
+        volume:
+            ndarray, uint64.  Must be block-aligned.
+        
+        gzip_level:
+            The level of gzip compression to use, from 0 (no compression) to 9.
     
     See ``decode_labelarray_volume()`` for the corresponding decode function.
     """
@@ -1291,10 +1308,10 @@ def encode_labelarray_volume(offset_zyx, volume):
             yield block
             del block
 
-    return encode_labelarray_blocks(corners_zyx, gen_blocks())
+    return encode_labelarray_blocks(corners_zyx, gen_blocks(), gzip_level)
 
 
-def encode_nonaligned_labelarray_volume(offset_zyx, volume):
+def encode_nonaligned_labelarray_volume(offset_zyx, volume, gzip_level=6):
     """
     Encode a uint64 volume as labelarray data, located at the given offset coordinate.
     The volume need not be aligned to 64-px blocks, but the encoded result will be
@@ -1336,7 +1353,7 @@ def encode_nonaligned_labelarray_volume(offset_zyx, volume):
     aligned_box = np.array( (full_boxes[:,0,:].min(axis=0), 
                              full_boxes[:,1,:].max(axis=0)) )
     
-    return aligned_box, encode_labelarray_blocks(full_boxes[:,0,:], gen_blocks())
+    return aligned_box, encode_labelarray_blocks(full_boxes[:,0,:], gen_blocks(), gzip_level)
     
 
 def decode_labelarray_volume(box_zyx, encoded_data):
