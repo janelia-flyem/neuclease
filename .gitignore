@@ -6,3 +6,4 @@
 .cache
 logs
 .test-data
+*.egg-info
