@@ -47,7 +47,7 @@ def main():
 
     # Ideally, we would choose the max label for the node we're writing to,
     # but the /maxlabel endpoint doesn't work for all nodes
-    # instead, we'll use the repe-wide maxlabel from the /info JSON.
+    # instead, we'll use the repo-wide maxlabel from the /info JSON.
     #maxlabel = fetch_maxlabel(args.dvid_server, args.uuid, args.labelmap_instance)
     maxlabel = fetch_instance_info(args.dvid_server, args.uuid, args.labelmap_instance)["Extended"]["MaxRepoLabel"]
     
@@ -69,6 +69,86 @@ def main():
 
 
 def overwrite_sparsevol(server, uuid, instance, new_label, sparsevol_filepath, roi_sbm, invert_roi, no_downres, logger):
+    """
+    Given a sparsevol (and an optional ROI mask), download all blocks
+    intersecting the sparsevol, and overwrite the supervoxels in each
+    block that are covered by the sparsevol (and ROI).
+    
+    Pseudo-code:
+        
+        1. Parse the sparsevol RLE data into a complete list of coordinates.
+           (Note: For large bodies, this requires a lot of RAM.)
+           
+           Results in a large array:
+           
+               [[z,y,x],
+                [z,y,x],
+                ...
+               ]
+
+        2. Append columns to the coordinate array for the block index:
+        
+               [[z,y,x,bz,by,bx],
+                [z,y,x,bz,by,bx],
+                ...
+               ]
+
+        3. Sort the coordinate array by BLOCK index (bz,by,bx).
+        
+        4. Divide the coordinates into groups, by block index.
+           Now each group of coordinates corresponds to a single
+           block that needs to be patched.
+           
+        5. For each group:
+             a. Construct a 3D mask from the coordinates in this group
+                AND the intersection of the given ROI mask (if provided).
+             b. Download the corresponding labelmap block.
+             c. Overwrite the masked voxels with new_label.
+             d. Do not post the patched block data immediately.
+                Instead, save it to a temporary queue.
+             e. If the queue has 400 blocks in it, post them all,
+                and then clear the queue.
+
+        6. After the above loop runs, clear the queue one last time.
+
+
+    Args:
+    
+        server:
+            dvid server, e.g. emdata1:8000
+
+        uuid:
+            uuid to read/write.  Must be unlocked.
+
+        instance:
+            labelmap instance to read/write blocks
+        
+        new_label:
+            The supervoxel ID to use when overwriting the voxel data.
+
+        sparsevol_filepath:
+            path to a binary file containing a sparsevol,
+            exactly as downloaded from DVID's /sparsevol endpoint.
+
+        roi_sbm:
+            Optional. An ROI mask, loaded into a SparseBlockMask object.
+        
+        invert_roi:
+            If False, only overwrite voxels that overlap the given ROI.
+            If True, only overwrite voxels that DON'T overlap the given ROI.
+            (If you don't want the ROI to be used at all, set roi_sbm=None.)
+        
+        no_downres:
+            If True, tell DVID not to update the labelmap downscale pyramids in
+            response to each block write.  In that case, you're responsible
+            for updating the downscale pyramids yourself.
+        
+        logger:
+            A Python logger object for writing misc. status messages.
+    
+    Returns:
+        The set of supervoxels that were at least partially overwritten by the new label.
+    """
     sorted_path = sparsevol_filepath + '.sorted_blocktable.npy'
     if os.path.exists(sorted_path):
         logger.info("Loading presorted sparse coordinates")
