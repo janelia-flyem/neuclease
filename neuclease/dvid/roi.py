@@ -170,7 +170,8 @@ def fetch_combined_roi_volume(server, uuid, rois, as_bool=False, box_zyx=None, *
         (combined_vol, combined_box, overlapping_pairs)
         where combined_vol is an image volume (ndarray) (resolution: scale 5),
         combined_box indicates the location of combined_vol (scale 5),
-        and overlapping_pairs
+        and overlapping_pairs indicates which ROIs overlap, and are thus not
+        completely represented in the output volume (see caveat above).
     
     Example:
     

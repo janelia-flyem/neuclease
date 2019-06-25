@@ -8,8 +8,9 @@ import numpy as np
 import pandas as pd
 
 from . import dvid_api_wrapper, fetch_generic_json
+from .node import fetch_instance_info
 from .voxels import fetch_volume_box
-from ..util import Grid, boxes_from_grid, tqdm_proxy, gen_json_objects, encode_coords_to_uint64, compute_parallel
+from ..util import Grid, boxes_from_grid, round_box, tqdm_proxy, gen_json_objects, encode_coords_to_uint64, compute_parallel
 
 logger = logging.getLogger(__name__)
 
@@ -723,3 +724,87 @@ def body_synapse_counts(synapse_samples):
         logger.warning("*** Synapse table includes body 0 and was therefore probably generated from out-of-date data. ***")
     
     return synapse_counts
+
+
+def fetch_roi_synapses(server, uuid, synapses_instance, rois, fetch_labels=False, processes=16):
+    """
+    Fetch the coordinates and (optionally) body labels for 
+    all synapses that fall within the given ROIs.
+    
+    Args:
+    
+        server:
+            DVID server, e.g. 'emdata4:8900'
+        
+        uuid:
+            DVID uuid, e.g. 'abc9'
+        
+        synapses_instance:
+            DVID synapses instance name, e.g. 'synapses'
+        
+        rois:
+            list of DVID ROI instance names, e.g. ['EB', 'FB']
+        
+        fetch_labels:
+            If True, also fetch the supervoxel and body label underneath each synapse,
+            returned in columns 'sv' and 'body'.
+        
+        processes:
+            How many parallel processes to use when fetching synapses and supervoxel labels.
+    
+    Returns:
+        pandas DataFrame with columns:
+        ``['z', 'y', 'x', 'kind', 'conf']`` and ``['sv', 'body']`` (if ``fetch_labels=True``)
+    
+    Example:
+        df = fetch_roi_synapses('emdata4:8900', '3c281', 'synapses', ['PB(L5)', 'PB(L7)'], True, 8)
+    """
+    # Late imports to avoid circular imports in dvid/__init__
+    from neuclease.dvid import fetch_combined_roi_volume, determine_point_rois, fetch_labels_batched, fetch_mapping
+    
+    # Determine name of the segmentation instance that's
+    # associated with the given synapses instance.
+    syn_info = fetch_instance_info(server, uuid, synapses_instance)
+    seg_instance = syn_info["Base"]["Syncs"][0]
+    
+    logger.info(f"Fetching mask for ROIs: {rois}")
+    # Fetch the ROI as a low-res array (scale 5, i.e. 32-px resolution)
+    roi_vol_s5, roi_box_s5, overlapping_pairs = fetch_combined_roi_volume(server, uuid, rois)
+    
+    if len(overlapping_pairs) > 0:
+        logger.warning("Some ROIs overlapped and are thus not completely represented in the output:\n"
+                       f"{overlapping_pairs}")
+    
+    # Convert to full-res box
+    roi_box = (2**5) * roi_box_s5
+    
+    # fetch_synapses_in_batches() requires a box that is 64-px-aligned
+    roi_box = round_box(roi_box, 64, 'out')
+    
+    logger.info("Fetching synapse points")
+    # points_df is a DataFrame with columns for [z,y,x]
+    points_df, _partners_df = fetch_synapses_in_batches(server, uuid, synapses_instance, roi_box, processes=processes)
+    
+    # Append a 'roi_name' column to points_df
+    logger.info("Labeling ROI for each point")
+    determine_point_rois(server, uuid, rois, points_df, roi_vol_s5, roi_box_s5)
+
+    logger.info("Discarding points that don't overlap with the roi")
+    rois = {*rois}
+    points_df = points_df.query('roi in @rois').copy()
+    
+    columns = ['z', 'y', 'x', 'kind', 'conf', 'roi_label', 'roi']
+
+    if fetch_labels:
+        logger.info("Fetching label under each point")
+        svs = fetch_labels_batched(server, uuid, seg_instance,
+                                   points_df[['z', 'y', 'x']].values,
+                                   supervoxels=True,
+                                   processes=processes)
+
+        bodies = fetch_mapping(server, uuid, seg_instance, svs)
+        points_df['sv'] = svs
+        points_df['body'] = bodies.values
+        columns += ['body', 'sv']
+    
+    return points_df[columns]
