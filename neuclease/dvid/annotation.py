@@ -7,10 +7,12 @@ import ujson
 import numpy as np
 import pandas as pd
 
+from dvidutils import LabelMapper
+
 from . import dvid_api_wrapper, fetch_generic_json
 from .node import fetch_instance_info
 from .voxels import fetch_volume_box
-from ..util import Grid, boxes_from_grid, round_box, tqdm_proxy, gen_json_objects, encode_coords_to_uint64, compute_parallel
+from ..util import Timer, Grid, boxes_from_grid, round_box, tqdm_proxy, gen_json_objects, encode_coords_to_uint64, compute_parallel
 
 logger = logging.getLogger(__name__)
 
@@ -769,7 +771,7 @@ def fetch_roi_synapses(server, uuid, synapses_instance, rois, fetch_labels=False
         df = fetch_roi_synapses('emdata4:8900', '3c281', 'synapses', ['PB(L5)', 'PB(L7)'], True, 8)
     """
     # Late imports to avoid circular imports in dvid/__init__
-    from neuclease.dvid import fetch_combined_roi_volume, determine_point_rois, fetch_labels_batched, fetch_mapping
+    from neuclease.dvid import fetch_combined_roi_volume, determine_point_rois, fetch_labels_batched, fetch_mapping, fetch_mappings
     
     # Determine name of the segmentation instance that's
     # associated with the given synapses instance.
@@ -805,15 +807,24 @@ def fetch_roi_synapses(server, uuid, synapses_instance, rois, fetch_labels=False
     columns = ['z', 'y', 'x', 'kind', 'conf', 'roi_label', 'roi']
 
     if fetch_labels:
-        logger.info("Fetching label under each point")
+        logger.info("Fetching supervoxel under each point")
         svs = fetch_labels_batched(server, uuid, seg_instance,
                                    points_df[['z', 'y', 'x']].values,
                                    supervoxels=True,
                                    processes=processes)
 
-        bodies = fetch_mapping(server, uuid, seg_instance, svs)
+        with Timer("Mapping supervoxels to bodies", logger):
+            # Arbitrary heuristic for whether to do the
+            # body-lookups on DVID or on the client.
+            if len(svs) < 100_000:
+                bodies = fetch_mapping(server, uuid, seg_instance, svs).values
+            else:
+                mapping = fetch_mappings(server, uuid, seg_instance)
+                mapper = LabelMapper(mapping.index.values, mapping.values)
+                bodies = mapper.apply(svs, True)
+
         points_df['sv'] = svs
-        points_df['body'] = bodies.values
+        points_df['body'] = bodies
         columns += ['body', 'sv']
     
     return points_df[columns]
