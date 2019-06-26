@@ -828,3 +828,67 @@ def fetch_roi_synapses(server, uuid, synapses_instance, rois, fetch_labels=False
         columns += ['body', 'sv']
     
     return points_df[columns]
+
+
+def determine_bodies_of_interest(server, uuid, synapses_instance, rois=None, min_tbars=2, min_psds=10, processes=16):
+    """
+    Determine which bodies fit the given criteria
+    for minimum synapse counts WITHIN the given ROIs.
+    
+    Note that the min_tbars and min_psds criteria are OR'd together.
+    A body need only match at least one of the criteria to be considered "of interest".
+
+    This function is just a convenience wrapper around calling
+    fetch_roi_synapses() followed by body_synapse_counts().
+
+    Args:
+        server:
+            dvid server
+        
+        uuid:
+            dvid uuid
+        
+        synapses_instance:
+            synapses annotation instance name, e.g. 'synapses'
+        
+        rois:
+            A list of ROI instance names.  If provided ONLY synapses
+            within these ROIs will be counted when determining bodies of interest.
+            If not provided, all synapses in the volume will be counted.
+
+        min_tbars:
+            All bodies with at least this many t-bars (PreSyn annotations) will be "of interest".
+    
+        min_psds:
+            All bodies with at least this many PSDs (PostSyn annotations) will be "of interest".
+        
+        processes:
+            How many parallel processes to use when fetching synapses and body labels.
+    
+    Returns:
+        Set of body IDs.
+    """
+    from neuclease.dvid import fetch_labels_batched
+    
+    with Timer("Fetching synapse points", logger):
+        if rois is None:
+            # Fetch all synapses in the volume
+            points_df, _partners_df = fetch_synapses_in_batches(server, uuid, synapses_instance, processes=processes)
+        else:
+            # Fetch only the synapses within the given ROIs
+            points_df = fetch_roi_synapses(server, uuid, synapses_instance, rois, False, processes=processes)
+
+    with Timer("Fetching body labels", logger):
+        syn_info = fetch_instance_info(server, uuid, synapses_instance)
+        seg_instance = syn_info["Base"]["Syncs"][0]
+        points_df['body'] = fetch_labels_batched( server, uuid, seg_instance,
+                                                  points_df[['z', 'y', 'x']].values,
+                                                  processes=processes )
+
+    with Timer("Aggregating body-wise synapse counts"):
+        body_synapses_df = body_synapse_counts(points_df)
+
+    body_synapses_df = body_synapses_df.query('PreSyn >= @min_tbars or PostSyn >= @min_psds')
+    return set(body_synapses_df.index)
+
+
