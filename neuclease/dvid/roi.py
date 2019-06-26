@@ -287,6 +287,9 @@ def determine_point_rois(server, uuid, rois, points_df, combined_vol=None, combi
             See fetch_combined_roi_volume()
         
         combined_box: Must be provided if combined_vol is provided.
+    
+    Returns:
+        Nothing.  points_df is modified in-place.
     """
     assert set(points_df.columns).issuperset(['x', 'y', 'z'])
     
