@@ -398,7 +398,7 @@ def load_synapses_as_dataframes(elements):
     return point_df, partner_df
 
 
-def fetch_synapses_in_batches(server, uuid, synapses_instance, bounding_box_zyx, batch_shape_zyx=(256,256,64000),
+def fetch_synapses_in_batches(server, uuid, synapses_instance, bounding_box_zyx=None, batch_shape_zyx=(256,256,64000),
                               format='pandas', endpoint='blocks', processes=8): #@ReservedAssignment
     """
     Fetch all synapse annotations for the given labelmap volume (or subvolume) and synapse instance.
@@ -427,9 +427,9 @@ def fetch_synapses_in_batches(server, uuid, synapses_instance, bounding_box_zyx,
             The bounds of the subvolume from which to fetch synapse annotations.
             Given as a pair of coordinates (start, stop), e.g. [(0,0,0), (256,1024,1024)],
             in Z,Y,X order.  It must be block-aligned.
-
-            Alternatively, a labelmap instance name can be passed here (e.g. 'segmentation'),
-            in which case the labelmap's bounding box will be fetched and used.
+            
+            If not provided, the entire bounding box of the sync'd
+            labelmap instance (e.g. 'segmentation') is used.
             
         batch_shape_zyx:
             What box shape to use for each /elements request.
@@ -448,8 +448,17 @@ def fetch_synapses_in_batches(server, uuid, synapses_instance, bounding_box_zyx,
     """
     assert format in ('pandas', 'json')
     assert endpoint in ('blocks', 'elements')
-    if isinstance(bounding_box_zyx, str):
-        bounding_box_zyx = fetch_volume_box(server, uuid, bounding_box_zyx)
+
+    if bounding_box_zyx is None or isinstance(bounding_box_zyx, str):
+        # Determine name of the segmentation instance that's
+        # associated with the given synapses instance.
+        syn_info = fetch_instance_info(server, uuid, synapses_instance)
+        seg_instance = syn_info["Base"]["Syncs"][0]
+        if isinstance(bounding_box_zyx, str):
+            assert bounding_box_zyx == seg_instance, \
+                ("The segmentation instance name you provided doesn't match the name of the sync'd instance.\n"
+                 "Please provide an explicit bounding-box.")
+        bounding_box_zyx = fetch_volume_box(server, uuid, seg_instance)
     else:
         bounding_box_zyx = np.asarray(bounding_box_zyx)
         assert (bounding_box_zyx % 64 == 0).all(), "box must be block-aligned"
