@@ -1,6 +1,7 @@
 import os
 import json
 import zlib
+import logging
 from itertools import chain
 
 import numpy as np
@@ -8,6 +9,9 @@ import pandas as pd
 
 from ..util import tqdm_proxy
 from ..dvid import fetch_mapping
+
+logger = logging.getLogger(__name__)
+
 
 EXAMPLE_ASSIGNMENT = {
   "file type":"Neu3 task list",
@@ -34,7 +38,11 @@ EXAMPLE_ASSIGNMENT = {
   ]
 }
 
-def generate_mergereview_assignment(server, uuid, instance, sv_groups, focused_bodies, output_path=None):
+##
+## See also: flyemflows.workflow.util.mergereview
+##
+
+def generate_mergereview_assignment_from_groups(server, uuid, instance, sv_groups, focused_bodies, output_path=None):
     d = os.path.dirname(output_path)
     if d:
         os.makedirs(d, exist_ok=True)
@@ -56,7 +64,8 @@ def generate_mergereview_assignment(server, uuid, instance, sv_groups, focused_b
             'original_uuid': uuid,
             'cc_index': int(cc_index),
             'supervoxel IDs': svs.tolist(),
-            'supervoxel IDs 0.5': svs_05.tolist(),
+            'supervoxel IDs 0.5': svs_05.tolist(), # legacy name
+            'boi supervoxel IDs': svs_05.tolist(), # new name (not supported by neu3 yet)
             'total_body_count': len(pd.unique(sv_bodies.loc[svs, 'body']))
         }
         tasks.append(task)
@@ -74,8 +83,11 @@ def generate_mergereview_assignment(server, uuid, instance, sv_groups, focused_b
     return assignment
 
 def generate_mergereview_assignments(server, uuid, instance, sv_groups, focused_bodies, assignment_size, output_dir, prefix='assignment-'):
+    """
+    Generate a set of merge review assignments by calling generate_mergereview_assignment_from_groups() several times.
+    """
     sv_groups_list = list(sv_groups.items())
     for i, batch_start in enumerate(tqdm_proxy(range(0, len(sv_groups), assignment_size), leave=False)):
         path = f"{output_dir}/{prefix}{i:04d}.json"
         batch_sv_groups = dict(sv_groups_list[batch_start:batch_start+assignment_size])
-        generate_mergereview_assignment(server, uuid, instance, batch_sv_groups, focused_bodies, path)
+        generate_mergereview_assignment_from_groups(server, uuid, instance, batch_sv_groups, focused_bodies, path)
