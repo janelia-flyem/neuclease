@@ -1,3 +1,4 @@
+import os
 import sys
 import logging
 from itertools import chain
@@ -830,7 +831,7 @@ def fetch_roi_synapses(server, uuid, synapses_instance, rois, fetch_labels=False
     return points_df[columns]
 
 
-def determine_bodies_of_interest(server, uuid, synapses_instance, rois=None, min_tbars=2, min_psds=10, processes=16):
+def determine_bodies_of_interest(server, uuid, synapses_instance, rois=None, min_tbars=2, min_psds=10, processes=16, *, synapse_table=None, seg_instance=None):
     """
     Determine which bodies fit the given criteria
     for minimum synapse counts WITHIN the given ROIs.
@@ -850,6 +851,8 @@ def determine_bodies_of_interest(server, uuid, synapses_instance, rois=None, min
         
         synapses_instance:
             synapses annotation instance name, e.g. 'synapses'
+            If you are providing a pre-loaded synapse_table and overriding seg_instance,
+            you can set synapses_instance=None.
         
         rois:
             A list of ROI instance names.  If provided ONLY synapses
@@ -864,23 +867,53 @@ def determine_bodies_of_interest(server, uuid, synapses_instance, rois=None, min
         
         processes:
             How many parallel processes to use when fetching synapses and body labels.
+        
+        synapse_table:
+            If you have a pre-loaded synapse table (or a path to one stored as .npy or .csv),
+            you may provide it here, in which case the synapse points won't be fetched from DVID.
+    
+        seg_instance:
+            If you want to override the segmentation instance name to use
+            (rather than inspecting the syanapse instance syncs), provide it here.
     
     Returns:
         Set of body IDs.
     """
-    from neuclease.dvid import fetch_labels_batched
+    from neuclease.dvid import fetch_labels_batched, fetch_combined_roi_volume, determine_point_rois
     
-    with Timer("Fetching synapse points", logger):
-        if rois is None:
-            # Fetch all synapses in the volume
-            points_df, _partners_df = fetch_synapses_in_batches(server, uuid, synapses_instance, processes=processes)
-        else:
-            # Fetch only the synapses within the given ROIs
-            points_df = fetch_roi_synapses(server, uuid, synapses_instance, rois, False, processes=processes)
+    if synapse_table is None:
+        with Timer("Fetching synapse points", logger):
+            if rois is None:
+                # Fetch all synapses in the volume
+                points_df, _partners_df = fetch_synapses_in_batches(server, uuid, synapses_instance, processes=processes)
+            else:
+                # Fetch only the synapses within the given ROIs
+                points_df = fetch_roi_synapses(server, uuid, synapses_instance, rois, False, processes=processes)
+    else:
+        # User provided a pre-loaded synapse table (or a path to one)
+        if isinstance(synapse_table, str):
+            with Timer(f"Loading synapse table {synapse_table}", logger):
+                _, ext = os.path.splitext(synapse_table)
+                assert ext in ('.csv', '.npy')
+                if ext == '.csv':
+                    synapse_table = load_synapses_from_csv(synapse_table)
+                elif ext == '.npy':
+                    synapse_table = pd.DataFrame(np.load(synapse_table))
+
+        assert isinstance(synapse_table, pd.DataFrame)
+        assert not ({'z', 'y', 'x', 'kind', 'conf'} - {*synapse_table.columns}), \
+            "Synapse table does not contain all expected columns"
+        
+        points_df = synapse_table
+        if rois:
+            roi_vol_s5, roi_box_s5, _ = fetch_combined_roi_volume(server, uuid, rois)
+            determine_point_rois(server, uuid, rois, points_df, roi_vol_s5, roi_box_s5)
 
     with Timer("Fetching body labels", logger):
-        syn_info = fetch_instance_info(server, uuid, synapses_instance)
-        seg_instance = syn_info["Base"]["Syncs"][0]
+        if seg_instance is None:
+            syn_info = fetch_instance_info(server, uuid, synapses_instance)
+            seg_instance = syn_info["Base"]["Syncs"][0]
+
         points_df['body'] = fetch_labels_batched( server, uuid, seg_instance,
                                                   points_df[['z', 'y', 'x']].values,
                                                   processes=processes )
