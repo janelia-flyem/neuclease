@@ -43,11 +43,18 @@ def round_coord(coord, grid_spacing, how):
     """
     Round the given coordinate up or down to the nearest grid position.
     """
-    assert how in ('down', 'up')
+    coord = np.asarray(coord)
+    assert how in ('down', 'up', 'closest')
     if how == 'down':
         return (coord // grid_spacing) * grid_spacing
     if how == 'up':
         return ((coord + grid_spacing - 1) // grid_spacing) * grid_spacing
+    if how == 'closest':
+        down = (coord // grid_spacing) * grid_spacing
+        up = ((coord + grid_spacing - 1) // grid_spacing) * grid_spacing
+        both = np.array((down, up))
+        both_diffs = np.abs(both - coord)
+        return both[np.argmin(both_diffs, axis=0), range(len(coord))]
 
 
 def round_box(box, grid_spacing, how='out'):
@@ -57,13 +64,14 @@ def round_box(box, grid_spacing, how='out'):
 
     box: (start, stop)
     grid_spacing: int or shape
-    how: One of ['out', 'in', 'down', 'up'].
+    how: One of ['out', 'in', 'down', 'up', 'closest'].
          Determines which direction the box corners are moved.
     """
     directions = { 'out':  ('down', 'up'),
                    'in':   ('up', 'down'),
                    'down': ('down', 'down'),
-                   'up':   ('up', 'up') }
+                   'up':   ('up', 'up'),
+                   'closest': ('closest', 'closest') }
 
     box = np.asarray(box)
     assert how in directions.keys()
