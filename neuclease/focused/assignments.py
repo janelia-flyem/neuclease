@@ -6,7 +6,7 @@ import ujson
 import numpy as np
 import pandas as pd
 
-from ..util import tqdm_proxy
+from ..util import tqdm_proxy, swap_df_cols
 
 def generate_focused_assignment(merge_table, output_path=None):
     """
@@ -39,6 +39,8 @@ def generate_focused_assignment(merge_table, output_path=None):
     REQUIRED_COLUMNS = ['sv_a', 'xa', 'ya', 'za', 'sv_b', 'xb', 'yb', 'zb']
     assert set(merge_table.columns).issuperset( REQUIRED_COLUMNS ), \
         "Table does not have the required columns to generate a focused proofreading assignment"
+    
+    swap_df_cols(merge_table, None, merge_table.eval('sv_a > sv_b'), ('a', 'b'))
     
     tasks = []
     for row in merge_table.itertuples():
