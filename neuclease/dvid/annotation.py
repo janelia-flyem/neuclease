@@ -909,7 +909,7 @@ def determine_bodies_of_interest(server, uuid, synapses_instance, rois=None, min
             roi_vol_s5, roi_box_s5, _ = fetch_combined_roi_volume(server, uuid, rois)
             determine_point_rois(server, uuid, rois, points_df, roi_vol_s5, roi_box_s5)
 
-    with Timer("Fetching body labels", logger):
+    with Timer("Fetching synapse body labels", logger):
         if seg_instance is None:
             syn_info = fetch_instance_info(server, uuid, synapses_instance)
             seg_instance = syn_info["Base"]["Syncs"][0]
