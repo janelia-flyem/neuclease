@@ -11,16 +11,16 @@ from dvidutils import LabelMapper
 from .favorites import compute_favorites, mark_favorites, extract_favorites
 from ..logging_setup import PrefixedLogger
 from ..util import Timer, tqdm_proxy, Grid, compute_parallel
-from ..util.box import box_to_slicing, round_box, overwrite_subvol
+from ..util.box import box_to_slicing, round_box, overwrite_subvol, round_coord
 from ..util.grid import boxes_from_grid
 from ..util.segmentation import contingency_table
-from ..dvid import fetch_volume_box, fetch_labelarray_voxels, fetch_mappings, fetch_labelmap_voxels
+from ..dvid import fetch_volume_box, fetch_labelarray_voxels, fetch_mappings, fetch_labelmap_voxels, fetch_roi
 
 logger = logging.getLogger(__name__)
 
 HEMIBRAIN_TAB_STARTS_INVERTED = {
     # These are the Y-boundaries in the original coordiante system,
-    # before rotation into the DVID coordiante system.
+    # before rotation into the DVID coordinate system.
     #
     # Source email:
     #   From: "Saalfeld, Stephan" <saalfelds@janelia.hhmi.org>
@@ -34,7 +34,7 @@ HEMIBRAIN_TAB_STARTS_INVERTED = {
     24: 4684,
     25: 7574,
     26: 10386,
-    27: 13223, # (last slice is black, sorry)
+    27: 13223, # ("last slice is black, sorry")
     28: 15938,
     29: 18532,
     30: 21198,
@@ -52,6 +52,55 @@ HEMIBRAIN_WIDTH = HEMIBRAIN_TAB_BOUNDARIES[-1] - HEMIBRAIN_TAB_BOUNDARIES[0]
 
 # (These are X coordinates)
 assert HEMIBRAIN_TAB_BOUNDARIES.tolist() == [0, 2655, 5251, 7920, 10600, 13229, 15895, 18489, 21204, 24041, 26853, 29743, 32360, 34427]
+
+
+def compute_roi_tab_divisions(server, uuid, roi):
+    """
+    Determine how the given ROI is distributed across the hemibrain tabs.
+    
+    Note:
+        In this computation, the hemibrain tab boundaries are rounded
+        to the nearest 32px boundary (since ROIs are stored at scale 5).
+        Therefore, the returned voxel counts are approximate
+        (but pretty close to accurate).
+    
+    Returns:
+        DataFrame
+    
+    Example:
+    
+        >>> compute_roi_tab_divisions('emdata4:8900', '0b0b54', 'LH')
+             tab_x  roi_blocks        voxels    roi_pct
+        tab
+        34       0     1208791  3.960966e+10  11.661226
+        33    2655     4521007  1.481444e+11  43.614225
+        32    5251     3867710  1.267371e+11  37.311859
+        31    7920      768392  2.517867e+10   7.412690
+        30   10600           0  0.000000e+00   0.000000
+        29   13229           0  0.000000e+00   0.000000
+        28   15895           0  0.000000e+00   0.000000
+        27   18489           0  0.000000e+00   0.000000
+        26   21204           0  0.000000e+00   0.000000
+        25   24041           0  0.000000e+00   0.000000
+        24   26853           0  0.000000e+00   0.000000
+        23   29743           0  0.000000e+00   0.000000
+        22   32360           0  0.000000e+00   0.000000
+    """
+    roi_coords = fetch_roi(server, uuid, roi, format='coords')
+    
+    # round tab boundaries to the nearest 32px (since that's how ROIs are defined)
+    tab_xs = round_coord(HEMIBRAIN_TAB_BOUNDARIES, 32, 'closest')
+
+    tab_stats = []
+    for (tab, left, right) in zip(range(34, 21, -1), tab_xs[:-1], tab_xs[1:]):
+        coord_count = ((roi_coords[:,2] >= (left // 32)) & (roi_coords[:,2] < (right // 32))).sum()
+        tab_stats.append((tab, coord_count, float(coord_count * 32**3)))
+
+    tab_stats_df = pd.DataFrame(tab_stats, columns=['tab', 'roi_blocks', 'voxels'])
+    tab_stats_df['roi_pct'] = 100*tab_stats_df['roi_blocks'] / len(roi_coords)
+    tab_stats_df = tab_stats_df.set_index('tab')
+    tab_stats_df.insert(0, 'tab_x', HEMIBRAIN_TAB_BOUNDARIES[:-1])
+    return tab_stats_df
 
 
 def compute_cc(img, min_component=1):
