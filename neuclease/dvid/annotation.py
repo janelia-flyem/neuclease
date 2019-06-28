@@ -877,7 +877,9 @@ def determine_bodies_of_interest(server, uuid, synapses_instance, rois=None, min
             (rather than inspecting the syanapse instance syncs), provide it here.
     
     Returns:
-        Set of body IDs.
+        pandas DataFrame, as returned by body_synapse_counts().
+        That is, DataFrame with columns: ['PreSyn', 'PostSyn'], indexed by 'body',
+        where only bodies of interest are included in the table.
     """
     from neuclease.dvid import fetch_labels_batched, fetch_combined_roi_volume, determine_point_rois
     
@@ -922,6 +924,6 @@ def determine_bodies_of_interest(server, uuid, synapses_instance, rois=None, min
         body_synapses_df = body_synapse_counts(points_df)
 
     body_synapses_df = body_synapses_df.query('PreSyn >= @min_tbars or PostSyn >= @min_psds')
-    return set(body_synapses_df.index)
+    return body_synapses_df
 
 
