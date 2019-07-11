@@ -5,6 +5,7 @@ from collections.abc import Mapping
 
 import ujson
 import numpy as np
+import pandas as pd
 import requests
 
 from ...util import tqdm_proxy
@@ -284,3 +285,22 @@ def extend_list_value(server, uuid, instance, key, new_list, *, session=None):
     if set(new_list) != set(old_list):
         logger.debug(f"Updating '{instance}/{key}' list from: {old_list} to: {new_list}")
         post_key(server, uuid, instance, key, json=new_list, session=session)
+
+
+@dvid_api_wrapper
+def fetch_body_annotations(server, uuid, instance='segmentation_annotations', *, session=None):
+    """
+    Special convenience function for reading the 'segmentation_annotations' keyvalue from DVID,
+    which is created and managed by NeuTu and maintains body status information.
+
+    Fetches ALL values from the instance, and loads them into a DataFrame, indexed by body.
+    
+    >>> annotations_df = fetch_body_annotations('emdata4:8900', '0b0b')
+    >>> traced_bodies = annotations_df.query('status == "Traced"').index
+    """
+    all_keys = fetch_keys(server, uuid, instance, session=session)
+    kvs = fetch_keyvalues(server, uuid, instance, all_keys, as_json=True, batch_size=100_000)
+    df = pd.DataFrame(list(filter(lambda v: v is not None and 'body ID' in v, kvs.values())))
+    df['body'] = df['body ID']
+    df = df.set_index('body')
+    return df
