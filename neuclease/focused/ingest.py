@@ -249,14 +249,15 @@ def drop_previously_reviewed(df, previous_focused_decisions_df):
     drop all previous decisions from the speculative set,
     regardless of review results.
     """
-    comparison_df = previous_focused_decisions_df[['id_a', 'id_b']].drop_duplicates()
-    in_prev = df[['id_a', 'id_b']].merge(comparison_df,
+    cols = [*df.columns]
+    comparison_df = previous_focused_decisions_df[['sv_a', 'sv_b']].drop_duplicates()
+    in_prev = df[['sv_a', 'sv_b']].merge(comparison_df,
                                          how='left',
-                                         on=['id_a', 'id_b'],
+                                         on=['sv_a', 'sv_b'],
                                          indicator='side')
 
     keep_rows = (in_prev['side'] == 'left_only')
-    return df[keep_rows.values]
+    return df.loc[keep_rows.values, cols]
 
 
 def compute_focused_bodies(server, uuid, instance, synapse_samples, min_tbars, min_psds, root_sv_sizes, min_body_size, sv_classifications=None, marked_bad_bodies=None, return_table=False, kafka_msgs=None):
