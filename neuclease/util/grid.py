@@ -1,4 +1,5 @@
 import numpy as np
+import pandas as pd
 
 from .util import ndrange
 from .box import box_intersection, round_box
@@ -254,3 +255,105 @@ def slabs_from_box( full_res_box, slab_depth, scale=0, scaling_policy='round-out
     slab_boxes = clipped_boxes_from_grid(scaled_input_bb_zyx, slab_grid)
     
     return slab_boxes
+
+
+
+def boxes_from_mask(mask, mask_offset=(0,0,0), grid=(64,64,64), clipped=False):
+    """
+    Given a boolean mask and a grid to overlay on it,
+    emit boxes for each grid space which contains at least
+    one nonzero voxel from the mask.
+
+    If no nonzero voxels fall within a paritcular grid space,
+    no box will be emitted for that space.
+    
+    Note:
+        The current implementation of this function works by calling
+        mask.nonzero() and creating a DataFrame from the resulting
+        coordiantes.  That will be expensive for large masks.
+        Use with caution.  In the future, a more RAM-friendly implementation
+        could be written that operates directly on the mask voxels,
+        one grid block at a time.
+    
+    Args:
+        mask:
+            3D array, will be treated as boolean.
+        
+        mask_offset:
+            The mask need not be aligned to (0,0,0).
+            Give the coordiante of the mask's first voxel here.
+        
+        grid:
+            Either a Grid, block tuple, or block width
+
+        clipped:
+            If True, reduce the size of each emitted box to minimally
+            encapsulate the coordinates that fall within it.
+            Otherwise, emit a box for the complete grid space.
+
+    Returns:
+        ndarray with shape (N, 2, 3) for N boxes.
+    """
+    assert mask.ndim == 3, \
+        f"mask must be 3D.  Your mask has shape: {mask.shape}"
+    
+    coords = np.array(mask.nonzero()).transpose()
+    coords += mask_offset
+    return boxes_from_coords(coords, grid, clipped)
+
+
+def boxes_from_coords(coords, grid, clipped=False):
+    """
+    Group the given coordinates according to a Grid,
+    and emit the set of boxes that the coordinates fall into.
+
+    If no coordinates fall within a paritcular grid space,
+    no box will be emitted for that space.
+    
+    Args:
+        coords:
+            2D array, [[z,y,x],
+                       [z,y,x],
+                       ...]
+        
+        grid:
+            Either a Grid, block tuple, or block width
+        
+        clipped:
+            If True, reduce the size of each emitted box to minimally
+            encapsulate the coordinates that fall within it.
+            Otherwise, emit a box for the complete grid space.
+    
+    Returns:
+        ndarray with shape (N, 2, 3) for N boxes.
+    """
+    coords = np.asarray(coords)
+    assert coords.ndim == 2
+    assert coords.shape[1] == 3, "This function only works for 3D coordinates"
+
+    # If necessary, auto-convert blockshape into a Grid
+    if not isinstance(grid, Grid):
+        if not hasattr(grid, '__len__'):
+            # If we were given an int, convert to isotropic blockshape
+            grid = (grid,)*coords.shape[1]
+        grid = Grid(grid)
+    
+    assert not grid.offset.any(), \
+        "Grids with offsets are not yet supported by this function."
+    
+    blocks = coords // grid.block_shape
+    
+    if not clipped:
+        blocks = pd.DataFrame(blocks).drop_duplicates().values
+        starts = (blocks * grid.block_shape)
+        stops = starts + grid.block_shape
+        return np.array((starts, stops)).transpose(1,0,2)
+    
+    table = np.concatenate((blocks, coords), axis=1)
+    df = pd.DataFrame(table, columns=['bz', 'by', 'bx', 'z', 'y', 'x'])
+    df = df.sort_values(['bz', 'by', 'bx', 'z', 'y', 'x'])
+    boxes_df = df.groupby(['bz', 'by', 'bx']).agg({'z': ['min', 'max'], 'y': ['min', 'max'], 'x': ['min', 'max']})
+    boxes_df.columns = ['z_min', 'z_max', 'y_min', 'y_max', 'x_min', 'x_max']
+    boxes_df[['z_max', 'y_max', 'x_max']] += (1,1,1)
+    boxes = boxes_df.values.reshape((-1, 3, 2)).transpose((0, 2, 1))
+    return boxes
