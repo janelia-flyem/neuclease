@@ -853,7 +853,7 @@ def fetch_sparsevol_coarse(server, uuid, instance, label_id, supervoxels=False, 
 
 def fetch_sparsevol_coarse_threaded(server, uuid, instance, labels, supervoxels=False, num_threads=2):
     """
-    Call fetch_sparsevol_coarse() for a list of threads using a ThreadPool.
+    Call fetch_sparsevol_coarse() for a list of labels using a ThreadPool.
     
     Returns:
         dict of { label: coords }
