@@ -755,7 +755,7 @@ def fetch_roi_synapses(server, uuid, synapses_instance, rois, fetch_labels=False
             DVID synapses instance name, e.g. 'synapses'
         
         rois:
-            list of DVID ROI instance names, e.g. ['EB', 'FB']
+            A single DVID ROI instance names or a list of them, e.g. 'EB' or ['EB', 'FB']
         
         fetch_labels:
             If True, also fetch the supervoxel and body label underneath each synapse,
@@ -773,6 +773,9 @@ def fetch_roi_synapses(server, uuid, synapses_instance, rois, fetch_labels=False
     """
     # Late imports to avoid circular imports in dvid/__init__
     from neuclease.dvid import fetch_combined_roi_volume, determine_point_rois, fetch_labels_batched, fetch_mapping, fetch_mappings
+
+    if isinstance(rois, str):
+        rois = [rois]
     
     # Determine name of the segmentation instance that's
     # associated with the given synapses instance.
