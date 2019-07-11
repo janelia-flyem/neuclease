@@ -15,7 +15,9 @@ logger = logging.getLogger(__name__)
 def fetch_roi(server, uuid, instance, format='ranges', *, session=None): # @ReservedAssignment
     """
     Fetch an ROI from dvid.
-    Note: This function returns coordinates (or masks, etc.) at SCALE 5.
+    
+    Note: This function returns coordinates (or masks, etc.) at SCALE 5,
+          since that the resolution at which DVID stores ROIs.
     
     Args:
         server:
@@ -35,10 +37,13 @@ def fetch_roi(server, uuid, instance, format='ranges', *, session=None): # @Rese
             If 'ranges':
                 np.ndarray, [[Z,Y,X0,X1], [Z,Y,X0,X1], ...]
                 Return the RLE block ranges as received from DVID.
+                Note: By DVID conventions, the interval [X0,X1] is inclusive,
+                      i.e. X1 is IN the range -- not one beyond the range,
+                      which would normally be the Python convention.
 
             If 'coords':
                 np.ndarray, [[Z,Y,X], [Z,Y,X], ...]
-                Expand the ranges into a list of ROI-block coordinates.
+                Expand the ranges into a list of ROI-block coordinates (scale 5).
 
             If 'mask':
                 (mask, mask_box)
@@ -185,6 +190,9 @@ def fetch_combined_roi_volume(server, uuid, rois, as_bool=False, box_zyx=None, *
         # Combine into volume
         roi_vol, box, overlaps = fetch_combined_roi_volume('emdata3:8900', '7f0c', rois, box_zyx=[(0,0,0), None])
     """
+    if isinstance(rois, str):
+        rois = [rois]
+    
     if not isinstance(rois, Mapping):
         rois = { roi : i for i,roi in enumerate(rois, start=1) }
 
