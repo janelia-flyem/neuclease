@@ -40,6 +40,7 @@ def generate_focused_assignment(merge_table, output_path=None):
     assert set(merge_table.columns).issuperset( REQUIRED_COLUMNS ), \
         "Table does not have the required columns to generate a focused proofreading assignment"
     
+    merge_table = merge_table.copy()
     swap_df_cols(merge_table, None, merge_table.eval('sv_a > sv_b'), ('a', 'b'))
     
     tasks = []
