@@ -16,19 +16,13 @@ DEFAULT_APPNAME = "neuclease"
 # FIXME: This should be eliminated or at least renamed
 DvidInstanceInfo = namedtuple("DvidInstanceInfo", "server uuid instance")
 
-def default_dvid_session(appname=None, user=None):
+def default_dvid_session(appname=DEFAULT_APPNAME, user=getpass.getuser()):
     """
     Return a default requests.Session() object that automatically appends the
     'u' and 'app' query string parameters to every request.
     The Session object is cached, so this function will return the same Session
     object if called again from the same thread with the same arguments.
     """
-    if appname is None:
-        appname = DEFAULT_APPNAME
-    
-    if user is None:
-        user = getpass.getuser()
-    
     # Technically, request sessions are not threadsafe,
     # so we keep one for each thread.
     thread_id = threading.current_thread().ident
@@ -44,18 +38,12 @@ def default_dvid_session(appname=None, user=None):
     return s
 
 
-def default_node_service(server, uuid, appname=None, user=None):
+def default_node_service(server, uuid, appname=DEFAULT_APPNAME, user=getpass.getuser()):
     """
     Return a DVIDNodeService for the given server and uuid.
     The object is cached, so this function will return the same service
     object if called again from the same thread with the same arguments.
     """
-    if appname is None:
-        appname = DEFAULT_APPNAME
-
-    if user is None:
-        user = getpass.getuser()
-
     # One per thread/process
     thread_id = threading.current_thread().ident
     pid = os.getpid()
