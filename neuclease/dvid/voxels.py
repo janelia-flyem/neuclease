@@ -114,6 +114,28 @@ def fetch_volume_box(server, uuid, instance, *, session=None):
 
 
 @dvid_api_wrapper
+def post_resolution(server, uuid, instance, resolution, *, session=None):
+    """
+    Sets the resolution for the image volume.
+    
+    Args:
+        server, uuid, instance:
+            Refer to a voxels-like instance, e.g. uint8blk, labelmap, etc.
+        
+        resolution:
+            For example: [8.0,  8.0, 8.0]
+            
+            Note:
+                Following the python conventions used everywhere in this library,
+                the resolution should be passed in ZYX order!
+    """
+    resolution = np.asarray(resolution).tolist()
+    assert len(resolution) == 3
+    r = session.post(f'http://{server}/api/node/{uuid}/{instance}/resolution', json=resolution[::-1])
+    r.raise_for_status()
+
+
+@dvid_api_wrapper
 def post_extents(server, uuid, instance, box_zyx, *, session=None):
     """
     Post new volume extents for the given instance.

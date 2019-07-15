@@ -12,6 +12,15 @@ def fetch_info(server, uuid, instance, *, session=None):
 # Synonym
 fetch_instance_info = fetch_info
 
+
+@dvid_api_wrapper
+def post_info(server, uuid, instance, info, *, session=None):
+    """
+    Replace the instance info.  Use with caution. 
+    """
+    r = session.post(f'http://{server}/api/node/{uuid}/{instance}/info', json=info)
+    r.raise_for_status()
+
 @dvid_api_wrapper
 def post_commit(server, uuid, note, log=[], *, session=None):
     """
