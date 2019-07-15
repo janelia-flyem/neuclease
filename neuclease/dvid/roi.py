@@ -294,7 +294,8 @@ def determine_point_rois(server, uuid, rois, points_df, combined_vol=None, combi
             you can provide it here as an optimization.
             See fetch_combined_roi_volume()
         
-        combined_box: Must be provided if combined_vol is provided.
+        combined_box:
+            Must be provided if combined_vol is provided.
     
     Returns:
         Nothing.  points_df is modified in-place.
