@@ -8,3 +8,4 @@ from .graph import *
 from .segmentation import *
 from .downsample_with_numba import *
 from .util import *
+from .skeleton import *
