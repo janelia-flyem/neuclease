@@ -1,8 +1,8 @@
 import numpy as np
 import pandas as pd
 
-from .util import ndrange
-from .box import box_intersection, round_box
+from .util import ndrange, tqdm_proxy, compute_parallel
+from .box import box_intersection, round_box, overwrite_subvol
 
 class Grid:
     """
@@ -357,3 +357,104 @@ def boxes_from_coords(coords, grid, clipped=False):
     boxes_df[['z_max', 'y_max', 'x_max']] += (1,1,1)
     boxes = boxes_df.values.reshape((-1, 3, 2)).transpose((0, 2, 1))
     return boxes
+
+
+def _fetch_volume_in_chunks_singlethreaded(bounding_box, grid, fetch_fn):
+    """
+    Fetch a large volume, one chunk at a time.
+    
+    Args:
+        bounding_box:
+            The location of the voxels to fetch
+        
+        grid:
+            The chunking scheme
+        
+        fetch_fn:
+            The function to use to fetch each chunk.
+            Should have signature:
+            
+                subvol = fetch_fn(box)
+    
+    Returns:
+        ndarray, shaped according to bounding box stop - start
+    """
+    # Initialize volume after the first fetch, to determine dtype
+    vol = None
+    shape = bounding_box[1] - bounding_box[0]
+
+    for box in tqdm_proxy(boxes_from_grid(bounding_box, grid, clipped=True)):
+        subvol = fetch_fn(box)
+        if vol is None:
+            vol = np.zeros(shape, subvol.dtype)
+        overwrite_subvol(vol, box - bounding_box[0], subvol)
+
+    return vol
+
+
+def fetch_volume_in_chunks(bounding_box, grid, fetch_fn, threads=0, dtype=None):
+    """
+    Fetch a large volume in chunks, and return the assembled result.
+    The chunks can optionally be fetched in parallel, via a threadpool.
+    
+    Args:
+        bounding_box:
+            The location of the voxels to fetch
+        
+        grid:
+            The chunking scheme
+        
+        fetch_fn:
+            The function to use to fetch each chunk.
+            Should have signature:
+            
+                subvol = fetch_fn(box)
+        
+        threads:
+            If nonzero, fetch chunks in parallel, using a threadpool.
+            For completely synchronous operation (no threadpool), use threads=0.
+        
+        dtype:
+            Optional. If you know the dtype of the volume,
+            you can pass it here as a tiny optimization.
+            Otherwise, the first chunk is fetched before
+            the threadpool is started, to determine the dtype.
+    
+    Returns:
+        ndarray, shaped according to bounding box (stop - start)
+    """
+    if threads == 0:
+        return _fetch_volume_in_chunks_singlethreaded(bounding_box, grid, fetch_fn)
+    
+    shape = bounding_box[1] - bounding_box[0]
+    
+    boxes = boxes_from_grid(bounding_box, grid, clipped=True)
+    num_boxes = len(boxes)
+    prog_start = 0
+    boxes = iter(boxes)
+    
+    # If the user provided a dtype, allocate the volume right away.
+    # Otherwise, fetch the first subvol before the threadpool starts,
+    # just to determine the dtype.
+    if dtype is not None:
+        vol = np.empty(shape, dtype)
+    else:
+        box = next(boxes)
+        prog_start = 1
+        subvol = fetch_fn(box)
+        dtype = subvol.dtype
+        vol = np.empty(shape, dtype)
+        overwrite_subvol(vol, box - bounding_box[0], subvol)
+
+    def fetch_and_overwrite(box):
+        subvol = fetch_fn(box)
+        overwrite_subvol(vol, box - bounding_box[0], subvol)
+    
+    compute_parallel( fetch_and_overwrite,
+                      boxes,
+                      threads=threads,
+                      ordered=False,
+                      leave_progress=True,
+                      total=num_boxes,
+                      initial=prog_start )
+    return vol
