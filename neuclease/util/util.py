@@ -331,7 +331,7 @@ def iter_batches(it, batch_size):
                 yield batch
 
 
-def compute_parallel(func, iterable, chunksize=1, threads=None, processes=None, ordered=True, leave_progress=False):
+def compute_parallel(func, iterable, chunksize=1, threads=None, processes=None, ordered=True, leave_progress=False, total=None, initial=0):
     """
     Use the given function to process the given iterable in a ThreadPool or process Pool,
     showing progress using tqdm.
@@ -360,6 +360,13 @@ def compute_parallel(func, iterable, chunksize=1, threads=None, processes=None, 
             meaning that some results will be presented out-of-order,
             depending on how long they took to complete relative to the
             other items in the pool.
+        
+        total:
+            Optional. Specify the total number of tasks, for progress reporting.
+            Not necessary if your iterable defines __len__.
+        
+        initial:
+            Optional. Specify a starting value for the progress bar.
     """
     assert bool(threads) ^ bool(processes), \
         "Specify either threads or processes (not both)"
@@ -369,8 +376,7 @@ def compute_parallel(func, iterable, chunksize=1, threads=None, processes=None, 
     elif processes:
         pool = Pool(processes)
 
-    total = None
-    if hasattr(iterable, '__len__'):
+    if total is None and hasattr(iterable, '__len__'):
         total = len(iterable)
 
     with pool:
@@ -378,7 +384,7 @@ def compute_parallel(func, iterable, chunksize=1, threads=None, processes=None, 
             items = pool.imap(func, iterable, chunksize)
         else:
             items = pool.imap_unordered(func, iterable, chunksize)
-        items_progress = tqdm_proxy(items, total=total, leave=leave_progress)
+        items_progress = tqdm_proxy(items, initial=initial, total=total, leave=leave_progress)
         items = list(items_progress)
         items_progress.close()
         return items
