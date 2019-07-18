@@ -380,7 +380,9 @@ def load_synapses_as_dataframes(elements):
                     rel_points.append( (rz,ry,rx, z,y,x) )
 
     point_df = pd.DataFrame( {'z': zs, 'y': ys, 'x': xs}, dtype=np.int32 )
-    point_df['kind'] = pd.Series(kinds, dtype='category')
+
+    kind_dtype = pd.CategoricalDtype(categories=["PreSyn", "PostSyn"], ordered=False)
+    point_df['kind'] = pd.Series(kinds, dtype=kind_dtype)
     point_df['conf'] = pd.Series(confs, dtype=np.float32)
     point_df['user'] = pd.Series(users, dtype='category')
     point_df.index = encode_coords_to_uint64(point_df[['z', 'y', 'x']].values)
@@ -415,6 +417,9 @@ def fetch_synapses_in_batches(server, uuid, synapses_instance, bounding_box_zyx=
     Warning:
         For large volumes with many synapses, the 'json' format requires a lot of RAM,
         and is not particularly convenient to save/load.
+    
+    See also:
+        ``save_synapses_npy()``, ``load_synapses_npy()``
     
     Args:
         server:
@@ -484,6 +489,11 @@ def fetch_synapses_in_batches(server, uuid, synapses_instance, bounding_box_zyx=
         partner_dfs = filter(len, partner_dfs)
 
         point_df = pd.concat(point_dfs)
+        
+        # Make sure user and kind are Categorical
+        point_df['kind'] = point_df['kind'].astype("category")
+        point_df['user'] = point_df['user'].astype("category")
+        
         partner_df = pd.concat(partner_dfs, ignore_index=True)
         partner_df.drop_duplicates(inplace=True)
         return point_df, partner_df
@@ -508,9 +518,65 @@ def _fetch_synapse_batch(server, uuid, synapses_instance, batch_box, format='jso
         return (point_df, partner_df)
 
 
-def load_synapses_from_csv(csv_path):
+def save_synapses_npy(synapse_point_df, npy_path, index=False):
     """
-    Convenience function for reading saved synapse table as CSV with the proper dtypes.
+    Save the given synapse point DataFrame to a .npy file,
+    with careful handling of strings to avoid creating any
+    pickled objects (which are annoying to load).
+    """
+    dtypes = {}
+    
+    # Avoid 'pickle' objects (harder to load) by converting
+    # categories/strings to fixed-width strings
+    max_kind = synapse_point_df['kind'].map(len).astype(int).max()
+    dtypes['kind'] = f'U{max_kind}'
+    
+    if 'user' in synapse_point_df:
+        max_user = synapse_point_df['user'].map(len).astype(int).max()
+        dtypes['user'] = f'U{max_user}'
+    
+    np.save(npy_path, synapse_point_df.to_records(index=index, column_dtypes=dtypes))
+
+
+def load_synapses_npy(npy_path):
+    """
+    Load the given .npy file as a synapse point DataFrame,
+    with special handling of the string columns to use
+    categorical dtypes (saves RAM). 
+    """
+    records = np.load(npy_path)
+    
+    df = pd.DataFrame(records[['z','y','x','conf']])
+    if 'point_id' in records.dtype.names:
+        df.index = records['point_id']
+
+    df['kind'] = pd.Series(records['kind'], dtype='category')
+    if 'user' in records.dtype.names:
+        df['user'] = pd.Series(records['user'], dtype='category')
+
+    return df
+
+
+def save_synapses_csv(synapse_point_df, csv_path, index=False):
+    """
+    Save the given synapse points table to CSV.
+    
+    Note:
+        Usually it's more efficient to read/write .npy files.
+        See ``save_synapses_npy()``.
+    """
+    synapse_point_df.to_csv(csv_path, header=True, index=index)
+
+
+def load_synapses_csv(csv_path):
+    """
+    Convenience function for reading saved synapse
+    table from CSV with the proper dtypes.
+
+    Note:
+        Usually it's more efficient to read/write .npy files.
+        See ``load_synapses_npy()``.
+
     """
     dtype = { 'x': np.int32,
               'y': np.int32,
@@ -523,6 +589,27 @@ def load_synapses_from_csv(csv_path):
               'sv': np.uint64 }
 
     return pd.read_csv(csv_path, header=0, dtype=dtype)
+
+
+def load_synapses(path):
+    """
+    Load synapse points from the given file path.
+    """
+    if isinstance(path, pd.DataFrame):
+        return path
+
+    assert isinstance(path, str)
+    _, ext = os.path.splitext(path)
+    assert ext in ('.csv', '.npy', '.json')
+
+    if ext == '.csv':
+        points_df = load_synapses_csv(path)
+    elif ext == '.npy':
+        points_df = load_synapses_npy(path)
+    elif ext == '.json':
+        points_df, _partner_df = load_synapses_from_json()
+    
+    return points_df
 
 
 def load_synapses_from_json(json_path, batch_size=1000):
@@ -901,9 +988,9 @@ def determine_bodies_of_interest(server, uuid, synapses_instance, rois=None, min
                 _, ext = os.path.splitext(synapse_table)
                 assert ext in ('.csv', '.npy')
                 if ext == '.csv':
-                    synapse_table = load_synapses_from_csv(synapse_table)
+                    synapse_table = load_synapses_csv(synapse_table)
                 elif ext == '.npy':
-                    synapse_table = pd.DataFrame(np.load(synapse_table))
+                    synapse_table = load_synapses_npy(synapse_table)
 
         assert isinstance(synapse_table, pd.DataFrame)
         assert not ({'z', 'y', 'x', 'kind', 'conf'} - {*synapse_table.columns}), \

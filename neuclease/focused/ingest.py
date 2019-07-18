@@ -11,7 +11,7 @@ from ..util import read_csv_header, Timer, swap_df_cols
 from ..util.csv import read_csv_col
 from ..merge_table import load_all_supervoxel_sizes, compute_body_sizes
 from ..dvid import fetch_keys, fetch_complete_mappings, fetch_keyvalues, fetch_labels_batched, fetch_mapping
-from ..dvid.annotation import load_synapses_from_csv, body_synapse_counts
+from ..dvid.annotation import load_synapses, body_synapse_counts
 from ..dvid.labelmap import fetch_supervoxel_fragments, fetch_labels
 
 # Load new table. Normalize.
@@ -50,7 +50,7 @@ def update_synapse_table(server, uuid, instance, synapse_df, output_path=None, s
     seg_info = (server, uuid, instance)
     
     if isinstance(synapse_df, str):
-        synapse_df = load_synapses_from_csv(synapse_df)
+        synapse_df = load_synapses(synapse_df)
 
     # Get the set of all retired supervoxel IDs
     _leaves, _retired = fetch_supervoxel_fragments(*seg_info, split_source)
@@ -380,7 +380,7 @@ def compute_focused_bodies(server, uuid, instance, synapse_samples, min_tbars, m
     ## Synapses
     ##
     if isinstance(synapse_samples, str):
-        synapse_samples = load_synapses_from_csv(synapse_samples)
+        synapse_samples = load_synapses(synapse_samples)
 
     assert set(['sv', 'body']).intersection(set(synapse_samples.columns)), \
         "synapse samples must have either 'body' or 'sv' column"

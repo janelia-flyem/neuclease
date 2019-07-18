@@ -12,7 +12,7 @@ import pandas as pd
 
 from neuclease import configure_default_logging
 from neuclease.util import box_to_slicing
-from neuclease.dvid import fetch_roi, load_synapses_from_csv
+from neuclease.dvid import fetch_roi, load_synapses
 
 logger = logging.getLogger(__name__)
 
@@ -30,11 +30,7 @@ def main():
     assert syn_ext in ('.npy', '.csv')
 
     logging.info(f"Reading {args.synapse_table}")
-    if syn_ext == '.npy':
-        synapse_df = pd.DataFrame(np.load(args.synapse_table))
-    elif syn_ext == '.csv':
-        synapse_df = pd.DataFrame(load_synapses_from_csv(args.synapse_table))
-    
+    synapse_df = load_synapses(args.synapse_table)
     check_in_rois(args.server, args.uuid, synapse_df, args.rois)
     
     logging.info("DONE")
