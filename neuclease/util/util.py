@@ -585,7 +585,7 @@ def extract_labels_from_volume(points_df, volume, box_zyx=None, vol_scale=0, lab
 
             Must be either:
             - a mapping of `{ label_id: name }` (or `{ name : label_id }`),
-              indicating each ROI's label ID in the output image, or
+              indicating each label ID in the output image, or
             - a list label names in which case the mapping is determined automatically
               by enumerating the labels in the given order (starting at 1).
     
@@ -605,7 +605,7 @@ def extract_labels_from_volume(points_df, volume, box_zyx=None, vol_scale=0, lab
     q = 'z >= @min_z and y >= @min_y and x >= @min_x and z < @max_z and y < @max_y and x < @max_x'
     downsampled_coords_zyx.query(q, inplace=True)
 
-    logger.info(f"Extracting {len(downsampled_coords_zyx)} ROI index values")
+    logger.info(f"Extracting labels from volume at {len(downsampled_coords_zyx)} points")
     points_df['label'] = 0
     downsampled_coords_zyx -= box_zyx[0]
     points_df.loc[downsampled_coords_zyx.index, 'label'] = volume[tuple(downsampled_coords_zyx.values.transpose())]
