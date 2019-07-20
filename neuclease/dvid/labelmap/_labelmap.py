@@ -427,13 +427,14 @@ def fetch_labels_batched(server, uuid, instance, coordinates_zyx, supervoxels=Fa
         batch_df = coords_df.iloc[batch_start:batch_stop].copy()
         batch_dfs.append(batch_df)
 
-    batch_starts = list(range(0, len(coords_df), batch_size))
-    if threads <= 1 and processes <= 1:
-        batch_result_dfs = map(fetch_batch, batch_dfs)
-        batch_result_dfs = tqdm_proxy(batch_result_dfs, total=len(batch_starts), leave=False, logger=logger)
-        batch_result_dfs = list(batch_result_dfs)
-    else:
-        batch_result_dfs = compute_parallel(fetch_batch, batch_dfs, 1, threads, processes, ordered=False, leave_progress=False)
+    with Timer("Fetching labels from DVID", logger):
+        batch_starts = list(range(0, len(coords_df), batch_size))
+        if threads <= 1 and processes <= 1:
+            batch_result_dfs = map(fetch_batch, batch_dfs)
+            batch_result_dfs = tqdm_proxy(batch_result_dfs, total=len(batch_starts), leave=False, logger=logger)
+            batch_result_dfs = list(batch_result_dfs)
+        else:
+            batch_result_dfs = compute_parallel(fetch_batch, batch_dfs, 1, threads, processes, ordered=False, leave_progress=False)
 
     return pd.concat(batch_result_dfs).sort_index()['label'].values
 
@@ -1484,7 +1485,7 @@ def post_hierarchical_cleaves(server, uuid, instance, body_id, group_mapping, *,
     Given a set of N supervoxel groups that belong to a single body,
     this function will issue N cleaves to leave each group as its own body,
     but using a strategy that should be more efficient than naively cleaving
-    each group in turn.
+    each group off independently.
     
     Note:
         If the given groups include all supervoxels in the body, then
