@@ -153,48 +153,37 @@ def check_tarsupervoxels_status_via_exists(server, uuid, tsv_instance, bodies, s
     query for missing supervoxels, rather than /missing, which incurs a disk
     read in DVID.
     """
-    sv_body = []
-    
     if seg_instance is None:
         # Determine segmentation instance
         info = fetch_instance_info(server, uuid, tsv_instance)
         seg_instance = info["Base"]["Syncs"][0]
     
-    try:
-        if mapping is None:
-            mapping = fetch_complete_mappings(server, uuid, seg_instance, kafka_msgs=kafka_msgs)
-        
-        # Filter out bodies we don't care about,
-        # and append unmapped (singleton/identity) bodies
-        _bodies = set(bodies)
-        mapping = pd.DataFrame(mapping).query('body in @_bodies')['body'].copy()
-        unmapped_bodies = _bodies - set(mapping)
-        unmapped_bodies = np.fromiter(unmapped_bodies, np.uint64)
-        singleton_mapping = pd.Series(index=unmapped_bodies, data=unmapped_bodies)
-        mapping = pd.concat((mapping, singleton_mapping))
-        
-        # Faster than mapping.loc[], apparently
-        mapper = LabelMapper(mapping.index.values.astype(np.uint64),
-                             mapping.values.astype(np.uint64))
+    if mapping is None:
+        mapping = fetch_complete_mappings(server, uuid, seg_instance, kafka_msgs=kafka_msgs)
+    
+    # Filter out bodies we don't care about,
+    # and append unmapped (singleton/identity) bodies
+    _bodies = set(bodies)
+    mapping = pd.DataFrame(mapping).query('body in @_bodies')['body'].copy()
+    unmapped_bodies = _bodies - set(mapping)
+    unmapped_bodies = np.fromiter(unmapped_bodies, np.uint64)
+    singleton_mapping = pd.Series(index=unmapped_bodies, data=unmapped_bodies)
+    mapping = pd.concat((mapping, singleton_mapping))
+    
+    # Faster than mapping.loc[], apparently
+    mapper = LabelMapper(mapping.index.values.astype(np.uint64),
+                         mapping.values.astype(np.uint64))
 
-        BATCH_SIZE = 10_000
-        for start in tqdm_proxy(range(0, len(mapping), BATCH_SIZE)):
-            svs = mapping.index[start:start+BATCH_SIZE]
-            statuses = fetch_exists(server, uuid, tsv_instance, svs)
-            missing_svs = statuses[~statuses].index.values.astype(np.uint64)
+    statuses = fetch_exists(server, uuid, tsv_instance, mapping.index, batch_size=10_000, processes=16)
+    missing_svs = statuses[~statuses].index
+    missing_bodies = mapper.apply(missing_svs, True)
 
-            if len(missing_svs) == 0:
-                continue
-
-            missing_bodies = mapper.apply(missing_svs, True)
-            sv_body += list(zip(missing_svs, missing_bodies))
-        
-    except KeyboardInterrupt:
-        logger.warning("Interrupted. Returning results so far.  Interrupt again to kill.")
-
-    df = pd.DataFrame(sv_body, columns=['sv', 'body'], dtype=np.uint64)
-    df.set_index('sv', inplace=True)
-    return df['body']
+    missing_df = pd.DataFrame({'sv': missing_svs, 'body': missing_bodies})
+    assert missing_df['sv'].dtype == np.uint64
+    assert missing_df['body'].dtype == np.uint64
+    
+    # Return a series, indexed by sv
+    return missing_df.set_index('sv')['body']
 
 
 ###

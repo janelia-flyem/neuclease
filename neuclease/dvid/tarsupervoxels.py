@@ -2,12 +2,13 @@ import os
 import glob
 import tarfile
 from io import BytesIO
+from functools import partial
 from contextlib import closing
 
 import numpy as np
 import pandas as pd
 
-from ..util import fetch_file, post_file, tqdm_proxy
+from ..util import fetch_file, post_file, tqdm_proxy, compute_parallel
 from . import dvid_api_wrapper, fetch_generic_json
 from .repo import create_instance
 
@@ -261,9 +262,10 @@ def fetch_supervoxel(server, uuid, instance, supervoxel_id, output=None, *, sess
 
 
 @dvid_api_wrapper
-def fetch_exists(server, uuid, instance, supervoxels, *, session=None):
+def fetch_exists(server, uuid, instance, supervoxels, batch_size=None, *, session=None, processes=1):
     """
-    Determine if the given supervoxels have files loaded into the given tarsupervoxels instance.
+    Determine if the given supervoxels have associated files
+    stored in the given tarsupervoxels instance.
     
     Args:
         server:
@@ -277,18 +279,39 @@ def fetch_exists(server, uuid, instance, supervoxels, *, session=None):
         
         supervoxels:
             list of supervoxel IDs for which to look for files.
-    
+        
+        batch_size:
+            If not None, given, split the list into batches and issue multiple requests.
+        
+        processes:
+            If given, fetch batches in parallel using multiple processes.
+
     Returns:
         pd.Series of bool, indexed by supervoxel
     """
     url = f'http://{server}/api/node/{uuid}/{instance}/exists'
     supervoxels = np.asarray(supervoxels, np.uint64)
-    exists = fetch_generic_json(url, json=supervoxels.tolist(), session=session)
+    
+    if batch_size is None:
+        batch_size = len(supervoxels)
 
-    result = pd.Series(exists, dtype=bool, index=supervoxels)
-    result.name = 'exists'
-    result.index.name = 'sv'
-    return result
+    sv_chunks = [supervoxels[a:a+batch_size] for a in range(0, len(supervoxels), batch_size)]
+
+    show_progress = (len(sv_chunks) > 1)
+
+    result_chunks = []
+    if processes <= 1 or len(sv_chunks) <= 1:
+        for sv_chunk in tqdm_proxy(sv_chunks, disable=not show_progress):
+            result = fetch_generic_json(url, json=sv_chunk.tolist(), session=session)
+            result = pd.Series(result, dtype=bool, index=sv_chunk)
+            result.name = 'exists'
+            result.index.name = 'sv'
+            result_chunks.append( result )
+    else:
+        _fetch_batch = partial(fetch_exists, server, uuid, instance)
+        result_chunks = compute_parallel(_fetch_batch, sv_chunks, processes=processes)
+
+    return pd.concat(result_chunks)
 
 
 @dvid_api_wrapper
