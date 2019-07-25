@@ -1,4 +1,5 @@
 import os
+import json
 import logging
 
 import h5py
@@ -10,9 +11,11 @@ from dvidutils import LabelMapper
 from ..util import read_csv_header, Timer, swap_df_cols
 from ..util.csv import read_csv_col
 from ..merge_table import load_all_supervoxel_sizes, compute_body_sizes
-from ..dvid import fetch_keys, fetch_complete_mappings, fetch_keyvalues, fetch_labels_batched, fetch_mapping
+from ..dvid import fetch_keys, post_keyvalues, fetch_complete_mappings, fetch_keyvalues, fetch_labels_batched, fetch_mapping, find_master
 from ..dvid.annotation import load_synapses, body_synapse_counts
 from ..dvid.labelmap import fetch_supervoxel_fragments, fetch_labels
+
+from .assignments import generate_focused_assignment
 
 # Load new table. Normalize.
 
@@ -80,7 +83,7 @@ def load_focused_table(path):
     Must have at least the required columns for an edge table (id_a, id_b, and coordinates),
     but may include extra.  All columns are loaded and included in the result.
     """
-    REQUIRED_COLUMNS = ['id_a', 'id_b', 'xa', 'ya', 'za', 'xb', 'yb', 'zb']
+    REQUIRED_COLUMNS = ['sv_a', 'sv_b', 'xa', 'ya', 'za', 'xb', 'yb', 'zb']
     ext = os.path.splitext(path)[1]
     assert ext in ('.csv', '.npy')
     if ext == '.csv':
@@ -219,8 +222,8 @@ def fetch_focused_decisions(server, uuid, instance='segmentation_merged', normal
 
         coords_a = df[['za', 'ya', 'xa']].values
         coords_b = df[['zb', 'yb', 'xb']].values
-        svs_a = fetch_labels_batched(*update_with_instance, coords_a, True, 0, 20_000, threads=8)
-        svs_b = fetch_labels_batched(*update_with_instance, coords_b, True, 0, 20_000, threads=8)
+        svs_a = fetch_labels_batched(*update_with_instance, coords_a, True, 0, 10_000, threads=8)
+        svs_b = fetch_labels_batched(*update_with_instance, coords_b, True, 0, 10_000, threads=8)
         bodies_a = fetch_mapping(*update_with_instance, svs_a).values
         bodies_b = fetch_mapping(*update_with_instance, svs_b).values
         
@@ -250,6 +253,13 @@ def drop_previously_reviewed(df, previous_focused_decisions_df):
     regardless of review results.
     """
     cols = [*df.columns]
+    
+    if df.eval('sv_a > sv_b').any():
+        raise RuntimeError("Some rows of the input (df) are not in normal form.")
+
+    if previous_focused_decisions_df.eval('sv_a > sv_b').any():
+        raise RuntimeError("Some rows of the input (previous_focused_decisions_df) are not in normal form.")
+    
     comparison_df = previous_focused_decisions_df[['sv_a', 'sv_b']].drop_duplicates()
     in_prev = df[['sv_a', 'sv_b']].merge(comparison_df,
                                          how='left',
@@ -258,6 +268,92 @@ def drop_previously_reviewed(df, previous_focused_decisions_df):
 
     keep_rows = (in_prev['side'] == 'left_only')
     return df.loc[keep_rows.values, cols]
+
+
+def upload_focused_tasks(assignment, comment, server, uuid=None, instance='focused_assign', *, repo_uuid=None, overwrite_existing=False):
+    """
+    Upload a set of focused proofreading assignments to a dvid key-value instance.
+    
+    Args:
+        assignment:
+            One of the following:
+            - A pre-loaded focused proofreading JSON assignment (i.e. a dict)
+            - A filepath to a JSON assignment
+            - A DataFrame of focused proofreading tasks with columns:
+                ['sv_a', 'sv_b', 'xa', 'ya', 'za', 'xb', 'yb', 'zb']
+            - A filepath to a CSV file that can be loaded as a DataFrame.
+
+        comment:
+            What comment to insert into the tasks, to distinguish
+            this task set from other task sets.
+        
+        server:
+            DVID server, e.g. 'emdata4:8900'
+
+        uuid:
+            The uuid to upload the tasks to.
+            If not provided, the current master node will be used.
+        
+        instance:
+            The keyvalue instance to upload to.
+        
+        repo_uuid:
+            If uuid is not provided and the server contains more than one DVID repo,
+            you must provide a repo_uuid in order for the master node to be
+            automatically identified.
+        
+        overwrite_existing:
+            If any of the given tasks already exist in the keyvalue instance,
+            they will not be uploaded unless this flag is True.
+    
+    Returns:
+        (written_pairs, skipped_pairs)
+        The lists of SV ID pairs that were uploaded and skipped, respectively.
+    """
+    # If the user passed a filepath, load it.
+    if isinstance(assignment, str):
+        if assignment.endswith('.csv'):
+            assignment = load_focused_table(assignment)
+        elif assignment.endswith('.json'):
+            with open(assignment, 'r'):
+                assignment = json.load()
+    
+    # If the loaded data is a DataFrame, convert to JSON.
+    if isinstance(assignment, pd.DataFrame):
+        assignment = generate_focused_assignment(assignment)
+
+    assert isinstance(assignment, dict)
+    assert assignment["file type"] == "Neu3 task list"
+
+    if uuid is None:
+        uuid = find_master(server, repo_uuid)
+
+    all_keys = fetch_keys(server, uuid, instance)
+    all_keys = set(all_keys)
+    tasks = assignment['task list']
+
+    skipped_pairs = []
+    written_pairs = []
+
+    upload_tasks = {}
+    for task in tasks:
+        sv_a = task['supervoxel ID 1']
+        sv_b = task['supervoxel ID 2']
+        focused_ID = f"{sv_a}_{sv_b}"
+
+        if focused_ID in all_keys and not overwrite_existing:
+            # already loaded
+            skipped_pairs.append( (sv_a, sv_b) )
+        else:
+            task['focused ID'] = focused_ID
+            task['status'] = "Not examined"
+            task['comment'] = comment
+            upload_tasks[focused_ID] = task
+            written_pairs.append( (sv_a, sv_b) )
+
+    logger.info("Uploading {len(upload_tasks)} tasks, skipping {len(skipped_tasks)}")
+    post_keyvalues(server, uuid, instance, upload_tasks, batch_size=10_000)
+    return written_pairs, skipped_pairs
 
 
 def compute_focused_bodies(server, uuid, instance, synapse_samples, min_tbars, min_psds, root_sv_sizes, min_body_size, sv_classifications=None, marked_bad_bodies=None, return_table=False, kafka_msgs=None):
