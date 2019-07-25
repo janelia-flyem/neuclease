@@ -408,7 +408,7 @@ def fetch_labels_batched(server, uuid, instance, coordinates_zyx, supervoxels=Fa
     coords_df['label'] = np.uint64(0)
     
     if presort:
-        with Timer("Pre-sorting coordinates by block index.", logger):
+        with Timer(f"Pre-sorting {len(coords_df)} coordinates by block index", logger):
             # Sort coordinates by their block index,
             # so DVID will be able to service the requests faster.
             coords_df['bz'] = coords_df['z'] // 64
