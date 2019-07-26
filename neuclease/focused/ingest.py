@@ -101,7 +101,7 @@ def load_focused_table(path):
     return df
 
 
-def fetch_focused_decisions(server, uuid, instance='segmentation_merged', normalize_pairs=None, subset_pairs=None, subset_slice=None, drop_invalid=True, update_with_instance='segmentation'):
+def fetch_focused_decisions(server, uuid, instance='segmentation_merged', normalize_pairs=None, subset_pairs=None, drop_invalid=True, update_with_instance='segmentation'):
     """
     Load focused decisions from a given keyvalue instance
     (e.g. 'segmentation_merged') and return them as a DataFrame,
@@ -124,10 +124,10 @@ def fetch_focused_decisions(server, uuid, instance='segmentation_merged', normal
             (The left/right order within the pair doesn't matter.)
             Alternatively, the pairs can be given as exact key strings to retrieve
             (in the format '{id_1}+{id_2}', e.g. '123+456')
-        
-        subset_slice:
-            If provided, only select from the given slice of the full key set.
-            Must be a slice object, e.g. slice(1000,2000), or np.s_[1000:2000]
+            
+            Note:
+                If any of the listed pairs don't exist in the keyvalue instance,
+                they'll be silently dropped from the results.
 
         drop_invalid:
             If True, remove any rows with missing/invalid fields for sv id or coordinates.
@@ -151,28 +151,30 @@ def fetch_focused_decisions(server, uuid, instance='segmentation_merged', normal
     """
     assert normalize_pairs in (None, 'sv', 'body')
     
-    with Timer(f"Fetching keys from '{instance}'", logger):
-        # FIXME: Unless subset_pairs is used, it's probably faster
-        #        to just fetch all the key/values at once,
-        #        rather than fetching the keys, then the values.
-        #        (On the server side, fetching keys in leveldb is just as
-        #        expensive as fetching the values too.)
-        keys = fetch_keys(server, uuid, instance)
-
+    
     if subset_pairs is not None:
         subset_pairs = list(subset_pairs)
         if isinstance(subset_pairs[0], str):
-            keys = list(set(keys).intersection(subset_pairs))
+            keys = subset_pairs
         else:
             subset_keys1 = [f'{a}+{b}' for a,b in subset_pairs]
             subset_keys2 = [f'{b}+{a}' for a,b in subset_pairs]
-            keys = list(set(subset_keys1).intersection(keys) | set(subset_keys2).intersection(keys))
-
-    if subset_slice:
-        keys = keys[subset_slice]
+            keys = list({*subset_keys1, *subset_keys2})
+    else:
+        with Timer(f"Fetching keys from '{instance}'", logger):
+            # FIXME: Unless subset_pairs is used, it's probably faster
+            #        to just fetch all the key/values at once,
+            #        rather than fetching the keys, then the values.
+            #        (On the server side, fetching keys in leveldb is just as
+            #        expensive as fetching the values too.)
+            keys = fetch_keys(server, uuid, instance)
 
     with Timer(f"Fetching values from '{instance}'"):
-        task_values = list(fetch_keyvalues(server, uuid, instance, keys, as_json=True).values())
+        task_values = fetch_keyvalues(server, uuid, instance, keys, as_json=True, batch_size=100_000).values()
+        
+        # fetch_keyvalues() returns None for values that don't exist.
+        # Drop those ones.
+        task_values = [*filter(None, task_values)]
 
     # Flatten coords before loading into dataframe
     for value in task_values:
