@@ -351,7 +351,7 @@ def upload_focused_tasks(assignment, comment, server, uuid=None, instance='focus
             upload_tasks[focused_ID] = task
             written_pairs.append( (sv_a, sv_b) )
 
-    logger.info("Uploading {len(upload_tasks)} tasks, skipping {len(skipped_tasks)}")
+    logger.info(f"Uploading {len(upload_tasks)} tasks, skipping {len(skipped_pairs)}")
     post_keyvalues(server, uuid, instance, upload_tasks, batch_size=10_000)
     return written_pairs, skipped_pairs
 
