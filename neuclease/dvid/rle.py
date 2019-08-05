@@ -244,7 +244,7 @@ def runlength_encode_to_lengths(coord_list_zyx, assume_sorted=False):
     return rle_result
     
 
-@jit(["i4[:,:](i4[:,::1],i4[::1])", "i2[:,:](i2[:,::1],i2[::1])"], nopython=True, nogil=True) # See note about signature, below.
+@jit(["i8[:,:](i8[:,::1],i8[::1])", "i4[:,:](i4[:,::1],i4[::1])", "i2[:,:](i2[:,::1],i2[::1])"], nopython=True, nogil=True) # See note about signature, below.
 def runlength_decode_from_lengths(rle_start_coords_zyx, rle_lengths):
     """
     Given a 2D array of coordinates and a 1D array of runlengths, i.e.:
@@ -294,7 +294,7 @@ def runlength_decode_from_lengths(rle_start_coords_zyx, rle_lengths):
     return coords
 
 
-@jit(["i4[:,:](i4[:,::1])", "i2[:,:](i2[:,::1])"], nopython=True, nogil=True) # See note about signature, below.
+@jit(["i8[:,:](i8[:,::1])", "i4[:,:](i4[:,::1])", "i2[:,:](i2[:,::1])"], nopython=True, nogil=True) # See note about signature, below.
 def runlength_decode_from_ranges(rle_array_zyx):
     """
     Used for parsing the result of DVID's /roi endpoint.
