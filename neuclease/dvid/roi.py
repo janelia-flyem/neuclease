@@ -306,9 +306,11 @@ def determine_point_rois(server, uuid, rois, points_df, combined_vol=None, combi
         combined_vol, combined_box, overlapping_pairs = fetch_combined_roi_volume(server, uuid, rois, session=session)
         if overlapping_pairs:
             logger.warning(f"Some ROIs overlap!")
+            logger.warning(f"Overlapping pairs: {overlapping_pairs}")
 
     assert combined_box is not None
 
     extract_labels_from_volume(points_df, combined_vol, combined_box, 5, rois)
+    points_df.drop(columns=['roi', 'roi_label'], errors='ignore', inplace=True)
     points_df.rename(inplace=True, columns={'label': 'roi_label', 'label_name': 'roi'})
 

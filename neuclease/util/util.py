@@ -608,6 +608,8 @@ def extract_labels_from_volume(points_df, volume, box_zyx=None, vol_scale=0, lab
     logger.info(f"Extracting labels from volume at {len(downsampled_coords_zyx)} points")
     points_df['label'] = 0
     downsampled_coords_zyx -= box_zyx[0]
+
+    points_df.drop(columns=['label', 'label_name'], errors='ignore', inplace=True)
     points_df.loc[downsampled_coords_zyx.index, 'label'] = volume[tuple(downsampled_coords_zyx.values.transpose())]
 
     if label_names is not None:
