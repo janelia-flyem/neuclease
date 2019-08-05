@@ -92,6 +92,33 @@ def apply_mask_for_labels(volume, label_ids, inplace=False):
     return flatvol.reshape(volume.shape)
 
 
+def box_from_coords(coords):
+    """
+    Determine the bounding box of the given list of coordinates.
+    """
+    start = coords.min(axis=0)
+    stop = 1+coords.max(axis=0)
+    box = np.array((start, stop))
+    return box
+
+
+def mask_from_coords(coords):
+    """
+    Given a list of coordinates, create a dense mask array,
+    whose shape is determined by the bounding box of
+    the coordinates.
+    
+    Returns:
+        (mask, box)
+        where mask.shape == box[1] - box[0],
+    """
+    coords = np.asarray(coords)
+    box = box_from_coords(coords)
+    mask = np.zeros(box[1] - box[0], bool)
+    mask[(*(coords - box[0]).transpose(),)] = True
+    return mask, box
+
+
 def compute_nonzero_box(mask, save_ram=False):
     """
     Given a mask image, return the bounding box of the nonzero voxels in the mask.
@@ -104,7 +131,7 @@ def compute_nonzero_box(mask, save_ram=False):
         box = np.array([coords.min(axis=0), 1+coords.max(axis=0)])
         return box
     
-    but if save_ram=True, this function allocating
+    but if save_ram=True, this function avoids allocating
     the coords array, but performs slightly worse than the simple
     implementation unless your array is so very large and dense
     that allocating the coordinate list is a problem.
