@@ -602,8 +602,11 @@ def extract_labels_from_volume(points_df, volume, box_zyx=None, vol_scale=0, lab
     # Drop everything outside the combined_box
     min_z, min_y, min_x = box_zyx[0] #@UnusedVariable
     max_z, max_y, max_x = box_zyx[1] #@UnusedVariable
-    q = 'z >= @min_z and y >= @min_y and x >= @min_x and z < @max_z and y < @max_y and x < @max_x'
-    downsampled_coords_zyx.query(q, inplace=True)
+    dc = downsampled_coords_zyx
+    downsampled_coords_zyx = dc.loc[   (dc['z'] >= min_z) & (dc['z'] < max_z)
+                                     & (dc['y'] >= min_y) & (dc['y'] < max_y)
+                                     & (dc['x'] >= min_x) & (dc['x'] < max_x) ]
+    del dc
 
     logger.info(f"Extracting labels from volume at {len(downsampled_coords_zyx)} points")
     points_df['label'] = 0
@@ -624,12 +627,16 @@ def extract_labels_from_volume(points_df, volume, box_zyx=None, vol_scale=0, lab
         else:
             label_names = dict(enumerate(label_names, start=1))
         
-        if not isinstance(label_names, defaultdict):
-            label_names = defaultdict(lambda: '<unspecified>', label_names)
-
-        points_df['label_name'] = pd.Categorical( points_df['label'].map(label_names),
-                                                  categories=set(label_names.values()),
+        name_set = ['<unspecified>', *label_names.values()]
+        default_names = ['<unspecified>']*len(points_df)
+        # FIXME: More than half of the runtime of this function is spent on this line!
+        #        Is there some way to speed this up?
+        points_df['label_name'] = pd.Categorical( default_names,
+                                                  categories=name_set,
                                                   ordered=False )
+        for label, name in label_names.items():
+            rows = points_df['label'] == label
+            points_df.loc[rows, 'label_name'] = name
 
 
 def compute_merges(orig_vol, agg_vol):
