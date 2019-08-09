@@ -825,7 +825,7 @@ def body_synapse_counts(synapse_samples):
     return synapse_counts
 
 
-def fetch_roi_synapses(server, uuid, synapses_instance, rois, fetch_labels=False, processes=16):
+def fetch_roi_synapses(server, uuid, synapses_instance, rois, fetch_labels=False, return_partners=False, processes=16):
     """
     Fetch the coordinates and (optionally) body labels for 
     all synapses that fall within the given ROIs.
@@ -847,20 +847,26 @@ def fetch_roi_synapses(server, uuid, synapses_instance, rois, fetch_labels=False
         fetch_labels:
             If True, also fetch the supervoxel and body label underneath each synapse,
             returned in columns 'sv' and 'body'.
-        
+            
+        return_partners:
+            If True, also return the partners table.
+
         processes:
             How many parallel processes to use when fetching synapses and supervoxel labels.
     
     Returns:
         pandas DataFrame with columns:
         ``['z', 'y', 'x', 'kind', 'conf']`` and ``['sv', 'body']`` (if ``fetch_labels=True``)
-    
+        If return_partners is True, also return the partners table.
+
     Example:
         df = fetch_roi_synapses('emdata4:8900', '3c281', 'synapses', ['PB(L5)', 'PB(L7)'], True, 8)
     """
     # Late imports to avoid circular imports in dvid/__init__
     from neuclease.dvid import fetch_combined_roi_volume, determine_point_rois, fetch_labels_batched, fetch_mapping, fetch_mappings
 
+    assert rois, "No rois provided, result would be empty. Is that what you meant?"
+    
     if isinstance(rois, str):
         rois = [rois]
     
@@ -885,7 +891,7 @@ def fetch_roi_synapses(server, uuid, synapses_instance, rois, fetch_labels=False
     
     logger.info("Fetching synapse points")
     # points_df is a DataFrame with columns for [z,y,x]
-    points_df, _partners_df = fetch_synapses_in_batches(server, uuid, synapses_instance, roi_box, processes=processes)
+    points_df, partners_df = fetch_synapses_in_batches(server, uuid, synapses_instance, roi_box, processes=processes)
     
     # Append a 'roi_name' column to points_df
     logger.info("Labeling ROI for each point")
@@ -918,7 +924,16 @@ def fetch_roi_synapses(server, uuid, synapses_instance, rois, fetch_labels=False
         points_df['body'] = bodies
         columns += ['body', 'sv']
     
-    return points_df[columns]
+    if return_partners:
+        # Filter
+        #partners_df = partners_df.query('post_id in @points_df.index and pre_id in @points_df.index').copy()
+        
+        # Faster filter (via merge)
+        partners_df = partners_df.merge(points_df[[]], 'inner', left_on='pre_id', right_index=True)
+        partners_df = partners_df.merge(points_df[[]], 'inner', left_on='post_id', right_index=True)
+        return points_df[columns], partners_df
+    else:
+        return points_df[columns]
 
 
 def determine_bodies_of_interest(server, uuid, synapses_instance, rois=None, min_tbars=2, min_psds=10, processes=16, *, synapse_table=None, seg_instance=None):
