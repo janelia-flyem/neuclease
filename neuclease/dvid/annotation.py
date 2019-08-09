@@ -930,7 +930,13 @@ def determine_bodies_of_interest(server, uuid, synapses_instance, rois=None, min
     A body need only match at least one of the criteria to be considered "of interest".
 
     This function is just a convenience wrapper around calling
-    fetch_roi_synapses() followed by body_synapse_counts().
+    fetch_roi_synapses(), fetch_labels_batched(), and body_synapse_counts().
+
+    Note:
+        If your synapse table is already loaded and already has a 'body' column,
+        and you aren't providing any rois to filter with, then this function is
+        merely equivalent to calling body_synapse_counts() and filtering it
+        for tbar/psd requirements.
 
     Args:
         server:
@@ -945,7 +951,7 @@ def determine_bodies_of_interest(server, uuid, synapses_instance, rois=None, min
             you can set synapses_instance=None.
         
         rois:
-            A list of ROI instance names.  If provided ONLY synapses
+            A list of ROI instance names.  If provided, ONLY synapses
             within these ROIs will be counted when determining bodies of interest.
             If not provided, all synapses in the volume will be counted.
 
@@ -961,6 +967,8 @@ def determine_bodies_of_interest(server, uuid, synapses_instance, rois=None, min
         synapse_table:
             If you have a pre-loaded synapse table (or a path to one stored as .npy or .csv),
             you may provide it here, in which case the synapse points won't be fetched from DVID.
+            Furthermore, if the table already contains a 'body' column, then it is presumed to be
+            accurate and body labels will not be fetched from DVID.
     
         seg_instance:
             If you want to override the segmentation instance name to use
@@ -973,6 +981,7 @@ def determine_bodies_of_interest(server, uuid, synapses_instance, rois=None, min
     """
     from neuclease.dvid import fetch_labels_batched, fetch_combined_roi_volume, determine_point_rois
     
+    # Download synapses if necessary
     if synapse_table is None:
         with Timer("Fetching synapse points", logger):
             if rois is None:
@@ -993,22 +1002,26 @@ def determine_bodies_of_interest(server, uuid, synapses_instance, rois=None, min
                     synapse_table = load_synapses_npy(synapse_table)
 
         assert isinstance(synapse_table, pd.DataFrame)
-        assert not ({'z', 'y', 'x', 'kind', 'conf'} - {*synapse_table.columns}), \
+        assert not ({'z', 'y', 'x', 'kind'} - {*synapse_table.columns}), \
             "Synapse table does not contain all expected columns"
         
         points_df = synapse_table
         if rois:
             roi_vol_s5, roi_box_s5, _ = fetch_combined_roi_volume(server, uuid, rois)
             determine_point_rois(server, uuid, rois, points_df, roi_vol_s5, roi_box_s5)
+            points_df = points_df.query('roi_label != 0')
 
-    with Timer("Fetching synapse body labels", logger):
-        if seg_instance is None:
-            syn_info = fetch_instance_info(server, uuid, synapses_instance)
-            seg_instance = syn_info["Base"]["Syncs"][0]
-
-        points_df['body'] = fetch_labels_batched( server, uuid, seg_instance,
-                                                  points_df[['z', 'y', 'x']].values,
-                                                  processes=processes )
+    if 'body' in points_df:
+        logger.info("Using user-provided body labels")
+    else:
+        with Timer("Fetching synapse body labels", logger):
+            if seg_instance is None:
+                syn_info = fetch_instance_info(server, uuid, synapses_instance)
+                seg_instance = syn_info["Base"]["Syncs"][0]
+    
+            points_df['body'] = fetch_labels_batched( server, uuid, seg_instance,
+                                                      points_df[['z', 'y', 'x']].values,
+                                                      processes=processes )
 
     with Timer("Aggregating body-wise synapse counts"):
         body_synapses_df = body_synapse_counts(points_df)
