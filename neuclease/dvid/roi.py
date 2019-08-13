@@ -246,7 +246,7 @@ def fetch_combined_roi_volume(server, uuid, rois, as_bool=False, box_zyx=None, *
 
         # If we're overwriting some areas of a ROI we previously wrote,
         # keep track of the overlapping pairs.
-        prev_rois = set(pd.unique(combined_vol[tuple(coords.transpose())]))
+        prev_rois = set(pd.unique(combined_vol[tuple(coords.transpose())]).astype(dtype))
         prev_rois -= set([0])
         if prev_rois:
             overlapping_pairs += ((p,label) for p in prev_rois)
