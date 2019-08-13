@@ -210,7 +210,9 @@ def fetch_combined_roi_volume(server, uuid, rois, as_bool=False, box_zyx=None, *
     if box_zyx is None:
         box_zyx = [None, None]
 
+    box_zyx = list(box_zyx)
     assert len(box_zyx) == 2
+
     if box_zyx[0] is None:
         box_zyx[0] = roi_boxes[:,0,:].min(axis=0)
     if box_zyx[1] is None:
