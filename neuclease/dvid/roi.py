@@ -307,8 +307,13 @@ def determine_point_rois(server, uuid, rois, points_df, combined_vol=None, combi
     if combined_vol is None:
         combined_vol, combined_box, overlapping_pairs = fetch_combined_roi_volume(server, uuid, rois, session=session)
         if overlapping_pairs:
+            rois = [*rois]
+            msg = ""
+            for a,b in overlapping_pairs:
+                msg += f"  {rois[a-1]} : {rois[b-1]}\n"
+        
             logger.warning(f"Some ROIs overlap!")
-            logger.warning(f"Overlapping pairs: {overlapping_pairs}")
+            logger.warning(f"Overlapping pairs:\n{msg}")
 
     assert combined_box is not None
 
