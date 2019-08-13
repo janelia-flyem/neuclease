@@ -280,6 +280,7 @@ def split_disconnected_bodies(labels_orig):
     new_to_orig = dict(emitted_mapping_pairs)
 
     new_unique_labels = pd.unique(overlap_table_df['final_cc'].values)
+    new_unique_labels = new_unique_labels.astype(overlap_table_df['final_cc'].dtype)
     new_unique_labels.sort()
     
     return labels_cc, new_to_orig, new_unique_labels
