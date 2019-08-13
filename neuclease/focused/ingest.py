@@ -205,6 +205,10 @@ def fetch_focused_decisions(server, uuid, instance='segmentation_merged', normal
     if 'time zone' in df:
         df['time zone'] = pd.Series(df['time zone'], dtype='category')
 
+    # Convert time to proper timestamp
+    if 'time' in df:
+        df['time'] = pd.to_datetime(df['time'])
+
     if drop_invalid:
         invalid = df['sv_a'].isnull()
         for col in ['sv_a', 'sv_b', 'body_a', 'body_b', 'xa', 'ya', 'za', 'xb', 'yb', 'zb']:
