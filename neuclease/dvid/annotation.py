@@ -820,8 +820,13 @@ def body_synapse_counts(synapse_samples):
     synapse_counts.fillna(0.0, inplace=True)
 
     if 0 in synapse_counts.index:
-        logger.warning("*** Synapse table includes body 0 and was therefore probably generated from out-of-date data. ***")
-    
+        msg = ("*** Synapse table includes body 0 and was therefore probably generated "
+               "from out-of-date data OR some synapses in your data fall on voxels with "
+               "no label (label 0). ***")
+        logger.warning(msg)
+
+    synapse_counts['PostSyn'] = synapse_counts['PostSyn'].astype(np.int32)
+    synapse_counts['PreSyn'] = synapse_counts['PreSyn'].astype(np.int32)
     return synapse_counts
 
 
