@@ -1,6 +1,8 @@
 import numpy as np
 from numba import jit
 
+import pandas as pd
+
 def extract_rle_size_and_first_coord(rle_payload_bytes):
     """
     Given a binary RLE payload as returned by the /sparsevol endpoint,
@@ -47,7 +49,7 @@ def combine_sparsevol_rle_responses(rle_payloads):
     
 
 
-def parse_rle_response(response_bytes, dtype=np.int32):
+def parse_rle_response(response_bytes, dtype=np.int32, format='coords'):
     """
     Parse a (legacy) RLE response from DVID, used by various endpoints
     such as 'sparsevol' and 'sparsevol-coarse'.
@@ -62,17 +64,33 @@ def parse_rle_response(response_bytes, dtype=np.int32):
             If you know the results will not exceed 2**15 in any coordinate,
             you can save some RAM by selecting np.int16
 
-    Return:
-        An array of coordinates of the form:
+        format:
+            Either 'coords' or 'rle'.  See return value explanation.
 
-        [[Z,Y,X],
-         [Z,Y,X],
-         [Z,Y,X],
-         ...
-        ]
+    Return:
+        If format == 'coords', returns an array of coordinates of the form:
+
+            [[Z,Y,X],
+             [Z,Y,X],
+             [Z,Y,X],
+             ...
+            ]
+        
+        If format == 'rle', returns the RLE start coordinates and RLE lengths as two arrays:
+        
+            (start_coords, lengths)
+            
+            where start_coords is in the form:
+            
+                [[Z,Y,X], [Z,Y,X], ...]
+            
+            and lengths is a 1-D array:
+            
+                [length, length, ...]
     """
     assert isinstance(response_bytes, bytes)
     assert dtype in (np.int32, np.int16)
+    assert format in ('coords', 'rle')
     descriptor = response_bytes[0]
     ndim = response_bytes[1]
     run_dimension = response_bytes[2]
@@ -109,12 +127,117 @@ def parse_rle_response(response_bytes, dtype=np.int32):
         rle_starts_zyx = rle_starts_zyx.astype(np.int16)
         rle_lengths = rle_lengths.astype(np.int16)
 
+    if format == 'rle':
+        return rle_starts_zyx, rle_lengths
+
     dense_coords = runlength_decode_from_lengths(rle_starts_zyx, rle_lengths)
     assert dense_coords.dtype == dtype
     
     assert rle_lengths.sum() == len(dense_coords), "Got the wrong number of coordinates!"
     return dense_coords
 
+
+def rle_box_dilation(start_coords, lengths, radius):
+    """
+    Dilate the given RLEs by some radius, using simple
+    "box" dilation (not a proper spherical dilation).
+    
+    Equivalent to decoding the given RLEs, constructing a binary mask,
+    dilating it with a rectangular structuring element,
+    and then re-encoding the resulting nonzero coordinates.
+    
+    But much faster than that, and requiring much less RAM.
+    
+    Args:
+        start_coords, lengths:
+            See runlength_decode_from_lengths()
+        
+        radius:
+            The "radius" of the cube-shaped structuring element used to dilate.
+    """
+    assert start_coords.ndim == 2
+    assert lengths.ndim == 1
+    assert len(start_coords) == len(lengths)
+    
+    if len(start_coords) == 0:
+        return np.zeros((0, 3), np.int32), np.zeros((0,), np.int32)
+
+    # Concatenate: (Z,Y,X,L)
+    table = np.concatenate((start_coords, lengths[:, None]), axis=1)
+
+    # Dilation in X is trivial
+    table[:] += (0, 0, -radius, 2*radius)
+
+    # Dilate in Z
+    new_tables = []
+    for rz in range(-radius, radius+1):
+        new_tables.append( table + np.int32((rz,0,0,0)) )
+
+    # Choose chunk size for condense step.
+    # As a heuristic, anything smaller than the size of the
+    # original RLE seems like a reasonable chunk size to use.
+    # Smaller chunks require less RAM usage overall,
+    # but if there are too many chunks the code isn't well vectorized.
+    chunk_size = max(1024, len(start_coords) // 8)
+
+    # Condense.
+    table = np.concatenate(new_tables)
+    table = _condense_rles(table, chunk_size)
+
+    # Dilate in Y
+    new_tables = []
+    for ry in range(-radius, radius+1):
+        new_tables.append( table + np.int32((0,ry,0,0)) )
+
+    # Condense.
+    table = np.concatenate(new_tables)
+    table = _condense_rles(table, chunk_size)
+
+    return table[:, :3], table[:, 3]
+
+
+def _condense_rles(table, chunk_size):
+    """
+    Given an RLE table (columns Z,Y,X,L) which may contain overlapping RLEs,
+    condense it into a minmal RLE table.
+    
+    This is done by decoding it, dropping duplicate coordinates, and re-encoding it.
+    The table is processed in chunks to avoid too much instantaneous RAM usage.
+    """
+    assert len(table) > 0
+    
+    # Sort by Z,Y columns
+    order = np.lexsort(table[:, :2].transpose()[::-1])
+    table = table[order]
+
+    # We could do this as one big decode step and drop duplicates afterward,
+    # but that would require a lot of RAM.
+    # Instead, break into chunks and drop duplicates as we go.
+    condensed_chunks = []
+    start = 0
+    while start < len(table):
+        # Search for a stop row that splits *between* ZY groups
+        # TODO: This would be faster without an explicit loop, using diff or something
+        stop = start+chunk_size
+        while stop < len(table) and (table[stop, :2] == table[stop-1, :2]).all():
+            stop += 1
+    
+        # Must copy because C-order is required
+        chunk = table[start:stop]
+        start = stop
+
+        chunk_coords = runlength_decode_from_lengths( chunk[:, :3].copy(), chunk[:, 3].copy() )
+        chunk_coords = pd.DataFrame(chunk_coords, columns=[*'zyx'])
+        chunk_coords = chunk_coords.drop_duplicates().sort_values([*'zyx'])
+        chunk_coords = np.asarray(chunk_coords.values, order='C')
+
+        condensed_chunk = runlength_encode_to_lengths(chunk_coords, True)
+        condensed_chunks.append( condensed_chunk )
+        del chunk_coords
+    
+    condensed_table = np.concatenate( condensed_chunks )
+    return condensed_table
+    
 
 def runlength_encode_to_ranges(coord_list_zyx, assume_sorted=False):
     """
