@@ -1685,14 +1685,61 @@ def post_merge(server, uuid, instance, main_label, other_labels, *, session=None
     r.raise_for_status()
     
 
-def labelmap_kafka_msgs_to_df(kafka_msgs, default_timestamp=DEFAULT_TIMESTAMP):
+def read_labelmap_kafka_df(server, uuid, instance='segmentation', default_timestamp=DEFAULT_TIMESTAMP, drop_completes=True):
+    """
+    Convenience function for reading the kafka log for
+    a labelmap instance and loading it into a DataFrame.
+    Basically a combination of 
+    
+    Args:
+        server, uuid, instance:
+            A labelmap instance for which a kafka log exists.
+        
+        default_timestamp:
+            See labelmap_kafka_msgs_to_df()
+        
+        drop_completes:
+            See labelmap_kafka_msgs_to_df()
+
+    Returns:
+        DataFrame with columns:
+            ['timestamp', 'uuid', 'mutid', 'action', 'target_body', 'target_sv', 'msg']
+    """
+    msgs = read_kafka_messages(server, uuid, instance)
+    msgs_df = labelmap_kafka_msgs_to_df(msgs, default_timestamp, drop_completes)
+    return msgs_df
+
+
+def labelmap_kafka_msgs_to_df(kafka_msgs, default_timestamp=DEFAULT_TIMESTAMP, drop_completes=True):
     """
     Convert the kafka messages for a labelmap instance into a DataFrame.
+
+    Args:
+        kafka_msgs:
+            A list of JSON messages from the kafka log emitted by a labelmap instance.
+        
+        default_timestamp:
+            Old versions of DVID did not emit a timestamp with each message.
+            For such messages, we'll assign a default timestamp, specified by this argument.
+
+        drop_completes:
+            If True, don't return the completion confirmation messages.
+            That is, drop 'merge-complete', 'cleave-complete', 'split-complete',
+            and 'split-supervoxel-complete'.
+            Note: No attempt is made to ensure that all returned messages actually
+            had a corresponding 'complete' message.  If some operation in the log
+            failed (and thus has no corresponding 'complete' message), it will
+            still be included in the output.
+    
     """
     df = kafka_msgs_to_df(kafka_msgs, drop_duplicates=False, default_timestamp=default_timestamp)
 
     # Append action and 'body'
     df['action'] = [msg['Action'] for msg in df['msg']]
+
+    if drop_completes:
+        completes = df['action'].map(lambda s: s.endswith('-complete'))
+        df = df[~completes].copy()
     
     mutation_bodies = defaultdict(lambda: 0)
     mutation_svs = defaultdict(lambda: 0)
@@ -1700,7 +1747,7 @@ def labelmap_kafka_msgs_to_df(kafka_msgs, default_timestamp=DEFAULT_TIMESTAMP):
     target_bodies = []
     target_svs = []
     
-    # This logic is somewhat more complex than you might think is necesary,
+    # This logic is somewhat more complex than you might think is necessary,
     # but that's because the kafka logs (sadly) contain duplicate mutation IDs,
     # i.e. the mutation ID was not unique in our earlier logs.
     for msg in df['msg'].values:
