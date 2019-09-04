@@ -1,5 +1,7 @@
 import numpy as np
 from numba import jit
+from numba.types import int32
+from numba.typed import List
 
 import pandas as pd
 
@@ -284,22 +286,28 @@ def runlength_encode_to_ranges(coord_list_zyx, assume_sorted=False):
         sorting_ind = np.lexsort(coord_list_zyx.transpose()[::-1])
         coord_list_zyx = coord_list_zyx[sorting_ind]
 
-    return _runlength_encode_to_ranges(coord_list_zyx)
+    runs = _runlength_encode_to_ranges(coord_list_zyx)
+    return np.asarray(runs, coord_list_zyx.dtype).reshape((-1,4))
 
 
 @jit(nopython=True, nogil=True)
 def _runlength_encode_to_ranges(coord_list_zyx):
     """
     Helper function for runlength_encode(), above.
+
+    Args:
+        coord_list_zyx:
+            Array of shape (N,3), of form [[Z,Y,X], [Z,Y,X], ...],
+            pre-sorted in Z-Y-X order.  Duplicates permitted.
     
-    coord_list_zyx:
-        Array of shape (N,3), of form [[Z,Y,X], [Z,Y,X], ...],
-        pre-sorted in Z-Y-X order.  Duplicates permitted.
+    Returns:
+        Flattened runlength encoding, as a numba typed.List:
+        
+            [Z,Y,X1,X2,Z,Y,X1,X2,Z,Y,X1,X2,...]
+
+        (Must be converted to np.array and un-flattened by the caller.)
     """
-    # Numba doesn't allow us to use empty lists at all,
-    # so we have to initialize this list with a dummy row,
-    # which we'll omit in the return value
-    runs = [0,0,0,0]
+    runs = List.empty_list(item_type=int32)
     
     # Start the first run
     (prev_z, prev_y, prev_x) = current_run_start = coord_list_zyx[0]
@@ -309,18 +317,17 @@ def _runlength_encode_to_ranges(coord_list_zyx):
 
         # If necessary, end the current run and start a new one
         # (Also, support duplicate coords without breaking the current run.)
-        if (z != prev_z) or (y != prev_y) or (x not in (prev_x, np.int32(1+prev_x))):
-            runs += list(current_run_start) + [prev_x]
+        if (z != prev_z) or (y != prev_y) or (x != prev_x and x != 1+prev_x):
+            runs.extend(current_run_start)
+            runs.append(prev_x)
             current_run_start = coord
 
         (prev_z, prev_y, prev_x) = (z,y,x)
 
     # End the last run
-    runs += list(current_run_start) + [prev_x]
-
-    # Return as 2D array
-    runs = np.array(runs, np.int32).reshape((-1,4))
-    return runs[1:, :] # omit dummy row (see above)
+    runs.extend(current_run_start)
+    runs.append(prev_x)
+    return runs
 
 
 def runlength_encode_to_lengths(coord_list_zyx, assume_sorted=False):
@@ -362,7 +369,8 @@ def runlength_encode_to_lengths(coord_list_zyx, assume_sorted=False):
         coord_list_zyx = coord_list_zyx[sorting_ind]
 
     # Compute ranges and then convert to lengths.
-    rle_result = _runlength_encode_to_ranges(coord_list_zyx)
+    runs = _runlength_encode_to_ranges(coord_list_zyx)
+    rle_result = np.array(runs, coord_list_zyx.dtype).reshape((-1,4))
     rle_result[:,3] = 1 + rle_result[:,3] - rle_result[:,2]
     return rle_result
     

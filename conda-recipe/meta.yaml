@@ -29,7 +29,7 @@ requirements:
     - numpy >=1.13
     - h5py
     - pandas
-    - numba
+    - numba >=0.45
     - vigra
     - nifty
     - libdvid-cpp >=0.3.post83
