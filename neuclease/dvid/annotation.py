@@ -545,8 +545,12 @@ def load_synapses_npy(npy_path):
     categorical dtypes (saves RAM). 
     """
     records = np.load(npy_path)
-    
-    df = pd.DataFrame(records[['z','y','x','conf']])
+
+    numeric_cols = ['z', 'y', 'x', 'conf', 'label', 'body', 'sv']
+    numeric_cols = [*filter(lambda c: c in records.dtype.names, numeric_cols)]
+
+    df = pd.DataFrame(records[numeric_cols])
+
     if 'point_id' in records.dtype.names:
         df.index = records['point_id']
 
