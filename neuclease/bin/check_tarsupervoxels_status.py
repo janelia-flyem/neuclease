@@ -41,7 +41,7 @@ from dvidutils import LabelMapper
 
 from neuclease import configure_default_logging
 from neuclease.util import read_csv_header, read_csv_col, tqdm_proxy, parse_timestamp
-from neuclease.dvid import fetch_missing, fetch_exists, fetch_mapping, fetch_instance_info
+from neuclease.dvid import fetch_missing, fetch_exists, fetch_mapping, fetch_instance_info, find_master
 from neuclease.dvid.kafka import read_kafka_messages, filter_kafka_msgs_by_timerange
 from neuclease.dvid.labelmap import fetch_complete_mappings, compute_affected_bodies
 
@@ -61,7 +61,7 @@ def main():
                              'Examples: -k="2018-11-22" -k="2018-11-22 17:34:00"')
     
     parser.add_argument('server', help='dvid server, e.g. emdata3:8900')
-    parser.add_argument('uuid', help='dvid node')
+    parser.add_argument('uuid', help='dvid node to analyze or "master" for the latest master branch uuid')
     parser.add_argument('tsv_instance', help="Name of a tarsupervoxels instance, e.g. segmentation_sv_meshes.\n"
                                              "Must be sync'd to a labelmap (segmentation) instance.")
     parser.add_argument('bodies_csv', nargs='?', help='CSV containing a column named "body", which will be read.\n'
@@ -72,6 +72,9 @@ def main():
     if not (bool(args.kafka_timestamp) ^ bool(args.bodies_csv)):
         print("You must provide either --kafka-timestamp or a bodies list (not both)", file=sys.stderr)
         sys.exit(1)
+
+    if args.uuid == "master":
+        args.uuid = find_master(args.server)
 
     # Determine segmentation instance
     info = fetch_instance_info(args.server, args.uuid, args.tsv_instance)
