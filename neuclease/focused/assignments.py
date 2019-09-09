@@ -56,7 +56,9 @@ def generate_focused_assignment(merge_table, output_path=None):
                    "file version": 1,
                    "task list": tasks }
     if output_path:
-        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        d = os.path.dirname(output_path)
+        if d:
+            os.makedirs(d, exist_ok=True)
         with open(output_path, 'w') as f:
             ujson.dump(assignment, f, indent=2)
     return assignment
