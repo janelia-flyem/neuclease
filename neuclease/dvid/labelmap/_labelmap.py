@@ -633,6 +633,15 @@ def fetch_complete_mappings(server, uuid, instance, include_retired=True, kafka_
         
         include_retired:
             If True, include rows for 'retired' supervoxels, which all map to 0.
+        
+        kafka_msgs:
+            Optionally provide the complete labelmap kafka log if you've got it,
+            in which case this function doesn't need to re-fetch it.
+        
+        sort:
+            Optional.
+            If 'sv', sort by supervoxel column.
+            If 'body', sort by body. Otherwise, don't sort.
 
     Returns:
         pd.Series(index=sv, data=body)
