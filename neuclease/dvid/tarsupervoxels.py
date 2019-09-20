@@ -311,7 +311,9 @@ def fetch_exists(server, uuid, instance, supervoxels, batch_size=None, *, sessio
         _fetch_batch = partial(fetch_exists, server, uuid, instance)
         result_chunks = compute_parallel(_fetch_batch, sv_chunks, processes=processes)
 
-    return pd.concat(result_chunks)
+    results = pd.concat(result_chunks)
+    assert results.index.dtype == np.uint64
+    return results
 
 
 @dvid_api_wrapper

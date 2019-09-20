@@ -1858,5 +1858,10 @@ def compute_affected_bodies(kafka_msgs):
         if msg['Action'] == 'split-supervoxel':
             new_supervoxels.add(msg['SplitSupervoxel'])
             new_supervoxels.add(msg['RemainSupervoxel'])
+    
+    new_bodies = np.fromiter(new_bodies, np.uint64)
+    changed_bodies = np.fromiter(changed_bodies, np.uint64)
+    removed_bodies = np.fromiter(removed_bodies, np.uint64)
+    new_supervoxels = np.fromiter(new_supervoxels, np.uint64)
 
     return new_bodies, changed_bodies, removed_bodies, new_supervoxels

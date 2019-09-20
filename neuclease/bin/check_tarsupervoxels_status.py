@@ -32,8 +32,9 @@ Examples:
 import sys
 import logging
 import argparse
-import requests
+from itertools import chain
 
+import requests
 import numpy as np
 import pandas as pd
 
@@ -97,8 +98,9 @@ def main():
         new_bodies, changed_bodies, _removed_bodies, new_supervoxels = compute_affected_bodies(filtered_kafka_msgs)
         sv_split_bodies = set(fetch_mapping(args.server, args.uuid, seg_instance, new_supervoxels)) - set([0])
         
-        bodies = list(new_bodies | changed_bodies | sv_split_bodies)
-        bodies = np.asarray(bodies, np.uint64)
+        bodies = set(chain(new_bodies, changed_bodies, sv_split_bodies))
+        bodies = np.fromiter(bodies, np.uint64)
+        bodies.sort()
     else: 
         raise AssertionError("Shouldn't get here.")
     
@@ -170,15 +172,18 @@ def check_tarsupervoxels_status_via_exists(server, uuid, tsv_instance, bodies, s
     mapping = pd.DataFrame(mapping).query('body in @_bodies')['body'].copy()
     unmapped_bodies = _bodies - set(mapping)
     unmapped_bodies = np.fromiter(unmapped_bodies, np.uint64)
-    singleton_mapping = pd.Series(index=unmapped_bodies, data=unmapped_bodies)
+    singleton_mapping = pd.Series(index=unmapped_bodies, data=unmapped_bodies, dtype=np.uint64)
     mapping = pd.concat((mapping, singleton_mapping))
     
+    assert mapping.index.values.dtype == np.uint64
+    assert mapping.values.dtype == np.uint64
+    
     # Faster than mapping.loc[], apparently
-    mapper = LabelMapper(mapping.index.values.astype(np.uint64),
-                         mapping.values.astype(np.uint64))
+    mapper = LabelMapper(mapping.index.values, mapping.values)
 
     statuses = fetch_exists(server, uuid, tsv_instance, mapping.index, batch_size=10_000, processes=16)
-    missing_svs = statuses[~statuses].index
+    missing_svs = statuses[~statuses].index.values
+    assert missing_svs.dtype == np.uint64
     missing_bodies = mapper.apply(missing_svs, True)
 
     missing_df = pd.DataFrame({'sv': missing_svs, 'body': missing_bodies})
