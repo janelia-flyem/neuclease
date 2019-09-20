@@ -831,7 +831,11 @@ def body_synapse_counts(synapse_samples):
 
     synapse_counts['PostSyn'] = synapse_counts['PostSyn'].astype(np.int32)
     synapse_counts['PreSyn'] = synapse_counts['PreSyn'].astype(np.int32)
-    return synapse_counts
+
+    # Convert columns from categorical index to normal index,
+    # so the caller can easily append their own columns if they want.
+    synapse_counts.columns = synapse_counts.columns.tolist()
+    return synapse_counts[['PreSyn', 'PostSyn']]
 
 
 def fetch_roi_synapses(server, uuid, synapses_instance, rois, fetch_labels=False, return_partners=False, processes=16):
