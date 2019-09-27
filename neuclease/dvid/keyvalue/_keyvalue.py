@@ -21,11 +21,24 @@ logger = logging.getLogger(__name__)
 @dvid_api_wrapper
 def fetch_keys(server, uuid, instance, *, session=None):
     """
-    Fetches the complete list of keys in the instance (not their values).
+    Fetch the complete list of keys in the instance (not their values).
     
     WARNING: In the current version of DVID, which uses the basholeveldb backend,
              this will be VERY SLOW for instances with a lot of data.
              (The speed depends on the total size of the values, not the number of keys.)
+
+    Args:
+        server:
+            dvid server, e.g. 'emdata3:8900'
+        
+        uuid:
+            dvid uuid, e.g. 'abc9'
+        
+        instance:
+            keyvalue instance name, e.g. 'focused_merged'
+
+    Returns:
+        list of strings
     """
     return fetch_generic_json(f'http://{server}/api/node/{uuid}/{instance}/keys', session=session)
 
@@ -37,6 +50,18 @@ def fetch_keyrange(server, uuid, instance, key1, key2, *, session=None):
     the given data instance (not their values).
     
     WARNING: This can be slow for large ranges.
+    
+    Args:
+        server:
+            dvid server, e.g. 'emdata3:8900'
+        
+        uuid:
+            dvid uuid, e.g. 'abc9'
+        
+        instance:
+            keyvalue instance name, e.g. 'focused_merged'
+    Returns:
+        List of values (bytes)
     """
     url = f'http://{server}/api/node/{uuid}/{instance}/keyrange/{key1}/{key2}'
     return fetch_generic_json(url, session=session)
@@ -44,6 +69,28 @@ def fetch_keyrange(server, uuid, instance, key1, key2, *, session=None):
 
 @dvid_api_wrapper
 def fetch_key(server, uuid, instance, key, as_json=False, *, session=None):
+    """
+    Fetch a single value from a DVID keyvalue instance.
+    
+    Args:
+        server:
+            dvid server, e.g. 'emdata3:8900'
+        
+        uuid:
+            dvid uuid, e.g. 'abc9'
+        
+        instance:
+            keyvalue instance name, e.g. 'focused_merged'
+        
+        key:
+            A key (string) whose corresponding value will be fetched.
+        
+        as_json:
+            If True, interpret the value as json and load it into a Python value
+    
+    Returns:
+        Bytes or parsed json data (see ``as_json``)
+    """
     r = session.get(f'http://{server}/api/node/{uuid}/{instance}/key/{key}')
     r.raise_for_status()
     if as_json:
@@ -53,6 +100,30 @@ def fetch_key(server, uuid, instance, key, as_json=False, *, session=None):
 
 @dvid_api_wrapper
 def post_key(server, uuid, instance, key, data=None, json=None, *, session=None):
+    """
+    Post a single value to a DVID keyvalue instance.
+    
+    Args:
+        server:
+            dvid server, e.g. 'emdata3:8900'
+        
+        uuid:
+            dvid uuid, e.g. 'abc9'
+        
+        instance:
+            keyvalue instance name, e.g. 'focused_merged'
+        
+        key:
+            A key (string) whose corresponding value will be posted.
+        
+        data:
+            The value to post to the given key, given as bytes.
+        
+        json:
+            Instead of posting bytes, you can provide a JSON-serializable
+            Python object via this argument.
+            The object will be encoded as JSON and then posted.
+    """
     assert data is not None or json is not None, "No data to post"
     if data is not None:
         assert isinstance(data, bytes), f"Raw data must be posted as bytes, not {type(data)}"
@@ -62,6 +133,22 @@ def post_key(server, uuid, instance, key, data=None, json=None, *, session=None)
 
 @dvid_api_wrapper
 def delete_key(server, uuid, instance, key, *, session=None):
+    """
+    Delete a single key from a dvid keyvalue instance.
+
+    Args:
+        server:
+            dvid server, e.g. 'emdata3:8900'
+        
+        uuid:
+            dvid uuid, e.g. 'abc9'
+        
+        instance:
+            keyvalue instance name, e.g. 'focused_merged'
+        
+        key:
+            A key (string) whose corresponding value will be deleted.
+    """
     r = session.delete(f'http://{server}/api/node/{uuid}/{instance}/key/{key}')
     r.raise_for_status()
 
@@ -204,6 +291,11 @@ def post_keyvalues(server, uuid, instance, keyvalues, batch_size=None, *, sessio
         keyvalues:
             A dictionary of { key : value }, in which key is a string and value is bytes.
             If the value is not bytes, it will be treated as JSON data and encoded to bytes.
+        
+        batch_size:
+            If provided, don't post all the values at once.
+            Instead, break the values into smaller batches (of the given size),
+            and post them one batch at a time.  Progress will be shown in the console.
     """
     assert isinstance(keyvalues, Mapping)
     batch_size = batch_size or len(keyvalues)
