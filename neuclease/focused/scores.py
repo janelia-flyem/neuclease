@@ -24,6 +24,10 @@ def calc_speculative_scores(table):
     Notes:
         - Higher is better!
         - Initially we are using a threshold of >=0.1
+    
+    From Email:
+        Subject: focused proofreading iteration 1 constraints
+        Date: Wednesday, July 25, 2018 at 11:38 AM
     """
     scores = np.empty(len(table), np.float32)
     for i in range(len(table)):
