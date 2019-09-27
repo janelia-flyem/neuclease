@@ -49,7 +49,7 @@ def generate_mergereview_assignment_from_groups(server, uuid, instance, sv_group
     
     focused_bodies = set(focused_bodies)
     all_svs = set(chain(*sv_groups.values()))
-    sv_bodies = fetch_mapping(server, uuid, instance, all_svs)
+    sv_bodies = fetch_mapping(server, uuid, instance, all_svs, as_series=True)
     sv_bodies = pd.DataFrame(sv_bodies)
     all_05_svs = sv_bodies.query('body in @focused_bodies').index
     

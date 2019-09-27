@@ -518,19 +518,24 @@ split_supervoxel = post_split_supervoxel
 
 
 @dvid_api_wrapper
-def fetch_mapping(server, uuid, instance, supervoxel_ids, *, session=None):
+def fetch_mapping(server, uuid, instance, supervoxel_ids, *, session=None, as_series=False):
     """
     For each of the given supervoxels, ask DVID what body they belong to.
     If the supervoxel no longer exists, it will map to label 0.
     
     Returns:
-        pd.Series, with index named 'sv' and values named 'body'
+        If as_series=True, return pd.Series, with index named 'sv' and values named 'body'.
+        Otherwise, return the bodies as an array, in the same order in which the supervoxels were given.
     """
     supervoxel_ids = list(map(int, supervoxel_ids))
     body_ids = fetch_generic_json(f'http://{server}/api/node/{uuid}/{instance}/mapping', json=supervoxel_ids, session=session)
     mapping = pd.Series(body_ids, index=np.asarray(supervoxel_ids, np.uint64), dtype=np.uint64, name='body')
     mapping.index.name = 'sv'
-    return mapping
+    
+    if as_series:
+        return mapping
+    else:
+        return mapping.values
 
 
 @dvid_api_wrapper
@@ -1548,7 +1553,7 @@ def post_hierarchical_cleaves(server, uuid, instance, body_id, group_mapping, *,
     group_mapping = group_mapping.rename('group', copy=False)
     group_mapping = group_mapping.rename_axis('sv', copy=False)
     
-    dvid_mapping = fetch_mapping(server, uuid, instance, group_mapping.index.values, session=session)
+    dvid_mapping = fetch_mapping(server, uuid, instance, group_mapping.index.values, as_series=True, session=session)
     assert (dvid_mapping == body_id).all(), \
         "All supervoxels in the group_mapping index must map (in DVID) to the given body_id"
 

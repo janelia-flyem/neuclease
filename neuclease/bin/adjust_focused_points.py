@@ -72,7 +72,7 @@ def adjust_focused_points(server, uuid, instance, assignment_json_data, supervox
             label_1 = sv_1
             label_2 = sv_2
         else:
-            label_1, label_2 = fetch_mapping(server, uuid, instance, [sv_1, sv_2])
+            label_1, label_2 = fetch_mapping(server, uuid, instance, [sv_1, sv_2], as_series=True)
         
         avg_coord = (coord_1 + coord_2) // 2
         

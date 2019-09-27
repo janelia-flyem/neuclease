@@ -927,7 +927,7 @@ def fetch_roi_synapses(server, uuid, synapses_instance, rois, fetch_labels=False
             # Arbitrary heuristic for whether to do the
             # body-lookups on DVID or on the client.
             if len(svs) < 100_000:
-                bodies = fetch_mapping(server, uuid, seg_instance, svs).values
+                bodies = fetch_mapping(server, uuid, seg_instance, svs)
             else:
                 mapping = fetch_mappings(server, uuid, seg_instance)
                 mapper = LabelMapper(mapping.index.values, mapping.values)

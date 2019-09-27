@@ -191,7 +191,7 @@ def cleave_supervoxels_as_isolated_bodies(instance_info, sv_ids):
     cleaving them out as their own independent, single-supervoxel bodies.
     """
     logger.info("Fetching mapping for each SV")
-    body_ids = fetch_mapping(*instance_info, sv_ids)
+    body_ids = fetch_mapping(*instance_info, sv_ids, as_series=True)
 
     logger.info("Performing cleaves")
     cleaved_ids = []

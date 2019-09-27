@@ -1,5 +1,6 @@
 from functools import partial
-from collections import namedtuple, Iterable
+from collections import namedtuple
+from collections.abc import Iterable
 
 import numpy as np
 import pandas as pd
@@ -362,7 +363,7 @@ def _fetch_sizes_via_labelindex(server, uuid, instance, labels, supervoxels=Fals
     Helper for fetch_sizes_via_labelindex()
     """
     if supervoxels:
-        mapping = fetch_mapping(server, uuid, instance, labels)
+        mapping = fetch_mapping(server, uuid, instance, labels, as_series=True)
         bodies = pd.unique(mapping.values)
         indices = fetch_labelindices(server, uuid, instance, bodies, format='pandas')
         df = pd.concat([index.blocks for index in indices])
@@ -455,7 +456,7 @@ def fetch_sparsevol_coarse_via_labelindex(server, uuid, instance, labels, superv
 
     block_ids = set()
     if supervoxels:
-        bodies = fetch_mapping(server, uuid, instance, labels)
+        bodies = fetch_mapping(server, uuid, instance, labels, as_series=True)
         for body, mapping_df in bodies.reset_index().groupby('body'):
             if body == 0:
                 continue

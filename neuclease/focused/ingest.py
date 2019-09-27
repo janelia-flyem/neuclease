@@ -230,8 +230,8 @@ def fetch_focused_decisions(server, uuid, instance='segmentation_merged', normal
         coords_b = df[['zb', 'yb', 'xb']].values
         svs_a = fetch_labels_batched(*update_with_instance, coords_a, True, 0, 10_000, threads=8)
         svs_b = fetch_labels_batched(*update_with_instance, coords_b, True, 0, 10_000, threads=8)
-        bodies_a = fetch_mapping(*update_with_instance, svs_a).values
-        bodies_b = fetch_mapping(*update_with_instance, svs_b).values
+        bodies_a = fetch_mapping(*update_with_instance, svs_a)
+        bodies_b = fetch_mapping(*update_with_instance, svs_b)
         
         df['sv_a'] = svs_a
         df['sv_b'] = svs_b
