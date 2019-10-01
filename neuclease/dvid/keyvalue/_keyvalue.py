@@ -60,8 +60,20 @@ def fetch_keyrange(server, uuid, instance, key1, key2, *, session=None):
         
         instance:
             keyvalue instance name, e.g. 'focused_merged'
+    
     Returns:
-        List of values (bytes)
+        List of keys (strings)
+        
+    Examples:
+        
+        # Everything from 0...999999999
+        keys = fetch_keyrange('emdata3:8900', 'abc9', '0', '999999999')
+
+        # This will catch everything from 'aaa...' to a single 'z', but not 'za'
+        keys = fetch_keyrange('emdata3:8900', 'abc9', 'a', 'z')
+
+        # This gets everything from 'aaa...' to 'zzzzz...'
+        keys = fetch_keyrange('emdata3:8900', 'abc9', 'a', chr(ord('z')+1))
     """
     url = f'http://{server}/api/node/{uuid}/{instance}/keyrange/{key1}/{key2}'
     return fetch_generic_json(url, session=session)
