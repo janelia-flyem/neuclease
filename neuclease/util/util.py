@@ -8,8 +8,8 @@ import vigra
 import logging
 import inspect
 import contextlib
+from functools import partial
 from multiprocessing.pool import Pool, ThreadPool
-from collections import defaultdict
 from datetime import datetime, timedelta
 from itertools import product, starmap
 from collections.abc import Mapping
@@ -331,7 +331,7 @@ def iter_batches(it, batch_size):
                 yield batch
 
 
-def compute_parallel(func, iterable, chunksize=1, threads=None, processes=None, ordered=True, leave_progress=False, total=None, initial=0):
+def compute_parallel(func, iterable, chunksize=1, threads=None, processes=None, ordered=True, leave_progress=False, total=None, initial=0, starmap=False):
     """
     Use the given function to process the given iterable in a ThreadPool or process Pool,
     showing progress using tqdm.
@@ -367,6 +367,10 @@ def compute_parallel(func, iterable, chunksize=1, threads=None, processes=None, 
         
         initial:
             Optional. Specify a starting value for the progress bar.
+        
+        starmap:
+            If True, each item should be a tuple, which will be unpacked into
+             the arguments to the given function, like ``itertools.starmap()``.
     """
     assert bool(threads) ^ bool(processes), \
         "Specify either threads or processes (not both)"
@@ -379,15 +383,24 @@ def compute_parallel(func, iterable, chunksize=1, threads=None, processes=None, 
     if total is None and hasattr(iterable, '__len__'):
         total = len(iterable)
 
+    if ordered:
+        f_map = pool.imap
+    else:
+        f_map = pool.imap_unordered
+    
+    if starmap:
+        func = partial(apply_star, func)
+
     with pool:
-        if ordered:
-            items = pool.imap(func, iterable, chunksize)
-        else:
-            items = pool.imap_unordered(func, iterable, chunksize)
+        items = f_map(func, iterable, chunksize)
         items_progress = tqdm_proxy(items, initial=initial, total=total, leave=leave_progress)
         items = list(items_progress)
         items_progress.close()
         return items
+
+
+def apply_star(func, arg):
+    return func(*arg)
 
 
 DEFAULT_TIMESTAMP = datetime.strptime('2018-01-01 00:00:00', '%Y-%m-%d %H:%M:%S')

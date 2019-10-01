@@ -332,6 +332,8 @@ def test_ndrange():
 def _double(x):
     return 2*x
 
+def _add(x, y):
+    return x + y
 
 def test_compute_parallel():
     items = list(range(100))
@@ -341,6 +343,10 @@ def test_compute_parallel():
     items = list(range(100))
     results = compute_parallel(_double, items, processes=2)
     assert results == list(range(0,200,2))
+
+    items = [*zip(range(10), range(100,110))]
+    results = compute_parallel(_add, items, processes=2, starmap=True)
+    assert results == [sum(item) for item in items]
 
 
 if __name__ == "__main__":
