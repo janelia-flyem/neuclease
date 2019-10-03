@@ -11,7 +11,8 @@ from dvidutils import LabelMapper
 from ..util import read_csv_header, Timer, swap_df_cols
 from ..util.csv import read_csv_col
 from ..merge_table import load_all_supervoxel_sizes, compute_body_sizes
-from ..dvid import fetch_keys, post_keyvalues, fetch_complete_mappings, fetch_keyvalues, fetch_labels_batched, fetch_mapping, find_master
+from ..dvid import (fetch_keys, post_keyvalues, fetch_complete_mappings, fetch_keyvalues,
+                    fetch_labels_batched, fetch_mapping, find_master, fetch_body_annotations)
 from ..dvid.annotation import load_synapses, body_synapse_counts
 from ..dvid.labelmap import fetch_supervoxel_fragments, fetch_labels
 
@@ -274,6 +275,177 @@ def drop_previously_reviewed(df, previous_focused_decisions_df):
 
     keep_rows = (in_prev['side'] == 'left_only')
     return df.loc[keep_rows.values, cols]
+
+
+DEFAULT_IMPORTANT_STATUSES = {'Leaves', 'Prelim Roughly traced', 'Roughly traced', 'Traced'}
+DEFAULT_BAD_BODIES = '/nrs/flyem/bergs/complete-ffn-agglo/bad-bodies-2019-02-26.csv'
+def filter_merge_tasks(server, uuid, focused_df=None, mr_df=None, mr_endpoint_df=None,
+                       body_annotations_df=None, previous_focused_df=None,
+                       important_statuses=DEFAULT_IMPORTANT_STATUSES, bad_bodies=DEFAULT_BAD_BODIES,
+                       min_psds=1, min_tbars=1):
+    """
+    Filter the given focused and/or merge-review tasks to remove tasks that should not be assigned.
+    
+    The following criteria are used for filtering:
+        - synapse counts: one or both bodies must have the requisite PSDs or T-bars
+        - bad bodies (e.g. frankenbodies): no task should involve a bad body
+        - previous assignments: Don't re-assign tasks that have already been reviewed.
+          Note: At the moment, only previous focused proofreading assignments are checked.
+        - body status: Each task must involve at least one body with an "important" status.
+    
+    Returns:
+        (focused_df, mr_df, mr_endpoint_df)
+    """
+    dvid_node = (server, uuid)
+
+    if isinstance(focused_df, str):
+        focused_df = pd.DataFrame(np.load(focused_df, allow_pickle=True))
+
+    if isinstance(mr_df, str):
+        mr_df = pd.DataFrame(np.load(mr_df, allow_pickle=True))
+    
+    if isinstance(mr_endpoint_df, str):
+        mr_endpoint_df = pd.DataFrame(np.load(mr_endpoint_df, allow_pickle=True))
+
+    assert not ((mr_df is None) ^ (mr_endpoint_df is None)), \
+        "If you have MR tasks, you must supply both mr_df and mr_endpoint_df"
+
+    for df in (focused_df, mr_df, mr_endpoint_df):
+        assert df is None or isinstance(df, pd.DataFrame), "bad input type"
+
+    if focused_df is not None:
+        focused_df = focused_df.copy()
+        swap_df_cols(focused_df, None, focused_df.eval('sv_a > sv_b'), ('a', 'b'))
+        num_focused = len(focused_df)
+        logger.info(f"Starting with {num_focused} focused tasks")
+
+    if mr_df is not None:
+        mr_df = mr_df.copy()
+        mr_endpoint_df = mr_endpoint_df.copy()
+        num_mr_tasks = len(mr_endpoint_df)
+        logger.info(f"Starting with {num_mr_tasks} merge-review tasks")
+        num_mr_edges = len(mr_df)
+        logger.info(f"Starting with {num_mr_edges} merge-review edges")
+
+    with Timer("Filtering for synapse counts", logger):
+        if min_psds > 0 or min_tbars > 0:
+            if focused_df is not None:
+                assert {'PostSyn_a', 'PreSyn_a', 'PostSyn_b', 'PreSyn_b'} < set(focused_df.columns), \
+                    "tasks are missing synapse count columns"
+            if mr_df is not None:
+                assert {'PostSyn_a', 'PreSyn_a', 'PostSyn_b', 'PreSyn_b'} < set(mr_df.columns), \
+                    "tasks are missing synapse count columns"
+            if mr_endpoint_df is not None:
+                assert {'PostSyn_a', 'PreSyn_a', 'PostSyn_b', 'PreSyn_b'} < set(mr_endpoint_df.columns), \
+                    "tasks are missing synapse count columns"
+    
+            _q = '(PostSyn_a >= @min_psds or PreSyn_a >= @min_tbars) and (PostSyn_b >= @min_psds or PreSyn_b >= @min_tbars)'
+
+            if focused_df is not None:
+                focused_df = focused_df.query(_q).copy()
+                logger.info(f"Dropped {num_focused - len(focused_df)} focused tasks")
+                num_focused = len(focused_df)
+            
+            if mr_df is not None:
+                mr_endpoint_df = mr_endpoint_df.query(_q).copy()
+                mr_df = mr_df.merge(mr_endpoint_df[['group_cc', 'cc_task']], 'right', ['group_cc', 'cc_task'])
+
+                logger.info(f"Dropped {num_mr_tasks - len(mr_endpoint_df)} merge-review tasks"
+                            f" ({num_mr_edges - len(mr_df)} edges)")
+                num_mr_tasks = len(mr_endpoint_df)
+                num_mr_edges = len(mr_df)
+
+    with Timer("Dropping bad bodies", logger):
+        if isinstance(bad_bodies, str):
+            bad_bodies = pd.read_csv(bad_bodies)['body']
+    
+        # Drop bad bodies (e.g. "frankenbodies")
+        if bad_bodies is not None:
+            bad_bodies = set(bad_bodies)
+            
+            if focused_df is not None:
+                # Discarding from focused is easy.        
+                focused_df = focused_df.query('(body_a not in @bad_bodies) and (body_b not in @bad_bodies)').copy()
+                logger.info(f"Dropped {num_focused - len(focused_df)} focused tasks")
+                num_focused = len(focused_df)
+    
+            if mr_df is not None:
+                # Discarding from the two MR tables is a little trickier.
+                # Figure out which tasks (group_cc, cc_task) are bad, and then
+                # merge with an 'indicator' column so we can drop the rows that were NOT found in the bad tasks.
+                bad_mr_tasks = mr_df.query('(body_a in @bad_bodies) or (body_b in @bad_bodies)')[['group_cc', 'cc_task']].drop_duplicates()
+                marked_mr = (mr_df[['group_cc', 'cc_task']]
+                                .merge(bad_mr_tasks, how='left', on=['group_cc', 'cc_task'], indicator='side'))
+                keep_rows = (marked_mr['side'] == 'left_only')
+                mr_df = mr_df.loc[keep_rows]
+            
+                marked_mr_endpoints = (mr_endpoint_df[['group_cc', 'cc_task']]
+                                        .merge(bad_mr_tasks, how='left', on=['group_cc', 'cc_task'], indicator='side'))
+                keep_rows = (marked_mr_endpoints['side'] == 'left_only')
+                mr_endpoint_df = mr_endpoint_df.loc[keep_rows]
+
+                logger.info(f"Dropped {num_mr_tasks - len(mr_endpoint_df)} merge-review tasks"
+                            f" ({num_mr_edges - len(mr_df)} edges)")
+                num_mr_tasks = len(mr_endpoint_df)
+                num_mr_edges = len(mr_df)
+
+
+    with Timer("Dropping previously-reviewed focused tasks", logger):
+        # Drop any focused tasks that have already been assigned in the past.
+        if previous_focused_df is None:
+            previous_focused_df = fetch_focused_decisions(*dvid_node, normalize_pairs='sv')
+        drop_previously_reviewed(focused_df, previous_focused_df)
+        logger.info(f"Dropped {num_focused - len(focused_df)} focused tasks")
+        num_focused = len(focused_df)
+
+    # TODO: Drop previously-reviewed merge-review tasks
+
+    # Are any of the inputs missing their status columns?
+    # If so, update them all.
+    dfs = [*filter(lambda df: df is not None, (focused_df, mr_df, mr_endpoint_df))]
+    if not all(({'status_a', 'status_b'} < {*df.columns}) for df in dfs):
+        with Timer("Updating status columns", logger):
+            if body_annotations_df is None:
+                body_annotations_df = fetch_body_annotations(*dvid_node)
+    
+            if focused_df is not None:
+                focused_df = focused_df.drop(columns=['status_a', 'status_b'], errors='ignore')
+                focused_df = focused_df.merge(body_annotations_df['status'], 'left', left_on='body_a', right_index=True)
+                focused_df = focused_df.merge(body_annotations_df['status'], 'left', left_on='body_b', right_index=True, suffixes=['_a', '_b'])
+    
+            if mr_df is not None:
+                mr_df = mr_df.drop(columns=['status_a', 'status_b'], errors='ignore')
+                mr_df = mr_df.merge(body_annotations_df['status'], 'left', left_on='body_a', right_index=True)
+                mr_df = mr_df.merge(body_annotations_df['status'], 'left', left_on='body_b', right_index=True, suffixes=['_a', '_b'])
+        
+                mr_endpoint_df = mr_endpoint_df.drop(columns=['status_a', 'status_b'], errors='ignore')
+                mr_endpoint_df = mr_endpoint_df.merge(body_annotations_df['status'], 'left', left_on='body_a', right_index=True)
+                mr_endpoint_df = mr_endpoint_df.merge(body_annotations_df['status'], 'left', left_on='body_b', right_index=True, suffixes=['_a', '_b'])
+
+    with Timer("Filtering by body status", logger):
+        # Filter by status.
+        # Each task must have exactly one 'important' status
+        _q = ('(status_a in @important_statuses) != (status_b in @important_statuses)')
+        if focused_df is not None:
+            focused_df = focused_df.query(_q).copy()
+            logger.info(f"Dropped {num_focused - len(focused_df)} focused tasks")
+            num_focused = len(focused_df)
+
+        if mr_df is not None:
+            mr_endpoint_df = mr_endpoint_df.query(_q).copy()
+            mr_df = mr_df.merge(mr_endpoint_df[['group_cc', 'cc_task']], 'right', on=['group_cc', 'cc_task'])
+            logger.info(f"Dropped {num_mr_tasks - len(mr_endpoint_df)} merge-review tasks"
+                        f" ({num_mr_edges - len(mr_df)} edges)")
+            num_mr_tasks = len(mr_endpoint_df)
+            num_mr_edges = len(mr_df)
+
+    if focused_df is not None:
+        logger.info(f"Remaining focused tasks: {len(focused_df)}")
+
+    if mr_df is not None:
+        logger.info(f"Remaining merge review tasks: {len(mr_endpoint_df)} ({len(mr_df)} edges)")
+
+    return (focused_df, mr_df, mr_endpoint_df)
 
 
 def upload_focused_tasks(assignment, comment, server, uuid=None, instance='focused_assign', *, repo_uuid=None, overwrite_existing=False):
