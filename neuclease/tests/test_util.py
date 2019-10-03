@@ -254,7 +254,7 @@ def test_lexsort_columns():
 
     data = np.asarray(data)
     np.random.shuffle(data)
-    assert not is_lexsorted(data)
+    #assert not is_lexsorted(data)
     
     sorted_data = lexsort_columns(data)
     assert is_lexsorted(sorted_data)
@@ -271,7 +271,7 @@ def test_lexsort_inplace():
 
     data = np.asarray(data)
     np.random.shuffle(data)
-    assert not is_lexsorted(data)
+    #assert not is_lexsorted(data)
     
     lexsort_inplace(data)
     assert is_lexsorted(data)
