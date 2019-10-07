@@ -278,10 +278,15 @@ def drop_previously_reviewed(df, previous_focused_decisions_df):
 
 
 DEFAULT_IMPORTANT_STATUSES = {'Leaves', 'Prelim Roughly traced', 'Roughly traced', 'Traced'}
+DEFAULT_FOCUS_STATUSES = {'Orphan', 'Orphan hotknife', '0.5assign'}
 DEFAULT_BAD_BODIES = '/nrs/flyem/bergs/complete-ffn-agglo/bad-bodies-2019-02-26.csv'
 def filter_merge_tasks(server, uuid, focused_df=None, mr_df=None, mr_endpoint_df=None,
                        body_annotations_df=None, previous_focused_df=None,
-                       important_statuses=DEFAULT_IMPORTANT_STATUSES, bad_bodies=DEFAULT_BAD_BODIES,
+                       connecting_statuses_1=DEFAULT_FOCUS_STATUSES,
+                       connecting_statuses_2=DEFAULT_FOCUS_STATUSES,
+                       at_least_one_of_statuses=DEFAULT_IMPORTANT_STATUSES,
+                       at_most_one_of_statuses=DEFAULT_IMPORTANT_STATUSES,
+                       bad_bodies=DEFAULT_BAD_BODIES,
                        min_psds=1, min_tbars=1):
     """
     Filter the given focused and/or merge-review tasks to remove tasks that should not be assigned.
@@ -291,7 +296,12 @@ def filter_merge_tasks(server, uuid, focused_df=None, mr_df=None, mr_endpoint_df
         - bad bodies (e.g. frankenbodies): no task should involve a bad body
         - previous assignments: Don't re-assign tasks that have already been reviewed.
           Note: At the moment, only previous focused proofreading assignments are checked.
-        - body status: Each task must involve at least one body with an "important" status.
+          
+        - body status: Tasks will be filtered according to the given sets of statuses.
+          Any task that has one body status from `connecting_statuses_1` and one from `connecting_statuses_2`
+          will be included, as will any task which has one body status from `at_least_one_of_statuses`.
+          Finally, no tasks will be included if they have more than one body status from `at_most_one_of_statuses`.
+          To skip status filtering altogether, pass ``None`` for all of the status sets.
     
     Returns:
         (focused_df, mr_df, mr_endpoint_df)
@@ -312,6 +322,9 @@ def filter_merge_tasks(server, uuid, focused_df=None, mr_df=None, mr_endpoint_df
 
     for df in (focused_df, mr_df, mr_endpoint_df):
         assert df is None or isinstance(df, pd.DataFrame), "bad input type"
+
+    assert bool(connecting_statuses_1) == bool(connecting_statuses_2), \
+        "If supplying connecting statuses, you must supply both."
 
     if focused_df is not None:
         focused_df = focused_df.copy()
@@ -422,22 +435,45 @@ def filter_merge_tasks(server, uuid, focused_df=None, mr_df=None, mr_endpoint_df
                 mr_endpoint_df = mr_endpoint_df.merge(body_annotations_df['status'], 'left', left_on='body_a', right_index=True)
                 mr_endpoint_df = mr_endpoint_df.merge(body_annotations_df['status'], 'left', left_on='body_b', right_index=True, suffixes=['_a', '_b'])
 
-    with Timer("Filtering by body status", logger):
-        # Filter by status.
-        # Each task must have exactly one 'important' status
-        _q = ('(status_a in @important_statuses) != (status_b in @important_statuses)')
-        if focused_df is not None:
-            focused_df = focused_df.query(_q).copy()
-            logger.info(f"Dropped {num_focused - len(focused_df)} focused tasks")
-            num_focused = len(focused_df)
+    if any([at_least_one_of_statuses, connecting_statuses_1, connecting_statuses_2, at_most_one_of_statuses]):
+        with Timer("Filtering by body status", logger):
+            query = ''
+            if at_least_one_of_statuses:
+                clause = '(status_a in @at_least_one_of_statuses) or (status_b in @at_least_one_of_statuses)'
+                if query:
+                    query = f'({query} or {clause})'
+                else:
+                    query = clause
+            
+            if connecting_statuses_1 and connecting_statuses_2:
+                clause = ('(    (status_a in @connecting_statuses_1 and status_b in @connecting_statuses_2)'
+                          '  or (status_a in @connecting_statuses_2 and status_b in @connecting_statuses_1))')
+                if query:
+                    query = f'({query} or {clause})'
+                else:
+                    query = clause
+    
+            if at_most_one_of_statuses:
+                clause = '(not ((status_a in @at_most_one_of_statuses) and (status_b in @at_most_one_of_statuses)))'
 
-        if mr_df is not None:
-            mr_endpoint_df = mr_endpoint_df.query(_q).copy()
-            mr_df = mr_df.merge(mr_endpoint_df[['group_cc', 'cc_task']], 'right', on=['group_cc', 'cc_task'])
-            logger.info(f"Dropped {num_mr_tasks - len(mr_endpoint_df)} merge-review tasks"
-                        f" ({num_mr_edges - len(mr_df)} edges)")
-            num_mr_tasks = len(mr_endpoint_df)
-            num_mr_edges = len(mr_df)
+                # This one is ANDed
+                if query:
+                    query = f'({query} and {clause})'
+                else:
+                    query = clause
+
+            if focused_df is not None:
+                focused_df = focused_df.query(query).copy()
+                logger.info(f"Dropped {num_focused - len(focused_df)} focused tasks")
+                num_focused = len(focused_df)
+    
+            if mr_df is not None:
+                mr_endpoint_df = mr_endpoint_df.query(query).copy()
+                mr_df = mr_df.merge(mr_endpoint_df[['group_cc', 'cc_task']], 'right', on=['group_cc', 'cc_task'])
+                logger.info(f"Dropped {num_mr_tasks - len(mr_endpoint_df)} merge-review tasks"
+                            f" ({num_mr_edges - len(mr_df)} edges)")
+                num_mr_tasks = len(mr_endpoint_df)
+                num_mr_edges = len(mr_df)
 
     if focused_df is not None:
         logger.info(f"Remaining focused tasks: {len(focused_df)}")
