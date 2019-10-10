@@ -570,6 +570,32 @@ def upload_focused_tasks(assignment, comment, server, uuid=None, instance='focus
     return written_pairs, skipped_pairs
 
 
+def compute_bodywise_stats(focused_df):
+    assert {'body_a', 'body_b', 'status_a', 'status_b', 'PostSyn_a', 'PostSyn_b'} < {*focused_df.columns}, \
+        "Input is missing some required columns"
+
+    # Put the big body first
+    focused_df = focused_df.copy()
+    swap_df_cols(focused_df, None, focused_df.eval('PostSyn_a < PostSyn_b'), ('a', 'b'))
+    assert focused_df.eval('PostSyn_a >= PostSyn_b').all()
+
+    stats_df = (focused_df[['body_a', 'status_a', 'PostSyn_a', 'PostSyn_b']]
+                    .rename(columns={ 'body_a': 'body',
+                                      'status_a': 'status',
+                                      'PostSyn_a': 'PostSyn_before',
+                                      'PostSyn_b': 'PostSyn_added'})
+                    .groupby('body').agg({'status': 'first', 'PostSyn_added': ['size', 'sum'], 'PostSyn_before': 'first'}))
+
+    stats_df.columns = ['status', 'num_tasks', 'PostSyn_added', 'PostSyn_before']
+    stats_df.sort_index(inplace=True)
+    
+    stats_df['Possible_Improvement_Pct'] = stats_df.eval('((PostSyn_before + PostSyn_added) / PostSyn_before) * 100 - 100')
+    stats_df['Possible_Improvement_Pct'] = stats_df['Possible_Improvement_Pct'].fillna(0).astype(int)
+    
+    #stats_df.to_csv('bodywise-stats-1psd.csv', index=True, header=True)
+    return stats_df
+
+
 def compute_focused_bodies(server, uuid, instance, synapse_samples, min_tbars, min_psds, root_sv_sizes, min_body_size, sv_classifications=None, marked_bad_bodies=None, return_table=False, kafka_msgs=None):
     """
     Compute the complete set of focused bodies, based on criteria for
