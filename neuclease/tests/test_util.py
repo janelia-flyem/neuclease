@@ -5,10 +5,11 @@ from tempfile import TemporaryFile
 
 import pytest
 import numpy as np
+import pandas as pd
 from neuclease.util import (uuids_match, read_csv_header, read_csv_col, connected_components,
                             connected_components_nonconsecutive, graph_tool_available,
                             closest_approach, approximate_closest_approach, upsample, is_lexsorted, lexsort_columns,
-                            lexsort_inplace, gen_json_objects, ndrange, compute_parallel)
+                            lexsort_inplace, gen_json_objects, ndrange, compute_parallel, iter_batches)
 
 def test_uuids_match():
     assert uuids_match('abcd', 'abcdef') == True
@@ -347,6 +348,24 @@ def test_compute_parallel():
     items = [*zip(range(10), range(100,110))]
     results = compute_parallel(_add, items, processes=2, starmap=True)
     assert results == [sum(item) for item in items]
+
+
+def test_iter_batches():
+    data = range(10)
+    assert [*iter_batches(data, 3)] == [[0,1,2], [3,4,5], [6,7,8], [9]]
+    assert [*iter_batches(iter(data), 3)] == [[0,1,2], [3,4,5], [6,7,8], [9]]
+
+    data = list(data)
+    assert [*iter_batches(data, 3)] == [[0,1,2], [3,4,5], [6,7,8], [9]]
+    
+    data = np.array(data)
+    assert [a.tolist() for a in iter_batches(data, 3)] == [[0,1,2], [3,4,5], [6,7,8], [9]]
+    
+    data = pd.Series(data)
+    assert [a.tolist() for a in iter_batches(data, 3)] == [[0,1,2], [3,4,5], [6,7,8], [9]]
+
+    data = pd.DataFrame(data, columns=['a'])
+    assert [df['a'].tolist() for df in iter_batches(data, 3)] == [[0,1,2], [3,4,5], [6,7,8], [9]]
 
 
 if __name__ == "__main__":

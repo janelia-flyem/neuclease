@@ -12,7 +12,7 @@ from functools import partial
 from multiprocessing.pool import Pool, ThreadPool
 from datetime import datetime, timedelta
 from itertools import product, starmap
-from collections.abc import Mapping
+from collections.abc import Mapping, Iterable, Iterator
 
 import ujson
 import requests
@@ -313,22 +313,35 @@ def _gen_json_objects(text_array):
 
 def iter_batches(it, batch_size):
     """
-    Consume the given iterator in batches and
+    Consume the given iterator/iterable in batches and
     yield each batch as a list of items.
     
     The last batch might be smaller than the others,
     if there aren't enough items to fill it.
     """
-    while True:
-        batch = []
-        try:
-            for _ in range(batch_size):
-                batch.append(next(it))
-        except StopIteration:
-            return
-        finally:
-            if batch:
-                yield batch
+    if isinstance(it, (pd.DataFrame, pd.Series)):
+        for batch_start in range(0, len(it), batch_size):
+            yield it.iloc[batch_start:batch_start+batch_size]
+        return
+    elif isinstance(it, (list, np.ndarray)):
+        for batch_start in range(0, len(it), batch_size):
+            yield it[batch_start:batch_start+batch_size]
+        return
+    else:
+        if not isinstance(it, Iterator):
+            assert isinstance(it, Iterable)
+            it = iter(it)
+
+        while True:
+            batch = []
+            try:
+                for _ in range(batch_size):
+                    batch.append(next(it))
+            except StopIteration:
+                return
+            finally:
+                if batch:
+                    yield batch
 
 
 def compute_parallel(func, iterable, chunksize=1, threads=None, processes=None, ordered=True, leave_progress=False, total=None, initial=0, starmap=False):
