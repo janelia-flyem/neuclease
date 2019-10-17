@@ -152,23 +152,28 @@ def fetch_focused_decisions(server, uuid, instance='segmentation_merged', normal
     """
     assert normalize_pairs in (None, 'sv', 'body')
     
-    
-    if subset_pairs is not None:
+
+    if subset_pairs is None:
+        with Timer(f"Fetching keys from '{instance}'", logger):
+            keys = fetch_keys(server, uuid, instance)
+    else:
         subset_pairs = list(subset_pairs)
         if isinstance(subset_pairs[0], str):
-            keys = subset_pairs
+            subset_keys = subset_pairs
         else:
             subset_keys1 = [f'{a}+{b}' for a,b in subset_pairs]
             subset_keys2 = [f'{b}+{a}' for a,b in subset_pairs]
-            keys = list({*subset_keys1, *subset_keys2})
-    else:
-        with Timer(f"Fetching keys from '{instance}'", logger):
-            # FIXME: Unless subset_pairs is used, it's probably faster
-            #        to just fetch all the key/values at once,
-            #        rather than fetching the keys, then the values.
-            #        (On the server side, fetching keys in leveldb is just as
-            #        expensive as fetching the values too.)
-            keys = fetch_keys(server, uuid, instance)
+            subset_keys = {*subset_keys1, *subset_keys2}
+            
+            if len(subset_pairs) < 100_000:
+                keys = subset_keys
+            else:
+                # If the user gave a lot of keys, it's faster to pre-filter
+                # using the ones that actually exist in the instance,
+                # even though we have to fetch the full key list first.
+                with Timer(f"Fetching keys from '{instance}'", logger):
+                    all_keys = fetch_keys(server, uuid, instance)
+                keys = [*subset_keys.intersection(all_keys)]
 
     with Timer(f"Fetching values from '{instance}'"):
         task_values = fetch_keyvalues(server, uuid, instance, keys, as_json=True, batch_size=100_000).values()
