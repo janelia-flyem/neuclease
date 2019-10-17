@@ -211,10 +211,13 @@ def fetch_focused_decisions(server, uuid, instance='segmentation_merged', normal
         df['time'] = pd.to_datetime(df['time'])
 
     if drop_invalid:
+        if 'sv_a' not in df.columns:
+            return df.iloc[0:0]
+
         invalid = df['sv_a'].isnull()
         for col in ['sv_a', 'sv_b', 'body_a', 'body_b', 'xa', 'ya', 'za', 'xb', 'yb', 'zb']:
             invalid |= df[col].isnull()
-        df = df[~invalid]
+        df = df.loc[~invalid]
 
         for col in ['sv_a', 'sv_b', 'body_a', 'body_b']:
             df[col] = df[col].astype(np.uint64)
