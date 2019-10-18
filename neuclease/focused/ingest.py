@@ -152,10 +152,15 @@ def fetch_focused_decisions(server, uuid, instance='segmentation_merged', normal
     """
     assert normalize_pairs in (None, 'sv', 'body')
     
-
     if subset_pairs is None:
         with Timer(f"Fetching keys from '{instance}'", logger):
             keys = fetch_keys(server, uuid, instance)
+    elif len(subset_pairs) == 0:
+        # subset was provided, but it was empty!
+        cols = ['body_a', 'body_b', 'result', 'sv_a', 'sv_b',
+                'time', 'time zone', 'user',
+                'za', 'ya', 'xa', 'zb', 'yb', 'xb']
+        return pd.DataFrame([], columns=cols)
     else:
         subset_pairs = list(subset_pairs)
         if isinstance(subset_pairs[0], str):
@@ -166,7 +171,7 @@ def fetch_focused_decisions(server, uuid, instance='segmentation_merged', normal
             subset_keys = {*subset_keys1, *subset_keys2}
             
             if len(subset_pairs) < 100_000:
-                keys = subset_keys
+                keys = [*subset_keys]
             else:
                 # If the user gave a lot of keys, it's faster to pre-filter
                 # using the ones that actually exist in the instance,
@@ -267,6 +272,9 @@ def drop_previously_reviewed(df, previous_focused_decisions_df):
     drop all previous decisions from the speculative set,
     regardless of review results.
     """
+    if len(previous_focused_decisions_df) == 0:
+        return df
+        
     cols = [*df.columns]
     
     if df.eval('sv_a > sv_b').any():
