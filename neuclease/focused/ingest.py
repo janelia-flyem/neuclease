@@ -1,6 +1,7 @@
 import os
 import json
 import logging
+from functools import partial
 
 import h5py
 import numpy as np
@@ -8,7 +9,7 @@ import pandas as pd
 
 from dvidutils import LabelMapper
 
-from ..util import read_csv_header, Timer, swap_df_cols
+from ..util import read_csv_header, Timer, swap_df_cols, compute_parallel
 from ..util.csv import read_csv_col
 from ..merge_table import load_all_supervoxel_sizes, compute_body_sizes
 from ..dvid import (fetch_keys, post_keyvalues, fetch_complete_mappings, fetch_keyvalues,
@@ -610,6 +611,271 @@ def compute_bodywise_stats(focused_df):
     
     #stats_df.to_csv('bodywise-stats-1psd.csv', index=True, header=True)
     return stats_df
+
+
+def fetch_output_table(npclient, dataset, body):
+    """
+    Return the list of bodies that are "downstream" of the given "upstream" body,
+    i.e. the list of bodies with at least one PSD that is partnered
+    with a tbar in the given body.
+    Also include various metadata associated with the upstream and downstream bodies,
+    as well as the weight of the connection (number of PSDs).
+    
+    Args:
+        npclient:
+            neuprint.Client
+        
+        dataset:
+            A neuprint dataset name (e.g. 'hemibrain')
+            
+        body:
+            A body ID. Must be a 'neuron' (not just a 'segment').
+    
+    Returns:
+        DataFrame.  See query below for column names.
+    """
+    q = f"""\
+        MATCH (m:`{dataset}-Neuron`)-[e:ConnectsTo]->(n)
+        WHERE m.bodyId = {body}
+        RETURN m.bodyId   AS upstream_body,
+               m.instance AS upstream_instance,
+               m.type     AS upstream_type,
+               m.status   AS upstream_status,
+               n.bodyId   AS downstream_body,
+               n.instance AS downstream_instance,
+               n.type     AS downstream_type,
+               n.status   AS downstream_status,
+               n.size     AS downstream_size,
+               n.pre      AS downstream_tbars,
+               n.post     AS downstream_psds,
+               e.weight   AS weight
+        ORDER BY m.type, m.bodyId, e.weight DESC, n.bodyId
+    """
+    return npclient.fetch_custom(q)
+
+
+def fetch_output_tables(npclient, dataset, bodies, processes=16):
+    """
+    Calls fetch_output_table() for the given bodies, in parallel batches.
+    
+    Args:
+        npclient:
+            neuprint.Client
+        
+        dataset:
+            A neuprint dataset name (e.g. 'hemibrain')
+            
+        bodies:
+            A list of bodies
+        
+        processes:
+            The level of parallelism to use for querying neuprint (and parsing the results)
+        
+        Returns:
+            All of the output tables for the given list of bodies,
+            concatenated into a single DataFrame, in arbitrary order.
+    """
+    output_tables = compute_parallel(partial(fetch_output_table, npclient, dataset), bodies, ordered=False, processes=processes)
+
+    # Don't include empty tables -- their columns have the wrong dtypes
+    output_tables = filter(lambda df: len(df) > 0, output_tables)
+    return pd.concat(output_tables, ignore_index=True)
+
+
+def extract_downstream_focused_tasks_for_bodies(server,
+                                                uuid,
+                                                all_focused_tasks_df,
+                                                upstream_bodies,
+                                                npclient,
+                                                dataset='hemibrain',
+                                                traced_statuses=DEFAULT_IMPORTANT_STATUSES,
+                                                expected_merge_rate=0.5,
+                                                processes=16):
+    """
+    Given a list of "traced" bodies and a large table of focused proofreading tasks,
+    select tasks which may improve the overall "output completeness" for the traced bodies,
+    by selecting tasks "orphans" that are downstream (post-synaptic) to the traced bodies.
+    
+    The "output completeness" of a traced body is simply the percentage of its
+    post-synaptic partners which are categorized as traced bodies. By determining
+    which post-synaptic bodies are "orphans" (i.e. not traced) and finding merges 
+    for those orphans, the orphans become part of traced bodies. Thus, we can improve
+    the output completeness for the upstream bodies by increasing the percentage of
+    its output partners which are traced.
+    
+    This function does the following:
+    
+    1.  Use neuprint to fetch the table of output connections (i.e. downstream connections)
+        for all of the given upstream bodies.
+
+    2a. Split the connection list into "traced" downstream connections and "untraced"
+        connections.  The untraced connections indicate which orphans we're interested
+        in finding merges for.
+
+    2b. Compute the current output completion rates for each of the given upstream bodies.
+
+    3a. From the given list of focused tasks, select the tasks involving any of the untraced
+        downstream bodies we found.
+       
+        Note: Here, we assume that the focused task table includes a "small_body" column,
+              and that is the column that is searched for matches with our list of untraced
+              orphans.  That is, we assume that in any of the focused tasks we're interested
+              in, the untraced orphan is the smaller of the two bodies in the task.
+
+    3b. Drop any focused tasks from the list which have already been decided upon,
+        using the given DVID node.
+    
+    4.  Sort the tasks for each upstream body according to the weight of its associated connection.
+        Then combine the above-computed completion statistics with the connection weights to
+        determine the cumulative improvement to each upstream body's output completeness, assuming
+        the tasks are evaluated in the sorted order.  The final task table includes this information
+        in the columns "cumulative_weight" (all previously traced connections and task connections)
+        and "expected_cumulative_completeness" (a cumulative fraction of the total traced+untraced 
+        connections). The "expected_cumulative_completeness" is computed using an assumed merge
+        rate for the tasks, as given by `expected_merge_rate`.
+
+    Args:
+        server, uuid:
+            DVID node from which to fetch previous focused decisions.
+
+        all_focused_tasks_df:
+            Table of focused decisions in which to find tasks of interest as described above.
+
+        upstream_bodies:
+            Bodies of interest, for whose output completeness you'd like to improve
+            
+        npclient:
+            neuprint Client object
+        
+        dataset:
+            Which neuprint 'dataset' your bodies belong to
+            
+        traced_statuses:
+            List of strings.
+            Bodies with these statuses are considered "traced" and all others
+            are considered "orphans".
+        
+        expected_merge_rate:
+            float between 0.0 and 1.0
+            As described above, this rate is used when computing the "expected_cumulative_completeness"
+            column in the output table.
+
+        processes:
+            How many parallel processes to use when querying neuprint and parsing its response.
+    
+    Returns:
+        downstream_focused_df, downstream_connections_df, completion_stats_df
+        
+            Where the main results of this function are in `downstream_focused_df`,
+            which contains the list of focused tasks extracted from your input table,
+            with at least the following additional columns appended:
+            
+                ['upstream_body',                    # From your input list of upstream_bodies
+                 'downstream_body',                  # Same as 'small_body'
+                 'weight',                           # Size of the connection between upstream_body and downstream_body
+                 'downstream_tbars',                 # Number of tbars in downstream_body
+                 'downstream_psds',                  # Number of PSDs in downstream_body
+                 'cumulative_weight',                # Cumulative weight of connections in all tasks for upstream_body
+                 'expected_cumulative_completeness'  # Cumulative output completeness for upstream_body, as described above
+                 'max_cumulative_completeness'       # Cumulative output completeness if merge rate were 100%
+                ]
+            
+            And where completion_stats_df and downstream_connections_df are auxilliary outputs which may be of interest:
+            
+                - `downstream_connections_df` is the table of downstream connections
+                  fetched from neuprint
+
+                - `completion_stats_df` contains the original output completeness
+                  for each upstream body, without considering any focused tasks.
+    Example:
+    
+        # Pick some upstream bodies to work on
+        upstream_bodies = [...]
+        
+        # Extract the tasks of interest that will improve the output completeness of the given bodies
+        downstream_focused_df, completion_stats_df = extract_downstream_focused_tasks_for_bodies(..., upstream_bodies, ...)
+
+        # We are not necessarily willing to invest enough time to maximally
+        # improve every body's output completeness.
+        # Instead, we probably want to bring every body up to a pre-specified
+        # target completeness (e.g. 20%)
+        # To select just enough tasks to hit that target, filter by the `expected_cumulative_completeness` column:
+        filtered_tasks_df = downstream_focused_df.query('expected_cumulative_completeness <= 0.2')
+    """
+    upstream_bodies = pd.unique(upstream_bodies)
+    
+    with Timer("Fetching output tables from neuprint", logger):
+        downstream_df = fetch_output_tables(npclient, dataset, upstream_bodies, processes)
+    
+    with Timer("Computing completion stats", logger):
+        # Divide into traced/untraced
+        downstream_traced_df = downstream_df.query('downstream_status in @traced_statuses')
+        downstream_untraced_df = downstream_df.query('downstream_status not in @traced_statuses')
+    
+        traced_output_weights = downstream_traced_df.groupby('upstream_body')['weight'].sum().rename('traced_weight')
+        untraced_output_weights = downstream_untraced_df.groupby('upstream_body')['weight'].sum().rename('untraced_weight')
+        
+        # Calculate the upstream bodies' completion stats (traced/untraced/total)
+        completion_stats_df = pd.DataFrame(traced_output_weights).merge(untraced_output_weights, 'outer', left_index=True, right_index=True)
+        completion_stats_df = completion_stats_df.fillna(0)
+        completion_stats_df['total_weight'] = completion_stats_df.eval('traced_weight + untraced_weight')
+        completion_stats_df['orig_completeness'] = completion_stats_df.eval('traced_weight / total_weight')
+
+    with Timer("Extracting focused tasks for downstream orphans", logger):
+        # We assume the 'orphan' is the smaller body in the focused task;
+        # if it's not, that task is implicitly omitted.
+        _downstream_orphans = downstream_untraced_df['downstream_body'].unique()
+        downstream_focused_df = all_focused_tasks_df.query('small_body in @_downstream_orphans').copy()
+
+        # If any of these tasks have previously been decided, discard them now.
+        recent_focused_df = fetch_focused_decisions(server, uuid, 'segmentation_merged',
+                                                    normalize_pairs='sv',
+                                                    subset_pairs=downstream_focused_df[['sv_a', 'sv_b']].values)
+        downstream_focused_df = drop_previously_reviewed(downstream_focused_df, recent_focused_df)
+        logger.info(f"Found {len(downstream_focused_df)} unreviewed downstream focused tasks.")
+    
+    with Timer("Computing cumulative task completeness stats", logger):
+        # Add columns to each task so we know which upstream body it is associated with, along with associated columns.
+        # As mentioned above, downstream_body will always be the 'small_body' in the focused task.
+        downstream_focused_df = downstream_focused_df.merge(downstream_df[['upstream_body', 'downstream_body', 'weight', 'downstream_tbars', 'downstream_psds']],
+                                                            'left', left_on='small_body', right_on='downstream_body')
+    
+        # Sort by connection weight so that tasks are sorted by most impactful first,
+        # in case the caller wants to filter by cumulative_weight.
+        downstream_focused_df = downstream_focused_df.sort_values(['upstream_body', 'weight', 'downstream_tbars', 'downstream_psds', 'downstream_body'],
+                                                                  ascending=[True, False, False, False, True])
+    
+        # Append columns for upstream output-completion stats so we can compute the (expected) cumulative completeness after the tasks are completed.
+        downstream_focused_df = downstream_focused_df.merge(completion_stats_df, 'left', left_on='upstream_body', right_index=True)
+        
+        # Cumulative weight tracks the total downstream edge weight of orphans in the
+        # assignments, assuming they're peformed in-order.
+        
+        # Don't double-count downstream bodies, even if we've got two possible merges for the
+        # downstream body. (Presumably only one of them will be a merge.)
+        tasks_nodupes = downstream_focused_df.drop_duplicates(['upstream_body', 'downstream_body']).copy()
+        tasks_nodupes['cumulative_weight'] = tasks_nodupes.groupby('upstream_body')['weight'].cumsum()
+
+        downstream_focused_df = downstream_focused_df.merge(tasks_nodupes[['upstream_body', 'downstream_body', 'cumulative_weight']],
+                                                            'left', on=['upstream_body', 'downstream_body'])
+
+        # Expected cumulative completeness is an estimate of the final output completeness of the upstream body,
+        # assuming you're completing the focused tasks in this order, and assuming the merge rate given by expected_merge_rate.
+        formula = '(traced_weight + @expected_merge_rate*cumulative_weight) / (traced_weight + untraced_weight)'
+        downstream_focused_df['expected_cumulative_completeness'] = downstream_focused_df.eval(formula)
+
+        # Max cumulative completeness is the highest final output completeness of
+        # the upstream body you could possibly get, assuming a 100% merge rate.
+        formula = '(traced_weight + cumulative_weight) / (traced_weight + untraced_weight)'
+        downstream_focused_df['max_cumulative_completeness'] = downstream_focused_df.eval(formula)
+        
+        cum_completeness_df = (downstream_focused_df[['upstream_body', 'expected_cumulative_completeness', 'max_cumulative_completeness']]
+                               .rename(columns={'expected_cumulative_completeness': 'expected_final_completeness',
+                                                'max_cumulative_completeness': 'max_final_completeness'})
+                               .groupby('upstream_body').max())
+        completion_stats_df = completion_stats_df.merge(cum_completeness_df, 'left', left_index=True, right_index=True)
+
+    return downstream_focused_df, downstream_df, completion_stats_df
 
 
 def compute_focused_bodies(server, uuid, instance, synapse_samples, min_tbars, min_psds, root_sv_sizes, min_body_size, sv_classifications=None, marked_bad_bodies=None, return_table=False, kafka_msgs=None):
