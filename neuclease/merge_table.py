@@ -362,6 +362,10 @@ def load_all_supervoxel_sizes(server, uuid, instance, root_sv_sizes, split_sourc
         root_sv_sizes:
             Either a pd.Series (indexed by sv) or a path to an hdf5
             file that can be passed to load_supervoxel_sizes()
+        
+        split_source:
+            Either 'kafka' or 'dvid'.
+            Specifies where to fetch the supervoxel history from.
     
     Returns:
         pd.Series, indexed by supervoxel ID
@@ -369,6 +373,7 @@ def load_all_supervoxel_sizes(server, uuid, instance, root_sv_sizes, split_sourc
     if isinstance(root_sv_sizes, str):
         root_sv_sizes = load_supervoxel_sizes(root_sv_sizes)
     assert isinstance(root_sv_sizes, pd.Series)
+    
     split_fragment_sizes = fetch_split_supervoxel_sizes(server, uuid, instance, split_source=split_source)
     
     all_sv_sizes = pd.concat((root_sv_sizes, split_fragment_sizes))
