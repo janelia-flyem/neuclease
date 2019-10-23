@@ -103,7 +103,7 @@ def load_focused_table(path):
     return df
 
 
-def fetch_focused_decisions(server, uuid, instance='segmentation_merged', normalize_pairs=None, subset_pairs=None, drop_invalid=True, update_with_instance='segmentation'):
+def fetch_focused_decisions(server, uuid, instance='segmentation_merged', normalize_pairs='sv', subset_pairs=None, drop_invalid=True, update_with_instance='segmentation'):
     """
     Load focused decisions from a given keyvalue instance
     (e.g. 'segmentation_merged') and return them as a DataFrame,
@@ -842,6 +842,8 @@ def extract_downstream_focused_tasks_for_bodies(server,
     
         # Sort by connection weight so that tasks are sorted by most impactful first,
         # in case the caller wants to filter by cumulative_weight.
+        #
+        # TODO: Shuffle first, and don't sort by downstream body.
         downstream_focused_df = downstream_focused_df.sort_values(['upstream_body', 'weight', 'downstream_tbars', 'downstream_psds', 'downstream_body'],
                                                                   ascending=[True, False, False, False, True])
     
