@@ -65,14 +65,29 @@ def create_repo(server, alias, description, *, session=None):
     repo_uuid = r.json()['root']
     return repo_uuid
 
+
 @dvid_api_wrapper
-def fetch_info(server, uuid, *, session=None):
+def fetch_info(server, uuid=None, *, session=None):
     """
     Wrapper for the .../api/repo/<uuid>/info endpoint.
 
     See also: ``neuclease.dvid.wrapper_proxies.fetch_info()``
     """
-    return fetch_generic_json(f'http://{server}/api/repo/{uuid}/info', session=session)
+    if uuid is not None:
+        return fetch_generic_json(f'http://{server}/api/repo/{uuid}/info', session=session)
+    else:
+        # If there's only one repo, the user can omit the uuid.
+        repos_info = fetch_repos_info(server, session=session)
+
+        if len(repos_info) == 0:
+            raise RuntimeError(f"The server {server} has no repos")
+        if len(repos_info) > 1:
+            raise RuntimeError(f"Cannot infer repo UUID. The server {server} has more than one repo."
+                               " Please supply an explicit repo UUID.")
+
+        # Return the first (and only) info from repos/info
+        return next(iter(repos_info.values()))
+    
 
 # Synonym
 fetch_repo_info = fetch_info
@@ -327,7 +342,7 @@ def fetch_repo_dag(server, uuid=None, repo_info=None, *, session=None):
     return g
 
 
-def find_branch_nodes(server, repo_uuid=None, branch="", *, session=None):
+def find_branch_nodes(server, repo_uuid=None, branch="", *, full_info=False, session=None):
     """
     Find all nodes in the repo which belong to the given branch.
     Note: By convention, the master branch is indicated by an empty branch name.
@@ -345,18 +360,39 @@ def find_branch_nodes(server, repo_uuid=None, branch="", *, session=None):
         branch:
             Branch name to filter for.
             By default, filters for the master branch (i.e. an empty branch name).
+        
+        full_info:
+            If True, return a DataFrame with columns for node attributes
 
     Returns:
-        list of UUIDs, sorted chronologically from first to last.
+        list of UUIDs, sorted chronologically from first to last,
+        unless full_info=True, in which case a DataFrame is returned.
     
     
-    Example:
-        master_branch_uuids = find_branch_nodes('emdata3:8900', 'a77')
-        current_master_uuid = master_branch_uuids[-1]
+    Examples:
+
+        >>> master_branch_uuids = find_branch_nodes('emdata3:8900', 'a77')
+        >>> current_master_uuid = master_branch_uuids[-1]
+        
+        >>> master_branch_info_df = find_branch_nodes('emdata4:8900', full_info=True)
+        >>> print(master_branch_info_df.columns.tolist())
+        ['Branch', 'Note', 'Log', 'UUID', 'VersionID', 'Locked', 'Parents', 'Children', 'Created', 'Updated']
+        
     """
-    dag = fetch_repo_dag(server, repo_uuid, session=session)
+    assert branch != "master", \
+        ("Don't supply 'master' as the branch name.\n"
+         "In DVID, the 'master' branch is identified via an empty string ('').")
+    repo_info = fetch_repo_info(server, repo_uuid, session=session)
+    dag = fetch_repo_dag(server, repo_uuid, repo_info=repo_info, session=session)
     branch_uuids = nx.topological_sort(dag)
-    return list(filter(lambda uuid: dag.nodes()[uuid]['Branch'] == branch, branch_uuids))
+    nodes = list(filter(lambda uuid: dag.nodes()[uuid]['Branch'] == branch, branch_uuids))
+
+    if not full_info:
+        return nodes
+    else:
+        node_infos = [repo_info['DAG']['Nodes'][node] for node in nodes]
+        return pd.DataFrame(node_infos)
+
 
 def find_master(server, repo_uuid=None):
     """
