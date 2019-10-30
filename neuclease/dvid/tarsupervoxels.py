@@ -262,6 +262,29 @@ def fetch_supervoxel(server, uuid, instance, supervoxel_id, output=None, *, sess
 
 
 @dvid_api_wrapper
+def delete_supervoxel(server, uuid, instance, supervoxel_id, *, session=None):
+    """
+    Delete a particular supervoxel file (e.g. a mesh file) from a tarsupervoxels instance.
+    
+    Args:
+        server:
+            dvid server, e.g. 'emdata3:8900'
+        
+        uuid:
+            dvid uuid, e.g. 'abc9'
+        
+        instance:
+            dvid tarsupervoxels instance name, e.g. 'segmentation_sv_meshes'
+        
+        sv:
+            The supervoxel ID corresponding to the posted file.
+    """
+    url = f'http://{server}/api/node/{uuid}/{instance}/supervoxel/{supervoxel_id}'
+    r = session.delete(url)
+    r.raise_for_status()
+
+
+@dvid_api_wrapper
 def fetch_exists(server, uuid, instance, supervoxels, batch_size=None, *, session=None, processes=1):
     """
     Determine if the given supervoxels have associated files
