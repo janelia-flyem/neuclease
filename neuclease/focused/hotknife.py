@@ -50,9 +50,21 @@ HEMIBRAIN_TAB_STARTS_INVERTED = {
 HEMIBRAIN_TAB_BOUNDARIES = 34427 - np.fromiter(HEMIBRAIN_TAB_STARTS_INVERTED.values(), np.int32)[::-1]
 HEMIBRAIN_WIDTH = HEMIBRAIN_TAB_BOUNDARIES[-1] - HEMIBRAIN_TAB_BOUNDARIES[0]
 
-# (These are X coordinates)
+# (These are X coordinates.  These correspond to tabs 34..22-1)
 assert HEMIBRAIN_TAB_BOUNDARIES.tolist() == [0, 2655, 5251, 7920, 10600, 13229, 15895, 18489, 21204, 24041, 26853, 29743, 32360, 34427]
 
+def compute_tab(x):
+    """
+    Returns the hemibrain tab number that the given X-coordinate(s) falls within.
+    
+    Arg:
+        x:
+            int or array of ints, representing X-coordinates in DVID space.
+    
+    Returns:
+        tab(s) corresponding to the given input X-coordinates.
+    """
+    return 35 - np.searchsorted(HEMIBRAIN_TAB_BOUNDARIES, x)
 
 def compute_roi_tab_divisions(server, uuid, roi):
     """
