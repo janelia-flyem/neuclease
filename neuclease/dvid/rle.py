@@ -31,14 +31,13 @@ def extract_rle_size_and_first_coord(rle_payload_bytes):
     return voxel_count, first_coord_zyx
 
 
-def combine_sparsevol_rle_responses(rle_payloads):
-    all_coords = []
-    for payload in rle_payloads:
-        all_coords.append( parse_rle_response(payload) )
-    
-    combined_coords = np.concatenate(all_coords)
-    rles_zyx  = runlength_encode_to_lengths(combined_coords, assume_sorted=False)
-    assert rles_zyx.dtype == np.int32
+def construct_rle_payload(coords_zyx):
+    """
+    Construct the RLE payload to send to DVID's split endpoint,
+    including the header bytes.
+    """
+    coords_zyx = coords_zyx.astype(np.int32, copy=False)
+    rles_zyx  = runlength_encode_to_lengths(coords_zyx, assume_sorted=False)
     rles_xyz = rles_zyx[:, (2,1,0,3)]
     
     payload_items = []
@@ -48,7 +47,16 @@ def combine_sparsevol_rle_responses(rle_payloads):
     
     payload = b''.join( list(map(bytes, payload_items)) )
     return payload
-    
+
+
+def combine_sparsevol_rle_responses(rle_payloads):
+    """
+    Combined two sets of RLE payloads (perhaps fetched from DVID),
+    into a single RLE payload.
+    """
+    combined_coords = map(parse_rle_response, rle_payloads)
+    combined_coords = np.concatenate([*combined_coords])
+    return construct_rle_payload(combined_coords)
 
 
 def parse_rle_response(response_bytes, dtype=np.int32, format='coords'):
