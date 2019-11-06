@@ -19,13 +19,13 @@ class Grid:
             offset = (0,)*len(block_shape)
         assert len(block_shape) == len(offset)
 
-        self.block_shape = np.asarray(block_shape)
+        self.block_shape = np.asarray(block_shape, dtype=np.int32)
         assert (self.block_shape > 0).all(), f"block_shape must be non-zero, not {self.block_shape}"
 
-        self.offset = np.asarray(offset)
+        self.offset = np.asarray(offset, dtype=np.int32)
         self.modulus_offset = self.offset % block_shape
         
-        self.halo_shape = np.zeros_like(self.block_shape)
+        self.halo_shape = np.zeros_like(self.block_shape, dtype=np.int32)
         self.halo_shape[:] = halo
         
         # FIXME: Why is this assertion necessary?
@@ -53,6 +53,8 @@ class Grid:
         block_start = self.offset + (block_index * self.block_shape)
         return np.asarray( (block_start, block_start + self.block_shape) )
 
+    def __repr__(self):
+        return f"Grid(block_shape={tuple(self.block_shape)}, offset={tuple(self.offset)}, halo={tuple(self.halo_shape)})"
 
 class boxes_from_grid:
     """
