@@ -28,7 +28,9 @@ class SparseBlockMask:
                 The width (or shape) of each lowres voxel in FULL-RES coordinates.
         """
         self.lowres_mask = lowres_mask.astype(bool, copy=False)
-        self.box = np.asarray(box)
+
+        self.box = np.asarray(box) # full-res
+
         self.resolution = resolution
         if isinstance(self.resolution, collections.Iterable):
             self.resolution = np.asarray(resolution)
@@ -39,7 +41,9 @@ class SparseBlockMask:
             f"Inconsistent mask shape ({lowres_mask.shape}) and box {self.box.tolist()} for the given resolution ({resolution}).\n"\
             "Note: box should be specified in FULL resolution coordinates."
 
+        # Nonzero box (full-res coordinates)
         self.nonzero_box = compute_nonzero_box(self.lowres_mask)
+        self.nonzero_box *= resolution
         self.nonzero_box += self.box[0]
 
     @classmethod
@@ -159,6 +163,7 @@ class SparseBlockMask:
         Args:
             brick_grid:
                 The desired grid to use for the output.
+                Does not need to be equivalent to the lowres grid that this SBM corresponds to.
             
             halo:
                 If nonzero, expand each box by the given width in all dimensions.
@@ -186,7 +191,7 @@ class SparseBlockMask:
         lowres_block_mask_box = block_mask_box // self.resolution
         
         lowres_logical_and_clipped_boxes = ( (box, box_intersection(box, lowres_block_mask_box))
-                                       for box in boxes_from_grid(lowres_block_mask_box, lowres_brick_grid) )
+                                             for box in boxes_from_grid(lowres_block_mask_box, lowres_brick_grid) )
     
         lowres_boxes = []
         
