@@ -183,9 +183,6 @@ def fetch_supervoxels(server, uuid, instance, body_id, user=None, *, session=Non
     supervoxels.sort()
     return supervoxels
 
-# Deprecated name
-fetch_supervoxels_for_body = fetch_supervoxels 
-
 
 @dvid_api_wrapper
 def fetch_size(server, uuid, instance, label_id, supervoxels=False, *, session=None):
@@ -282,7 +279,7 @@ def fetch_supervoxel_sizes_for_body(server, uuid, instance, body_id, user=None, 
     """
     
     # FIXME: Remove 'user' param in favor of 'session' param.
-    supervoxels = fetch_supervoxels_for_body(server, uuid, instance, body_id, user, session=session)
+    supervoxels = fetch_supervoxels(server, uuid, instance, body_id, user, session=session)
     
     query_params = {}
     if user:

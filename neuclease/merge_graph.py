@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 
 from .util import Timer
-from .dvid import fetch_repo_info, fetch_supervoxels_for_body, fetch_labels, fetch_complete_mappings, fetch_mutation_id, fetch_supervoxel_splits
+from .dvid import fetch_repo_info, fetch_supervoxels, fetch_labels, fetch_complete_mappings, fetch_mutation_id, fetch_supervoxel_splits
 from .merge_table import MERGE_TABLE_DTYPE, load_mapping, load_merge_table, normalize_merge_table, apply_mapping_to_mergetable
 from .focused.ingest import fetch_focused_decisions
 from .adjacency import find_missing_adjacencies
@@ -272,7 +272,7 @@ class LabelmapMergeGraph:
                     return (mutid, supervoxels, edges, scores)
 
             logger.info("Edges not found in cache.  Extracting from merge graph.")
-            dvid_supervoxels = fetch_supervoxels_for_body(server, uuid, instance, body_id, session=session)
+            dvid_supervoxels = fetch_supervoxels(server, uuid, instance, body_id, session=session)
 
             # It's very fast to select rows based on the body_id,
             # so we prefer that if the mapping is already in sync with DVID.

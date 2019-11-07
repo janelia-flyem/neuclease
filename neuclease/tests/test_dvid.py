@@ -13,7 +13,7 @@ import pandas as pd
 
 from libdvid import DVIDNodeService
 
-from neuclease.dvid import (dvid_api_wrapper, DvidInstanceInfo, fetch_supervoxels_for_body, fetch_supervoxel_sizes_for_body,
+from neuclease.dvid import (dvid_api_wrapper, DvidInstanceInfo, fetch_supervoxels, fetch_supervoxel_sizes_for_body,
                             fetch_label, fetch_labels, fetch_labels_batched, fetch_mappings, fetch_complete_mappings, post_mappings,
                             fetch_mutation_id, generate_sample_coordinate, fetch_labelmap_voxels, post_labelmap_blocks, post_labelmap_voxels,
                             encode_labelarray_volume, encode_nonaligned_labelarray_volume, fetch_raw, post_raw,
@@ -63,11 +63,11 @@ def test_fetch_maxlabel(labelmap_setup):
     assert maxlabel == 5
 
 
-def test_fetch_supervoxels_for_body(labelmap_setup):
+def test_fetch_supervoxels(labelmap_setup):
     dvid_server, dvid_repo, _merge_table_path, _mapping_path, _supervoxel_vol = labelmap_setup
     instance_info = DvidInstanceInfo(dvid_server, dvid_repo, 'segmentation')
 
-    supervoxels = fetch_supervoxels_for_body(*instance_info, 1)
+    supervoxels = fetch_supervoxels(*instance_info, 1)
     assert (supervoxels == [1,2,3,4,5]).all()
 
 

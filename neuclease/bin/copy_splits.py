@@ -320,7 +320,7 @@ if __name__ == "__main__":
 #         all_bodies = [orig_body] + new_bodies
 #         all_split_svs = []
 #         for body in all_bodies:
-#             all_split_svs += fetch_supervoxels_for_body( server, uuid, instance, orig_body )
+#             all_split_svs += fetch_supervoxels( server, uuid, instance, orig_body )
 
 
 # def affected_bodies(src_supervoxels, src_info, dest_info, bodies=None):

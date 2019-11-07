@@ -7,7 +7,7 @@ from dvidutils import LabelMapper
 
 from neuclease.dvid.labelmap import fetch_labelindex, fetch_labelarray_voxels, decode_labelindex_blocks
 from neuclease.util.graph import connected_components, connected_components_nonconsecutive
-from neuclease.dvid.labelmap._labelmap import fetch_supervoxels_for_body
+from neuclease.dvid.labelmap._labelmap import fetch_supervoxels
 
 def find_missing_adjacencies(server, uuid, instance, body, known_edges, svs=None, search_distance=1, connect_non_adjacent=False):
     """
@@ -94,7 +94,7 @@ def find_missing_adjacencies(server, uuid, instance, body, known_edges, svs=None
     if svs is None:
         # We could compute the supervoxel list ourselves from 
         # the labelindex, but dvid can do it faster.
-        svs = fetch_supervoxels_for_body(server, uuid, instance, body)
+        svs = fetch_supervoxels(server, uuid, instance, body)
 
     cc = connected_components_nonconsecutive(known_edges, svs)
     orig_num_cc = final_num_cc = cc.max()+1
@@ -292,7 +292,7 @@ def _init_adj_table(coord_zyx, block_svs, cc_mapper):
 def export_debug_volumes(server, uuid, instance, body, block_table, outdir='/tmp'):
     import os
     from tqdm import tqdm
-    svs = fetch_supervoxels_for_body(server, uuid, instance, body)
+    svs = fetch_supervoxels(server, uuid, instance, body)
     svs_set = set(svs)
     for coord_zyx, df in tqdm(block_table.groupby(['z', 'y', 'x'])):
         block_vol = fetch_block_vol(server, uuid, instance, coord_zyx, svs_set)
