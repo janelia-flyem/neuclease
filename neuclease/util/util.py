@@ -344,7 +344,8 @@ def iter_batches(it, batch_size):
                     yield batch
 
 
-def compute_parallel(func, iterable, chunksize=1, threads=None, processes=None, ordered=True, leave_progress=False, total=None, initial=0, starmap=False):
+def compute_parallel(func, iterable, chunksize=1, threads=None, processes=None, ordered=True,
+                     leave_progress=False, total=None, initial=0, starmap=False, show_progress=True):
     """
     Use the given function to process the given iterable in a ThreadPool or process Pool,
     showing progress using tqdm.
@@ -406,7 +407,7 @@ def compute_parallel(func, iterable, chunksize=1, threads=None, processes=None, 
 
     with pool:
         items = f_map(func, iterable, chunksize)
-        items_progress = tqdm_proxy(items, initial=initial, total=total, leave=leave_progress)
+        items_progress = tqdm_proxy(items, initial=initial, total=total, leave=leave_progress, disable=not show_progress)
         items = list(items_progress)
         items_progress.close()
         return items

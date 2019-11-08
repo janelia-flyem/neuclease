@@ -285,7 +285,7 @@ def delete_supervoxel(server, uuid, instance, supervoxel_id, *, session=None):
 
 
 @dvid_api_wrapper
-def fetch_exists(server, uuid, instance, supervoxels, batch_size=None, *, session=None, processes=1):
+def fetch_exists(server, uuid, instance, supervoxels, batch_size=None, *, session=None, processes=1, show_progress=True):
     """
     Determine if the given supervoxels have associated files
     stored in the given tarsupervoxels instance.
@@ -308,6 +308,9 @@ def fetch_exists(server, uuid, instance, supervoxels, batch_size=None, *, sessio
         
         processes:
             If given, fetch batches in parallel using multiple processes.
+        
+        show_progress:
+            If True, display/log progress information.
 
     Returns:
         pd.Series of bool, indexed by supervoxel
@@ -320,7 +323,7 @@ def fetch_exists(server, uuid, instance, supervoxels, batch_size=None, *, sessio
 
     sv_chunks = [supervoxels[a:a+batch_size] for a in range(0, len(supervoxels), batch_size)]
 
-    show_progress = (len(sv_chunks) > 1)
+    show_progress &= (len(sv_chunks) > 1)
 
     result_chunks = []
     if processes <= 1 or len(sv_chunks) <= 1:
@@ -332,7 +335,7 @@ def fetch_exists(server, uuid, instance, supervoxels, batch_size=None, *, sessio
             result_chunks.append( result )
     else:
         _fetch_batch = partial(fetch_exists, server, uuid, instance)
-        result_chunks = compute_parallel(_fetch_batch, sv_chunks, processes=processes)
+        result_chunks = compute_parallel(_fetch_batch, sv_chunks, processes=processes, show_progress=show_progress)
 
     results = pd.concat(result_chunks)
     assert results.index.dtype == np.uint64
