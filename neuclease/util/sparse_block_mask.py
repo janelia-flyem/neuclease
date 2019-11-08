@@ -32,7 +32,7 @@ class SparseBlockMask:
         self.box = np.asarray(box) # full-res
 
         self.resolution = resolution
-        if isinstance(self.resolution, collections.Iterable):
+        if isinstance(self.resolution, collections.abc.Iterable):
             self.resolution = np.asarray(resolution)
         else:
             self.resolution = np.array( [resolution]*lowres_mask.ndim )
