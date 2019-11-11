@@ -138,7 +138,9 @@ def _read_complete_kafka_log(topic_name, kafka_servers, group_id=None, timeout_s
     from pykafka import KafkaClient
     client = KafkaClient(hosts=','.join(kafka_servers))
     topic = client.topics[topic_name.encode('utf-8')]
-    consumer = topic.get_simple_consumer(consumer_group=group_id, consumer_timeout_ms=int(1000*timeout_seconds))
+    consumer = topic.get_simple_consumer( consumer_group=group_id,
+                                          consumer_timeout_ms=int(1000*timeout_seconds),
+                                          auto_commit_enable=(group_id is not None) )
     
     try:
         # Consumer isn't fully initialized until the first message is fetched.
