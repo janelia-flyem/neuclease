@@ -452,6 +452,42 @@ def find_parent(server, uuids, dag=None):
     return s
 
 
+def resolve_ref(server, ref):
+    """
+    Given a ref that is either a UUID or a branch name,
+    return the UUID it refers to, i.e. return the UUID
+    itself OR return the last UUID of the branch.
+    
+    Examples:
+        
+        >>> resolve_ref('emdata4:8900', 'abc123')
+        abc123
+        
+        >>> resolve_ref('emdata4:8900', 'master')
+        abc123
+    """
+    try:
+        # Is it a uuid?
+        # If so, fetch_repo_info() will work
+        # (even if it's not the root uuid)
+        fetch_repo_info(server, ref)
+    except Exception:
+        pass # See below
+    else:
+        return ref
+
+    if ref == "master":
+        ref = ""
+        
+    # Not a valid UUID.  Maybe its a branch.
+    try:
+        return find_branch_nodes(server, branch=ref)[-1]
+    except Exception as ex:
+        if 'more than one repo' in ex.args[0]:
+            raise RuntimeError("resolve_uuid() does not support servers that contain multiple repos.")
+        raise
+
+
 def is_locked(server, uuid):
     """
     Determine whether or not the given UUID
