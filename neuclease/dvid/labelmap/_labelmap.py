@@ -1696,7 +1696,7 @@ def post_merge(server, uuid, instance, main_label, other_labels, *, session=None
     r.raise_for_status()
     
 
-def read_labelmap_kafka_df(server, uuid, instance='segmentation', default_timestamp=DEFAULT_TIMESTAMP, drop_completes=True):
+def read_labelmap_kafka_df(server, uuid, instance='segmentation', default_timestamp=DEFAULT_TIMESTAMP, drop_completes=True, group_id=None):
     """
     Convenience function for reading the kafka log for
     a labelmap instance and loading it into a DataFrame.
@@ -1716,7 +1716,7 @@ def read_labelmap_kafka_df(server, uuid, instance='segmentation', default_timest
         DataFrame with columns:
             ['timestamp', 'uuid', 'mutid', 'action', 'target_body', 'target_sv', 'msg']
     """
-    msgs = read_kafka_messages(server, uuid, instance)
+    msgs = read_kafka_messages(server, uuid, instance, group_id=group_id)
     msgs_df = labelmap_kafka_msgs_to_df(msgs, default_timestamp, drop_completes)
     return msgs_df
 
