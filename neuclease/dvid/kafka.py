@@ -306,7 +306,7 @@ def kafka_msgs_to_df(msgs, drop_duplicates=False, default_timestamp=DEFAULT_TIME
 
 def filter_kafka_msgs_by_timerange(kafka_msgs, min_timestamp=None, max_timestamp=None, min_mutid=None, max_mutid=None):
     """
-    Given a list of kafka messages from a DVID data instance,
+    Given a list (or dataframe) of kafka messages from a DVID data instance,
     filter messages according to a mutation ID range and/or a timestamp range.
 
     For example, this call removes messages except those with at least
@@ -314,6 +314,20 @@ def filter_kafka_msgs_by_timerange(kafka_msgs, min_timestamp=None, max_timestamp
     
         all_msgs = read_kafka_messages('emdata3:8900', 'ef1d', 'segmentation')
         filtered_msgs = filter_kafka_msgs_by_timerange(all_msgs, min_mutid=1002213701, max_timestamp='2018-10-16 13:00')
+    
+    Args:
+        kafka_msgs:
+            Either a list of JSON messages from a dvid instance kafka log,
+            or a DataFrame of kafka messages as returned by kafka_msgs_to_df()
+        
+        min_timestamp, max_timestamp:
+            min/max timestamps, as a datetime or string
+        
+        min_mutid, max_mutid:
+            min/max DVID mutation IDs (integers)
+    
+    Returns:
+        Filtered list or DataFrame (depending on input type)
     """
     queries = []
     if min_timestamp is not None:
@@ -333,11 +347,17 @@ def filter_kafka_msgs_by_timerange(kafka_msgs, min_timestamp=None, max_timestamp
     if not queries:
         return kafka_msgs
 
-    kafka_df = kafka_msgs_to_df(kafka_msgs)
+    if isinstance(kafka_msgs, pd.DataFrame):
+        kafka_df = kafka_msgs
+    else:
+        kafka_df = kafka_msgs_to_df(kafka_msgs)
 
     q = ' and '.join(queries)
-    kafka_df.query(q, inplace=True)
-    
-    return kafka_df['msg'].tolist()
+    kafka_df = kafka_df.query(q)
+
+    if isinstance(kafka_msgs, pd.DataFrame):
+        return kafka_df
+    else:    
+        return kafka_df['msg'].tolist()
 
 
