@@ -692,7 +692,8 @@ def extract_downstream_focused_tasks_for_bodies(server,
                                                 dataset='hemibrain',
                                                 traced_statuses=DEFAULT_IMPORTANT_STATUSES,
                                                 expected_merge_rate=0.5,
-                                                processes=16):
+                                                processes=16,
+                                                downstream_df=None):
     """
     Given a list of "traced" bodies and a large table of focused proofreading tasks,
     select tasks which may improve the overall "output completeness" for the traced bodies,
@@ -806,9 +807,13 @@ def extract_downstream_focused_tasks_for_bodies(server,
     """
     upstream_bodies = pd.unique(upstream_bodies)
     
-    with Timer("Fetching output tables from neuprint", logger):
-        downstream_df = fetch_output_tables(npclient, dataset, upstream_bodies, processes)
-    
+    if downstream_df is None:
+        with Timer("Fetching output tables from neuprint", logger):
+            downstream_df = fetch_output_tables(npclient, dataset, upstream_bodies, processes)
+    else:
+        assert set(downstream_df['upstream_body']) == set(upstream_bodies), \
+            "The downstream connections dataframe you provided doesn't match your input bodies."
+
     with Timer("Computing completion stats", logger):
         # Divide into traced/untraced
         downstream_traced_df = downstream_df.query('downstream_status in @traced_statuses')
