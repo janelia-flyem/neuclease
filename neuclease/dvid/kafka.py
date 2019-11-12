@@ -89,8 +89,7 @@ def read_kafka_messages(server, uuid, instance, action_filter=None, dag_filter='
             or 'json-values' (return list of parsed JSON structures from each record.value)
 
         group_id:
-            Kafka group ID to use when reading.  If not given, a new unique ID is created
-            to ensure that the complete log is read.
+            Kafka group ID to use when reading.  If not given, the complete log is read.
             Note: If you re-use group IDs, then subsequent calls to this function will
                   not yield repeated messages.  The log will resume where it left off
                   from the previous call.
@@ -117,7 +116,11 @@ def read_kafka_messages(server, uuid, instance, action_filter=None, dag_filter='
 
     kafka_servers, topic, dag = kafka_info_for_dvid_instance(server, uuid, instance, kafka_servers, topic_prefix)
 
-    logger.info(f"Reading kafka messages for {topic} from {kafka_servers}")
+    logger.info(f"Using kafka servers: {kafka_servers}")
+    logger.info(f"Reading kafka messages for topic: {topic}")
+    if group_id is not None:
+        logger.info(f"Using kafka consumer group id: {group_id}")
+
     with Timer() as timer:
         records = _read_complete_kafka_log(topic, kafka_servers, group_id, consumer_timeout)
     logger.info(f"Reading {len(records)} kafka messages took {timer.seconds} seconds")
