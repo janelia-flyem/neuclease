@@ -338,6 +338,9 @@ def filter_kafka_msgs_by_timerange(kafka_msgs, min_timestamp=None, max_timestamp
     Returns:
         Filtered list or DataFrame (depending on input type)
     """
+    if len(kafka_msgs) == 0:
+        return kafka_msgs
+
     queries = []
     if min_timestamp is not None:
         min_timestamp = parse_timestamp(min_timestamp)
