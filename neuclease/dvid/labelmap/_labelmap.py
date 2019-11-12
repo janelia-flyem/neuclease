@@ -184,6 +184,87 @@ def fetch_supervoxels(server, uuid, instance, body_id, user=None, *, session=Non
     return supervoxels
 
 
+def fetch_supervoxels_for_bodies(server, uuid, instance, bodies, *, threads=0, processes=0):
+    """
+    Fetch the supervoxels for all of the bodies in the given list,
+    and return them as a DataFrame with columns ['sv','body']
+
+    Args:
+        server:
+            dvid server, e.g. 'emdata3:8900'
+
+        uuid:
+            dvid uuid, e.g. 'abc9'
+
+        instance:
+            dvid instance name, e.g. 'segmentation'
+
+        bodies:
+            list of body IDs
+
+        threads:
+            If non-zero, fetch the results in parallel using a threadpool
+
+        processes:
+            If non-zero, fetch the results in parallel using a process pool
+
+    Returns:
+        DataFrame with columns ['sv', 'body']
+
+
+    Notes:
+        - The order of the bodies in the result will not
+          necessarily be the same as the order of the input list.
+        - If an error is encountered when fetching the supervoxels for a body
+          (e.g. if the body doesn't exist at the given node), it will be
+          omitted from the results and an error will be logged.
+        - The input list is de-duplicated before fetching the results.
+    """
+    bodies = pd.unique(bodies).copy() # Apparently this copy is needed or else we get a segfault
+
+    _fetch = partial(_fetch_supervoxels_for_body, server, uuid, instance)
+
+    if threads == 0 and processes == 0:
+        bodies_and_svs = [*map(_fetch, tqdm_proxy(bodies, leave=False))]
+    else:
+        bodies_and_svs = compute_parallel(_fetch, bodies, threads=threads, processes=processes, ordered=False)
+
+    bodies = []
+    all_svs = []
+    bad_bodies = []
+    for body, svs in bodies_and_svs:
+        if svs is None:
+            bad_bodies.append(body)
+            continue
+        bodies.append(np.array([body]*len(svs)))
+        all_svs.append(svs)
+
+    if len(bodies) > 0:
+        bodies = np.concatenate(bodies)
+        all_svs = np.concatenate(all_svs)
+
+    if bad_bodies:
+        if len(bad_bodies) < 100:
+            msg = f"Could not obtain supervoxel list for {len(bad_bodies)} bodies: {bad_bodies}"
+        else:
+            msg = f"Could not obtain supervoxel list for {len(bad_bodies)} labels."
+        logger.error(msg)
+
+    return pd.DataFrame({"sv": all_svs, "body": bodies}, dtype=np.uint64)
+
+
+def _fetch_supervoxels_for_body(server, uuid, instance, body):
+    """
+    Helper for fetch_supervoxels_for_bodies()
+    """
+    try:
+        svs = fetch_supervoxels(server, uuid, instance, body)
+    except HTTPError as ex:
+        if (ex.response is not None and ex.response.status_code == 404):
+            return (body, None)
+    return (body, svs)
+
+
 @dvid_api_wrapper
 def fetch_size(server, uuid, instance, label_id, supervoxels=False, *, session=None):
     """
