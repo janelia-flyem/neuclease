@@ -9,7 +9,7 @@ import networkx as nx
 from ..util import uuids_match, Timer, find_root, parse_timestamp, DEFAULT_TIMESTAMP
 from . import dvid_api_wrapper
 from .server import fetch_server_info
-from .repo import fetch_repo_dag
+from .repo import fetch_repo_dag, resolve_ref
 from .node import fetch_instance_info
 
 logger = logging.getLogger(__name__)
@@ -41,9 +41,9 @@ def reset_kafka_offset(server, uuid, instance, group_id):
     """
     from pykafka import KafkaClient
     from pykafka.common import OffsetType
-    seg_instance = (server, uuid, instance)
+    
     logger.info(f"Resetting kafka offset for group id '{group_id}'")
-    kafka_servers, topic_name, _dag = kafka_info_for_dvid_instance(*seg_instance)
+    kafka_servers, topic_name, _dag = kafka_info_for_dvid_instance(server, uuid, instance)
     client = KafkaClient(hosts=','.join(kafka_servers))
     topic = client.topics[topic_name.encode('utf-8')]
     consumer = topic.get_simple_consumer( consumer_group=group_id,
@@ -67,7 +67,7 @@ def read_kafka_messages(server, uuid, instance, action_filter=None, dag_filter='
             dvid server, e.g. 'emdata3:8900'
         
         uuid:
-            dvid node, e.g. 'a9f2'
+            dvid node, e.g. 'a9f2' or a dvid branch, e.g. 'master'
         
         instance:
             dvid instance name, e.g. 'segmentation'
@@ -114,6 +114,7 @@ def read_kafka_messages(server, uuid, instance, action_filter=None, dag_filter='
     assert dag_filter in ('leaf-only', 'leaf-and-parents', None)
     assert return_format in ('records', 'json-values')
 
+    uuid = resolve_ref(server, uuid)
     kafka_servers, topic, dag = kafka_info_for_dvid_instance(server, uuid, instance, kafka_servers, topic_prefix)
 
     logger.info(f"Using kafka servers: {kafka_servers}")
@@ -152,7 +153,7 @@ def kafka_info_for_dvid_instance(server, uuid, instance, kafka_servers=None, top
             dvid server, e.g. 'emdata3:8900'
         
         uuid:
-            dvid node, e.g. 'a9f2'
+            dvid node, e.g. 'a9f2' or a dvid branch, e.g. 'master'
         
         instance:
             dvid instance name, e.g. 'segmentation'
@@ -172,6 +173,7 @@ def kafka_info_for_dvid_instance(server, uuid, instance, kafka_servers=None, top
         if topic_prefix is None:
             topic_prefix = server_info.get("Kafka Topic Prefix") or ""
 
+    uuid = resolve_ref(server, uuid)
     full_instance_info = fetch_instance_info(server, uuid, instance, session=session)
     data_uuid = full_instance_info["Base"]["DataUUID"]
     repo_uuid = full_instance_info["Base"]["RepoUUID"]
