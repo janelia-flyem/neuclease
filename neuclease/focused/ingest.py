@@ -641,6 +641,8 @@ def fetch_output_table(npclient, dataset, body):
                m.instance AS upstream_instance,
                m.type     AS upstream_type,
                m.status   AS upstream_status,
+               m.pre      AS upstream_tbars,
+               m.post     AS upstream_psds,
                n.bodyId   AS downstream_body,
                n.instance AS downstream_instance,
                n.type     AS downstream_type,
