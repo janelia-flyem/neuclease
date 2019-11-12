@@ -19,6 +19,38 @@ class KafkaReadError(RuntimeError):
     pass
 
 
+def reset_kafka_offset(server, uuid, instance, group_id):
+    """
+    Reset the kafka offset for the given group ID to the earliest
+    position in the log, whose topic is indicated by the given
+    DVID instance info. The offset position is stored on the kafka server,
+    so subsequent consumers will start at the new offset, even if they are
+    created in different processes.
+    
+    Note:
+        This operation is not instantaneous.
+        After this function executes, consumers of the kafka topic may
+        fail to extract any messages at all for a few seconds,
+        giving the appearance that they have consumed all messages from the log.
+        
+    Args:
+        server, uuid, instance:
+            dvid instance details, which will be used to determine the kafka topic name.
+        group_id:
+            Kafka group ID for a consumer (or group of consumers)
+    """
+    from pykafka import KafkaClient
+    from pykafka.common import OffsetType
+    seg_instance = (server, uuid, instance)
+    logger.info(f"Resetting kafka offset for group id '{group_id}'")
+    kafka_servers, topic_name, _dag = kafka_info_for_dvid_instance(*seg_instance)
+    client = KafkaClient(hosts=','.join(kafka_servers))
+    topic = client.topics[topic_name.encode('utf-8')]
+    consumer = topic.get_simple_consumer( consumer_group=group_id,
+                                          consumer_timeout_ms=1000 )
+    consumer.reset_offsets([(consumer.partitions[0], OffsetType.EARLIEST)])
+
+
 @dvid_api_wrapper
 def read_kafka_messages(server, uuid, instance, action_filter=None, dag_filter='leaf-and-parents', return_format='json-values',
                         group_id=None, consumer_timeout=2.0, kafka_servers=None, topic_prefix=None, *, session=None):
