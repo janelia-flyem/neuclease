@@ -83,6 +83,31 @@ def read_kafka_messages(server, uuid, instance, action_filter=None, dag_filter='
     assert dag_filter in ('leaf-only', 'leaf-and-parents', None)
     assert return_format in ('records', 'json-values')
 
+    kafka_servers, topic, dag = kafka_info_for_dvid_instance(server, uuid, instance, kafka_servers, topic_prefix)
+
+    logger.info(f"Reading kafka messages for {topic} from {kafka_servers}")
+    with Timer() as timer:
+        records = _read_complete_kafka_log(topic, kafka_servers, group_id, consumer_timeout)
+    logger.info(f"Reading {len(records)} kafka messages took {timer.seconds} seconds")
+
+    # Extract and parse JSON values for easy filtering.
+    values = [ujson.loads(rec.value) for rec in records]
+    records_and_values = zip(records, values)
+
+    # Chain filters and evaluate
+    records_and_values = _filter_records_for_dag(records_and_values, dag_filter, dag, uuid)
+    records_and_values = _filter_records_for_action(records_and_values, action_filter)
+    records_and_values = list(records_and_values)
+
+    if return_format == 'records':
+        return [record for (record, _value) in records_and_values]
+    elif return_format == 'json-values':
+        return [value for (_record, value) in records_and_values]
+    else:
+        raise AssertionError(f"Invalid return_format: {return_format}")
+
+
+def kafka_info_for_dvid_instance(server, uuid, instance, kafka_servers=None, topic_prefix=None, *, session=None):
     if kafka_servers is None or topic_prefix is None:
         server_info = fetch_server_info(server, session=session)
 
@@ -104,26 +129,8 @@ def read_kafka_messages(server, uuid, instance, action_filter=None, dag_filter='
     root_uuid = find_root(dag, repo_uuid)
 
     topic = f'{topic_prefix}dvidrepo-{root_uuid}-data-{data_uuid}'
-    logger.info(f"Reading kafka messages for {topic} from {kafka_servers}")
-    with Timer() as timer:
-        records = _read_complete_kafka_log(topic, kafka_servers, group_id, consumer_timeout)
-    logger.info(f"Reading {len(records)} kafka messages took {timer.seconds} seconds")
 
-    # Extract and parse JSON values for easy filtering.
-    values = [ujson.loads(rec.value) for rec in records]
-    records_and_values = zip(records, values)
-
-    # Chain filters and evaluate
-    records_and_values = _filter_records_for_dag(records_and_values, dag_filter, dag, uuid)
-    records_and_values = _filter_records_for_action(records_and_values, action_filter)
-    records_and_values = list(records_and_values)
-
-    if return_format == 'records':
-        return [record for (record, _value) in records_and_values]
-    elif return_format == 'json-values':
-        return [value for (_record, value) in records_and_values]
-    else:
-        raise AssertionError(f"Invalid return_format: {return_format}")
+    return kafka_servers, topic, dag
 
 
 def _read_complete_kafka_log(topic_name, kafka_servers, group_id=None, timeout_seconds=2.0):
