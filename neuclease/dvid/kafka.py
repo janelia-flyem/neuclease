@@ -108,6 +108,23 @@ def read_kafka_messages(server, uuid, instance, action_filter=None, dag_filter='
 
 
 def kafka_info_for_dvid_instance(server, uuid, instance, kafka_servers=None, topic_prefix=None, *, session=None):
+    """
+    Return the kafka topic and kafka servers for the given dvid instance,
+    along with the repo DAG (which was needed to determine the topic name).
+    
+    Args:
+        server:
+            dvid server, e.g. 'emdata3:8900'
+        
+        uuid:
+            dvid node, e.g. 'a9f2'
+        
+        instance:
+            dvid instance name, e.g. 'segmentation'
+    
+    Returns:
+        kafka_servers, topic, dag
+    """
     if kafka_servers is None or topic_prefix is None:
         server_info = fetch_server_info(server, session=session)
 
