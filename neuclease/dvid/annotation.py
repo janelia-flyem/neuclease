@@ -208,10 +208,18 @@ def fetch_roi(server, uuid, instance, roi, roi_uuid=None, *, session=None):
 
 
 @dvid_api_wrapper
-def fetch_elements(server, uuid, instance, box_zyx, *, session=None):
+def fetch_elements(server, uuid, instance, box_zyx, *, format='json', session=None):  #@ReservedAssignment
     """
     Returns all point annotations within the given box.
-    Note: Automatically includes relationships.
+    
+    Note:
+        Automatically includes relationships if format=True,
+        and automatically discards relationships if format=False.
+    
+    Note:
+        This function is best for fetching relatively
+        sparse annotations, to-do annotations.
+        For synapse annotations, see ``fetch_synapses_in_batches()``.
     
     Args:
         server:
@@ -228,9 +236,16 @@ def fetch_elements(server, uuid, instance, box_zyx, *, session=None):
             Given as a pair of coordinates (start, stop), e.g. [(0,0,0), (10,20,30)],
             in Z,Y,X order.  It need not be block-aligned.
         
+        format:
+            Either 'json' or 'pandas'
+            If 'pandas', convert the elements into a dataframe
+            with separate columns for X,Y,Z and each property.
+            In the pandas case, relationships are discarded.
+        
     Returns:
         JSON list
     """
+    assert format in ('json', 'pandas')
     box_zyx = np.asarray(box_zyx)
     shape = box_zyx[1] - box_zyx[0]
     
@@ -242,7 +257,40 @@ def fetch_elements(server, uuid, instance, box_zyx, *, session=None):
     
     # The endooint returns 'null' instead of an empty list, on old servers at least.
     # But we always return a list.
-    return data or []
+    data = data or []
+    
+    if format == 'pandas':
+        return load_elements_as_dataframe(data)
+    else:
+        return data
+
+
+def load_elements_as_dataframe(elements):
+    """
+    Convert the given elements from JSON to a pandas DataFrame.
+    
+    Note:
+        For synapse annotations in particular,
+        see ``load_synapses_as_dataframes()``
+    """
+    pos = np.zeros((len(elements), 3), dtype=np.int32)
+    kinds = []
+    tags = []
+    
+    prop_arrays = {}
+
+    for i, e in enumerate(elements):
+        pos[i] = e['Pos']
+        kinds.append(e['Kind'])
+        tags.append(e['Tags'])
+        for k, v in e['Prop'].items():
+            pa = prop_arrays.get(k)
+            if pa is None:
+                pa = prop_arrays[k] = np.empty(len(elements), dtype=object)
+            pa[i] = v
+    
+    return pd.DataFrame({'z': pos[:, 2], 'y': pos[:,1], 'x': pos[:,0],
+                         'kind': kinds, 'tags': tags, **prop_arrays})
 
 
 @dvid_api_wrapper
