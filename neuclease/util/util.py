@@ -154,6 +154,10 @@ def post_file(url, f, *, session=None):
     r.raise_for_status()
 
 
+def load_df(npy_path):
+    return pd.DataFrame(np.load(npy_path, allow_pickle=True))
+
+
 class ndrange:
     """
     Generator.
