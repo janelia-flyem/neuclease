@@ -352,6 +352,12 @@ def test_compute_parallel():
 
 def test_iter_batches():
     data = range(10)
+    
+    # If data supports len, we support it, and if not, we don't.
+    assert hasattr(iter_batches(data, 3), '__len__')
+    assert not hasattr(iter_batches(iter(data), 3), '__len__')
+    assert len(iter_batches(data, 3)) == 4
+    
     assert [*iter_batches(data, 3)] == [[0,1,2], [3,4,5], [6,7,8], [9]]
     assert [*iter_batches(iter(data), 3)] == [[0,1,2], [3,4,5], [6,7,8], [9]]
 
@@ -369,4 +375,5 @@ def test_iter_batches():
 
 
 if __name__ == "__main__":
-    pytest.main(['-s', '--tb=native', '--pyargs', 'neuclease.tests.test_util'])
+    args = ['-s', '--tb=native', '--pyargs', 'neuclease.tests.test_util']
+    pytest.main(args)
