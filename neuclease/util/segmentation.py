@@ -119,9 +119,10 @@ def mask_from_coords(coords):
     return mask, box
 
 
-def compute_nonzero_box(mask, save_ram=False):
+def compute_nonzero_box(mask, save_ram=True):
     """
-    Given a mask image, return the bounding box of the nonzero voxels in the mask.
+    Given a mask image, return the bounding box
+    of the nonzero voxels in the mask.
     
     Equivalent to:
     
@@ -131,42 +132,74 @@ def compute_nonzero_box(mask, save_ram=False):
         box = np.array([coords.min(axis=0), 1+coords.max(axis=0)])
         return box
     
-    but if save_ram=True, this function avoids allocating
-    the coords array, but performs slightly worse than the simple
-    implementation unless your array is so very large and dense
-    that allocating the coordinate list is a problem.
-    """
-    if save_ram:
-        box = _compute_nonzero_box(mask)
+    ...but faster.
     
-        # If the volume is completely empty,
-        # the helper returns an invalid box.
-        # In that case, return zeros
-        if (box[1] <= box[0]).any():
-            return np.zeros_like(box)
+    Args:
+        mask:
+            A binary image
+    
+        save_ram:
+            Deprecated.  Now ignored.
+    
+    Returns:
+        box, e.g. [(1,2,3), (10, 20,30)]
+        If the mask is completely empty, zeros are returned,
+        e.g. [(0,0,0), (0,0,0)]
+    """
+    box = _compute_nonzero_box_numpy(mask)
 
-        return box
+    # If the volume is completely empty,
+    # the helper returns an invalid box.
+    # In that case, return zeros
+    if (box[1] <= box[0]).any():
+        return np.zeros_like(box)
 
-    else:
-        coords = np.transpose(np.nonzero(mask))
-        if len(coords) == 0:
-            return np.zeros((2, mask.ndim))
-        box = np.array([coords.min(axis=0), 1+coords.max(axis=0)])
-        return box
+    return box
 
 
-@njit
-def _compute_nonzero_box(mask):
+def _compute_nonzero_box_numpy(mask):
     """
     Helper for compute_nonzero_box().
+ 
+    Note:
+        If the mask has no nonzero voxels, an "invalid" box is returned,
+        i.e. the start is above the stop.
+    """
+    # start with an invalid box
+    box = np.zeros((2, mask.ndim), np.int32)
+    box[0, :] = mask.shape
+    
+    # For each axis, reduce along the other axes
+    axes = [*range(mask.ndim)]
+    for axis in axes:
+        other_axes = tuple({*axes} - {axis})
+        pos = np.logical_or.reduce(mask, axis=other_axes).nonzero()[0]
+        if len(pos):
+            box[0, axis] = pos[0]
+            box[1, axis] = pos[-1]+1
 
+    return box
+    
+
+@njit
+def _compute_nonzero_box_numba(mask):
+    """
+    Altenative helper for compute_nonzero_box().
+    
+    This turns out to be slower than the pure-numpy version above,
+    despite the fact that this version makes only one pass over the
+    data and the numpy version makes a pass for each axis.
+    
+    It would be interesting to see if the performance of this
+    version improves with future version of numpy. 
+ 
     Note:
         If the mask has no nonzero voxels, an "invalid" box is returned,
         i.e. the start is above the stop.
     """
     box = np.zeros((2, mask.ndim), np.int32)
     box[0, :] = mask.shape
-
+ 
     c = np.zeros((mask.ndim,), np.int32)
     for i, val in np.ndenumerate(mask):
         if val != 0:
