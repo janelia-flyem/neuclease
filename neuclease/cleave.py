@@ -284,6 +284,12 @@ def agglomerative_clustering(cleaned_edges, edge_weights, seed_labels, node_size
 
 def edge_weighted_watershed(cleaned_edges, edge_weights, seed_labels, _node_sizes=None):
     """
+    FIXME:
+        It's probably not worth pulling in a large dependency like
+        nifty for such a simple algorithm, unless the size of the input is huge.
+        (And plus, nifty seems to introduce segfaults on occasion...)
+        For cleaving, it's simpler to just use Kruskal from networkx.
+    
     Run nifty.graph.edgeWeightedWatershedsSegmentation() on the given graph with N nodes and E edges.
     The graph node IDs must be consecutive, starting with zero, dtype=np.uint32
     
