@@ -39,6 +39,11 @@ def box_as_tuple(box):
     return (tuple(box[0]), tuple(box[1]))
 
 
+def box_shape(box):
+    box = np.asarray(box)
+    return box[1] - box[0]
+
+
 def round_coord(coord, grid_spacing, how):
     """
     Round the given coordinate up or down to the nearest grid position.

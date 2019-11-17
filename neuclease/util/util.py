@@ -192,6 +192,8 @@ class ndrange:
     (6, 2, 18)
     (6, 12, 3)
     (6, 12, 18)
+    
+    See also: ``ndindex_array()``
     """
 
     def __init__(self, start, stop=None, step=None):
@@ -216,6 +218,33 @@ class ndrange:
         span = (np.array(self.stop) - self.start)
         step = np.array(self.step)
         return np.prod( (span + step-1) // step )
+
+
+def ndindex_array(*shape, dtype=np.int32):
+    """
+    Like np.ndindex, but returns an array.
+    
+    numpy has no convenience function for this, and won't any time soon.
+    https://github.com/numpy/numpy/issues/1234#issuecomment-545990743
+    
+    Example:
+    
+        >>> ndindex_array(3,4)
+        array([[0, 0],
+               [0, 1],
+               [0, 2],
+               [0, 3],
+               [1, 0],
+               [1, 1],
+               [1, 2],
+               [1, 3],
+               [2, 0],
+               [2, 1],
+               [2, 2],
+               [2, 3]])
+    """
+    return np.indices(shape, dtype=dtype).reshape(len(shape), -1).transpose()
+
 
 class NumpyConvertingEncoder(json.JSONEncoder):
     """
