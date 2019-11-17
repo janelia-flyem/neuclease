@@ -133,7 +133,9 @@ def post_roi(server, uuid, instance, roi_ranges, *, session=None):
             list or ndarray of ranges, specified in SCALE-5 coordinates:
             [[Z,Y,X0,X1], [Z,Y,X0,X1], ...]
     """
-    encoded_ranges = ujson.dumps(roi_ranges, cls=NumpyConvertingEncoder)
+    if isinstance(roi_ranges, np.ndarray):
+        roi_ranges = roi_ranges.tolist()
+    encoded_ranges = ujson.dumps(roi_ranges)
     r = session.post(f'http://{server}/api/node/{uuid}/{instance}/roi', data=encoded_ranges)
     r.raise_for_status()
 
