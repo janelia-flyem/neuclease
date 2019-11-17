@@ -206,6 +206,9 @@ def fetch_roi(server, uuid, instance, roi, roi_uuid=None, *, session=None):
     r.raise_for_status()
     return r.json()
 
+# Synonym to avoid conflicts with roi.fetch_roi()
+fetch_annotation_roi = fetch_roi
+
 
 @dvid_api_wrapper
 def fetch_elements(server, uuid, instance, box_zyx, *, format='json', session=None):  #@ReservedAssignment

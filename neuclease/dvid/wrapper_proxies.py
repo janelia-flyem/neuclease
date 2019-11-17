@@ -72,7 +72,9 @@ from . import dvid_api_wrapper
 from .server import fetch_server_info
 from .repo import fetch_repo_info
 from .node import fetch_instance_info
-from .annotation import post_annotation_sync, post_annotation_reload
+from .roi import fetch_roi_roi
+from .annotation import post_annotation_sync, post_annotation_reload, fetch_annotation_roi
+from neuclease.dvid.repo import fetch_repo_instances
 
 
 @dvid_api_wrapper
@@ -117,3 +119,17 @@ def post_reload(server, uuid, instance, *, session=None, **kwargs):
     # Aside from that, labelsz reload and annotation reload calls are identical,
     # so it doesn't matter which wrapper we call.
     post_annotation_reload(server, uuid, instance, **kwargs, session=session)
+
+
+def fetch_roi(server, uuid, instance, *args, session=None, **kwargs):
+    """
+    Convenience wrapper for both ``annotations.fetch_roi()`` and ``roi.fetch_roi()``
+    """
+    instance_type = fetch_repo_instances(server, uuid, session=session)[instance]
+    assert instance_type in ('roi', 'annotation'), \
+        "Unexpected instance type for instance '{instance}': '{instance_type}'"
+
+    if instance_type == 'roi':
+        return fetch_roi_roi(server, uuid, instance, *args, **kwargs, session=session)
+    elif instance_type == 'annotation':
+        return fetch_annotation_roi(server, uuid, instance, *args, **kwargs, session=session)

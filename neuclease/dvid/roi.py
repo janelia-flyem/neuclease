@@ -88,6 +88,9 @@ def fetch_roi(server, uuid, instance, format='ranges', *, session=None): # @Rese
 
     assert False, "Shouldn't get here."
 
+# Synonym, to avoid conflicts with annotation.fetch_roi()
+fetch_roi_roi = fetch_roi
+
 
 @dvid_api_wrapper
 def post_roi(server, uuid, instance, roi_ranges, *, session=None):
