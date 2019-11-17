@@ -5,14 +5,14 @@ import ujson
 import numpy as np
 import pandas as pd
 
-from ..util import NumpyConvertingEncoder, tqdm_proxy, extract_labels_from_volume
+from ..util import NumpyConvertingEncoder, tqdm_proxy, extract_labels_from_volume, box_shape
 from . import dvid_api_wrapper, fetch_generic_json
 from .rle import runlength_decode_from_ranges
 
 logger = logging.getLogger(__name__)
 
 @dvid_api_wrapper
-def fetch_roi(server, uuid, instance, format='ranges', *, session=None): # @ReservedAssignment
+def fetch_roi(server, uuid, instance, format='ranges', *, mask_box=None, session=None): # @ReservedAssignment
     """
     Fetch an ROI from dvid.
     
@@ -33,6 +33,12 @@ def fetch_roi(server, uuid, instance, format='ranges', *, session=None): # @Rese
             Determines the format of the return value, as described below.
             Either 'ranges', 'coords' or 'mask'.
 
+        mask_box:
+            Only valid when format='mask'.
+            If provided, specifies the box within which the ROI mask should
+            be returned, in scale-5 coordinates.
+            Voxels outside the box will be omitted from the returned mask.
+
         Returns:
             If 'ranges':
                 np.ndarray, [[Z,Y,X0,X1], [Z,Y,X0,X1], ...]
@@ -52,6 +58,9 @@ def fetch_roi(server, uuid, instance, format='ranges', *, session=None): # @Rese
                 and the bounding box is also returned.
     """
     assert format in ('coords', 'ranges', 'mask')
+    if mask_box is not None:
+        mask_box =  np.asarray(mask_box)
+    
     rle_ranges = fetch_generic_json(f'http://{server}/api/node/{uuid}/{instance}/roi', session=session)
     rle_ranges = np.asarray(rle_ranges, np.int32, order='C')
 
@@ -64,9 +73,11 @@ def fetch_roi(server, uuid, instance, format='ranges', *, session=None): # @Rese
             return np.ndarray( (0,3), np.int32 )
         
         if format == 'mask':
-            mask_box = np.array([[0,0,0], [0,0,0]], np.int32)
-            mask = np.ndarray( (0,0,0), np.int32 )
+            if mask_box is None:
+                mask_box = np.array([[0,0,0], [0,0,0]], np.int32)
+            mask = np.ndarray( box_shape(mask_box), np.int32 )
             return mask, mask_box
+
         assert False, "Shouldn't get here"
             
     assert rle_ranges.shape[1] == 4    
@@ -78,10 +89,17 @@ def fetch_roi(server, uuid, instance, format='ranges', *, session=None): # @Rese
         return coords
 
     if format == 'mask':
-        mask_box = np.array([coords.min(axis=0), 1+coords.max(axis=0)])
-        mask_shape = mask_box[1] - mask_box[0]
+        if mask_box is None:
+            mask_box = np.array([coords.min(axis=0), 1+coords.max(axis=0)])
+        mask_shape = box_shape(mask_box)
 
         coords -= mask_box[0]
+        
+        # Drop coords outside the mask box
+        keep =  (coords[:] >= 0).all(axis=1)
+        keep &= (coords[:] < mask_shape).all(axis=1)
+        coords = coords[keep, :]
+        
         mask = np.zeros(mask_shape, bool)
         mask[tuple(coords.transpose())] = True
         return mask, mask_box
