@@ -12,7 +12,9 @@ from requests import HTTPError
 
 from libdvid import DVIDNodeService, encode_label_block
 
-from ...util import Timer, round_box, extract_subvol, DEFAULT_TIMESTAMP, tqdm_proxy, ndrange, box_to_slicing, compute_parallel
+from ...util import (Timer, round_box, extract_subvol, DEFAULT_TIMESTAMP, tqdm_proxy,
+                     ndrange, box_to_slicing, compute_parallel, boxes_from_grid, box_shape,
+                     overwrite_subvol)
 
 from .. import dvid_api_wrapper, fetch_generic_json, fetch_repo_info
 from ..repo import create_voxel_instance, fetch_repo_dag
@@ -1156,6 +1158,69 @@ def fetch_labelmap_voxels(server, uuid, instance, box_zyx, scale=0, throttle=Fal
 # Deprecated name
 fetch_labelarray_voxels = fetch_labelmap_voxels
 
+
+def fetch_labelmap_voxels_chunkwise(server, uuid, instance, box_zyx, scale=0, throttle=False, supervoxels=False,
+                                    *, chunk_shape=(64,64,4096), threads=0):
+    """
+    Same as fetch_labelmap_voxels, but internally fetches the volume in
+    pieces to avoid fetching too much from DVID in one call.
+
+    Args:
+        server:
+            dvid server, e.g. 'emdata3:8900'
+        
+        uuid:
+            dvid uuid, e.g. 'abc9'
+        
+        instance:
+            dvid instance name, e.g. 'segmentation'
+
+        box_zyx:
+            The bounds of the volume to fetch in the coordinate system for the requested scale.
+            Given as a pair of coordinates (start, stop), e.g. [(0,0,0), (10,20,30)], in Z,Y,X order.
+            The box need not be block-aligned, but the request to DVID will be block aligned
+            to 64px boundaries, and the retrieved volume will be truncated as needed before
+            it is returned.
+        
+        scale:
+            Which downsampling scale to fetch from
+        
+        throttle:
+            If True, passed via the query string to DVID, in which case DVID might return a '503' error
+            if the server is too busy to service the request.
+            It is your responsibility to catch DVIDExceptions in that case.
+        
+        supervoxels:
+            If True, request supervoxel data from the given labelmap instance.
+        
+        block_shape:
+            The size of each 
+
+    Returns:
+        ndarray, with shape == (box[1] - box[0])
+    """
+    full_vol = np.zeros(box_shape(box_zyx), np.uint64)
+    chunk_boxes = boxes_from_grid(box_zyx, chunk_shape, clipped=True)
+    
+    _fetch = partial(_fetch_chunk, server, uuid, instance, scale, throttle, supervoxels)
+    
+    if threads == 0:
+        boxes_and_blocks = [*tqdm_proxy(map(_fetch, chunk_boxes), total=len(chunk_boxes))]
+    else:
+        boxes_and_blocks = compute_parallel(_fetch, chunk_boxes, ordered=False, threads=threads)
+     
+    for block_box, block_vol in boxes_and_blocks:
+        overwrite_subvol(full_vol, block_box - box_zyx[0], block_vol)
+    
+    return full_vol
+
+
+def _fetch_chunk(server, uuid, instance, scale, throttle, supervoxels, box):
+    """
+    Helper for fetch_labelmap_voxels_chunkwise()
+    """
+    return box, fetch_labelmap_voxels(server, uuid, instance, box, scale, throttle, supervoxels)
+        
 
 def post_labelmap_voxels(server, uuid, instance, offset_zyx, volume, scale=0, downres=False, noindexing=False, throttle=False, *, session=None):
     """
