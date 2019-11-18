@@ -6,6 +6,8 @@ def extract_subvol(array, box):
     """
     Extract a subarray according to the given box.
     """
+    assert all(b >= 0 for b in box[0])
+    assert all(b <= s for b,s in zip(box[1], array.shape))
     return array[box_to_slicing(*box)]
 
 
@@ -13,6 +15,8 @@ def overwrite_subvol(array, box, subarray):
     """
     Overwrite a portion of the given array.
     """
+    assert all(b >= 0 for b in box[0])
+    assert all(b <= s for b,s in zip(box[1], array.shape))
     try:
         array[box_to_slicing(*box)] = subarray
     except:
