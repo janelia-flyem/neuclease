@@ -5,9 +5,9 @@ import ujson
 import numpy as np
 import pandas as pd
 
-from ..util import NumpyConvertingEncoder, tqdm_proxy, extract_labels_from_volume, box_shape
+from ..util import tqdm_proxy, extract_labels_from_volume, box_shape
 from . import dvid_api_wrapper, fetch_generic_json
-from .rle import runlength_decode_from_ranges
+from .rle import runlength_decode_from_ranges, runlength_decode_from_ranges_to_mask
 
 logger = logging.getLogger(__name__)
 
@@ -84,24 +84,11 @@ def fetch_roi(server, uuid, instance, format='ranges', *, mask_box=None, session
     if format == 'ranges':
         return rle_ranges
 
-    coords = runlength_decode_from_ranges(rle_ranges)
     if format == 'coords':
-        return coords
+        return runlength_decode_from_ranges(rle_ranges)
 
     if format == 'mask':
-        if mask_box is None:
-            mask_box = np.array([coords.min(axis=0), 1+coords.max(axis=0)])
-        mask_shape = box_shape(mask_box)
-
-        coords -= mask_box[0]
-        
-        # Drop coords outside the mask box
-        keep =  (coords[:] >= 0).all(axis=1)
-        keep &= (coords[:] < mask_shape).all(axis=1)
-        coords = coords[keep, :]
-        
-        mask = np.zeros(mask_shape, bool)
-        mask[tuple(coords.transpose())] = True
+        mask, mask_box = runlength_decode_from_ranges_to_mask(rle_ranges, mask_box)
         return mask, mask_box
 
     assert False, "Shouldn't get here."

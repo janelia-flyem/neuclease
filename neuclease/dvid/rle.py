@@ -433,6 +433,59 @@ def runlength_decode_from_lengths(rle_start_coords_zyx, rle_lengths):
     return coords
 
 
+def runlength_decode_from_ranges_to_mask(rle_array_zyx, mask_box=None):
+    """
+    Used for parsing the result of DVID's /roi endpoint.
+    
+    Args:
+        Array of run-length encodings in the form:
+        
+        [[Z,Y,X1,X2],
+         [Z,Y,X1,X2],
+         [Z,Y,X1,X2],
+         ...
+        ]
+
+    Note: The interval [X1,X2] is INCLUSIVE, following DVID conventions, not Python conventions.
+
+    Returns:
+        (mask, mask_box)
+
+        Where mask is a binary mask of the ROI, in which each voxel
+        represents one ROI block (scale 5).
+        The mask will be cropped to the bounding box of the ROI,
+        and mask_box is the bounding-box of the mask, in scale-5 units.
+    """
+    rle_array_zyx = np.asarray(rle_array_zyx, dtype=np.int32)
+
+    if mask_box is None:
+        min_coord =   rle_array_zyx[:, (0,1,2)].min(axis=0)
+        max_coord = 1+rle_array_zyx[:, (0,1,3)].max(axis=0)
+        mask_box = np.asarray([min_coord, max_coord])
+    else:
+        mask_box = np.asarray(mask_box, dtype=np.int32)
+
+    mask_shape = tuple((mask_box[1] - mask_box[0]).tolist())
+
+    ranges_array = rle_array_zyx + np.asarray([0,0,0,1], dtype=np.int32)
+    ranges_array -= mask_box[0, (0,1,2,2)]
+
+    keep =  (ranges_array[:, (0,1,2)] >= 0).all(axis=1)
+    keep &= (ranges_array[:, (0,1,3)] <= mask_shape).all(axis=1)
+    
+    ranges_array = np.asarray(ranges_array[keep, :], order='C')
+    mask = np.zeros(mask_shape, dtype=np.uint8)
+    _write_mask_from_ranges(ranges_array, mask)
+    return mask.astype(bool), mask_box
+
+
+@jit(nopython=True)
+def _write_mask_from_ranges(ranges_array, mask):
+    for i in range(len(ranges_array)):
+        (z, y, x0, x1) = ranges_array[i]
+        mask[z, y, x0:x1] = 1
+
+
 @jit(["i8[:,:](i8[:,::1])", "i4[:,:](i4[:,::1])", "i2[:,:](i2[:,::1])"], nopython=True, nogil=True) # See note about signature, below.
 def runlength_decode_from_ranges(rle_array_zyx):
     """
