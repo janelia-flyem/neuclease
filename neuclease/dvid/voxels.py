@@ -107,6 +107,13 @@ def fetch_volume_box(server, uuid, instance, *, session=None):
     """
     info = fetch_instance_info(server, uuid, instance, session=session)
     box_xyz = np.array((info["Extended"]["MinPoint"], info["Extended"]["MaxPoint"]))
+    
+    if box_xyz[0] is None or box_xyz[1] is None:
+        # If the instance has been created, but not written to,
+        # DVID will return null extents.
+        # We return zeros, since that's nicer to work with.
+        return np.array([[0,0,0], [0,0,0]])
+    
     box_xyz[1] += 1
     
     box_zyx = box_xyz[:,::-1]
