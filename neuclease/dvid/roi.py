@@ -305,6 +305,7 @@ def determine_point_rois(server, uuid, rois, points_df, combined_vol=None, combi
             See fetch_combined_roi_volume()
         
         combined_box:
+            Optionally crop the ROIs according to the given box before using them.
             Must be provided if combined_vol is provided.
     
     Returns:
@@ -313,7 +314,7 @@ def determine_point_rois(server, uuid, rois, points_df, combined_vol=None, combi
     assert set(points_df.columns).issuperset(['x', 'y', 'z'])
     
     if combined_vol is None:
-        combined_vol, combined_box, overlapping_pairs = fetch_combined_roi_volume(server, uuid, rois, session=session)
+        combined_vol, combined_box, overlapping_pairs = fetch_combined_roi_volume(server, uuid, rois, False, combined_box, session=session)
         if overlapping_pairs:
             rois = [*rois]
             msg = ""
