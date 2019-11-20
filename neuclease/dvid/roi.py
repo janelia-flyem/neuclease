@@ -5,7 +5,7 @@ import ujson
 import numpy as np
 import pandas as pd
 
-from ..util import tqdm_proxy, extract_labels_from_volume, box_shape
+from ..util import tqdm_proxy, extract_labels_from_volume, box_shape, extract_subvol, box_intersection
 from . import dvid_api_wrapper, fetch_generic_json
 from .rle import runlength_decode_from_ranges, runlength_decode_from_ranges_to_mask
 
@@ -163,9 +163,8 @@ def fetch_combined_roi_volume(server, uuid, rois, as_bool=False, box_zyx=None, *
               in which case the ROIs will be enumerated in order (starting at 1)
     
         as_bool:
-            If True, return a boolean mask.
-            Otherwise, return a label volume, whose dtype will be chosen such
-            as to allow a unique value for each ROI in the list.
+            If True, return a boolean mask instead of a label volume.
+            Note: When using is_bool, the `overlapping_pairs` result is undefined.
         
         box_zyx:
             Optional. Specifies the box `[start, stop] == [(z0,y0,x0), (z1,y1,x1)]`
@@ -187,7 +186,10 @@ def fetch_combined_roi_volume(server, uuid, rois, as_bool=False, box_zyx=None, *
         combined_box indicates the location of combined_vol (scale 5),
         and overlapping_pairs indicates which ROIs overlap, and are thus not
         completely represented in the output volume (see caveat above).
-    
+        
+        Unless as_bool is used, combined_vol is a label volume, whose dtype 
+        will be wide enough to allow a unique value for each ROI in the list.
+
     Example:
     
         from neuclease.dvid import fetch_repo_instances, fetch_combined_roi_volume
@@ -245,26 +247,22 @@ def fetch_combined_roi_volume(server, uuid, rois, as_bool=False, box_zyx=None, *
 
     # Overlay ROIs one-by-one
     for roi, label in tqdm_proxy(rois.items(), leave=False):
-        coords = runlength_decode_from_ranges(all_rle_ranges[roi])
+        roi_box = box_intersection(roi_boxes[label-1], box_zyx)
+        roi_mask, roi_box = runlength_decode_from_ranges_to_mask(all_rle_ranges[roi], roi_box)
         
-        # Drop coords that are out-of-bounds
-        in_bounds = (coords >= box_zyx[0]).all(axis=1) & (coords < box_zyx[1]).all(axis=1)
-        coords = coords[in_bounds]
-
-        # Offset for output
-        coords -= box_zyx[0]
-
         # If we're overwriting some areas of a ROI we previously wrote,
         # keep track of the overlapping pairs.
-        prev_rois = set(pd.unique(combined_vol[tuple(coords.transpose())]).astype(dtype))
-        prev_rois -= set([0])
-        if prev_rois:
-            overlapping_pairs += ((p,label) for p in prev_rois)
+        combined_view = extract_subvol(combined_vol, roi_box - box_zyx[0])
+        assert combined_view.base is combined_vol
+        
+        prev_rois = {*pd.unique(combined_view[roi_mask])} - {0}
+        overlapping_pairs += ((p,label) for p in prev_rois)
 
+        # Overwrite view
         if as_bool:
-            combined_vol[tuple(coords.transpose())] = True
+            combined_view[roi_mask] = True
         else:
-            combined_vol[tuple(coords.transpose())] = label
+            combined_view[roi_mask] = label
 
     return combined_vol, box_zyx, overlapping_pairs
 
