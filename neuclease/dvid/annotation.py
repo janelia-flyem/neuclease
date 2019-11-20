@@ -13,7 +13,7 @@ from dvidutils import LabelMapper
 from . import dvid_api_wrapper, fetch_generic_json
 from .node import fetch_instance_info
 from .voxels import fetch_volume_box
-from ..util import Timer, Grid, boxes_from_grid, round_box, tqdm_proxy, gen_json_objects, encode_coords_to_uint64, compute_parallel
+from ..util import Timer, Grid, boxes_from_grid, round_box, tqdm_proxy, compute_parallel, gen_json_objects, encode_coords_to_uint64, decode_coords_from_uint64
 
 logger = logging.getLogger(__name__)
 
@@ -452,6 +452,23 @@ def load_synapses_as_dataframes(elements):
     partner_df.drop_duplicates(inplace=True)
     
     return point_df, partner_df
+
+
+def fetch_bodies_for_synapses(server, uuid, seg_instance, point_df=None, partner_df=None, batch_size=10_000, threads=0, processes=0):
+    from .labelmap import fetch_labels_batched
+    
+    if point_df is not None:
+        bodies = fetch_labels_batched(server, uuid, seg_instance, point_df[['z', 'y', 'x']].values,
+                                      batch_size=batch_size, threads=threads, processes=processes)
+        point_df['body'] = bodies
+
+    if partner_df is not None:
+        pre_coords = decode_coords_from_uint64(partner_df['pre_id'].values)
+        post_coords = decode_coords_from_uint64(partner_df['post_id'].values)
+        partner_df['pre_body'] = fetch_labels_batched(server, uuid, seg_instance, pre_coords,
+                                                      batch_size=batch_size, threads=threads, processes=processes)
+        partner_df['post_body'] = fetch_labels_batched(server, uuid, seg_instance, post_coords,
+                                                       batch_size=batch_size, threads=threads, processes=processes)
 
 
 def fetch_synapses_in_batches(server, uuid, synapses_instance, bounding_box_zyx=None, batch_shape_zyx=(256,256,64000),
