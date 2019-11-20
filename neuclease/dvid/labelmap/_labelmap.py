@@ -424,6 +424,9 @@ def fetch_label(server, uuid, instance, coordinate_zyx, supervoxels=False, scale
     r.raise_for_status()
     return np.uint64(r.json()["Label"])
 
+# Synonym. See wrapper_proxies.py
+fetch_labelmap_label = fetch_label
+
 # Old name (FIXME: remove)
 fetch_label_for_coordinate = fetch_label
 

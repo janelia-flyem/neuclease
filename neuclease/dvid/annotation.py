@@ -133,6 +133,8 @@ def fetch_label(server, uuid, instance, label, relationships=False, *, session=N
     r.raise_for_status()
     return r.json()
 
+# Synonym.  See wrapper_proxies.py
+fetch_annotation_label = fetch_label
 
 @dvid_api_wrapper
 def fetch_tag(server, uuid, instance, tag, relationships=False, *, session=None):
@@ -442,8 +444,9 @@ def load_synapses_as_dataframes(elements):
     rel_points = np.array(rel_points, np.int32)
     pre_partner_ids = encode_coords_to_uint64(rel_points[:,:3])
     post_partner_ids = encode_coords_to_uint64(rel_points[:,3:])
+
     partner_df = pd.DataFrame({'post_id': post_partner_ids, 'pre_id': pre_partner_ids})
-    
+
     # For synapses near block borders, maybe only the PreSyn or
     # only the PostSyn happens to be in the given elements.
     # But in most cases, both PreSyn and PostSyn are present,
