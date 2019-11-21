@@ -1291,7 +1291,7 @@ post_labelarray_voxels = post_labelmap_voxels
 
 
 @dvid_api_wrapper
-def post_labelmap_blocks(server, uuid, instance, corners_zyx, blocks, scale=0, downres=False, noindexing=False, throttle=False, *, is_raw=False, gzip_level=6, session=None):
+def post_labelmap_blocks(server, uuid, instance, corners_zyx, blocks, scale=0, downres=False, noindexing=False, throttle=False, *, is_raw=False, gzip_level=6, session=None, progress=False):
     """
     Post supervoxel data to a labelmap instance, from a list of blocks.
     
@@ -1344,7 +1344,7 @@ def post_labelmap_blocks(server, uuid, instance, corners_zyx, blocks, scale=0, d
         assert isinstance(blocks, (bytes, memoryview))
         body_data = blocks
     else:
-        body_data = encode_labelarray_blocks(corners_zyx, blocks, gzip_level)
+        body_data = encode_labelarray_blocks(corners_zyx, blocks, gzip_level, progress)
     
     if not body_data:
         return # No blocks
@@ -1364,7 +1364,7 @@ def post_labelmap_blocks(server, uuid, instance, corners_zyx, blocks, scale=0, d
 post_labelarray_blocks = post_labelmap_blocks
 
 
-def encode_labelarray_blocks(corners_zyx, blocks, gzip_level=6):
+def encode_labelarray_blocks(corners_zyx, blocks, gzip_level=6, progress=False):
     """
     Encode a sequence of labelmap blocks to bytes, in the
     format expected by dvid's ``/blocks`` endpoint.
@@ -1382,7 +1382,8 @@ def encode_labelarray_blocks(corners_zyx, blocks, gzip_level=6):
         
         blocks:
             Iterable of blocks to encode.
-            Each block must be 64px wide, uint64.
+            Each block must be 64px wide.
+            Will be converted to uint64 if necessary.
         
         gzip_level:
             The level of gzip compression to use, from 0 (no compression) to 9.
@@ -1417,7 +1418,7 @@ def encode_labelarray_blocks(corners_zyx, blocks, gzip_level=6):
         return encode_label_block(block)
 
     encoded_blocks = []
-    for block in blocks:
+    for block in tqdm_proxy(blocks, disable=not progress):
         assert block.shape == (64,64,64)
         block = np.asarray(block, np.uint64, 'C')
         encoded_blocks.append( gzip.compress(_encode_label_block(block), gzip_level) )
