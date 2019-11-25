@@ -59,7 +59,7 @@ def combine_sparsevol_rle_responses(rle_payloads):
     return construct_rle_payload(combined_coords)
 
 
-def parse_rle_response(response_bytes, dtype=np.int32, format='coords'):
+def parse_rle_response(response_bytes, dtype=np.int32, format='coords'): # @ReservedAssignment
     """
     Parse a (legacy) RLE response from DVID, used by various endpoints
     such as 'sparsevol' and 'sparsevol-coarse'.
@@ -75,17 +75,9 @@ def parse_rle_response(response_bytes, dtype=np.int32, format='coords'):
             you can save some RAM by selecting np.int16
 
         format:
-            Either 'coords' or 'rle'.  See return value explanation.
+            Either 'rle', 'ranges', or 'coords'.  See return value explanation.
 
     Return:
-        If format == 'coords', returns an array of coordinates of the form:
-
-            [[Z,Y,X],
-             [Z,Y,X],
-             [Z,Y,X],
-             ...
-            ]
-        
         If format == 'rle', returns the RLE start coordinates and RLE lengths as two arrays:
         
             (start_coords, lengths)
@@ -97,10 +89,27 @@ def parse_rle_response(response_bytes, dtype=np.int32, format='coords'):
             and lengths is a 1-D array:
             
                 [length, length, ...]
+
+        If format == 'ranges':
+            Return the RLEs as ranges, in the form:
+
+                [[Z,Y,X0,X1], [Z,Y,X0,X1], ...]
+
+            Note: By DVID conventions, the interval [X0,X1] is inclusive,
+                  i.e. X1 is IN the range -- not one beyond the range,
+                  which would normally be the Python convention.
+
+        If format == 'coords', returns an array of coordinates of the form:
+
+            [[Z,Y,X],
+             [Z,Y,X],
+             [Z,Y,X],
+             ...
+            ]
     """
     assert isinstance(response_bytes, bytes)
     assert dtype in (np.int32, np.int16)
-    assert format in ('coords', 'rle')
+    assert format in ('coords', 'rle', 'ranges')
     descriptor = response_bytes[0]
     ndim = response_bytes[1]
     run_dimension = response_bytes[2]
@@ -121,30 +130,37 @@ def parse_rle_response(response_bytes, dtype=np.int32, format='coords'):
     rle_starts_zyx = rle_starts_xyz[:,::-1]
     rle_lengths = rle_items[:,3]
 
-    # Sadly, the decode function requires contiguous arrays, so we must copy.
-    rle_starts_zyx = rle_starts_zyx.copy('C')
-    rle_lengths = rle_lengths.copy('C')
-
     # For now, DVID always returns a voxel_count of 0, so we can't make this assertion.
     #assert rle_lengths.sum() == _voxel_count,\
     #    f"Voxel count ({voxel_count}) doesn't match expected sum of run-lengths ({rle_lengths.sum()})"
 
     if dtype == np.int16:
-        assert rle_starts_zyx[:2].min() >= -(2**15), "Can't return np.int16 -- result would overflow"
-        assert rle_starts_zyx[:2].max() < 2**15, "Can't return np.int16 -- result would overflow"
-        assert (rle_starts_zyx[:,2] + rle_lengths).min() >= -(2**15), "Can't return np.int16 -- result would overflow"
-        assert (rle_starts_zyx[:,2] + rle_lengths).max() < 2**15, "Can't return np.int16 -- result would overflow"
+        assert rle_starts_zyx[:, :2].min() >= -(2**15), "Can't return np.int16 -- result would overflow"
+        assert rle_starts_zyx[:, :2].max() < 2**15, "Can't return np.int16 -- result would overflow"
+        assert (rle_starts_zyx[:, 2] + rle_lengths).min() >= -(2**15), "Can't return np.int16 -- result would overflow"
+        assert (rle_starts_zyx[:, 2] + rle_lengths).max() < 2**15, "Can't return np.int16 -- result would overflow"
         rle_starts_zyx = rle_starts_zyx.astype(np.int16)
         rle_lengths = rle_lengths.astype(np.int16)
 
+    if format == 'ranges':
+        ranges = np.zeros((len(rle_items), 4), dtype)
+        ranges[:, :3] = rle_starts_zyx
+        ranges[:, 3] = rle_starts_zyx[:,2] + rle_lengths - 1 # end is INCLUSIVE, as noted above
+        return ranges
+
     if format == 'rle':
         return rle_starts_zyx, rle_lengths
-
-    dense_coords = runlength_decode_from_lengths(rle_starts_zyx, rle_lengths)
-    assert dense_coords.dtype == dtype
     
-    assert rle_lengths.sum() == len(dense_coords), "Got the wrong number of coordinates!"
-    return dense_coords
+    if format == 'coords':
+        # Sadly, the decode function requires contiguous arrays, so we must copy.
+        rle_starts_zyx = rle_starts_zyx.copy('C')
+        rle_lengths = rle_lengths.copy('C')
+    
+        dense_coords = runlength_decode_from_lengths(rle_starts_zyx, rle_lengths)
+        assert dense_coords.dtype == dtype
+        
+        assert rle_lengths.sum() == len(dense_coords), "Got the wrong number of coordinates!"
+        return dense_coords
 
 
 def rle_box_dilation(start_coords, lengths, radius):

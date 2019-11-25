@@ -19,7 +19,7 @@ from ...util import (Timer, round_box, extract_subvol, DEFAULT_TIMESTAMP, tqdm_p
 from .. import dvid_api_wrapper, fetch_generic_json, fetch_repo_info
 from ..repo import create_voxel_instance, fetch_repo_dag
 from ..kafka import read_kafka_messages, kafka_msgs_to_df
-from ..rle import parse_rle_response
+from ..rle import parse_rle_response, runlength_decode_from_ranges_to_mask
 
 from ._split import SplitEvent, fetch_supervoxel_splits_from_kafka
 from .labelops_pb2 import MappingOps, MappingOp
@@ -923,30 +923,79 @@ def fetch_mutation_id(server, uuid, instance, body_id, *, session=None):
 
 
 @dvid_api_wrapper
-def fetch_sparsevol_coarse(server, uuid, instance, label_id, supervoxels=False, *, session=None):
+def fetch_sparsevol_coarse(server, uuid, instance, label_id, supervoxels=False,
+                           *, format='coords', mask_box=None, session=None): # @ReservedAssignment
     """
     Return the 'coarse sparsevol' representation of a given body/supervoxel.
     This is similar to the sparsevol representation at scale=6,
     EXCEPT that it is generated from the label index, so no blocks
     are lost from downsampling.
-    
-    Return an array of coordinates of the form:
 
-        [[Z,Y,X],
-         [Z,Y,X],
-         [Z,Y,X],
-         ...
-        ]
+    Args:
+        server:
+            dvid server, e.g. 'emdata3:8900'
+        
+        uuid:
+            dvid uuid, e.g. 'abc9'
+        
+        instance:
+            dvid labelmap instance name, e.g. 'segmentation'
     
+        label_id:
+            body ID in dvid, or supervoxel ID is supervoxels=True
+        
+        supervoxels:
+            Whether or not to interpret label_id as a body or supervoxel
+        
+        format:
+            Either 'coords', or 'mask'.
+            If 'coords, return the coordinates (at scale 6) of the
+            dvid blocks intersected by the body.
+            If 'mask', return a dense boolean volume (scale 6) indicating
+            which blocks the body intersects, and return the volume's box.
+        
+        mask_box:
+            Only valid when format='mask'.
+            If provided, specifies the box within which the body mask should
+            be returned, in scale-6 coordinates.
+            Voxels outside the box will be omitted from the returned mask.
+
+    Returns:
+    
+        If format='coords', return an array of coordinates of the form:
+    
+            [[Z,Y,X],
+             [Z,Y,X],
+             [Z,Y,X],
+             ...
+            ]
+
+        If 'mask':
+            (mask, mask_box)
+            Return a binary mask of the blocks intersected by the body,
+            where each voxel represents one ROI block (scale 6).
+            Unless you provide a custom ``mask_box``, the mask will be
+            cropped to the bounding box of the body. The mask's bounding box
+            is also returned. (If you passed in a custom ``mask_box``, it
+            will be unchanged.)
+        
     See also: ``fetch_sparsevol_coarse_via_labelindex()``
     
     Note: The returned coordinates are not necessarily sorted.
     """
+    assert format in ('coords', 'mask')
+
     supervoxels = str(bool(supervoxels)).lower()
     r = session.get(f'http://{server}/api/node/{uuid}/{instance}/sparsevol-coarse/{label_id}?supervoxels={supervoxels}')
     r.raise_for_status()
     
-    return parse_rle_response( r.content )
+    if format == 'coords':
+        return parse_rle_response( r.content, format='coords' )
+
+    if format == 'mask':
+        rle_ranges = parse_rle_response( r.content, format='ranges' )
+        mask, mask_box = runlength_decode_from_ranges_to_mask(rle_ranges, mask_box)
+        return mask, mask_box
 
 
 def fetch_sparsevol_coarse_threaded(server, uuid, instance, labels, supervoxels=False, num_threads=2):
