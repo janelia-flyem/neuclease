@@ -264,7 +264,7 @@ def fetch_combined_roi_volume(server, uuid, rois, as_bool=False, box_zyx=None, *
         else:
             combined_view[roi_mask] = label
 
-    return combined_vol, box_zyx, overlapping_pairs
+    return combined_vol, box_zyx, np.array(overlapping_pairs, dtype=int)
 
 
 @dvid_api_wrapper
