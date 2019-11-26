@@ -699,6 +699,9 @@ def extract_labels_from_volume(points_df, volume, box_zyx=None, vol_scale=0, lab
 
     assert ((box_zyx[1] - box_zyx[0]) == volume.shape).all() 
 
+    assert points_df.index.duplicated().sum() == 0, \
+        "This function doesn't work if the input DataFrame's index has duplicate values."
+
     downsampled_coords_zyx = (points_df[['z', 'y', 'x']] // (2**vol_scale)).astype(np.int32)
 
     # Drop everything outside the combined_box
