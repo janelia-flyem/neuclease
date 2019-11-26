@@ -642,6 +642,26 @@ def upsample(orig_data, upsample_factor):
     return upsampled_data
 
 
+def downsample_mask(mask, factor, method='or'):
+    """
+    Downsample a boolean mask by the given factor.
+    """
+    assert method in ('or', 'and')
+    assert not any(mask.shape % factor), \
+        "mask shape must be divisible by the downsampling factor"
+    
+    mask = np.asarray(mask, order='C')
+    v = view_as_blocks(mask, mask.ndim*(factor,))
+    last_axes = (*range(v.ndim),)[-mask.ndim:]
+    
+    if method == 'or':
+        f = np.logical_or.reduce
+    if method == 'and':
+        f = np.logical_and.reduce
+    
+    return f(v, axis=last_axes)
+
+
 def extract_labels_from_volume(points_df, volume, box_zyx=None, vol_scale=0, label_names=None):
     """
     Given a list of point coordinates and a label volume, assign a
