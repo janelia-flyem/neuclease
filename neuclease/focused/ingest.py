@@ -884,6 +884,11 @@ def extract_downstream_focused_tasks_for_bodies(server,
                                .groupby('upstream_body').max())
         completion_stats_df = completion_stats_df.merge(cum_completeness_df, 'left', left_index=True, right_index=True)
 
+        # For bodies with no tasks at all won't be mentioned in cum_completeness_df,
+        # so they'll have NaNs.  Replace with the appropriate values.
+        completion_stats_df['expected_final_completeness'].fillna(completion_stats_df['orig_completeness'], inplace=True)
+        completion_stats_df['max_final_completeness'].fillna(completion_stats_df['orig_completeness'], inplace=True)
+
     return downstream_focused_df, downstream_df, completion_stats_df
 
 
