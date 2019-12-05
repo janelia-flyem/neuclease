@@ -53,7 +53,17 @@ def main(debug_mode=False):
                         help="After loading the merge graph, suspend the process before launching the server, and await a SIGCONT. "
                              "Allows you to ALMOST hot-swap a running cleave server. (You can load the new merge graph before killing the old server).")
     parser.add_argument('--testing', action='store_true')
+
+    parser.add_argument('--initialization-dvid-server',
+                            help="Which DVID server to use for initializing the edge table (for splits and focused edges)")
+    parser.add_argument('--initialization-uuid')
+    parser.add_argument('--initialization-labelmap-instance')
     args = parser.parse_args()
+
+    # By default, initialization is same as primary unless otherwise specified
+    args.initialization_dvid_server = args.initialization_dvid_server or args.primary_dvid_server
+    args.initialization_uuid = args.initialization_uuid or args.primary_uuid
+    args.initialization_labelmap_instance = args.initialization_labelmap_instance or args.primary_labelmap_instance
 
     # This check is to ensure that this initialization is only run once,
     # even in the presence of the flask debug 'reloader'.
@@ -76,19 +86,20 @@ def main(debug_mode=False):
             sys.exit(-1)
 
         primary_instance_info = DvidInstanceInfo(args.primary_dvid_server, args.primary_uuid, args.primary_labelmap_instance)
+        initialization_instance_info = DvidInstanceInfo(args.initialization_dvid_server, args.initialization_uuid, args.initialization_labelmap_instance)
 
         print("Loading merge table...")
         with Timer(f"Loading merge table from: {args.merge_table}", logger):
             MERGE_GRAPH = LabelmapMergeGraph(args.merge_table, primary_instance_info.uuid, args.debug_export_dir, no_kafka=args.testing)
 
         with Timer(f"Loading focused merge decisions", logger):
-            num_focused_merges = MERGE_GRAPH.append_edges_for_focused_merges(*primary_instance_info[:2], 'segmentation_merged')
+            num_focused_merges = MERGE_GRAPH.append_edges_for_focused_merges(*initialization_instance_info[:2], 'segmentation_merged')
         logger.info(f"Loaded {num_focused_merges} merge decisions.")
 
         # Apply splits first
         if all(primary_instance_info):
             with Timer(f"Appending split supervoxel edges for supervoxels in", logger):
-                bad_edges = MERGE_GRAPH.append_edges_for_split_supervoxels( primary_instance_info, read_from='dvid' )
+                bad_edges = MERGE_GRAPH.append_edges_for_split_supervoxels( initialization_instance_info, read_from='dvid' )
 
                 if len(bad_edges) > 0:
                     bad_edges_name = f'BAD-SPLIT-EDGES-{args.primary_uuid[:4]}.csv'
