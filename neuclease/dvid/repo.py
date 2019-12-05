@@ -481,10 +481,13 @@ def resolve_ref(server, ref):
         
     # Not a valid UUID.  Maybe its a branch.
     try:
-        return find_branch_nodes(server, branch=ref)[-1]
+        branch_nodes = find_branch_nodes(server, branch=ref)
+        if branch_nodes:
+            return branch_nodes[-1]
+        raise RuntimeError(f"Could not resolve reference '{ref}'.  It is neither a UUID or a branch name.")
     except Exception as ex:
         if 'more than one repo' in ex.args[0]:
-            raise RuntimeError("resolve_uuid() does not support servers that contain multiple repos.")
+            raise RuntimeError("resolve_ref() does not support servers that contain multiple repos.")
         raise
 
 
