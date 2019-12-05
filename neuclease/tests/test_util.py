@@ -9,7 +9,8 @@ import pandas as pd
 from neuclease.util import (uuids_match, read_csv_header, read_csv_col, connected_components,
                             connected_components_nonconsecutive, graph_tool_available,
                             closest_approach, approximate_closest_approach, upsample, is_lexsorted, lexsort_columns,
-                            lexsort_inplace, gen_json_objects, ndrange, compute_parallel, iter_batches)
+                            lexsort_inplace, gen_json_objects, ndrange, compute_parallel, iter_batches,
+                            is_box_coverage_complete)
 
 def test_uuids_match():
     assert uuids_match('abcd', 'abcdef') == True
@@ -374,6 +375,36 @@ def test_iter_batches():
     assert [df['a'].tolist() for df in iter_batches(data, 3)] == [[0,1,2], [3,4,5], [6,7,8], [9]]
 
 
+def test_is_box_coverage_complete():
+    full_box = [[0,50,100], [100,150,200]]
+    assert is_box_coverage_complete([full_box], full_box)
+    full_box = np.array(full_box)
+
+    boxes = [[[ 0, 50, 100], [ 50, 150, 200]],
+             [[50, 50, 100], [100, 150, 200]]]
+    assert is_box_coverage_complete(boxes, full_box)
+
+    boxes = [[[ 0, 50, 100],  [50, 150, 200]],
+             [[50, 50, 100],  [75, 150, 200]]]
+    assert not is_box_coverage_complete(boxes, full_box)
+
+    box_shape = np.array((50,50,50))
+    boxes = [(box, box + box_shape) for box in ndrange(full_box[0], full_box[1], box_shape)]
+    assert is_box_coverage_complete(boxes, full_box)
+    assert not is_box_coverage_complete(boxes[:-1], full_box)
+    assert not is_box_coverage_complete(boxes[1:], full_box)
+    
+    # Try boxes that exceed the bounds of full_box
+    boxes = [[[ 0,  0, 100], [50,  150, 200]],
+             [[50, 50, 100], [100, 150, 300]]]
+    assert is_box_coverage_complete(boxes, full_box)
+
+    boxes = [[[ 0,  0, 100], [50, 150, 200]],
+             [[50, 50, 100], [75, 150, 300]]]
+    assert not is_box_coverage_complete(boxes, full_box)
+
 if __name__ == "__main__":
     args = ['-s', '--tb=native', '--pyargs', 'neuclease.tests.test_util']
+    args += ['-x']
+    #args += ['-k', 'is_box_coverage_complete']
     pytest.main(args)

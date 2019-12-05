@@ -119,6 +119,59 @@ def box_intersection(box_A, box_B):
     return intersection
 
 
+def is_box_coverage_complete(boxes, full_box):
+    """
+    When overlaid with each other, do the given
+    boxes fully cover the given full_box?
+    
+    Args:
+        boxes:
+            Array, shape (N,2,D)
+
+        full_box:
+            Array, shape (2,D)
+        
+    Returns:
+        bool
+    
+    Note:
+        Boxes that extend beyond the extents of
+        full_box are permitted; they'll be cropped.
+    """
+    boxes = np.array(boxes, dtype=int)
+    full_box = np.array(full_box, dtype=int)
+
+    assert boxes.ndim == 3
+    assert full_box.ndim == 2
+    assert boxes.shape[1:] == full_box.shape
+
+    # Offset so full_box starts at (0,0,...)
+    boxes = boxes - full_box[0]
+    full_box = full_box - full_box[0]
+
+    # Clip
+    boxes[:,0,:] = np.maximum(boxes[:,0,:], full_box[0])
+    boxes[:,1,:] = np.minimum(boxes[:,1,:], full_box[1])
+
+    # Save RAM by dividing boxes by their greatest common factor along each dimension,
+    # allowing for a smaller mask.
+    all_boxes = np.concatenate((boxes, full_box[None]), axis=0)
+    factors = np.gcd.reduce(all_boxes, axis=(0,1))
+
+    assert not (boxes % factors).any()
+    assert not (full_box % factors).any()
+
+    boxes = boxes // factors
+    full_box = full_box // factors
+
+    # Now simply create a binary mask and fill each box within it.
+    mask = np.zeros(full_box[1], dtype=bool)
+    for box in boxes:
+        overwrite_subvol(mask, box, True)
+
+    return mask.all()
+
+
 def boxlist_to_json( bounds_list, indent=0 ):
     # The 'json' module doesn't have nice pretty-printing options for our purposes,
     # so we'll do this ourselves.
