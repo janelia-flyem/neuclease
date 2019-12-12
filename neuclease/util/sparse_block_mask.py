@@ -2,9 +2,10 @@ import collections
 import numpy as np
 
 from .view_as_blocks import view_as_blocks
-from .box import box_intersection, box_to_slicing
+from .box import box_intersection, box_to_slicing, extract_subvol, round_box
 from .grid import Grid, boxes_from_grid
 from .segmentation import compute_nonzero_box
+from matplotlib.pyplot import box
 
 class SparseBlockMask:
     """
@@ -51,6 +52,22 @@ class SparseBlockMask:
         empty_box = np.array([corner, corner])
         empty_mask = np.zeros((0,)*len(empty_box[0]), dtype=bool)
         return SparseBlockMask(empty_mask, empty_box, resolution)
+
+    @classmethod
+    def create_from_sbm_box(cls, sbm, sub_box):
+        """
+        Create a SparseBlockMask by extract a portion of an existing SparseBlockMask.
+        If sub_box isn't aligned to the given sbm resolution, it will be expanded to make it aligned.
+        """
+        sub_box = round_box(sub_box, sbm.resolution, 'out') 
+
+        new_box = box_intersection(sub_box, sbm.box)
+        new_resolution = sbm.resolution.copy()
+        new_lowres_box = new_box // new_resolution
+        
+        old_lowres_box = sbm.box // sbm.resolution
+        new_lowres_mask = extract_subvol(sbm.lowres_mask, new_lowres_box - old_lowres_box[0]).copy()
+        return SparseBlockMask(new_lowres_mask, new_box, new_resolution)
 
     @classmethod
     def create_from_lowres_coords(cls, coords_zyx, resolution):
