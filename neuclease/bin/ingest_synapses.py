@@ -26,8 +26,11 @@ DVID expects synapses in a JSON list, in the same format as that returned by the
 ]
 """
 import argparse
-import ujson
 
+import ujson
+import pandas as pd
+
+from neuclease.util import iter_batches, tqdm_proxy
 from neuclease.dvid import create_instance, post_elements, post_sync, post_reload
 
 def main():
@@ -46,9 +49,6 @@ def main():
     syn_instance = args.annotation_instance
     seg_instance = args.labelmap_instance
 
-    with open(args.elements_json, 'r') as f:
-        elements = ujson.load(f)
-    
     ##
     ## 1. Create an 'annotation' instance to store the synapse data
     ##
@@ -64,9 +64,27 @@ def main():
     ##    Note:
     ##      DVID stores these in block-aligned groups, based on the synapse coordinates.
     ##      Ingestion will be fastest if you pre-sort your JSON elements by 64px blocks,
-    ##      in Z-Y-X order.
+    ##      in Z-Y-X order, as shown below.
     ##
-    post_elements(server, uuid, syn_instance, elements)
+
+    with open(args.elements_json, 'r') as f:
+        elements = ujson.load(f)
+    
+    # Sort elements by block location (64px blocks)
+    # FIXME: This code should work but I haven't tested it yet.  Might have a typo.
+    elements_df = pd.DataFrame([(*e["Pos"], e) for e in elements], columns=['x', 'y', 'z', 'element'])
+    elements_df[['z', 'y', 'x']] //= 64
+    elements_df.sort_values(['z', 'y', 'x'], inplace=True)
+    
+    # Group blocks into larger chunks, with each chunk being 100 blocks
+    # in the X direction (and 1x1 in the zy directions).
+    elements_df['x'] //= 100
+
+    # Ingest in chunks.
+    num_chunks = elements_df[['z', 'y', 'x']].drop_duplicates().shape[0]
+    chunked_df = elements_df.groupby(['z', 'y', 'x'])
+    for zyx, batch_elements_df in tqdm_proxy(chunked_df, total=num_chunks):
+        post_elements(server, uuid, syn_instance, batch_elements_df['element'].tolist())
     
     ##
     ## 3. Sync the annotation instance to a pre-existing
