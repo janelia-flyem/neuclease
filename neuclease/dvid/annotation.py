@@ -486,7 +486,7 @@ def fetch_bodies_for_synapses(server, uuid, seg_instance, point_df=None, partner
 
 
 def fetch_synapses_in_batches(server, uuid, synapses_instance, bounding_box_zyx=None, batch_shape_zyx=(256,256,64000),
-                              format='pandas', endpoint='blocks', processes=8): #@ReservedAssignment
+                              format='pandas', endpoint='blocks', processes=8, check_consistency=False): #@ReservedAssignment
     """
     Fetch all synapse annotations for the given labelmap volume (or subvolume) and synapse instance.
     Box-shaped regions are queried in batches according to the given batch shape.
@@ -531,6 +531,9 @@ def fetch_synapses_in_batches(server, uuid, synapses_instance, bounding_box_zyx=
         endpoint:
             Either 'blocks' (faster) or 'elements' (supported on older servers).
     
+        check_consistency:
+            DVID debug feature. Checks for consistency in the response to the /blocks endpoint.
+
     Returns:
         If format == 'json', a list of JSON elements.
         If format == 'pandas', returns two dataframes:
@@ -573,7 +576,7 @@ def fetch_synapses_in_batches(server, uuid, synapses_instance, bounding_box_zyx=
     assert (batch_shape_zyx % 64 == 0).all(), "batch shape must be block-aligned"
 
     boxes = boxes_from_grid(bounding_box_zyx, Grid(batch_shape_zyx))
-    fn = partial(_fetch_synapse_batch, server, uuid, synapses_instance, format=format, endpoint=endpoint)
+    fn = partial(_fetch_synapse_batch, server, uuid, synapses_instance, format=format, endpoint=endpoint, check_consistency=check_consistency)
     results = compute_parallel(fn, boxes, processes=processes, ordered=False, leave_progress=True)
 
     if format == 'json':
@@ -597,14 +600,31 @@ def fetch_synapses_in_batches(server, uuid, synapses_instance, bounding_box_zyx=
         return point_df, partner_df
 
 
-def _fetch_synapse_batch(server, uuid, synapses_instance, batch_box, format='json', endpoint='blocks'): # @ReservedAssignment
+def _fetch_synapse_batch(server, uuid, synapses_instance, batch_box, format='json', endpoint='blocks', check_consistency=False): # @ReservedAssignment
     """
     Helper for fetch_synapses_in_batches(), above.
     As a special check, if format 'pandas' is used, we also check for dvid inconsistencies.
     """
+    assert not check_consistency or endpoint == 'blocks', \
+        "check_consistency can only be used with the blocks endpoint."
+
     if endpoint == 'blocks':
-        elements = fetch_blocks(server, uuid, synapses_instance, batch_box)
-        elements = list(chain(*elements.values()))
+        blocks = fetch_blocks(server, uuid, synapses_instance, batch_box)
+        elements = list(chain(*blocks.values()))
+        
+        if check_consistency:
+            for key, els in blocks.items():
+                if len(els) == 0:
+                    continue
+                block = [int(c) for c in key.split(',')]
+                block_box = 64*np.array((block, block))
+                block_box[1] += 64
+                pos = np.array([e['Pos'] for e in els])
+                if (pos < block_box[0]).any() or (pos >= block_box[1]).any():
+                    msg = ("Detected a DVID inconsistency: Some elements fetched from block "
+                           f"at {block_box[0, ::-1].tolist()} (XYZ) fall outside the block!")
+                    raise RuntimeError(msg)
+
     elif endpoint == 'elements':
         elements = fetch_elements(server, uuid, synapses_instance, batch_box)
     else:
@@ -617,7 +637,7 @@ def _fetch_synapse_batch(server, uuid, synapses_instance, batch_box, format='jso
         if ((point_df[['z', 'y', 'x']].values <  batch_box[0]).any()
         or  (point_df[['z', 'y', 'x']].values >= batch_box[1]).any()):
             msg = ("Detected a DVID inconsistency: Some elements fetched "
-                   f"from box {batch_box.tolist()} (XYZ) fall outside that region!")
+                   f"from box {batch_box[:, ::-1].tolist()} (XYZ) fall outside that region!")
             raise RuntimeError(msg)
         return (point_df, partner_df)
 
