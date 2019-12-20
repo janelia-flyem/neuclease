@@ -286,7 +286,7 @@ def _fetch_keyvalues_jsontar_via_jsontar(server, uuid, instance, keys, as_json=F
 
 
 @dvid_api_wrapper
-def post_keyvalues(server, uuid, instance, keyvalues, batch_size=None, *, session=None):
+def post_keyvalues(server, uuid, instance, keyvalues, batch_size=None, *, session=None, show_progress=True):
     """
     Post a batch of key-value pairs to a keyvalue instance.
     
@@ -315,7 +315,7 @@ def post_keyvalues(server, uuid, instance, keyvalues, batch_size=None, *, sessio
     keyvalues = list(keyvalues.items())
 
     batch_starts = range(0, len(keyvalues), batch_size)
-    progress = tqdm_proxy(batch_starts, leave=False, disable=(batch_size >= len(keyvalues)))
+    progress = tqdm_proxy(batch_starts, leave=False, disable=(batch_size >= len(keyvalues)) or not show_progress)
     for start in progress:
         kvs = []
         for key, value in keyvalues[start:start+batch_size]:
