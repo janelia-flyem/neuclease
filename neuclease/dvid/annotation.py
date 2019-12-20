@@ -314,10 +314,21 @@ def post_elements(server, uuid, instance, elements, kafkalog=True, *, session=No
             dvid annotations instance name, e.g. 'synapses'
         
         elements:
-            Elements as JSON data (a python list-of-dicts)
+            Elements as JSON data (a python list-of-dicts).
+            This is the same format as returned by fetch_elements().
+            It is NOT the format returned by fetch_blocks().
+            If your data came from fetch_blocks(), you must extract and concatenate the values of that dict.
         
         kafkalog:
             If True, log kafka events for each posted element.
+        
+        Example:
+        
+            from itertools import chain
+            blocks = fetch_blocks(server, uuid, instance_1, box)
+            elements = list(chain(*blocks.values()))
+            post_elements(server, uuid, instance_2, elements)
+        
     """
     params = {}
     if not kafkalog or kafkalog == 'off':
@@ -522,8 +533,24 @@ def fetch_synapses_in_batches(server, uuid, synapses_instance, bounding_box_zyx=
     
     Returns:
         If format == 'json', a list of JSON elements.
-        If format == 'pandas', returns two dataframes.
-        (See ``load_synapses_as_dataframes()`` for details.)
+        If format == 'pandas', returns two dataframes:
+
+            point_df:
+                One row for every t-bar and psd in the file, indicating its
+                location, confidence, and synapse type (PostSyn or PreSyn)
+                Columns: ['z', 'y', 'x', 'conf', 'kind', 'user']
+                Index: np.uint64, an encoded version of [z,y,x]
+            
+            partner_df:
+                Indicates which T-bar each PSD is associated with.
+                One row for every psd in the file.
+                Columns: ['post_id', 'pre_id']
+                where the values correspond to the index of point_df.
+                Note:
+                    It can generally be assumed that for the synapses we
+                    load into dvid, every PSD (PostSyn) is
+                    associated with exactly one T-bar (PreSyn).
+
     """
     assert format in ('pandas', 'json')
     assert endpoint in ('blocks', 'elements')
@@ -573,6 +600,7 @@ def fetch_synapses_in_batches(server, uuid, synapses_instance, bounding_box_zyx=
 def _fetch_synapse_batch(server, uuid, synapses_instance, batch_box, format='json', endpoint='blocks'): # @ReservedAssignment
     """
     Helper for fetch_synapses_in_batches(), above.
+    As a special check, if format 'pandas' is used, we also check for dvid inconsistencies.
     """
     if endpoint == 'blocks':
         elements = fetch_blocks(server, uuid, synapses_instance, batch_box)
@@ -586,6 +614,11 @@ def _fetch_synapse_batch(server, uuid, synapses_instance, batch_box, format='jso
         return elements
     elif format == 'pandas':
         point_df, partner_df = load_synapses_as_dataframes(elements)
+        if ((point_df[['z', 'y', 'x']].values <  batch_box[0]).any()
+        or  (point_df[['z', 'y', 'x']].values >= batch_box[1]).any()):
+            msg = ("Detected a DVID inconsistency: Some elements fetched "
+                   f"from box {batch_box.tolist()} (XYZ) fall outside that region!")
+            raise RuntimeError(msg)
         return (point_df, partner_df)
 
 
