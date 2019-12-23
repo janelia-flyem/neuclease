@@ -1,6 +1,7 @@
 import os
 import sys
 import logging
+import warnings
 from itertools import chain
 from functools import partial
 
@@ -410,6 +411,9 @@ def delete_element(server, uuid, instance, coord_zyx, kafkalog=True, *, session=
     r.raise_for_status()
 
 
+class SynapseWarning(UserWarning):
+    pass
+
 def load_synapses_as_dataframes(elements):
     """
     Load the given JSON elements as synapses a DataFrame.
@@ -436,6 +440,11 @@ def load_synapses_as_dataframes(elements):
                 load into dvid, every PSD (PostSyn) is
                 associated with exactly one T-bar (PreSyn).
     """
+    with warnings.catch_warnings():
+        warnings.simplefilter("once", category=SynapseWarning)
+        return _load_synapses_as_dataframes(elements)
+
+def _load_synapses_as_dataframes(elements):
     if not elements:
         point_df = pd.DataFrame([], columns=['x', 'y', 'z', 'kind', 'conf', 'user'])
         partner_df = pd.DataFrame([], columns=['post_id', 'pre_id'], dtype=np.uint64)
@@ -467,9 +476,25 @@ def load_synapses_as_dataframes(elements):
         confs.append( float(e.get('Prop', {}).get('conf', 0.0)) )
         users.append( e.get('Prop', {}).get('user', '') )
         
-        if 'Rels' in e:
+        if 'Rels' not in e or len(e['Rels']) == 0:
+            warnings.warn("At least one synapse had no relationships! Adding artificial partner(s) to (0,0,0).", SynapseWarning)
+            # In general, there should never be
+            # a tbar or psd with no relationships at all.
+            # That indicates an inconsistency in the database.
+            # To keep track of such cases, we add a special connection to point (0,0,0).
+            if e['Kind'] == 'PreSyn':
+                rel_points.append( (z,y,x, 0,0,0) )
+            else:
+                rel_points.append( (0,0,0, z,y,x) )
+        else:
             for rel in e['Rels']:
                 rx, ry, rz = rel['To']
+                
+                if rx == ry == rz == 0:
+                    # We usually assume (0,0,0) is not a real synapse, so it can be used in the case of "orphan" synapses.
+                    # But in this case, apparently a real synapse was found at (0,0,0), obfuscating the warning above.
+                    warnings.warn("Huh? The fetched synapse data actually contains a relationship to point (0,0,0)!")
+                
                 if e['Kind'] == 'PreSyn':
                     rel_points.append( (z,y,x, rz,ry,rx) )
                 else:
@@ -527,6 +552,11 @@ def fetch_synapses_in_batches(server, uuid, synapses_instance, bounding_box_zyx=
     Fetch all synapse annotations for the given labelmap volume (or subvolume) and synapse instance.
     Box-shaped regions are queried in batches according to the given batch shape.
     Returns either the raw JSON or a pandas DataFrame.
+    
+    Note:
+        Every synapse should have at least one partner (relationship).
+        If a synapse is found without a partner, that indicates a problem with the database.
+        In that case, a warning is emitted and the synapse is given an artificial partner to point (0,0,0).
     
     Note:
         On the hemibrain dataset (~70 million points),
@@ -613,7 +643,10 @@ def fetch_synapses_in_batches(server, uuid, synapses_instance, bounding_box_zyx=
 
     boxes = boxes_from_grid(bounding_box_zyx, Grid(batch_shape_zyx))
     fn = partial(_fetch_synapse_batch, server, uuid, synapses_instance, format=format, endpoint=endpoint, check_consistency=check_consistency)
-    results = compute_parallel(fn, boxes, processes=processes, ordered=False, leave_progress=True)
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("once", category=SynapseWarning)
+        results = compute_parallel(fn, boxes, processes=processes, ordered=False, leave_progress=True)
 
     if format == 'json':
         return list(chain(*results))
