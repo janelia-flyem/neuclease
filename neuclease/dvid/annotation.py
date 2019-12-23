@@ -484,9 +484,13 @@ def load_synapses_as_dataframes(elements):
     point_df.index = encode_coords_to_uint64(point_df[['z', 'y', 'x']].values)
     point_df.index.name = 'point_id'
     
-    rel_points = np.array(rel_points, np.int32)
-    pre_partner_ids = encode_coords_to_uint64(rel_points[:,:3])
-    post_partner_ids = encode_coords_to_uint64(rel_points[:,3:])
+    if rel_points:
+        rel_points = np.array(rel_points, np.int32)
+        pre_partner_ids = encode_coords_to_uint64(rel_points[:,:3])
+        post_partner_ids = encode_coords_to_uint64(rel_points[:,3:])
+    else:
+        pre_partner_ids = np.zeros((0,), dtype=np.uint64)
+        post_partner_ids = np.zeros((0,), dtype=np.uint64)
 
     partner_df = pd.DataFrame({'post_id': post_partner_ids, 'pre_id': pre_partner_ids})
 
@@ -618,8 +622,12 @@ def fetch_synapses_in_batches(server, uuid, synapses_instance, bounding_box_zyx=
         
         # Any zero-length dataframes might have the wrong dtypes,
         # which would screw up the concat step.  Remove them.
-        point_dfs = filter(len, point_dfs)
-        partner_dfs = filter(len, partner_dfs)
+        point_dfs = [*filter(len, point_dfs)]
+        partner_dfs = [*filter(len, partner_dfs)]
+
+        if len(point_dfs) == 0:
+            # Return empty dataframe
+            return load_synapses_as_dataframes([])
 
         point_df = pd.concat(point_dfs)
         
