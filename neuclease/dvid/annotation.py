@@ -744,10 +744,8 @@ def fetch_synapses_in_batches(server, uuid, synapses_instance, bounding_box_zyx=
         # Drop duplicates among them.
         if (point_df['kind'] == "Fake").any():
             # All fake rows are the same.  Drop all but the first.
-            fakes = point_df.eval('kind == "Fake"')
-            (fake_rows,) = fakes.values.nonzero()
-            fakes.iloc[fake_rows[0]] = False
-            point_df = point_df.iloc[~fakes]
+            fake_df = point_df.query('kind == "Fake"').iloc[0:1]
+            point_df = pd.concat((fake_df, point_df.query('kind != "Fake"')))
 
         # Sort, mostly to ensure that the Fake point (if any) is at the top.        
         point_df.sort_values(['z', 'y', 'x'], inplace=True)
