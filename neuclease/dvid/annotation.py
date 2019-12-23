@@ -682,14 +682,18 @@ def _fetch_synapse_batch(server, uuid, synapses_instance, batch_box, format='jso
         return (point_df, partner_df)
 
 
-def save_synapses_npy(synapse_point_df, npy_path, index=False):
+def save_synapses_npy(synapse_point_df, npy_path, save_index=None):
     """
     Save the given synapse point DataFrame to a .npy file,
     with careful handling of strings to avoid creating any
     pickled objects (which are annoying to load).
     """
-    dtypes = {}
+    assert save_index in (True, False, None)
+    if save_index is None:
+        save_index = (synapse_point_df.index.name is not None)
     
+    dtypes = {}
+
     # Avoid 'pickle' objects (harder to load) by converting
     # categories/strings to fixed-width strings
     max_kind = synapse_point_df['kind'].map(len).astype(int).max()
@@ -699,7 +703,7 @@ def save_synapses_npy(synapse_point_df, npy_path, index=False):
         max_user = synapse_point_df['user'].map(len).astype(int).max()
         dtypes['user'] = f'U{max_user}'
     
-    np.save(npy_path, synapse_point_df.to_records(index=index, column_dtypes=dtypes))
+    np.save(npy_path, synapse_point_df.to_records(index=save_index, column_dtypes=dtypes))
 
 
 def load_synapses_npy(npy_path):
