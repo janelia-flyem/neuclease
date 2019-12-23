@@ -458,9 +458,10 @@ def load_synapses_as_dataframes(elements, return_both_partner_tables=False):
         [pre_partner_df]:
             Only returned if return_both_partner_tables=True
     """
-    with warnings.catch_warnings():
-        warnings.simplefilter("once", category=SynapseWarning)
-        return _load_synapses_as_dataframes(elements, return_both_partner_tables)
+    #with warnings.catch_warnings():
+    #    warnings.simplefilter("once", category=SynapseWarning)
+    
+    return _load_synapses_as_dataframes(elements, return_both_partner_tables)
 
 def _load_synapses_as_dataframes(elements, return_both_partner_tables):
     if not elements:
@@ -504,9 +505,9 @@ def _load_synapses_as_dataframes(elements, return_both_partner_tables):
             # a tbar or psd with no relationships at all.
             # That indicates an inconsistency in the database.
             # To keep track of such cases, we add a special connection to point (0,0,0).
-            warnings.warn("At least one synapse had no relationships! "
-                          "Adding artificial partner(s) to (0,0,0).",
-                          SynapseWarning)
+            #warnings.warn("At least one synapse had no relationships! "
+            #              "Adding artificial partner(s) to (0,0,0).",
+            #              SynapseWarning)
             need_fake_point = True
             if e['Kind'] == 'PreSyn':
                 pre_rel_points.append( (z,y,x, 0,0,0) )
@@ -547,8 +548,8 @@ def _load_synapses_as_dataframes(elements, return_both_partner_tables):
     def construct_partner_df(rel_points):
         if rel_points:
             rel_points = np.array(rel_points, np.int32)
-            pre_partner_ids = encode_coords_to_uint64(rel_points[:,:3])
-            post_partner_ids = encode_coords_to_uint64(rel_points[:,3:])
+            pre_partner_ids  = encode_coords_to_uint64(rel_points[:, :3])
+            post_partner_ids = encode_coords_to_uint64(rel_points[:, 3:])
         else:
             pre_partner_ids = np.zeros((0,), dtype=np.uint64)
             post_partner_ids = np.zeros((0,), dtype=np.uint64)
@@ -710,7 +711,8 @@ def fetch_synapses_in_batches(server, uuid, synapses_instance, bounding_box_zyx=
                  format=format, endpoint=endpoint, check_consistency=check_consistency,
                  return_both_partner_tables=return_both_partner_tables)
 
-    initializer = lambda: warnings.simplefilter("once", category=SynapseWarning)
+    initializer = None
+    #initializer = lambda: warnings.simplefilter("once", category=SynapseWarning)
     results = compute_parallel(fn, boxes, processes=processes, ordered=False, leave_progress=True, initializer=initializer)
 
     if format == 'json':
