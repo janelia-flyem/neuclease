@@ -414,7 +414,7 @@ def delete_element(server, uuid, instance, coord_zyx, kafkalog=True, *, session=
 class SynapseWarning(UserWarning):
     pass
 
-def load_synapses_as_dataframes(elements):
+def load_synapses_as_dataframes(elements, return_both_partner_tables=False):
     """
     Load the given JSON elements as synapses a DataFrame.
     
@@ -422,33 +422,54 @@ def load_synapses_as_dataframes(elements):
         elements:
             JSON list of synapse annotation elements as returned by
             fetch_elements(), etc.
+        
+        return_both_partner_tables:
+            Debugging feature.
+            Helps detect DVID data inconsistencies, if used correctly.
+            If True, return two separate partner tables, computed
+            from the PreSyn and PostSyn relationship data, respectively.
+            
+            That is, pre_partner_df contains the pre->post pairs found
+            in the 'PreSynTo' relationships, and post_partner_df contains
+            the pre->post found in the 'PostSynTo' relationships.
+            
+            Note that the two tables will likely NOT be identical,
+            unless the given elements include every synapse in your volume.
+            By default, combine (and de-duplicate) the two tables.
 
     Returns:
+    
         point_df:
             One row for every t-bar and psd in the file, indicating its
             location, confidence, and synapse type (PostSyn or PreSyn)
             Columns: ['z', 'y', 'x', 'conf', 'kind', 'user']
             Index: np.uint64, an encoded version of [z,y,x]
         
-        partner_df:
+        [post_]partner_df:
             Indicates which T-bar each PSD is associated with.
             One row for every psd in the file.
-            Columns: ['post_id', 'pre_id']
+            Columns: ['pre_id', 'post_id']
             where the values correspond to the index of point_df.
             Note:
                 It can generally be assumed that for the synapses we
                 load into dvid, every PSD (PostSyn) is
                 associated with exactly one T-bar (PreSyn).
+        
+        [pre_partner_df]:
+            Only returned if return_both_partner_tables=True
     """
     with warnings.catch_warnings():
         warnings.simplefilter("once", category=SynapseWarning)
-        return _load_synapses_as_dataframes(elements)
+        return _load_synapses_as_dataframes(elements, return_both_partner_tables)
 
-def _load_synapses_as_dataframes(elements):
+def _load_synapses_as_dataframes(elements, return_both_partner_tables):
     if not elements:
         point_df = pd.DataFrame([], columns=['x', 'y', 'z', 'kind', 'conf', 'user'])
         partner_df = pd.DataFrame([], columns=['post_id', 'pre_id'], dtype=np.uint64)
-        return point_df, partner_df
+        if return_both_partner_tables:
+            return point_df, partner_df, partner_df
+        else:
+            return point_df, partner_df
 
     # Accumulating separate lists for each column ought to be
     # faster than building a list-of-tuples, I think.
@@ -463,8 +484,10 @@ def _load_synapses_as_dataframes(elements):
     
     # Relationship coordinates
     # [(pre_z, pre_y, pre_x, post_z, post_y, post_x), ...]
-    rel_points = []
+    pre_rel_points = []
+    post_rel_points = []
     
+    need_fake_point = False
     for e in elements:
         x,y,z = e['Pos']
         
@@ -477,15 +500,18 @@ def _load_synapses_as_dataframes(elements):
         users.append( e.get('Prop', {}).get('user', '') )
         
         if 'Rels' not in e or len(e['Rels']) == 0:
-            warnings.warn("At least one synapse had no relationships! Adding artificial partner(s) to (0,0,0).", SynapseWarning)
             # In general, there should never be
             # a tbar or psd with no relationships at all.
             # That indicates an inconsistency in the database.
             # To keep track of such cases, we add a special connection to point (0,0,0).
+            warnings.warn("At least one synapse had no relationships! "
+                          "Adding artificial partner(s) to (0,0,0).",
+                          SynapseWarning)
+            need_fake_point = True
             if e['Kind'] == 'PreSyn':
-                rel_points.append( (z,y,x, 0,0,0) )
+                pre_rel_points.append( (z,y,x, 0,0,0) )
             else:
-                rel_points.append( (0,0,0, z,y,x) )
+                post_rel_points.append( (0,0,0, z,y,x) )
         else:
             for rel in e['Rels']:
                 rx, ry, rz = rel['To']
@@ -496,34 +522,52 @@ def _load_synapses_as_dataframes(elements):
                     warnings.warn("Huh? The fetched synapse data actually contains a relationship to point (0,0,0)!")
                 
                 if e['Kind'] == 'PreSyn':
-                    rel_points.append( (z,y,x, rz,ry,rx) )
+                    pre_rel_points.append( (z,y,x, rz,ry,rx) )
                 else:
-                    rel_points.append( (rz,ry,rx, z,y,x) )
+                    post_rel_points.append( (rz,ry,rx, z,y,x) )
+
+    # See warning above.
+    if need_fake_point:
+        xs.append(0)
+        ys.append(0)
+        zs.append(0)
+        kinds.append('Fake')
+        confs.append(0.0)
+        users.append('neuclease.dvid.annotation.load_synapses_as_dataframes')
 
     point_df = pd.DataFrame( {'z': zs, 'y': ys, 'x': xs}, dtype=np.int32 )
 
-    kind_dtype = pd.CategoricalDtype(categories=["PreSyn", "PostSyn"], ordered=False)
+    kind_dtype = pd.CategoricalDtype(categories=["PreSyn", "PostSyn", "Fake"], ordered=False)
     point_df['kind'] = pd.Series(kinds, dtype=kind_dtype)
     point_df['conf'] = pd.Series(confs, dtype=np.float32)
     point_df['user'] = pd.Series(users, dtype='category')
     point_df.index = encode_coords_to_uint64(point_df[['z', 'y', 'x']].values)
     point_df.index.name = 'point_id'
-    
-    if rel_points:
-        rel_points = np.array(rel_points, np.int32)
-        pre_partner_ids = encode_coords_to_uint64(rel_points[:,:3])
-        post_partner_ids = encode_coords_to_uint64(rel_points[:,3:])
-    else:
-        pre_partner_ids = np.zeros((0,), dtype=np.uint64)
-        post_partner_ids = np.zeros((0,), dtype=np.uint64)
 
-    partner_df = pd.DataFrame({'post_id': post_partner_ids, 'pre_id': pre_partner_ids})
+    def construct_partner_df(rel_points):
+        if rel_points:
+            rel_points = np.array(rel_points, np.int32)
+            pre_partner_ids = encode_coords_to_uint64(rel_points[:,:3])
+            post_partner_ids = encode_coords_to_uint64(rel_points[:,3:])
+        else:
+            pre_partner_ids = np.zeros((0,), dtype=np.uint64)
+            post_partner_ids = np.zeros((0,), dtype=np.uint64)
+
+        partner_df = pd.DataFrame({'pre_id': pre_partner_ids, 'post_id': post_partner_ids})
+        return partner_df
+
+    pre_partner_df = construct_partner_df(pre_rel_points)
+    post_partner_df = construct_partner_df(post_rel_points)
+    
+    if return_both_partner_tables:
+        return point_df, pre_partner_df, post_partner_df
 
     # For synapses near block borders, maybe only the PreSyn or
     # only the PostSyn happens to be in the given elements.
     # But in most cases, both PreSyn and PostSyn are present,
     # and therefore the relationship is probably listed twice.
     # Drop duplicates.
+    partner_df = pd.concat((pre_partner_df, post_partner_df), ignore_index=True)
     partner_df.drop_duplicates(inplace=True)
     
     return point_df, partner_df
@@ -547,7 +591,8 @@ def fetch_bodies_for_synapses(server, uuid, seg_instance, point_df=None, partner
 
 
 def fetch_synapses_in_batches(server, uuid, synapses_instance, bounding_box_zyx=None, batch_shape_zyx=(256,256,64000),
-                              format='pandas', endpoint='blocks', processes=8, check_consistency=False): #@ReservedAssignment
+                              format='pandas', endpoint='blocks', processes=8, #@ReservedAssignment
+                              check_consistency=False, return_both_partner_tables=False): 
     """
     Fetch all synapse annotations for the given labelmap volume (or subvolume) and synapse instance.
     Box-shaped regions are queried in batches according to the given batch shape.
@@ -599,30 +644,49 @@ def fetch_synapses_in_batches(server, uuid, synapses_instance, bounding_box_zyx=
     
         check_consistency:
             DVID debug feature. Checks for consistency in the response to the /blocks endpoint.
+        
+        return_both_partner_tables:
+            Debugging feature.
+            Helps detect DVID data inconsistencies, if used correctly.
+            If True, return two separate partner tables, computed
+            from the PreSyn and PostSyn relationship data, respectively.
+            
+            That is, pre_partner_df contains the pre->post pairs found
+            in the 'PreSynTo' relationships, and post_partner_df contains
+            the pre->post found in the 'PostSynTo' relationships.
+            
+            Note that the two tables will likely NOT be identical,
+            unless the given elements include every synapse in your volume.
+            By default, combine (and de-duplicate) the two tables.
 
     Returns:
         If format == 'json', a list of JSON elements.
-        If format == 'pandas', returns two dataframes:
+        If format == 'pandas', returns two or three dataframes,
+        depending on return_both_partner_tables:
 
-            point_df:
-                One row for every t-bar and psd in the file, indicating its
-                location, confidence, and synapse type (PostSyn or PreSyn)
-                Columns: ['z', 'y', 'x', 'conf', 'kind', 'user']
-                Index: np.uint64, an encoded version of [z,y,x]
-            
-            partner_df:
-                Indicates which T-bar each PSD is associated with.
-                One row for every psd in the file.
-                Columns: ['post_id', 'pre_id']
-                where the values correspond to the index of point_df.
-                Note:
-                    It can generally be assumed that for the synapses we
-                    load into dvid, every PSD (PostSyn) is
-                    associated with exactly one T-bar (PreSyn).
-
+        point_df:
+            One row for every t-bar and psd in the file, indicating its
+            location, confidence, and synapse type (PostSyn or PreSyn)
+            Columns: ['z', 'y', 'x', 'conf', 'kind', 'user']
+            Index: np.uint64, an encoded version of [z,y,x]
+        
+        [post_]partner_df:
+            Indicates which T-bar each PSD is associated with.
+            One row for every psd in the file.
+            Columns: ['pre_id', 'post_id']
+            where the values correspond to the index of point_df.
+            Note:
+                It can generally be assumed that for the synapses we
+                load into dvid, every PSD (PostSyn) is
+                associated with exactly one T-bar (PreSyn).
+        
+        [pre_partner_df]:
+            Only returned if return_both_partner_tables=True            
     """
     assert format in ('pandas', 'json')
     assert endpoint in ('blocks', 'elements')
+    assert not return_both_partner_tables or format == 'pandas', \
+        "return_both_partner_tables does not apply unless you're asking for pandas format"
 
     if bounding_box_zyx is None or isinstance(bounding_box_zyx, str):
         # Determine name of the segmentation instance that's
@@ -641,39 +705,63 @@ def fetch_synapses_in_batches(server, uuid, synapses_instance, bounding_box_zyx=
     batch_shape_zyx = np.asarray(batch_shape_zyx)
     assert (batch_shape_zyx % 64 == 0).all(), "batch shape must be block-aligned"
 
-    boxes = boxes_from_grid(bounding_box_zyx, Grid(batch_shape_zyx))
-    fn = partial(_fetch_synapse_batch, server, uuid, synapses_instance, format=format, endpoint=endpoint, check_consistency=check_consistency)
+    boxes = [*boxes_from_grid(bounding_box_zyx, Grid(batch_shape_zyx))]
+    fn = partial(_fetch_synapse_batch, server, uuid, synapses_instance, 
+                 format=format, endpoint=endpoint, check_consistency=check_consistency,
+                 return_both_partner_tables=return_both_partner_tables)
 
-    with warnings.catch_warnings():
-        warnings.simplefilter("once", category=SynapseWarning)
-        results = compute_parallel(fn, boxes, processes=processes, ordered=False, leave_progress=True)
+    initializer = lambda: warnings.simplefilter("once", category=SynapseWarning)
+    results = compute_parallel(fn, boxes, processes=processes, ordered=False, leave_progress=True, initializer=initializer)
 
     if format == 'json':
         return list(chain(*results))
     elif format == 'pandas':
-        point_dfs, partner_dfs = zip(*results)
+        if return_both_partner_tables:
+            point_dfs, pre_partner_dfs, post_partner_dfs = zip(*results)
+            pre_partner_dfs = [*filter(len, pre_partner_dfs)]
+            post_partner_dfs = [*filter(len, post_partner_dfs)]
+        else:
+            point_dfs, partner_dfs = zip(*results)
+            partner_dfs = [*filter(len, partner_dfs)]
         
         # Any zero-length dataframes might have the wrong dtypes,
         # which would screw up the concat step.  Remove them.
         point_dfs = [*filter(len, point_dfs)]
-        partner_dfs = [*filter(len, partner_dfs)]
 
         if len(point_dfs) == 0:
             # Return empty dataframe
-            return load_synapses_as_dataframes([])
+            return load_synapses_as_dataframes([], return_both_partner_tables)
 
         point_df = pd.concat(point_dfs)
         
         # Make sure user and kind are Categorical
         point_df['kind'] = point_df['kind'].astype("category")
         point_df['user'] = point_df['user'].astype("category")
+
+        # If any 'fake' synapses were added due to inconsistent data,
+        # Drop duplicates among them.
+        if (point_df['kind'] == "Fake").any():
+            # All fake rows are the same.  Drop all but the first.
+            fakes = point_df.eval('kind == "Fake"')
+            (fake_rows,) = fakes.values.nonzero()
+            fakes.iloc[fake_rows[0]] = False
+            point_df = point_df.iloc[~fakes]
+
+        # Sort, mostly to ensure that the Fake point (if any) is at the top.        
+        point_df.sort_values(['z', 'y', 'x'], inplace=True)
         
-        partner_df = pd.concat(partner_dfs, ignore_index=True)
-        partner_df.drop_duplicates(inplace=True)
-        return point_df, partner_df
+        if return_both_partner_tables:
+            pre_partner_df = pd.concat(pre_partner_dfs, ignore_index=True)
+            post_partner_df = pd.concat(post_partner_dfs, ignore_index=True)
+            return point_df, pre_partner_df, post_partner_df
+        else:
+            partner_df = pd.concat(partner_dfs, ignore_index=True)
+            partner_df.drop_duplicates(inplace=True)
+            return point_df, partner_df
 
 
-def _fetch_synapse_batch(server, uuid, synapses_instance, batch_box, format='json', endpoint='blocks', check_consistency=False): # @ReservedAssignment
+def _fetch_synapse_batch(server, uuid, synapses_instance, batch_box, format, endpoint, # @ReservedAssignment
+                         check_consistency, return_both_partner_tables):
     """
     Helper for fetch_synapses_in_batches(), above.
     As a special check, if format 'pandas' is used, we also check for dvid inconsistencies.
@@ -705,14 +793,13 @@ def _fetch_synapse_batch(server, uuid, synapses_instance, batch_box, format='jso
 
     if format == 'json':
         return elements
-    elif format == 'pandas':
-        point_df, partner_df = load_synapses_as_dataframes(elements)
-        if ((point_df[['z', 'y', 'x']].values <  batch_box[0]).any()
-        or  (point_df[['z', 'y', 'x']].values >= batch_box[1]).any()):
-            msg = ("Detected a DVID inconsistency: Some elements fetched "
-                   f"from box {batch_box[:, ::-1].tolist()} (XYZ) fall outside that region!")
-            raise RuntimeError(msg)
-        return (point_df, partner_df)
+
+    if return_both_partner_tables:
+        point_df, pre_partner_df, post_partner_df = load_synapses_as_dataframes(elements, True)
+        return point_df, pre_partner_df, post_partner_df
+    else:
+        point_df, partner_df = load_synapses_as_dataframes(elements, False)
+        return point_df, partner_df
 
 
 def save_synapses_npy(synapse_point_df, npy_path, save_index=None):

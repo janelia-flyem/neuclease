@@ -420,7 +420,8 @@ class _iter_batches_with_len(_iter_batches):
 
 
 def compute_parallel(func, iterable, chunksize=1, threads=None, processes=None, ordered=True,
-                     leave_progress=False, total=None, initial=0, starmap=False, show_progress=True):
+                     leave_progress=False, total=None, initial=0, starmap=False, show_progress=True,
+                     **pool_kwargs):
     """
     Use the given function to process the given iterable in a ThreadPool or process Pool,
     showing progress using tqdm.
@@ -460,14 +461,18 @@ def compute_parallel(func, iterable, chunksize=1, threads=None, processes=None, 
         starmap:
             If True, each item should be a tuple, which will be unpacked into
              the arguments to the given function, like ``itertools.starmap()``.
+
+        pool_kwargs:
+            keyword arguments to pass to the underlying Pool object,
+            such as ``initializer`` or ``maxtasksperchild``.
     """
     assert bool(threads) ^ bool(processes), \
         "Specify either threads or processes (not both)"
 
     if threads:
-        pool = ThreadPool(threads)
+        pool = ThreadPool(threads, **pool_kwargs)
     elif processes:
-        pool = Pool(processes)
+        pool = Pool(processes, **pool_kwargs)
 
     if total is None and hasattr(iterable, '__len__'):
         total = len(iterable)
