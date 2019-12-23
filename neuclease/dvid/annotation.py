@@ -1346,3 +1346,48 @@ def determine_bodies_of_interest(server, uuid, synapses_instance, rois=None, min
     return body_synapses_df
 
 
+def check_synapse_consistency(syn_point_df, pre_partner_df, post_partner_df):
+    """
+    Given a synapse point table and TWO partners tables as returned when
+    calling ``fetch_synapses_in_batches(..., return_both_partner_tables=True)``,
+    Analyze the relationships to look for inconsistencies.
+    """
+    # 'Orphan' points (a tbar or psd with no relationships at all)
+    orphan_tbars = pre_partner_df.query('post_id == 0')
+    orphan_psds = post_partner_df.query('pre_id == 0')
+    logger.info(f"Found {len(orphan_tbars)} orphan TBars")
+    logger.info(f"Found {len(orphan_psds)} orphan psds")
+
+    # Duplicate connections (one tbar references the same PSD twice or more)
+    pre_dupes = pre_partner_df.loc[pre_partner_df.duplicated()].drop_duplicates()
+    post_dupes = post_partner_df.loc[post_partner_df.duplicated()].drop_duplicates()
+    logger.info(f"Found {len(pre_dupes)} duplicated tbar->psd relationships.")
+    logger.info(f"Found {len(post_dupes)} duplicated psd<-tbar relationships.")
+
+    # Non-reciprocal (Tbar references PSD, but not the other way around, or vice-versa)
+    pre_nodupes_df = pre_partner_df.drop_duplicates()
+    merged = pre_nodupes_df.merge(post_partner_df.drop_duplicates(), 'outer', ['pre_id', 'post_id'], indicator='which')
+    only_in_tbar = merged.query('which == "left_only"')
+    only_in_psd = merged.query('which == "right_only"')
+    logger.info(f"Found {len(only_in_tbar)} non-reciprocal relationships from TBars")
+    logger.info(f"Found {len(only_in_psd)} non-reciprocal relationships from PSDs")
+
+    # Refs to nowhere (Tbar or PSD has a relationship to a point that doesn't exist)
+    point_ids = syn_point_df.index
+    bad_tbar_refs = pre_partner_df.query('post_id not in @point_ids')
+    bad_psd_refs = post_partner_df.query('pre_id not in @point_ids')
+    logger.info(f"Found {len(bad_tbar_refs)} references to non-existent PSDs")
+    logger.info(f"Found {len(bad_psd_refs)} references to non-existent TBars")
+
+    # Too many refs from a single PSD
+    oversubscribed_post = post_partner_df.loc[post_partner_df.duplicated('post_id')]
+    oversubscribed_pre = pre_nodupes_df.loc[pre_nodupes_df.duplicated('post_id')]
+
+    logger.info(f"Found {len(oversubscribed_post)} PSDs that contain more than one relationship")
+    logger.info(f"Found {len(oversubscribed_pre)} PSDs that are referenced by more than one TBar")
+
+    return (orphan_tbars, orphan_psds,
+            pre_dupes, post_dupes,
+            only_in_tbar, only_in_psd,
+            bad_tbar_refs, bad_psd_refs,
+            oversubscribed_post, oversubscribed_pre)
