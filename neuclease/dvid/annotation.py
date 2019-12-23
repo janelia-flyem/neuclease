@@ -378,6 +378,38 @@ def fetch_blocks(server, uuid, instance, box_zyx, *, session=None):
     return fetch_generic_json(url, session=session)
 
 
+@dvid_api_wrapper
+def delete_element(server, uuid, instance, coord_zyx, kafkalog=True, *, session=None):
+    """
+    Deletes a point annotation given its location.
+    
+    Args:
+        server:
+            dvid server, e.g. 'emdata3:8900'
+        
+        uuid:
+            dvid uuid, e.g. 'abc9'
+        
+        instance:
+            dvid annotations instance name, e.g. 'synapses'
+        
+        coord_zyx:
+            coordinate (Z,Y,X)
+        
+        kafkalog:
+            If True, log this deletion in kafka.  Otherwise, don't.
+    """
+    assert len(coord_zyx) == 3
+    coord_str = '_'.join(map(str, coord_zyx[::-1]))
+    
+    params = {}
+    if not kafkalog:
+        params['kafkalog'] = 'off'
+    
+    r = session.delete(f'http://{server}/api/node/{uuid}/{instance}/element/{coord_str}', params=params)
+    r.raise_for_status()
+
+
 def load_synapses_as_dataframes(elements):
     """
     Load the given JSON elements as synapses a DataFrame.
