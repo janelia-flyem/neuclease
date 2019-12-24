@@ -380,6 +380,37 @@ def fetch_blocks(server, uuid, instance, box_zyx, *, session=None):
 
 
 @dvid_api_wrapper
+def post_blocks(server, uuid, instance, blocks_json, kafkalog=False, *, session=None):
+    """
+    Unlike the POST /elements endpoint, the /blocks endpoint is the fastest way to store
+    all point annotations and assumes the caller has (1) properly partitioned the elements
+    int the appropriate block for the block size (default 64) and (2) will do a POST /reload
+    to create the denormalized Label and Tag versions of the annotations after all
+    ingestion is completed.
+
+    This low-level ingestion also does not transmit subscriber events to associated
+    synced data (e.g., labelsz).
+
+    The POSTed JSON should be similar to the GET version with the block coordinate as 
+    the key:
+
+    {
+        "10,381,28": [ array of point annotation elements ],
+        "11,381,28": [ array of point annotation elements ],
+        ...
+    }
+    """
+    params = {}
+    if not kafkalog:
+        params['kafkalog'] = 'off'
+    
+    url = f'http://{server}/api/node/{uuid}/{instance}/blocks'
+    data = ujson.dumps(blocks_json).encode('utf-8')
+    r = session.post(url, data=data, params=params)
+    r.raise_for_status()
+
+
+@dvid_api_wrapper
 def delete_element(server, uuid, instance, coord_zyx, kafkalog=True, *, session=None):
     """
     Deletes a point annotation given its location.
@@ -1391,3 +1422,291 @@ def check_synapse_consistency(syn_point_df, pre_partner_df, post_partner_df):
             only_in_tbar, only_in_psd,
             bad_tbar_refs, bad_psd_refs,
             oversubscribed_post, oversubscribed_pre)
+
+
+def post_tbar_jsons(server, uuid, instance, partner_df, merge_existing=True, processes=32, chunk_shape=(256, 256, 64000)):
+   
+    logger.info("Computing chunk/block IDs")
+    partner_df['cz_pre'] = partner_df['z_pre'] // chunk_shape[0]
+    partner_df['cy_pre'] = partner_df['y_pre'] // chunk_shape[1]
+    partner_df['cx_pre'] = partner_df['x_pre'] // chunk_shape[2]
+    partner_df['cid_pre'] = encode_coords_to_uint64(partner_df[['cz_pre', 'cy_pre', 'cx_pre']].values)
+
+    partner_df['bz_pre'] = partner_df['z_pre'] // 64
+    partner_df['by_pre'] = partner_df['y_pre'] // 64
+    partner_df['bx_pre'] = partner_df['x_pre'] // 64
+    partner_df['bid_pre'] = encode_coords_to_uint64(partner_df[['bz_pre', 'by_pre', 'bx_pre']].values)
+
+    num_chunks = partner_df['cid_pre'].nunique()
+    _post = partial(_post_tbar_chunk, server, uuid, instance, chunk_shape, merge_existing)
+    compute_parallel(_post, partner_df.groupby(['cz_pre', 'cy_pre', 'cx_pre']),
+                     total=num_chunks, processes=processes, ordered=False, starmap=True)
+
+
+def _post_tbar_chunk(server, uuid, instance, chunk_shape, merge_existing, c_zyx, chunk_df):
+    block_jsons = {}
+    for (bz, by, bx), block_df in chunk_df.groupby(['bz_pre', 'by_pre', 'bx_pre']):
+        block_jsons[f"{bx},{by},{bz}"] = compute_tbar_jsons(block_df)
+    
+    if merge_existing:
+        chunk_start = np.asarray(c_zyx) * chunk_shape
+        chunk_stop = chunk_start + chunk_shape
+        existing = fetch_blocks(server, uuid, instance, [chunk_start, chunk_stop])
+        for key in existing.keys():
+            if key in block_jsons:
+                block_jsons[key].extend(existing[key])
+            elif existing[key]:
+                block_jsons[key] = existing[key]
+    
+    post_blocks(server, uuid, instance, block_jsons)
+
+
+def post_psd_jsons(server, uuid, instance, partner_df, merge_existing=True, processes=32, chunk_shape=(256, 256, 64000)):
+    logger.info("Computing chunk/block IDs")
+    partner_df['cz_post'] = partner_df['z_post'] // chunk_shape[0]
+    partner_df['cy_post'] = partner_df['y_post'] // chunk_shape[1]
+    partner_df['cx_post'] = partner_df['x_post'] // chunk_shape[2]
+    partner_df['cid_post'] = encode_coords_to_uint64(partner_df[['cz_post', 'cy_post', 'cx_post']].values)
+
+    partner_df['bz_post'] = partner_df['z_post'] // 64
+    partner_df['by_post'] = partner_df['y_post'] // 64
+    partner_df['bx_post'] = partner_df['x_post'] // 64
+    partner_df['bid_post'] = encode_coords_to_uint64(partner_df[['bz_post', 'by_post', 'bx_post']].values)
+
+    num_chunks = partner_df['cid_post'].nunique()
+    _post = partial(_post_psd_chunk, server, uuid, instance, chunk_shape, merge_existing)
+    compute_parallel(_post, partner_df.groupby(['cz_post', 'cy_post', 'cx_post']),
+                     total=num_chunks, processes=processes, ordered=False, starmap=True)
+
+
+def _post_psd_chunk(server, uuid, instance, chunk_shape, merge_existing, c_zyx, chunk_df):
+    block_jsons = {}
+    for (bz, by, bx), block_df in chunk_df.groupby(['bz_post', 'by_post', 'bx_post']):
+        block_jsons[f"{bx},{by},{bz}"] = compute_psd_jsons(block_df)
+    
+    if merge_existing:
+        chunk_start = np.asarray(c_zyx) * chunk_shape
+        chunk_stop = chunk_start + chunk_shape
+        existing = fetch_blocks(server, uuid, instance, [chunk_start, chunk_stop])
+        for key in existing.keys():
+            if key in block_jsons:
+                block_jsons[key].extend(existing[key])
+            elif existing[key]:
+                block_jsons[key] = existing[key]
+    
+    post_blocks(server, uuid, instance, block_jsons)
+
+
+def delete_all_synapses(server, uuid, instance, box=None, chunk_shape=(256,256,64000)):
+    if box is None or isinstance(box, str):
+        # Determine name of the segmentation instance that's
+        # associated with the given synapses instance.
+        syn_info = fetch_instance_info(server, uuid, instance)
+        seg_instance = syn_info["Base"]["Syncs"][0]
+        if isinstance(box, str):
+            assert box == seg_instance, \
+                ("The segmentation instance name you provided doesn't match the name of the sync'd instance.\n"
+                 "Please provide an explicit bounding-box.")
+        box = fetch_volume_box(server, uuid, seg_instance)
+
+    box = np.asarray(box)
+    assert (box % 64 == 0).all(), "box must be block-aligned"
+
+    chunk_boxes = boxes_from_grid(box, chunk_shape, clipped=True)
+    _erase = partial(_erase_chunk, server, uuid, instance)
+    compute_parallel(_erase, chunk_boxes, processes=32)
+
+
+def _erase_chunk(server, uuid, instance, chunk_box):
+    """
+    Helper for delete_all_synapses().
+    Fetch all blocks in the chunk (to see which blocks have data)
+    and erase the ones that aren't empty.
+    """
+    EMPTY = []
+    chunk_data = fetch_blocks(server, uuid, instance, chunk_box)
+    empty_data = {k:EMPTY for k,v in chunk_data.items() if v}
+    post_blocks(server, uuid, instance, empty_data, kafkalog=False)
+
+
+def compute_tbar_jsons(partner_df):
+    """
+    Compute the element JSON data that corresponds to the tbars in the given partner table
+    """
+    block_ids = partner_df[['z_pre', 'y_pre', 'z_pre']].values // 64
+    assert np.equal.reduce(block_ids, axis=0).all()
+    
+    tbar_jsons = []
+    for _pre_id, tbar_df in partner_df.groupby('pre_id'):
+        tbar_xyz = tbar_df[['x_pre', 'y_pre', 'z_pre']].values[0].tolist()
+        tbar_conf = tbar_df['conf_pre'].iloc[0]
+        tbar_jsons.append({
+            "Pos": tbar_xyz,
+            "Kind": "PreSyn",
+            "Tags": [],
+            "Prop": {"conf": str(tbar_conf), "user": "$fpl"},
+            "Rels": [{"Rel": "PreSynTo", "To":c} for c in tbar_df[['x_post', 'y_post', 'z_post']].values.tolist()]
+        })
+    return tbar_jsons
+
+
+def compute_psd_jsons(partner_df):
+    """
+    Compute the element JSON data that corresponds to the PSDs in the given partner table
+    """
+    block_ids = partner_df[['z_post', 'y_post', 'z_post']].values // 64
+    assert np.equal.reduce(block_ids, axis=0).all()
+    
+    psd_jsons = []
+    for row in partner_df.itertuples():
+        psd_jsons.append({
+            "Pos": [int(row.x_post), int(row.y_post), int(row.z_post)],
+            "Kind": "PostSyn",
+            "Tags": [],
+            "Prop": {"conf": str(row.conf_post), "user": "$fpl"},
+            "Rels": [{"Rel": "PostSynTo", "To": [int(row.x_pre), int(row.y_pre), int(row.z_pre)]}]
+        })
+    return psd_jsons
+
+
+
+def load_gary_psds(pkl_path):
+    """
+    Load a pickle file as given by Gary's code and return a 'partner table'.
+    """
+    import pickle
+    data = pickle.load(open(pkl_path, 'rb'))
+    _table = []
+    for tbar_coord, tbar_conf, psd_coords, psd_confs in tqdm_proxy(zip(data['locs'], data['conf'], data['psds'], data['psds_conf']), total=len(data['locs'])):
+        for psd_coord, psd_conf in zip(psd_coords, psd_confs):
+            _table.append([*(tbar_coord[::-1]), tbar_conf, *(psd_coord[::-1]), psd_conf])
+
+    df = pd.DataFrame(_table, columns=['z_pre', 'y_pre', 'x_pre', 'conf_pre', 'z_post', 'y_post', 'x_post', 'conf_post'])
+
+    for col in ['z_pre', 'y_pre', 'x_pre', 'z_post', 'y_post', 'x_post']:
+        df[col] = df[col].astype(np.int32)
+
+    df['pre_id'] = encode_coords_to_uint64(df[['z_pre', 'y_pre', 'x_pre']].values)
+    df['post_id'] = encode_coords_to_uint64(df[['z_post', 'y_post', 'x_post']].values)
+
+    df['user_pre'] = df['user_post'] = '$fpl'
+    df['kind_pre'] = 'PreSyn'
+    df['kind_post'] = 'PostSyn'
+    
+    df = df[['pre_id', 'z_pre', 'y_pre', 'x_pre', 'kind_pre', 'conf_pre', 'user_pre',
+             'post_id', 'z_post', 'y_post', 'x_post', 'kind_post', 'conf_post', 'user_post']]
+    return df
+
+
+def add_synapses(point_df, partner_df, new_psd_partners_df):
+    """
+    Add the PSDs from new_psd_partners_df, which may reference
+    existing tbars, or may reference new tbars, in which
+    case the tbars will be added, too.
+    """
+    POINT_COLS = ['z', 'y', 'x', 'kind', 'conf', 'user']
+    PARTNER_COLS_PRE = ['pre_id', 'z_pre', 'y_pre', 'x_pre', 'kind_pre', 'conf_pre', 'user_pre']
+    PARTNER_COLS_POST = ['post_id', 'z_post', 'y_post', 'x_post', 'kind_post', 'conf_post', 'user_post']
+    PARTNER_COLS = [*PARTNER_COLS_PRE, *PARTNER_COLS_POST]
+    
+    partner_df = partner_df[PARTNER_COLS]
+    new_psd_partners_df = new_psd_partners_df[PARTNER_COLS]
+
+    # Check for possible conflicts before we begin
+    conflicts = (pd.Index(new_psd_partners_df['pre_id'].values)
+                     .intersection(new_psd_partners_df['post_id'].values))
+    if len(conflicts) > 0:
+        raise RuntimeError("tbars and psds in the new set overlap!")
+    
+    conflicts = (pd.Index(new_psd_partners_df['pre_id'].values)
+                     .intersection(partner_df['post_id'].values))
+    if len(conflicts) > 0:
+        raise RuntimeError("tbars in the new set overlap with psds in the old set!")
+
+    conflicts = (pd.Index(new_psd_partners_df['post_id'].values)
+                     .intersection(partner_df['pre_id'].values))
+    if len(conflicts) > 0:
+        raise RuntimeError("psds in the new set overlap with tbars in the old set!")
+
+    partner_df = pd.concat((partner_df, new_psd_partners_df), ignore_index=False)
+    partner_df.drop_duplicates(['pre_id', 'post_id'], keep='last', inplace=True)
+
+    # Update points
+    new_points_pre = (new_psd_partners_df[PARTNER_COLS_PRE]
+                          .rename(columns={'pre_id': 'point_id', **dict(zip(PARTNER_COLS_PRE[1:], POINT_COLS))})
+                          .drop_duplicates('point_id', keep='last')
+                          .set_index('point_id'))
+
+    new_points_post = (new_psd_partners_df[PARTNER_COLS_POST]
+                          .rename(columns={'post_id': 'point_id', **dict(zip(PARTNER_COLS_POST[1:], POINT_COLS))})
+                          .drop_duplicates('point_id', keep='last')
+                          .set_index('point_id'))
+
+    point_df = pd.concat((point_df, new_points_pre, new_points_post))
+    
+    # Drop duplicate point_ids, keep new
+    point_df = point_df.loc[~point_df.index.duplicated(keep='last')]
+
+    return point_df, partner_df
+
+
+def delete_psds(point_df, partner_df, obsolete_partner_df):
+    """
+    Delete the PSDs listed in the given obsolete_partner_df.
+    If any tbars are left with no partners, delete those tbars, too.
+    """
+    obsolete_partner_df = obsolete_partner_df[['pre_id', 'post_id']]
+    obsolete_pre_ids = obsolete_partner_df['pre_id'].values
+    obsolete_post_ids = obsolete_partner_df['post_id'].values
+
+    # Drop obsolete PSDs
+    point_df = point_df.query('kind == "PreSyn" or point_id not in @obsolete_post_ids')
+    partner_df = partner_df.query('post_id not in @obsolete_post_ids')
+
+    # Delete empty tbars
+    remaining_tbar_ids = partner_df['pre_id'].unique()
+    dropped_tbar_ids = obsolete_partner_df.query('pre_id not in @remaining_tbar_ids')['pre_id'].unique()
+    point_df = point_df.query('kind == "PostSyn" or point_id not in @dropped_tbar_ids')
+    
+    return point_df.copy(), partner_df.copy()
+
+
+def delete_tbars(point_df, partner_df, obsolete_tbar_ids):
+    """
+    Delete the given tbars and all of their associated PSDs.
+    """
+    _obsolete_psd_ids = partner_df.query('pre_id in @obsolete_tbar_ids')['post_id'].values
+    partner_df = partner_df.query('pre_id not in @obsolete_tbar_ids')
+
+    q = ('    (kind == "PreSyn"  and point_id not in @obsolete_tbar_ids)'
+         ' or (kind == "PostSyn" and point_id not in @_obsolete_psd_ids)')
+    point_df = point_df.query(q)
+
+    return point_df.copy(), partner_df.copy()
+
+
+def select_autapses(partner_df):
+    """
+    Select rows from the given 'partner table' that correspond to autapses.
+    Must have columns body_pre and body_post.
+    """ 
+    return partner_df.query('body_pre == body_post')
+
+
+def select_redundant_psds(partner_df):
+    """
+    Select rows of the given 'partner table' that correspond to redundant PSDs.
+    If a tbar has more than one connection to the same body, then all but one
+    of them are considered redundant.
+    This function returns the less confident PSD entries as redundant.
+    """
+    if 'conf_post' in partner_df:
+        partner_df = partner_df.sort_values('conf_post')
+    else:
+        logger.warning("DataFrame has no 'conf_post' column.  Discarding redundant PSDs in arbitrary order.")
+
+    dupe_psd_rows = partner_df.duplicated(['pre_id', 'body_post'], keep='last')
+    dupe_partner_df = partner_df.loc[dupe_psd_rows]
+    return dupe_partner_df.copy()
+
+
