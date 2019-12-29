@@ -1628,21 +1628,21 @@ def add_synapses(point_df, partner_df, new_psd_partners_df):
     if len(conflicts) > 0:
         raise RuntimeError("psds in the new set overlap with tbars in the old set!")
 
-    partner_df = pd.concat((partner_df, new_psd_partners_df), ignore_index=False)
+    partner_df = pd.concat((partner_df, new_psd_partners_df), ignore_index=True, sort=True)
     partner_df.drop_duplicates(['pre_id', 'post_id'], keep='last', inplace=True)
 
     # Update points
-    new_points_pre = (new_psd_partners_df[PARTNER_COLS_PRE]
+    new_points_pre = (new_psd_partners_df
                           .rename(columns={'pre_id': 'point_id', **dict(zip(PARTNER_COLS_PRE[1:], POINT_COLS))})
                           .drop_duplicates('point_id', keep='last')
                           .set_index('point_id'))
 
-    new_points_post = (new_psd_partners_df[PARTNER_COLS_POST]
+    new_points_post = (new_psd_partners_df
                           .rename(columns={'post_id': 'point_id', **dict(zip(PARTNER_COLS_POST[1:], POINT_COLS))})
                           .drop_duplicates('point_id', keep='last')
                           .set_index('point_id'))
 
-    point_df = pd.concat((point_df, new_points_pre, new_points_post))
+    point_df = pd.concat((point_df, new_points_pre, new_points_post), sort=True)
     
     # Drop duplicate point_ids, keep new
     point_df = point_df.loc[~point_df.index.duplicated(keep='last')]
