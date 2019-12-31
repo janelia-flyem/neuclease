@@ -4,6 +4,7 @@ import logging
 import warnings
 from itertools import chain
 from functools import partial
+from collections import namedtuple
 
 import ujson
 import numpy as np
@@ -863,7 +864,7 @@ def load_synapses_npy(npy_path):
     with special handling of the string columns to use
     categorical dtypes (saves RAM). 
     """
-    records = np.load(npy_path)
+    records = np.load(npy_path, allow_pickle=True)
 
     numeric_cols = ['z', 'y', 'x', 'conf', 'label', 'body', 'sv']
     numeric_cols = [*filter(lambda c: c in records.dtype.names, numeric_cols)]
@@ -1377,11 +1378,27 @@ def determine_bodies_of_interest(server, uuid, synapses_instance, rois=None, min
     return body_synapses_df
 
 
+
+ConsistencyResults = namedtuple("ConsistencyResults",
+                                ["orphan_tbars", "orphan_psds",
+                                "pre_dupes", "post_dupes",
+                                "only_in_tbar", "only_in_psd",
+                                "bad_tbar_refs", "bad_psd_refs",
+                                "oversubscribed_post", "oversubscribed_pre"])
+
 def check_synapse_consistency(syn_point_df, pre_partner_df, post_partner_df):
     """
     Given a synapse point table and TWO partners tables as returned when
     calling ``fetch_synapses_in_batches(..., return_both_partner_tables=True)``,
     Analyze the relationships to look for inconsistencies.
+    
+    Note:
+        There are different types of results returned,
+        and they are not mutually exclusive.
+        For example, "orphan tbars" will also count toward
+        "non-reciprocal relationships", and also contribute to the "oversubscribed"
+        counts (since the orphans are artificially partnered to (0,0,0), which ends
+        up counting as oversubscribed). 
     """
     # 'Orphan' points (a tbar or psd with no relationships at all)
     orphan_tbars = pre_partner_df.query('post_id == 0')
@@ -1417,11 +1434,11 @@ def check_synapse_consistency(syn_point_df, pre_partner_df, post_partner_df):
     logger.info(f"Found {len(oversubscribed_post)} PSDs that contain more than one relationship")
     logger.info(f"Found {len(oversubscribed_pre)} PSDs that are referenced by more than one TBar")
 
-    return (orphan_tbars, orphan_psds,
-            pre_dupes, post_dupes,
-            only_in_tbar, only_in_psd,
-            bad_tbar_refs, bad_psd_refs,
-            oversubscribed_post, oversubscribed_pre)
+    return ConsistencyResults( orphan_tbars, orphan_psds,
+                               pre_dupes, post_dupes,
+                               only_in_tbar, only_in_psd,
+                               bad_tbar_refs, bad_psd_refs,
+                               oversubscribed_post, oversubscribed_pre )
 
 
 def post_tbar_jsons(server, uuid, instance, partner_df, merge_existing=True, processes=32, chunk_shape=(256, 256, 64000)):
