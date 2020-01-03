@@ -30,7 +30,7 @@ import argparse
 import ujson
 import pandas as pd
 
-from neuclease.util import iter_batches, tqdm_proxy
+from neuclease.util import tqdm_proxy
 from neuclease.dvid import create_instance, post_elements, post_sync, post_reload
 
 def main():
@@ -83,7 +83,7 @@ def main():
     # Ingest in chunks.
     num_chunks = elements_df[['z', 'y', 'x']].drop_duplicates().shape[0]
     chunked_df = elements_df.groupby(['z', 'y', 'x'])
-    for zyx, batch_elements_df in tqdm_proxy(chunked_df, total=num_chunks):
+    for _zyx, batch_elements_df in tqdm_proxy(chunked_df, total=num_chunks):
         post_elements(server, uuid, syn_instance, batch_elements_df['element'].tolist())
     
     ##
@@ -115,7 +115,7 @@ def main():
     ##
     if args.labelsz_instance:
         create_instance(server, uuid, args.labelsz_instance, 'labelsz')
-        post_sync(server, uuid, args.labelsz_instance, [seg_instance])
+        post_sync(server, uuid, args.labelsz_instance, [syn_instance])
         post_reload(server, uuid, args.labelsz_instance)
     
     
