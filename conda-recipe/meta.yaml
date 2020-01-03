@@ -39,7 +39,7 @@ requirements:
     - pykafka
     - networkx >=2.1
     - asciitree
-    - protobuf
+    - protobuf 3.9.1
     #- graph-tool  <-- Optional dependency. Install to your own conda env if desired (but check the license).
 
 test:
