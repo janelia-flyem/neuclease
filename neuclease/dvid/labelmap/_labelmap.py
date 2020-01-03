@@ -2031,6 +2031,10 @@ def labelmap_kafka_msgs_to_df(kafka_msgs, default_timestamp=DEFAULT_TIMESTAMP, d
     df['target_body'] = target_bodies
     df['target_sv'] = target_svs
 
+    for col in FINAL_COLUMNS:
+        if col not in df:
+            df[col] = np.nan
+
     return df[FINAL_COLUMNS]
 
 
