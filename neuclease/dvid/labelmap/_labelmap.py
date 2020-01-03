@@ -1024,7 +1024,7 @@ def fetch_sparsevol_coarse_threaded(server, uuid, instance, labels, supervoxels=
 
 
 @dvid_api_wrapper
-def fetch_sparsevol(server, uuid, instance, label, supervoxels=False, scale=0, dtype=np.int32, *, session=None):
+def fetch_sparsevol(server, uuid, instance, label, supervoxels=False, scale=0, dtype=np.int32, *, format='coords', session=None): #@ReservedAssignment
     """
     Return coordinates of all voxels in the given body/supervoxel at the given scale.
 
@@ -1032,9 +1032,39 @@ def fetch_sparsevol(server, uuid, instance, label, supervoxels=False, scale=0, d
 
     Note: At scale 0, this will be a LOT of data for any reasonably large body.
           Use with caution.
+
+    Return:
+        If format == 'rle', returns the RLE start coordinates and RLE lengths as two arrays:
+        
+            (start_coords, lengths)
+            
+            where start_coords is in the form:
+            
+                [[Z,Y,X], [Z,Y,X], ...]
+            
+            and lengths is a 1-D array:
+            
+                [length, length, ...]
+
+        If format == 'ranges':
+            Return the RLEs as ranges, in the form:
+
+                [[Z,Y,X0,X1], [Z,Y,X0,X1], ...]
+
+            Note: By DVID conventions, the interval [X0,X1] is inclusive,
+                  i.e. X1 is IN the range -- not one beyond the range,
+                  which would normally be the Python convention.
+
+        If format == 'coords', returns an array of coordinates of the form:
+
+            [[Z,Y,X],
+             [Z,Y,X],
+             [Z,Y,X],
+             ...
+            ]
     """
     rles = fetch_sparsevol_rles(server, uuid, instance, label, supervoxels, scale, session=session)
-    return parse_rle_response(rles, dtype)
+    return parse_rle_response(rles, dtype, format)
 
 
 def compute_changed_bodies(instance_info_a, instance_info_b, *, session=None):
