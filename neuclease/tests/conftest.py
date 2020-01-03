@@ -15,7 +15,7 @@ from neuclease.dvid import fetch_repos_info, create_labelmap_instance, post_merg
 TEST_DVID_SERVER_PROC = None # Initialized below
 
 TEST_DATA_DIR = os.path.dirname(neuclease.__file__) + '/../.test-data'
-DVID_STORE_PATH = f'{TEST_DATA_DIR}/dvid-datastore'
+DVID_STORE_PATH = f'{TEST_DATA_DIR}/dbs'
 DVID_CONFIG_PATH = f'{TEST_DATA_DIR}/dvid-config.toml'
 
 DVID_PORT = 8000
@@ -37,10 +37,19 @@ logfile = "{TEST_DATA_DIR}/dvid.log"
 max_log_size = 500 # MB
 max_log_age = 30   # days
 
+[backend]
+    [backend.default]
+    store = "mutable"
+    log = "mutationlog"
+
 [store]
     [store.mutable]
     engine = "basholeveldb"
-    path = "{DVID_STORE_PATH}"
+    path = "{DVID_STORE_PATH}/mutable"
+
+[store.mutationlog]
+    engine = "filelog"
+    path = "{DVID_STORE_PATH}/mutationlog"
 """
 
 @pytest.fixture(scope="session")
