@@ -210,6 +210,89 @@ def _compute_nonzero_box_numba(mask):
     return box
 
 
+def edge_mask(label_img, mode='before'):
+    """
+    Find all boundaries between labels in the given ND volume,
+    and return a boolean mask that selects all voxels that lie
+    just "before" the inter-voxel boundary,
+    or just "after" the inter-voxel boudnary,
+    or both.
+    
+    Example:
+    
+        >>> labels = [[1,1,1,1,2,2],
+        ...           [1,1,1,1,2,2],
+        ...           [1,1,2,2,2,2],
+        ...           [1,1,2,2,2,2],
+        ...           [1,1,2,2,2,2],
+        ...           [1,2,2,2,2,2]]
+        
+        >>> mask = edge_mask(labels, 'before')
+        >>> print(mask.astype(int))
+        [[0 0 0 1 0 0]
+         [0 0 1 1 0 0]
+         [0 1 0 0 0 0]
+         [0 1 0 0 0 0]
+         [0 1 0 0 0 0]
+         [1 0 0 0 0 0]]
+ 
+        >>> mask = edge_mask(labels, 'after')
+        >>> print(mask.astype(int))
+        [[0 0 0 0 1 0]
+         [0 0 0 0 1 0]
+         [0 0 1 1 0 0]
+         [0 0 1 0 0 0]
+         [0 0 1 0 0 0]
+         [0 1 0 0 0 0]]
+ 
+        >>> mask = edge_mask(labels, 'both')
+        >>> print(mask.astype(int))
+        [[0 0 0 1 1 0]
+         [0 0 1 1 1 0]
+         [0 1 1 1 0 0]
+         [0 1 1 0 0 0]
+         [0 1 1 0 0 0]
+         [1 1 0 0 0 0]]       
+    """
+    label_img = np.asarray(label_img)
+    mask = np.zeros(label_img.shape, bool)
+
+    for axis in range(label_img.ndim):
+        left_slicing = ((slice(None),) * axis) + (np.s_[:-1],)
+        right_slicing = ((slice(None),) * axis) + (np.s_[1:],)
+
+        m = edge_mask_for_axis(label_img, axis)
+        if mode in ('before', 'both'):
+            mask[left_slicing] |= m
+
+        if mode in ('after', 'both'):
+            mask[right_slicing] |= m
+    
+    return mask
+
+
+def edge_mask_for_axis( label_img, axis ):
+    """
+    Find all supervoxel edges along the given axis and return
+    a 'left-hand' mask indicating where the edges are located
+    (i.e. a boolean array indicating voxels that are just to the left of an edge).
+    Note that this mask is less wide (by 1 pixel) than ``label_img`` along the chosen axis.
+    """
+    if axis < 0:
+        axis += label_img.ndim
+    assert label_img.ndim > axis
+    
+    if label_img.shape[axis] == 1:
+        return np.zeros_like(label_img)
+
+    left_slicing = ((slice(None),) * axis) + (np.s_[:-1],)
+    right_slicing = ((slice(None),) * axis) + (np.s_[1:],)
+
+    edge_mask = (label_img[left_slicing] != label_img[right_slicing])
+    return edge_mask
+
+
+
 def contingency_table(left_vol, right_vol):
     """
     Overlay left_vol and right_vol and compute the table of
