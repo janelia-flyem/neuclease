@@ -1024,14 +1024,49 @@ def fetch_sparsevol_coarse_threaded(server, uuid, instance, labels, supervoxels=
 
 
 @dvid_api_wrapper
-def fetch_sparsevol(server, uuid, instance, label, supervoxels=False, scale=0, dtype=np.int32, *, format='coords', session=None): #@ReservedAssignment
+def fetch_sparsevol(server, uuid, instance, label, supervoxels=False, scale=0,
+                    *, format='coords', dtype=np.int32, mask_box=None, session=None): #@ReservedAssignment
     """
     Return coordinates of all voxels in the given body/supervoxel at the given scale.
 
     For dtype arg, see parse_rle_response()
 
-    Note: At scale 0, this will be a LOT of data for any reasonably large body.
-          Use with caution.
+    Args:
+        server:
+            dvid server, e.g. 'emdata3:8900'
+        
+        uuid:
+            dvid uuid, e.g. 'abc9'
+        
+        instance:
+            dvid labelmap instance name, e.g. 'segmentation'
+    
+        label:
+            body ID in dvid, or supervoxel ID is supervoxels=True
+        
+        supervoxels:
+            Whether or not to interpret label_id as a body or supervoxel
+
+        scale:
+            The scale at which the sparsevol should be returned.
+            Note that at higher scales, some bodies may appear discontiguous
+            since the downsampled segmentation is used to construct the sparsevol.
+        
+        dtype:
+            (Not used when format='mask'.)
+            The dtype of the returned coords/ranges/rles.
+            If you know the sparsevol coordinates will not exceed 65535,
+            you can set this to np.int16 to save RAM.
+            
+        format:
+            Either 'rle', 'ranges', 'coords', or 'mask'.
+            See return value details below.
+        
+        mask_box:
+            Only valid when format='mask'.
+            If provided, specifies the box within which the body mask should
+            be returned, in scale-N coordinates where N is the scale you're requesting.
+            Voxels outside the box will be omitted from the returned mask.
 
     Return:
         If format == 'rle', returns the RLE start coordinates and RLE lengths as two arrays:
@@ -1062,9 +1097,29 @@ def fetch_sparsevol(server, uuid, instance, label, supervoxels=False, scale=0, d
              [Z,Y,X],
              ...
             ]
+
+            Note: At scale 0, this will be a LOT of data for any reasonably large body.
+                  Use with caution.
+
+        If format == 'mask':
+            (mask, mask_box)
+            Return a binary mask (at the requested scale).
+            Unless you provide a custom ``mask_box``, the mask will be
+            cropped to the bounding box of the body. The mask's bounding box
+            is also returned. (If you passed in a custom ``mask_box``, it
+            will be unchanged.)
     """
+    assert format in ('coords', 'rle', 'ranges', 'mask')
+
     rles = fetch_sparsevol_rles(server, uuid, instance, label, supervoxels, scale, session=session)
-    return parse_rle_response(rles, dtype, format)
+    
+    if format in ('coords', 'rle', 'ranges'):
+        return parse_rle_response(rles, dtype, format)
+
+    if format == 'mask':
+        rle_ranges = parse_rle_response( rles, format='ranges' )
+        mask, mask_box = runlength_decode_from_ranges_to_mask(rle_ranges, mask_box)
+        return mask, mask_box
 
 
 def compute_changed_bodies(instance_info_a, instance_info_b, *, session=None):
