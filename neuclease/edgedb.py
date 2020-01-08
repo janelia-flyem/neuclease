@@ -3,6 +3,7 @@ import threading
 from functools import partial
 from itertools import chain
 
+import numpy as np
 import pandas as pd
 
 from pymongo import MongoClient
@@ -109,6 +110,7 @@ def fetch_all_edges_from_body(mongo_server, dvid_server, uuid, instance, body,
     q2 = {"$and": [{"sv_b": {"$in": svs}}, {"sv_a": {"$nin": svs}}]}
     q = {"$or": [q1,q2]}
     r = mgclient['edges']['edges'].find(q)
+    
     try:
         edges = list(r)
     except Exception as ex:
@@ -130,7 +132,15 @@ def fetch_all_edges_from_body(mongo_server, dvid_server, uuid, instance, body,
     if format == 'json':
         return edges
     else:
-        return pd.DataFrame(edges)
+        # fix dtypes
+        df = pd.DataFrame(edges)
+        df['sv_a'] = df['sv_a'].astype(np.uint64)
+        df['sv_b'] = df['sv_b'].astype(np.uint64)
+        df['score'] = df['score'].astype(np.float32)
+        df['resolution'] = df['resolution'].astype(np.int8)
+        for col in ['za', 'ya', 'xa', 'zb', 'yb', 'xb']:
+            df[col] = df[col].astype(np.int32)
+        return df
 
 
 def fetch_all_edges_for_bodies(mongo_server, dvid_server, uuid, instance, bodies, min_score=0.1,
@@ -157,7 +167,17 @@ def fetch_all_edges_for_bodies(mongo_server, dvid_server, uuid, instance, bodies
         
         edge_lists = filter(lambda e: (e is not None) and (len(e) > 0) and not isinstance(e, tuple), edge_lists)
         edges = list(chain(*edge_lists))
-        batch_dfs.append( pd.DataFrame(edges) )
+
+        # fix dtypes
+        df = pd.DataFrame(edges)
+        df['sv_a'] = df['sv_a'].astype(np.uint64)
+        df['sv_b'] = df['sv_b'].astype(np.uint64)
+        df['score'] = df['score'].astype(np.float32)
+        df['resolution'] = df['resolution'].astype(np.int8)
+        for col in ['za', 'ya', 'xa', 'zb', 'yb', 'xb']:
+            df[col] = df[col].astype(np.int32)
+
+        batch_dfs.append(df)
 
     final_df = pd.concat(batch_dfs, ignore_index=True)
     
