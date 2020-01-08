@@ -212,23 +212,22 @@ def fetch_combined_roi_volume(server, uuid, rois, as_bool=False, box_zyx=None, *
     for roi in tqdm_proxy(rois.keys(), leave=False):
         all_rle_ranges[roi] = fetch_roi(server, uuid, roi, format='ranges', session=session)
     
-    roi_boxes = []
-    for rle_ranges in all_rle_ranges.values():
-        roi_boxes.append( [  rle_ranges[:, (0,1,2)].min(axis=0),
-                           1+rle_ranges[:, (0,1,3)].max(axis=0)] )
+    roi_boxes = {}
+    for roi, rle_ranges in all_rle_ranges.items():
+        roi_boxes[roi] = np.array([  rle_ranges[:, (0,1,2)].min(axis=0),
+                                   1+rle_ranges[:, (0,1,3)].max(axis=0)])
     
-    roi_boxes = np.array(roi_boxes)
-
     if box_zyx is None:
         box_zyx = [None, None]
 
     box_zyx = list(box_zyx)
     assert len(box_zyx) == 2
 
+    roi_box_array = np.array([*roi_boxes.values()])
     if box_zyx[0] is None:
-        box_zyx[0] = roi_boxes[:,0,:].min(axis=0)
+        box_zyx[0] = roi_box_array[:,0,:].min(axis=0)
     if box_zyx[1] is None:
-        box_zyx[1] = roi_boxes[:,1,:].max(axis=0)
+        box_zyx[1] = roi_box_array[:,1,:].max(axis=0)
     
     box_zyx = np.asarray(box_zyx)
     combined_shape = (box_zyx[1] - box_zyx[0])
@@ -247,7 +246,8 @@ def fetch_combined_roi_volume(server, uuid, rois, as_bool=False, box_zyx=None, *
 
     # Overlay ROIs one-by-one
     for roi, label in tqdm_proxy(rois.items(), leave=False):
-        roi_box = box_intersection(roi_boxes[label-1], box_zyx)
+        roi_box = box_intersection(roi_boxes[roi], box_zyx)
+        assert (roi_box[1] - roi_box[0] > 0).all(), "ROI box does not intersect the full box."
         roi_mask, roi_box = runlength_decode_from_ranges_to_mask(all_rle_ranges[roi], roi_box)
         
         # If we're overwriting some areas of a ROI we previously wrote,
