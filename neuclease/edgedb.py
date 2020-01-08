@@ -79,7 +79,7 @@ def fetch_all_edges_from_body(mongo_server, dvid_server, uuid, instance, body,
             saving time.
         
         format:
-            If no edges were found, returns None.
+            If no edges were found or an error is encountered, returns a tuple (body, message).
             Otherwise:
                 - If 'json', then the edges are returned as json data (which
                   is how they were stored in mongo), but loaded into Python lists/dicts.
@@ -99,23 +99,29 @@ def fetch_all_edges_from_body(mongo_server, dvid_server, uuid, instance, body,
         try:
             svs = fetch_supervoxels(dvid_server, uuid, instance, body).tolist()
         except Exception:
-            return None
+            return (body, "Body does not exist in DVID")
     
     if len(svs) == 0:
-        return None
+        return (body, "Body has no supervoxels")
     
     # All edges where one sv is IN the body, and the other is NOT IN the body.
     q1 = {"$and": [{"sv_a": {"$in": svs}}, {"sv_b": {"$nin": svs}}]}
     q2 = {"$and": [{"sv_b": {"$in": svs}}, {"sv_a": {"$nin": svs}}]}
     q = {"$or": [q1,q2]}
     r = mgclient['edges']['edges'].find(q)
-    edges = list(r)
+    try:
+        edges = list(r)
+    except Exception as ex:
+        return (body, str(ex))
     
+    if len(edges) == 0:
+        return (body, "Body has no edges in the database")
+
     if min_score is not None:
         edges = [*filter(lambda e: e['score'] >= min_score, edges)]
     
     if len(edges) == 0:
-        return None
+        return (body, "None of the body's edges exceed the min_score")
 
     for e in edges:
         del e['_id']
@@ -132,6 +138,8 @@ def fetch_all_edges_for_bodies(mongo_server, dvid_server, uuid, instance, bodies
     """
     Fetch in batches, converting to DataFrame only after each batch.
     """
+    batch_error_dfs = []
+    
     batch_dfs = []
     for batch_start in tqdm_proxy(range(0, len(bodies), batch_size)):
         batch_bodies = bodies[batch_start:batch_start+batch_size]
@@ -140,10 +148,22 @@ def fetch_all_edges_for_bodies(mongo_server, dvid_server, uuid, instance, bodies
                             min_score=min_score, is_singleton=all_singletons, format='json')
 
         edge_lists = compute_parallel(_query_fn, batch_bodies, 1000, ordered=False, processes=processes)
-        edge_lists = filter(lambda e: (e is not None) and (len(e) > 0), edge_lists)
+
+        batch_errors = [*filter(lambda e: e is not None and isinstance(e, tuple), edge_lists)]
+        if batch_errors:
+            batch_error_df = pd.DataFrame(batch_errors, columns=['body', 'error'])
+            batch_error_df['error'] = batch_error_df['error'].astype('category')
+            batch_error_dfs.append( batch_error_df )
         
+        edge_lists = filter(lambda e: (e is not None) and (len(e) > 0) and not isinstance(e, tuple), edge_lists)
         edges = list(chain(*edge_lists))
         batch_dfs.append( pd.DataFrame(edges) )
 
     final_df = pd.concat(batch_dfs, ignore_index=True)
-    return final_df
+    
+    if batch_error_dfs:
+        final_error_df = pd.concat(batch_error_dfs, ignore_index=True)
+    else:
+        final_error_df = None
+
+    return final_df, final_error_df
