@@ -430,7 +430,7 @@ def filter_merge_tasks(server, uuid, focused_df=None, mr_df=None, mr_endpoint_df
         # Drop any focused tasks that have already been assigned in the past.
         if previous_focused_df is None:
             previous_focused_df = fetch_focused_decisions(*dvid_node, normalize_pairs='sv')
-        drop_previously_reviewed(focused_df, previous_focused_df)
+        focused_df = drop_previously_reviewed(focused_df, previous_focused_df)
         logger.info(f"Dropped {num_focused - len(focused_df)} focused tasks")
         num_focused = len(focused_df)
 
