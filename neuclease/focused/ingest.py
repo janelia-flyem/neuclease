@@ -298,7 +298,7 @@ DEFAULT_IMPORTANT_STATUSES = {'Leaves', 'Prelim Roughly traced', 'Roughly traced
 DEFAULT_FOCUS_STATUSES = {'Orphan', 'Orphan hotknife', '0.5assign'}
 DEFAULT_BAD_BODIES = '/nrs/flyem/bergs/complete-ffn-agglo/bad-bodies-2019-02-26.csv'
 def filter_merge_tasks(server, uuid, focused_df=None, mr_df=None, mr_endpoint_df=None,
-                       body_annotations_df=None, previous_focused_df=None,
+                       body_statuses=None, previous_focused_df=None,
                        connecting_statuses_1=DEFAULT_FOCUS_STATUSES,
                        connecting_statuses_2=DEFAULT_FOCUS_STATUSES,
                        at_least_one_of_statuses=DEFAULT_IMPORTANT_STATUSES,
@@ -324,6 +324,12 @@ def filter_merge_tasks(server, uuid, focused_df=None, mr_df=None, mr_endpoint_df
         (focused_df, mr_df, mr_endpoint_df)
     """
     dvid_node = (server, uuid)
+    
+    if body_statuses is not None:
+        assert isinstance(body_statuses, pd.Series), \
+            "body_statuses should be a Series now."
+        assert body_statuses.name == "status"
+        assert body_statuses.index.name == "body"
 
     if isinstance(focused_df, str):
         focused_df = pd.DataFrame(np.load(focused_df, allow_pickle=True))
@@ -428,29 +434,30 @@ def filter_merge_tasks(server, uuid, focused_df=None, mr_df=None, mr_endpoint_df
         logger.info(f"Dropped {num_focused - len(focused_df)} focused tasks")
         num_focused = len(focused_df)
 
-    # TODO: Drop previously-reviewed merge-review tasks
+    # TODO: Drop previously-reviewed merge-review tasks (not just focused tasks)
 
     # Are any of the inputs missing their status columns?
     # If so, update them all.
     dfs = [*filter(lambda df: df is not None, (focused_df, mr_df, mr_endpoint_df))]
     if not all(({'status_a', 'status_b'} < {*df.columns}) for df in dfs):
         with Timer("Updating status columns", logger):
-            if body_annotations_df is None:
+            if body_statuses is None:
                 body_annotations_df = fetch_body_annotations(*dvid_node)
+                body_statuses = body_annotations_df['status']
     
             if focused_df is not None:
                 focused_df = focused_df.drop(columns=['status_a', 'status_b'], errors='ignore')
-                focused_df = focused_df.merge(body_annotations_df['status'], 'left', left_on='body_a', right_index=True)
-                focused_df = focused_df.merge(body_annotations_df['status'], 'left', left_on='body_b', right_index=True, suffixes=['_a', '_b'])
+                focused_df = focused_df.merge(body_statuses, 'left', left_on='body_a', right_index=True)
+                focused_df = focused_df.merge(body_statuses, 'left', left_on='body_b', right_index=True, suffixes=['_a', '_b'])
     
             if mr_df is not None:
                 mr_df = mr_df.drop(columns=['status_a', 'status_b'], errors='ignore')
-                mr_df = mr_df.merge(body_annotations_df['status'], 'left', left_on='body_a', right_index=True)
-                mr_df = mr_df.merge(body_annotations_df['status'], 'left', left_on='body_b', right_index=True, suffixes=['_a', '_b'])
+                mr_df = mr_df.merge(body_statuses, 'left', left_on='body_a', right_index=True)
+                mr_df = mr_df.merge(body_statuses, 'left', left_on='body_b', right_index=True, suffixes=['_a', '_b'])
         
                 mr_endpoint_df = mr_endpoint_df.drop(columns=['status_a', 'status_b'], errors='ignore')
-                mr_endpoint_df = mr_endpoint_df.merge(body_annotations_df['status'], 'left', left_on='body_a', right_index=True)
-                mr_endpoint_df = mr_endpoint_df.merge(body_annotations_df['status'], 'left', left_on='body_b', right_index=True, suffixes=['_a', '_b'])
+                mr_endpoint_df = mr_endpoint_df.merge(body_statuses, 'left', left_on='body_a', right_index=True)
+                mr_endpoint_df = mr_endpoint_df.merge(body_statuses, 'left', left_on='body_b', right_index=True, suffixes=['_a', '_b'])
 
     if any([at_least_one_of_statuses, connecting_statuses_1, connecting_statuses_2, at_most_one_of_statuses]):
         with Timer("Filtering by body status", logger):
