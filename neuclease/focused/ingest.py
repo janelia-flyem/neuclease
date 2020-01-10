@@ -508,6 +508,44 @@ def filter_merge_tasks(server, uuid, focused_df=None, mr_df=None, mr_endpoint_df
     return (focused_df, mr_df, mr_endpoint_df)
 
 
+def compute_status_matchups(focused_statuses_df):
+    """
+    For a dataframe with columns status_a and status_b,
+    show the count of every combination of status pairings,
+    so you can display it in a pie chart.
+    
+    Example:
+        status_matchups = compute_status_matchups(focused_statuses_df)
+        status_matchups.set_index('status_pair')['tasks'].plot(kind='pie');
+    """
+    # Order status so that "better" statuses will appear on the left in the table below.
+    # Note: "Cropped" is a new synonym for "Leaves", and "assign" is a new synonym for "0.5assign"
+    statuses = [ 'Traced', 'Roughly traced', 'Prelim Roughly traced', 'Leaves', 'Cropped',
+                 'Orphan', 'Orphan hotknife', '0.5assign', 'assign', 'Orphan-artifact', 'tiny', 
+                 'Unimportant', '---' ]
+
+    status_rankings = dict(zip(statuses, range(len(statuses))))
+
+    ranked_statuses = focused_statuses_df[[]].copy()
+    ranked_statuses['status_1'] = focused_statuses_df['status_a'].fillna('tiny').map(status_rankings)
+    ranked_statuses['status_2'] = focused_statuses_df['status_b'].fillna('tiny').map(status_rankings)
+
+    sorted_pairs = ranked_statuses[['status_1', 'status_2']].values
+    sorted_pairs = np.sort(sorted_pairs, axis=1)
+
+    ranked_statuses['status_1'] = sorted_pairs[:,0]
+    ranked_statuses['status_2'] = sorted_pairs[:,1]
+
+    ranked_statuses['status_1'] = ranked_statuses['status_1'].map({v:k for k,v in status_rankings.items()})
+    ranked_statuses['status_2'] = ranked_statuses['status_2'].map({v:k for k,v in status_rankings.items()})
+
+    status_matchups = ranked_statuses.groupby(['status_1', 'status_2']).size().sort_values(ascending=False).rename('tasks').reset_index()
+    
+    pair_strs = status_matchups['status_1'] + ' / ' + status_matchups['status_2']
+    status_matchups['status_pair'] = pair_strs
+    return status_matchups
+
+
 def upload_focused_tasks(assignment, comment, server, uuid=None, instance='focused_assign', *, repo_uuid=None, overwrite_existing=False):
     """
     Upload a set of focused proofreading assignments to a dvid key-value instance.
