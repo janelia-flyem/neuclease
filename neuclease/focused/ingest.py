@@ -680,7 +680,7 @@ def fetch_output_table(npclient, dataset, body):
         DataFrame.  See query below for column names.
     """
     q = f"""\
-        MATCH (m:`{dataset}-Neuron`)-[e:ConnectsTo]->(n)
+        MATCH (m:`{dataset}_Neuron`)-[e:ConnectsTo]->(n)
         WHERE m.bodyId = {body}
         RETURN m.bodyId   AS upstream_body,
                m.instance AS upstream_instance,
