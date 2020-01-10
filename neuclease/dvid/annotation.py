@@ -290,6 +290,10 @@ def load_elements_as_dataframe(elements):
         pos[i] = e['Pos']
         kinds.append(e['Kind'])
         tags.append(e['Tags'])
+
+        if 'Prop' not in e or not e['Prop']:
+            continue
+
         for k, v in e['Prop'].items():
             pa = prop_arrays.get(k)
             if pa is None:
