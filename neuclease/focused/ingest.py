@@ -103,7 +103,12 @@ def load_focused_table(path):
     return df
 
 
-def fetch_focused_decisions(server, uuid, instance='segmentation_merged', normalize_pairs='sv', subset_pairs=None, drop_invalid=True, update_with_instance='segmentation'):
+def fetch_focused_decisions(server, uuid, instance='segmentation_merged',
+                            normalize_pairs='sv',
+                            subset_pairs=None,
+                            drop_invalid=True,
+                            update_with_instance='segmentation',
+                            is_hemibrain=True):
     """
     Load focused decisions from a given keyvalue instance
     (e.g. 'segmentation_merged') and return them as a DataFrame,
@@ -145,6 +150,11 @@ def fetch_focused_decisions(server, uuid, instance='segmentation_merged', normal
             are assumed to be the same as the given keyvalue instance),
             or a complete tuple of ``(server, uuid, instance)`` to use instead.
 
+        is_hemibrain:
+            If these focused decisions are from the hemibrain dataset,
+            special logic is required when applying update_from_instance.
+            See the source code comments for details.
+        
     Returns:
         DataFrame with columns:
         ['body_a', 'body_b', 'result', 'sv_a', 'sv_b',
@@ -235,6 +245,7 @@ def fetch_focused_decisions(server, uuid, instance='segmentation_merged', normal
         for col in ['xa', 'ya', 'za', 'xb', 'yb', 'zb']:
             df[col] = df[col].astype(np.int32)
 
+    # Update IDs in case the supervoxels have been split since the decision was stored.
     if update_with_instance:
         if isinstance(update_with_instance, str):
             update_with_instance = (server, uuid, update_with_instance)
@@ -243,13 +254,35 @@ def fetch_focused_decisions(server, uuid, instance='segmentation_merged', normal
 
         coords_a = df[['za', 'ya', 'xa']].values
         coords_b = df[['zb', 'yb', 'xb']].values
-        svs_a = fetch_labels_batched(*update_with_instance, coords_a, True, 0, 10_000, threads=8)
-        svs_b = fetch_labels_batched(*update_with_instance, coords_b, True, 0, 10_000, threads=8)
-        bodies_a = fetch_mapping(*update_with_instance, svs_a)
-        bodies_b = fetch_mapping(*update_with_instance, svs_b)
+        new_svs_a = fetch_labels_batched(*update_with_instance, coords_a, True, 0, 10_000, threads=8)
+        new_svs_b = fetch_labels_batched(*update_with_instance, coords_b, True, 0, 10_000, threads=8)
+
+        if is_hemibrain:
+            # The purpose of update_with_instance is to update supervoxel IDs in the case of
+            # supervoxels that were split AFTER the focused proofreading decision was stored.
+            # That's done by sampling the new segmentation label under the given coordinates (see above).
+            # But for the hemibrain dataset, specifically,
+            # the stored coordinates DON'T necessarily fall on the
+            # actual supervoxels they are supposed to correspond to!
+            # We should IGNORE sv changes that don't appear to be the result of a split.
+            # That's easy to see from the ID value. (IDs over 5 billion are from splits.)
+            # In those cases, we'll be ignoring the split, meaning this function can't
+            # help you avoid re-assigning such tasks. But that shouldn't be too common.
+            old_svs_a = df['sv_a'].values
+            old_svs_b = df['sv_b'].values
+
+            # Ignore updates if the new ID is clearly not a split.
+            ignore_update_a = (new_svs_a != old_svs_a) & (new_svs_a < 5e9)
+            ignore_update_b = (new_svs_b != old_svs_b) & (new_svs_b < 5e9)
+
+            new_svs_a[ignore_update_a] = old_svs_a[ignore_update_a]
+            new_svs_b[ignore_update_b] = old_svs_b[ignore_update_b]
         
-        df['sv_a'] = svs_a
-        df['sv_b'] = svs_b
+        bodies_a = fetch_mapping(*update_with_instance, new_svs_a)
+        bodies_b = fetch_mapping(*update_with_instance, new_svs_b)
+        
+        df['sv_a'] = new_svs_a
+        df['sv_b'] = new_svs_b
         df['body_a'] = bodies_a
         df['body_b'] = bodies_b
 
