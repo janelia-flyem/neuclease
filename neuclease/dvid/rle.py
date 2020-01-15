@@ -483,12 +483,22 @@ def runlength_decode_from_ranges_to_mask(rle_array_zyx, mask_box=None):
 
     mask_shape = tuple((mask_box[1] - mask_box[0]).tolist())
 
+    # Switch from inclusive conventions for python conventions (one-past-the-end)
     ranges_array = rle_array_zyx + np.asarray([0,0,0,1], dtype=np.int32)
+    
+    # Offset to mask-local coordinates
     ranges_array -= mask_box[0, (0,1,2,2)]
 
-    keep =  (ranges_array[:, (0,1,2)] >= 0).all(axis=1)
-    keep &= (ranges_array[:, (0,1,3)] <= mask_shape).all(axis=1)
-    
+    # Crop the X ranges to the mask_shape edges.
+    # Out-of-bounds ranges will end up with X1 >= X2 (and discarded below).
+    ranges_array[:, 2] = np.maximum(ranges_array[:, 2], 0)
+    ranges_array[:, 3] = np.minimum(ranges_array[:, 3], mask_shape[2])
+
+    # Discard ranges that are out of bounds in Z/Y, or were cropped to nothing in X
+    keep =  (ranges_array[:, :2] >= 0).all(axis=1)
+    keep &= (ranges_array[:, :2] <= mask_shape[:2]).all(axis=1)
+    keep &= (ranges_array[:, 2] < ranges_array[:, 3])
+
     ranges_array = np.asarray(ranges_array[keep, :], order='C')
     mask = np.zeros(mask_shape, dtype=np.uint8)
     _write_mask_from_ranges(ranges_array, mask)
