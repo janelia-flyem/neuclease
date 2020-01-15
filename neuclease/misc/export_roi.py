@@ -118,7 +118,9 @@ def load_roi_label_volume(server, uuid, rois_or_neuprint, box_s5=[None, None], e
             if export_labelmap[2] not in fetch_repo_instances(server, uuid, 'labelmap'):
                 create_labelmap_instance(*export_labelmap, voxel_size=8*(2**5), max_scale=6) # FIXME: hard-coded voxel size
             
-            boxes = boxes_from_grid(roi_box, (64,64,2048), clipped=True)
+            # It's really important to use this block shape.
+            # See https://github.com/janelia-flyem/dvid/issues/342
+            boxes = boxes_from_grid(roi_box, (256,256,256), clipped=True)
             for box in tqdm_proxy(boxes):
                 block = extract_subvol(roi_vol, box - roi_box[0])
                 post_labelmap_voxels(*export_labelmap, box[0], block, scale=0, downres=True)
