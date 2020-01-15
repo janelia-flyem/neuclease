@@ -58,7 +58,7 @@ def post_tarsupervoxel_sync(server, uuid, instance, sync_instance, replace=False
 
 
 @dvid_api_wrapper
-def fetch_tarfile(server, uuid, instance, body_id, output=None, *, session=None):
+def fetch_tarfile(server, uuid, instance, body_id, output=None, *, check_head=False, session=None):
     """
     Fetch a .tar file from a tarsupervoxels instance for the given body,
     and save it to bytes, a file object, or a file path.
@@ -80,15 +80,32 @@ def fetch_tarfile(server, uuid, instance, body_id, output=None, *, session=None)
             If None, tarfile is returned in-memory, as bytes.
             If str, it is interpreted as a path to which the .tar file will be written.
             Otherwise, must be a file object to write the bytes to (e.g. a BytesIO object).
+        
+        check_head:
+            If True, don't fetch the tarfile.
+            Instead, send a HEAD requests to determine if all the supervoxel files for the
+            given tarfile actually exist on the server, and thus the tarfile would be
+            complete if you actually requested it.
+            Returns True if the HEAD check passed (status 200),
+            or False if the HEAD check failed (status 400).
     
     Returns:
         None, unless no output file object/path is provided,
         in which case the tarfile bytes are returned.
+        Or, if check_head=True, returns True or False,
+        depending on the status of the HEAD check. 
     
     See also: ``tar_to_dict()``
     """
     url = f'http://{server}/api/node/{uuid}/{instance}/tarfile/{body_id}'
-    return fetch_file(url, output, session=session)
+    
+    if check_head:
+        r = session.head(url)
+        if r.status_code not in (200, 400):
+            r.raise_for_status()
+        return (r.status_code == 200)
+    else:
+        return fetch_file(url, output, session=session)
 
 
 def tar_to_dict(tar_bytes, exts=None):
@@ -289,6 +306,8 @@ def fetch_exists(server, uuid, instance, supervoxels, batch_size=None, *, sessio
     """
     Determine if the given supervoxels have associated files
     stored in the given tarsupervoxels instance.
+    
+    See also: ``fetch_tarfile(..., check_head=True)``
     
     Args:
         server:
