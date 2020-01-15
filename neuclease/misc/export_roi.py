@@ -1,13 +1,108 @@
 import os
+import collections
+
+import h5py
 import vigra
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
+import neuprint
+from neuclease.util import round_box
+from neuclease.dvid import fetch_combined_roi_volume
+
 from neuclease.dvid import fetch_roi, fetch_volume_box
 from libdvid import DVIDNodeService
 
-def export_roi(server, uuid, roi_name, scale, scaled_shape_zyx, parent_output_dir):
+def load_roi_label_volume(server, uuid, rois_or_neuprint, box_s5=[None, None], export_path=None):
+    """
+    Fetch several ROIs from DVID and combine them into a single label volume or mask.
+    The label values in the returned volume correspond to the order in which the ROI
+    names were passed in, starting at label 1.
+    
+    This function is essentially a convenience function around fetch_combined_roi_volume(),
+    but in this case it will optionally auto-fetch the ROI list, and auto-export the volume.
+    
+    Args:
+        server:
+            DVID server
+
+        uuid:
+            DVID uuid
+
+        rois_or_neuprint:
+            Either a list of ROIs or a neuprint server from which to obtain the roi list.
+
+        box_s5:
+            If you want to restrict the ROIs to a particular subregion,
+            you may pass your own bounding box (at scale 5).
+            Alternatively, you may pass the name of a segmentation
+            instance from DVID whose bounding box will be used.
+
+        export_path:
+            If you want the ROI volume to be exported to disk,
+            provide a path name ending with .npy or .h5.
+    
+    Returns:
+        (roi_vol, roi_box), containing the fetched label volume and the
+        bounding box it corresponds to, in DVID scale-5 coordinates.
+
+    Note:
+      If you have a list of (full-res) points to extract from the returned volume,
+      pass a DataFrame with columns ['z','y','x'] to the following function.
+      If you already downloaded the roi_vol (above), provide it.
+      Otherwise, leave out those args and it will be fetched first.
+      Adds columns to the input DF (in-place) for 'roi' (str) and 'roi_label' (int).
+    
+        >>> from neuclease.dvid import determine_point_rois
+        >>> determine_point_rois(*master, rois, point_df, roi_vol, roi_box)
+    """
+    if isinstance(box_s5, str):
+        # Assume that this is a segmentation instance whose dimensions should be used
+        # Fetch the maximum extents of the segmentation,
+        # and rescale it for scale-5.
+        seg_box = fetch_volume_box(server, uuid, box_s5)
+        box_s5 = round_box(seg_box, (2**5), 'out') // 2**5
+        box_s5[0] = (0,0,0)
+
+    if isinstance(rois_or_neuprint, (str, neuprint.Client)):
+        if isinstance(rois_or_neuprint, str):
+            npclient = neuprint.Client(rois_or_neuprint)
+        else:
+            npclient = rois_or_neuprint
+        
+        # Fetch ROI names from neuprint
+        q = "MATCH (m: Meta) RETURN m.superLevelRois as rois"
+        rois = npclient.fetch_custom(q)['rois'].iloc[0]
+        rois = sorted(rois)
+        # # Remove '.*ACA' ROIs. Apparently there is some
+        # # problem with them. (They overlap with other ROIs.)
+        # rois = [*filter(lambda r: 'ACA' not in r, rois)]
+    else:
+        assert isinstance(rois, collections.abc.Iterable)
+        rois = rois_or_neuprint
+
+    # Fetch each ROI and write it into a volume
+    roi_vol, roi_box, overlapping_pairs = fetch_combined_roi_volume(server, uuid, rois, box_zyx=box_s5)
+    
+    if len(overlapping_pairs) > 0:
+        print(f"Some ROIs overlap! Here's an incomplete list of overlapping pairs:")
+        for a,b in overlapping_pairs:
+            a, b = int(a), int(b)
+            print(f"{rois[a-1]} : {rois[b-1]}")
+    
+    # Export to npy/h5py for external use
+    if export_path:
+        if export_path.endwith('.npy'):
+            np.save(export_path, roi_vol)
+        elif export_path.endswith('.h5'):
+            with h5py.File(export_path, 'w') as f:
+                f.create_dataset('rois_scale_5', data=roi_vol, chunks=True)
+
+    return roi_vol, roi_box
+    
+
+def export_roi_slices(server, uuid, roi_name, scale, scaled_shape_zyx, parent_output_dir):
     """
     Export the ROI to a PNG stack (as binary images) at the requested scale.
     
