@@ -318,7 +318,7 @@ def drop_previously_reviewed(df, previous_focused_decisions_df):
         raise RuntimeError("Some rows of the input (previous_focused_decisions_df) are not in normal form.")
     
     comparison_df = previous_focused_decisions_df[['sv_a', 'sv_b']].drop_duplicates()
-    in_prev = df[['sv_a', 'sv_b']].merge(comparison_df,
+    in_prev = df[['sv_a', 'sv_b']].merge(comparison_df[['sv_a', 'sv_b']],
                                          how='left',
                                          on=['sv_a', 'sv_b'],
                                          indicator='side')
@@ -883,6 +883,10 @@ def extract_downstream_focused_tasks_for_bodies(server,
         # To select just enough tasks to hit that target, filter by the `expected_cumulative_completeness` column:
         filtered_tasks_df = downstream_focused_df.query('expected_cumulative_completeness <= 0.2')
     """
+    # TODO: This could be automatically set if we fetched the synapse data from neuprint
+    assert 'small_body' in all_focused_tasks_df.columns, \
+        "Task table must contain a column for 'small_body'"
+
     upstream_bodies = pd.unique(upstream_bodies)
     
     if downstream_df is None:
@@ -966,6 +970,7 @@ def extract_downstream_focused_tasks_for_bodies(server,
         # so they'll have NaNs.  Replace with the appropriate values.
         completion_stats_df['expected_final_completeness'].fillna(completion_stats_df['orig_completeness'], inplace=True)
         completion_stats_df['max_final_completeness'].fillna(completion_stats_df['orig_completeness'], inplace=True)
+        completion_stats_df['expected_additional_completeness'] = completion_stats_df.eval('expected_cumulative_completeness - orig_completeness')
 
     return downstream_focused_df, downstream_df, completion_stats_df
 
