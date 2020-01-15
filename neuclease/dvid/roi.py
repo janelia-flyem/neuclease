@@ -7,7 +7,7 @@ import pandas as pd
 
 from ..util import tqdm_proxy, extract_labels_from_volume, box_shape, extract_subvol, box_intersection
 from . import dvid_api_wrapper, fetch_generic_json
-from .rle import runlength_decode_from_ranges, runlength_decode_from_ranges_to_mask
+from .rle import runlength_decode_from_ranges, runlength_decode_from_ranges_to_mask, runlength_encode_mask_to_ranges
 
 logger = logging.getLogger(__name__)
 
@@ -125,6 +125,16 @@ def post_roi(server, uuid, instance, roi_ranges, *, session=None):
     encoded_ranges = ujson.dumps(roi_ranges)
     r = session.post(f'http://{server}/api/node/{uuid}/{instance}/roi', data=encoded_ranges)
     r.raise_for_status()
+
+
+@dvid_api_wrapper
+def post_roi_from_mask(server, uuid, instance, mask, mask_box=None, *, session):
+    """
+    Same as ``post_roi()``, but takes a binary mask
+    volume as input, rather than pre-formatted ranges.
+    """
+    ranges = runlength_encode_mask_to_ranges(mask, mask_box)
+    post_roi(server, uuid, instance, ranges, session=session)
 
 
 @dvid_api_wrapper

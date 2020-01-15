@@ -354,6 +354,90 @@ def _runlength_encode_to_ranges(coord_list_zyx):
     return runs
 
 
+def runlength_encode_mask_to_ranges(mask, mask_box=None):
+    """
+    Given a binary mask, return an array of
+    run-length encodings of the form:
+    
+        [[Z,Y,X1,X2],
+         [Z,Y,X1,X2],
+         [Z,Y,X1,X2],
+         ...
+        ]
+    
+    Note:
+        The interval [X1,X2] is INCLUSIVE, following DVID conventions,
+        not Python conventions (i.e. X2 is not one-past-the-end).
+    
+    Args:
+        mask:
+            binary volume, 3D
+        
+        mask_box:
+            If provided, should correspond to the location of the mask in global coordinates.
+            The returned ranges will be offset to reflect global coordinates.
+        
+    Returns:
+        Ranges array as described above, shape (N,4)
+    """
+    assert mask.ndim == 3
+    runs = _runlength_encode_mask_to_ranges(mask)
+    ranges = np.asarray(runs).reshape((-1,4))
+
+    if mask_box is not None:
+        mask_box = np.asarray(mask_box)
+        assert mask_box.shape == (2,3)
+        assert mask.shape == tuple(mask_box[1] - mask_box[0]), \
+            "mask shape doesn't correspond to mask_box"
+        
+        ranges[:] += mask_box[0, (0,1,2,2)]
+        assert (ranges >= mask_box[0, (0,1,2,2)]).all()
+        assert (ranges <= mask_box[1, (0,1,2,2)]).all()
+        
+    return ranges
+
+
+@jit(nopython=True)
+def _runlength_encode_mask_to_ranges(mask):
+    """
+    Helper function for runlength_encode_mask_to_ranges(), above.
+
+    Args:
+        mask:
+            binary volume, 3D
+    
+    Returns:
+        Flattened runlength encoding, as a numba typed.List:
+        
+            [Z,Y,X1,X2,Z,Y,X1,X2,Z,Y,X1,X2,...]
+
+        Must be converted to np.array and un-flattened by the caller.
+        Uses DVID conventions for the ranges, i.e. X1,X2 is inclusive,
+        not one-past-the-end.
+    """
+    runs = List.empty_list(item_type=int32)
+
+    Z, Y, X = mask.shape
+    for z in range(Z):
+        for y in range(Y):
+            x0 = x1 = 0
+            in_run = False
+            for x in range(X):
+                if not in_run and mask[z,y,x]:
+                    x0 = x
+                    in_run = True
+                elif in_run and not mask[z,y,x]:
+                    x1 = x-1
+                    in_run = False
+                    runs.extend([z, y, x0, x1])
+
+            if in_run:
+                x1 = X-1
+                runs.extend([z, y, x0, x1])
+
+    return runs
+
+
 def runlength_encode_to_lengths(coord_list_zyx, assume_sorted=False):
     """
     Given an array of coordinates in the form:
