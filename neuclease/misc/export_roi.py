@@ -1,4 +1,5 @@
 import os
+import logging
 import collections
 
 import h5py
@@ -8,13 +9,13 @@ import pandas as pd
 from tqdm import tqdm
 
 import neuprint
-from neuclease.util import round_box
-from neuclease.dvid import fetch_combined_roi_volume
+from neuclease.util import Timer, tqdm_proxy, round_box, boxes_from_grid, extract_subvol
+from neuclease.dvid import ( fetch_repo_instances, fetch_roi, fetch_volume_box,
+                             fetch_combined_roi_volume, create_labelmap_instance, post_labelmap_voxels )
 
-from neuclease.dvid import fetch_roi, fetch_volume_box
-from libdvid import DVIDNodeService
+logger = logging.getLogger(__name__)
 
-def load_roi_label_volume(server, uuid, rois_or_neuprint, box_s5=[None, None], export_path=None):
+def load_roi_label_volume(server, uuid, rois_or_neuprint, box_s5=[None, None], export_path=None, export_labelmap=None):
     """
     Fetch several ROIs from DVID and combine them into a single label volume or mask.
     The label values in the returned volume correspond to the order in which the ROI
@@ -42,6 +43,10 @@ def load_roi_label_volume(server, uuid, rois_or_neuprint, box_s5=[None, None], e
         export_path:
             If you want the ROI volume to be exported to disk,
             provide a path name ending with .npy or .h5.
+        
+        export_labelmap:
+            If you want the ROI volume to be exported to a DVID labelmap instance,
+            Provide the instance name, or a tuple of (server, uuid, instance).
     
     Returns:
         (roi_vol, roi_box), containing the fetched label volume and the
@@ -65,6 +70,12 @@ def load_roi_label_volume(server, uuid, rois_or_neuprint, box_s5=[None, None], e
         box_s5 = round_box(seg_box, (2**5), 'out') // 2**5
         box_s5[0] = (0,0,0)
 
+    if export_labelmap:
+        assert isinstance(box_s5, np.ndarray)
+        assert not (box_s5 % 64).any(), \
+            ("If exporting to a labelmap instance, please supply "
+             "an explicit box and make sure it is block-aligned.")
+    
     if isinstance(rois_or_neuprint, (str, neuprint.Client)):
         if isinstance(rois_or_neuprint, str):
             npclient = neuprint.Client(rois_or_neuprint)
@@ -79,25 +90,40 @@ def load_roi_label_volume(server, uuid, rois_or_neuprint, box_s5=[None, None], e
         # # problem with them. (They overlap with other ROIs.)
         # rois = [*filter(lambda r: 'ACA' not in r, rois)]
     else:
-        assert isinstance(rois, collections.abc.Iterable)
+        assert isinstance(rois_or_neuprint, collections.abc.Iterable)
         rois = rois_or_neuprint
 
     # Fetch each ROI and write it into a volume
-    roi_vol, roi_box, overlap_stats = fetch_combined_roi_volume(server, uuid, rois, box_zyx=box_s5)
+    with Timer(f"Fetching combined ROI volume for {len(rois)} ROIs", logger):
+        roi_vol, roi_box, overlap_stats = fetch_combined_roi_volume(server, uuid, rois, box_zyx=box_s5)
     
     if len(overlap_stats) > 0:
-        print(f"Some ROIs overlap! Here's an incomplete list of overlapping pairs:")
-        print(overlap_stats)
+        logger.warn(f"Some ROIs overlap! Here's an incomplete list of overlapping pairs:\n{overlap_stats}")
     
     # Export to npy/h5py for external use
     if export_path:
-        if export_path.endswith('.npy'):
-            np.save(export_path, roi_vol)
-        elif export_path.endswith('.h5'):
-            with h5py.File(export_path, 'w') as f:
-                f.create_dataset('rois_scale_5', data=roi_vol, chunks=True)
+        with Timer(f"Exporting to {export_path}", logger):
+            if export_path.endswith('.npy'):
+                np.save(export_path, roi_vol)
+            elif export_path.endswith('.h5'):
+                with h5py.File(export_path, 'w') as f:
+                    f.create_dataset('rois_scale_5', data=roi_vol, chunks=True)
 
-    return roi_vol, roi_box
+    if export_labelmap:
+        if isinstance(export_labelmap, str):
+            export_labelmap = (server, uuid, export_labelmap)
+        
+        assert len(export_labelmap) == 3
+        with Timer(f"Exporting to {export_labelmap[2]}", logger):
+            if export_labelmap[2] not in fetch_repo_instances(server, uuid, 'labelmap'):
+                create_labelmap_instance(*export_labelmap, voxel_size=8*(2**5), max_scale=6) # FIXME: hard-coded voxel size
+            
+            boxes = boxes_from_grid(roi_box, (64,64,2048), clipped=True)
+            for box in tqdm_proxy(boxes):
+                block = extract_subvol(roi_vol, box - roi_box[0])
+                post_labelmap_voxels(*export_labelmap, box[0], block, scale=0, downres=True)
+
+    return roi_vol, roi_box, rois
     
 
 def export_roi_slices(server, uuid, roi_name, scale, scaled_shape_zyx, parent_output_dir):
