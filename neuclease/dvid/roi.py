@@ -181,10 +181,10 @@ def fetch_combined_roi_volume(server, uuid, rois, as_bool=False, box_zyx=None, *
             with no offset.
     
     Returns:
-        (combined_vol, combined_box, overlapping_pairs)
+        (combined_vol, combined_box, overlap_stats)
         where combined_vol is an image volume (ndarray) (resolution: scale 5),
         combined_box indicates the location of combined_vol (scale 5),
-        and overlapping_pairs indicates which ROIs overlap, and are thus not
+        and overlap_stats indicates which ROIs overlap, and are thus not
         completely represented in the output volume (see caveat above).
         
         Unless as_bool is used, combined_vol is a label volume, whose dtype 
@@ -205,8 +205,19 @@ def fetch_combined_roi_volume(server, uuid, rois, as_bool=False, box_zyx=None, *
     if isinstance(rois, str):
         rois = [rois]
     
+    # rois is a dict {name : label}
     if not isinstance(rois, Mapping):
         rois = { roi : i for i,roi in enumerate(rois, start=1) }
+
+    # Create a reverse-lookup {label : name} for reporting overlaps below.
+    reverse_rois = {}
+    for roi, label in rois.items():
+        if label in reverse_rois:
+            # Caller is permitted to map more than one ROI to the same label,
+            # so include both names in the overlap report.
+            reverse_rois[label] = reverse_rois[label] + '+' + roi
+        else:
+            reverse_rois[label] = roi
 
     all_rle_ranges = {}
     for roi in tqdm_proxy(rois.keys(), leave=False):
@@ -214,8 +225,12 @@ def fetch_combined_roi_volume(server, uuid, rois, as_bool=False, box_zyx=None, *
     
     roi_boxes = {}
     for roi, rle_ranges in all_rle_ranges.items():
-        roi_boxes[roi] = np.array([  rle_ranges[:, (0,1,2)].min(axis=0),
-                                   1+rle_ranges[:, (0,1,3)].max(axis=0)])
+        # If roi is completely empty, don't process it at all
+        if len(rle_ranges) == 0:
+            del rois[roi]
+        else:
+            roi_boxes[roi] = np.array([  rle_ranges[:, (0,1,2)].min(axis=0),
+                                       1+rle_ranges[:, (0,1,3)].max(axis=0)])
     
     if box_zyx is None:
         box_zyx = [None, None]
@@ -241,22 +256,27 @@ def fetch_combined_roi_volume(server, uuid, rois, as_bool=False, box_zyx=None, *
                 dtype = d
                 break
 
-    overlapping_pairs = []
+    overlap_stats = []
     combined_vol = np.zeros(combined_shape, dtype)
 
     # Overlay ROIs one-by-one
     for roi, label in tqdm_proxy(rois.items(), leave=False):
         roi_box = box_intersection(roi_boxes[roi], box_zyx)
         assert (roi_box[1] - roi_box[0] > 0).all(), "ROI box does not intersect the full box."
-        roi_mask, roi_box = runlength_decode_from_ranges_to_mask(all_rle_ranges[roi], roi_box)
+        roi_mask, _roi_box = runlength_decode_from_ranges_to_mask(all_rle_ranges[roi], roi_box)
+        assert (_roi_box == roi_box).all()
         
         # If we're overwriting some areas of a ROI we previously wrote,
         # keep track of the overlapping pairs.
         combined_view = extract_subvol(combined_vol, roi_box - box_zyx[0])
         assert combined_view.base is combined_vol
         
-        prev_rois = {*pd.unique(combined_view[roi_mask])} - {0}
-        overlapping_pairs += ((p,label) for p in prev_rois)
+        # Keep track of the overlapping sizes
+        prev_labels_overlap_sizes = pd.Series(combined_view[roi_mask]).value_counts()
+        for p, size in prev_labels_overlap_sizes.items():
+            if p == 0:
+                continue
+            overlap_stats.append((reverse_rois[p], reverse_rois[label], size))
 
         # Overwrite view
         if as_bool:
@@ -264,7 +284,8 @@ def fetch_combined_roi_volume(server, uuid, rois, as_bool=False, box_zyx=None, *
         else:
             combined_view[roi_mask] = label
 
-    return combined_vol, box_zyx, np.array(overlapping_pairs, dtype=int)
+    overlap_stats = pd.DataFrame(overlap_stats, columns=['roi_a', 'roi_b', 'overlap'])
+    return combined_vol, box_zyx, overlap_stats
 
 
 @dvid_api_wrapper
