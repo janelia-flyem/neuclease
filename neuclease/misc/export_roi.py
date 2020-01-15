@@ -83,17 +83,15 @@ def load_roi_label_volume(server, uuid, rois_or_neuprint, box_s5=[None, None], e
         rois = rois_or_neuprint
 
     # Fetch each ROI and write it into a volume
-    roi_vol, roi_box, overlapping_pairs = fetch_combined_roi_volume(server, uuid, rois, box_zyx=box_s5)
+    roi_vol, roi_box, overlap_stats = fetch_combined_roi_volume(server, uuid, rois, box_zyx=box_s5)
     
-    if len(overlapping_pairs) > 0:
+    if len(overlap_stats) > 0:
         print(f"Some ROIs overlap! Here's an incomplete list of overlapping pairs:")
-        for a,b in overlapping_pairs:
-            a, b = int(a), int(b)
-            print(f"{rois[a-1]} : {rois[b-1]}")
+        print(overlap_stats)
     
     # Export to npy/h5py for external use
     if export_path:
-        if export_path.endwith('.npy'):
+        if export_path.endswith('.npy'):
             np.save(export_path, roi_vol)
         elif export_path.endswith('.h5'):
             with h5py.File(export_path, 'w') as f:
