@@ -392,19 +392,40 @@ def extend_list_value(server, uuid, instance, key, new_list, *, session=None):
 
 
 @dvid_api_wrapper
-def fetch_body_annotations(server, uuid, instance='segmentation_annotations', *, session=None):
+def fetch_body_annotations(server, uuid, instance='segmentation_annotations', bodies=None, *, session=None):
     """
     Special convenience function for reading the 'segmentation_annotations' keyvalue from DVID,
     which is created and managed by NeuTu and maintains body status information.
 
-    Fetches ALL values from the instance, and loads them into a DataFrame, indexed by body.
+    If a list of bodies is provided, fetches annotation info for those bodies only.
+    Otherwise, fetches ALL values from the instance.
+    
+    Loads the results into a DataFrame, indexed by body.
+    
+    Note: Any missing annotation entries are silently ignored.
+          You should check the results to see if every body annotation
+          you requested was returned. (Otherwise, it was missing from dvid.)
     
     >>> annotations_df = fetch_body_annotations('emdata4:8900', '0b0b')
     >>> traced_bodies = annotations_df.query('status == "Traced"').index
     """
-    all_keys = fetch_keys(server, uuid, instance, session=session)
-    kvs = fetch_keyvalues(server, uuid, instance, all_keys, as_json=True, batch_size=100_000)
-    df = pd.DataFrame(list(filter(lambda v: v is not None and 'body ID' in v, kvs.values())))
-    df['body'] = df['body ID']
-    df = df.set_index('body')
+    if bodies is not None:
+        keys = [str(b) for b in bodies]
+        try:
+            max(int(b) for b in keys)
+        except ValueError:
+            raise RuntimeError(f"Malformed body list: {bodies}")
+    else:
+        keys = fetch_keys(server, uuid, instance, session=session)
+
+    kvs = fetch_keyvalues(server, uuid, instance, keys, as_json=True, batch_size=100_000)
+    values = list(filter(lambda v: v is not None and 'body ID' in v, kvs.values()))
+    if len(values) == 0:
+        empty_index = pd.Series([], dtype=int, name='body')
+        return pd.DataFrame({'status': []}, dtype=object, index=empty_index)
+
+    df = pd.DataFrame(values)
+    if 'body ID' in df:
+        df['body'] = df['body ID']
+        df = df.set_index('body')
     return df
