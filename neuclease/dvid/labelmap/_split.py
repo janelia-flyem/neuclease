@@ -259,7 +259,7 @@ def extract_split_tree(events, sv_id):
             
         sv_id:
             The tree containing this supervoxel ID will be extracted.
-            The ID does not necessarily need to be the roof node of it's split tree.
+            The ID does not necessarily need to be the root node of it's split tree.
     
     Returns:
         nx.DiGraph -- A subgraph of the forest passed in.
@@ -554,3 +554,29 @@ def extract_and_render_splits(split_events, svs, display=False):
     return rendered_trees
 
 
+def fetch_retired_supervoxel_size(server, leaf_uuid, instance, retired_sv, split_events=None):
+    """
+    Determines how big a retired supervoxel was.
+    
+    Once a supervoxel has been split, dvid retires its id and its
+    size can no longer be fetched.
+    
+    If the retired supervoxel happens to exist in an older node,
+    then its size can still be fetched from dvid.
+    
+    But if the supervoxel was created and retired in the same dvid node,
+    then the only way to determine how big it was is to identify its split
+    descendents and sum their sizes.
+    """
+    from . import fetch_size, fetch_sizes, fetch_mapping
+    if fetch_mapping(server, leaf_uuid, instance, [retired_sv])[0] != 0:
+        # Not retired after all. Return current size.
+        return fetch_size(server, leaf_uuid, instance, retired_sv, supervoxels=True)
+    
+    if split_events is None:
+        split_events = fetch_supervoxel_splits(server, leaf_uuid, instance, 'dvid', format='dict')
+
+    tree = extract_split_tree(split_events, retired_sv)
+    leaf_svs = [*filter(lambda sv: tree.out_degree(sv) == 0, {retired_sv} | {*nx.descendants(tree, retired_sv)})]
+    sizes = fetch_sizes(server, leaf_uuid, instance, leaf_svs, supervoxels=True)
+    return sizes.sum()
