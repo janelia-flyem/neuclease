@@ -26,7 +26,7 @@ from libdvid import DVIDNodeService
 # to avoid the particular system function in question.
 # Details here:
 # https://bugs.python.org/issue30385
-if platform.system() == "Darwin":
+if platform.system() == "Darwin" and 'no_proxy' not in os.environ:
     os.environ["no_proxy"] = "*"
 
 DEFAULT_DVID_SESSIONS = {}
