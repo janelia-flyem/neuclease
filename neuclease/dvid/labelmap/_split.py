@@ -91,7 +91,7 @@ def fetch_supervoxel_splits_from_dvid(server, uuid, instance, *, session=None):
     #     of proximity to the given UUID.  So the first UUID would be the version of interest, then
     #     its parent, and so on.
 
-    r = session.get(f'http://{server}/api/node/{uuid}/{instance}/supervoxel-splits')
+    r = session.get(f'{server}/api/node/{uuid}/{instance}/supervoxel-splits')
     r.raise_for_status()
 
     events = {}

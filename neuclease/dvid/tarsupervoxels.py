@@ -51,7 +51,7 @@ def create_tarsupervoxel_instance(server, uuid, instance, sync_instance, extensi
 
 @dvid_api_wrapper
 def post_tarsupervoxel_sync(server, uuid, instance, sync_instance, replace=False, *, session=None):
-    r = session.post(f'http://{server}/api/node/{uuid}/{instance}/sync',
+    r = session.post(f'{server}/api/node/{uuid}/{instance}/sync',
                      params={ "replace": str(bool(replace)).lower() },
                      json={ "sync": sync_instance } )
     r.raise_for_status()
@@ -97,7 +97,7 @@ def fetch_tarfile(server, uuid, instance, body_id, output=None, *, check_head=Fa
     
     See also: ``tar_to_dict()``
     """
-    url = f'http://{server}/api/node/{uuid}/{instance}/tarfile/{body_id}'
+    url = f'{server}/api/node/{uuid}/{instance}/tarfile/{body_id}'
     
     if check_head:
         r = session.head(url)
@@ -184,7 +184,7 @@ def post_load(server, uuid, instance, tar, *, session=None):
             post_load(*tsv_instance, {'123.drc': '/path/to/meshes/123.drc',
                                       '456.drc': '/path/to/meshes/456.drc'})
     """
-    url = f'http://{server}/api/node/{uuid}/{instance}/load'
+    url = f'{server}/api/node/{uuid}/{instance}/load'
     
     if isinstance(tar, str):
         if os.path.isdir(tar):
@@ -242,7 +242,7 @@ def post_supervoxel(server, uuid, instance, supervoxel_id, sv_file, *, session=N
             The file to post.
             Either a path to a file, a (binary) file object, or bytes.
     """
-    url = f'http://{server}/api/node/{uuid}/{instance}/supervoxel/{supervoxel_id}'
+    url = f'{server}/api/node/{uuid}/{instance}/supervoxel/{supervoxel_id}'
     post_file(url, sv_file, session=session)
 
 
@@ -274,7 +274,7 @@ def fetch_supervoxel(server, uuid, instance, supervoxel_id, output=None, *, sess
         None, unless no output file object/path is provided,
         in which case the file bytes are returned.
     """
-    url = f'http://{server}/api/node/{uuid}/{instance}/supervoxel/{supervoxel_id}'
+    url = f'{server}/api/node/{uuid}/{instance}/supervoxel/{supervoxel_id}'
     return fetch_file(url, output, session=session)
 
 
@@ -296,7 +296,7 @@ def delete_supervoxel(server, uuid, instance, supervoxel_id, *, session=None):
         sv:
             The supervoxel ID corresponding to the posted file.
     """
-    url = f'http://{server}/api/node/{uuid}/{instance}/supervoxel/{supervoxel_id}'
+    url = f'{server}/api/node/{uuid}/{instance}/supervoxel/{supervoxel_id}'
     r = session.delete(url)
     r.raise_for_status()
 
@@ -334,7 +334,7 @@ def fetch_exists(server, uuid, instance, supervoxels, batch_size=None, *, sessio
     Returns:
         pd.Series of bool, indexed by supervoxel
     """
-    url = f'http://{server}/api/node/{uuid}/{instance}/exists'
+    url = f'{server}/api/node/{uuid}/{instance}/exists'
     supervoxels = np.asarray(supervoxels, np.uint64)
     
     if batch_size is None:
@@ -383,7 +383,7 @@ def fetch_missing(server, uuid, instance, body_id, *, session=None):
         np.ndarray of supervoxels that are missing for the given body.
         If no supervoxels are missing, the array will be empty (len 0).
     """
-    r = session.get(f'http://{server}/api/node/{uuid}/{instance}/missing/{body_id}')
+    r = session.get(f'{server}/api/node/{uuid}/{instance}/missing/{body_id}')
     r.raise_for_status()
     return np.array(r.json(), np.uint64)
 

@@ -48,7 +48,7 @@ def fetch_labelindex(server, uuid, instance, label, format='protobuf', *, sessio
     """
     assert format in ('protobuf', 'pandas', 'raw')
 
-    r = session.get(f'http://{server}/api/node/{uuid}/{instance}/index/{label}')
+    r = session.get(f'{server}/api/node/{uuid}/{instance}/index/{label}')
     r.raise_for_status()
 
     if format == 'raw':
@@ -84,7 +84,7 @@ def fetch_labelindices(server, uuid, instance, labels, *, format='protobuf', ses
     elif not isinstance(labels, list):
         labels = list(labels)
     
-    endpoint = f'http://{server}/api/node/{uuid}/{instance}/indices'
+    endpoint = f'{server}/api/node/{uuid}/{instance}/indices'
     r = session.get(endpoint, json=labels)
     r.raise_for_status()
 
@@ -108,7 +108,7 @@ def post_labelindex(server, uuid, instance, label, proto_index, *, session=None)
     assert proto_index.label == label
     
     payload = proto_index.SerializeToString()
-    r = session.post(f'http://{server}/api/node/{uuid}/{instance}/index/{label}', data=payload)
+    r = session.post(f'{server}/api/node/{uuid}/{instance}/index/{label}', data=payload)
     r.raise_for_status()
     
 
@@ -134,7 +134,7 @@ def post_labelindices(server, uuid, instance, indices, *, session=None):
         return
 
     payload = label_indices.SerializeToString()
-    endpoint = f'http://{server}/api/node/{uuid}/{instance}/indices'
+    endpoint = f'{server}/api/node/{uuid}/{instance}/indices'
     r = session.post(endpoint, data=payload)
     r.raise_for_status()
 

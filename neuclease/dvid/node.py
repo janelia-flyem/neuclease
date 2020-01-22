@@ -7,7 +7,7 @@ def fetch_info(server, uuid, instance, *, session=None):
 
     See also: ``neuclease.dvid.wrapper_proxies.fetch_info()``
     """
-    return fetch_generic_json(f'http://{server}/api/node/{uuid}/{instance}/info', session=session)
+    return fetch_generic_json(f'{server}/api/node/{uuid}/{instance}/info', session=session)
 
 # Synonym
 fetch_instance_info = fetch_info
@@ -18,7 +18,7 @@ def post_info(server, uuid, instance, info, *, session=None):
     """
     Replace the instance info.  Use with caution. 
     """
-    r = session.post(f'http://{server}/api/node/{uuid}/{instance}/info', json=info)
+    r = session.post(f'{server}/api/node/{uuid}/{instance}/info', json=info)
     r.raise_for_status()
 
 @dvid_api_wrapper
@@ -34,7 +34,7 @@ def post_commit(server, uuid, note, log=[], *, session=None):
             assert isinstance(item, str)
         body["log"] = log
     
-    r = session.post(f'http://{server}/api/node/{uuid}/commit', json=body)
+    r = session.post(f'{server}/api/node/{uuid}/commit', json=body)
     r.raise_for_status()
     return r.json()["committed"]
 
@@ -46,7 +46,7 @@ def fetch_commit(server, uuid, *, session=None):
     
     Returns True if the node is locked.
     """
-    r = session.get(f'http://{server}/api/node/{uuid}/commit')
+    r = session.get(f'{server}/api/node/{uuid}/commit')
     r.raise_for_status()
     return r.json()["Locked"]
     
@@ -69,7 +69,7 @@ def post_branch(server, uuid, branch_name, note, custom_uuid=None, *, session=No
     if custom_uuid:
         body["uuid"] = custom_uuid
         
-    r = session.post(f'http://{server}/api/node/{uuid}/branch', json=body)
+    r = session.post(f'{server}/api/node/{uuid}/branch', json=body)
     r.raise_for_status()
     return r.json()["child"]
 
@@ -89,7 +89,7 @@ def post_newversion(server, uuid, note, custom_uuid=None, *, session=None):
     if custom_uuid:
         body["uuid"] = custom_uuid
         
-    r = session.post(f'http://{server}/api/node/{uuid}/newversion', json=body)
+    r = session.post(f'{server}/api/node/{uuid}/newversion', json=body)
     r.raise_for_status()
     return r.json()["child"]
 
@@ -103,7 +103,7 @@ def post_blob(server, uuid, instance, data=None, json=None, *, session=None):
     The reference is a URL-friendly content hash (FNV-128) of the blob data.
     """
     assert (data is not None) ^ (json is not None), "Must provide either data or json (but not both)"
-    r = session.post(f'http://{server}/api/node/{uuid}/{instance}/blobstore', data=data, json=json)
+    r = session.post(f'{server}/api/node/{uuid}/{instance}/blobstore', data=data, json=json)
     r.raise_for_status()
     
     return r.json()["reference"]
@@ -120,7 +120,7 @@ def fetch_blob(server, uuid, instance, reference, as_json=False, *, session=None
     Returns:
         Either bytes or parsed JSON data, depending on as_json.
     """
-    r = session.get(f'http://{server}/api/node/{uuid}/{instance}/blobstore/{reference}')
+    r = session.get(f'{server}/api/node/{uuid}/{instance}/blobstore/{reference}')
     r.raise_for_status()
     if as_json:
         return r.json()

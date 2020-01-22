@@ -60,7 +60,7 @@ def fetch_maxlabel(server, uuid, instance, *, session=None, dag=None):
     If the ``/maxlabel`` endpoint returns an error stating "No maximum label",
     we recursively check the parent node(s) for a valid maxlabel until we find one.
     """
-    url = f'http://{server}/api/node/{uuid}/{instance}/maxlabel'
+    url = f'{server}/api/node/{uuid}/{instance}/maxlabel'
     
     try:
         return fetch_generic_json(url, session=session)["maxlabel"]
@@ -108,14 +108,14 @@ def post_maxlabel(server, uuid, instance, maxlabel, *, session=None):
         current MaxLabel value for the instance.
         See ``fetch_maxlabel()``
     """
-    url = f'http://{server}/api/node/{uuid}/{instance}/maxlabel/{maxlabel}'
+    url = f'{server}/api/node/{uuid}/{instance}/maxlabel/{maxlabel}'
     r = session.post(url)
     r.raise_for_status()
 
 
 @dvid_api_wrapper
 def fetch_nextlabel(server, uuid, instance, *, session=None):
-    url = f'http://{server}/api/node/{uuid}/{instance}/nextlabel'
+    url = f'{server}/api/node/{uuid}/{instance}/nextlabel'
     r_json = fetch_generic_json(url, session=session)
     return r_json['nextlabel']
 
@@ -153,7 +153,7 @@ def post_nextlabel(server, uuid, instance, num_labels, *, session=None):
             The returned range is INCLUSIVE, meaning 'end' is reserved
             (unlike python's range() function).
     """
-    url = f'http://{server}/api/node/{uuid}/{instance}/nextlabel/{num_labels}'
+    url = f'{server}/api/node/{uuid}/{instance}/nextlabel/{num_labels}'
     r = session.post(url)
     r.raise_for_status()
     d = r.json()
@@ -178,7 +178,7 @@ def fetch_supervoxels(server, uuid, instance, body_id, user=None, *, session=Non
     if user:
         query_params['u'] = user
 
-    url = f'http://{server}/api/node/{uuid}/{instance}/supervoxels/{body_id}'
+    url = f'{server}/api/node/{uuid}/{instance}/supervoxels/{body_id}'
     r = session.get(url, params=query_params)
     r.raise_for_status()
     supervoxels = np.array(r.json(), np.uint64)
@@ -296,7 +296,7 @@ def fetch_size(server, uuid, instance, label_id, supervoxels=False, *, session=N
         The voxel count of the given body/supervoxel, as an integer.
     """
     supervoxels = str(bool(supervoxels)).lower()
-    url = f'http://{server}/api/node/{uuid}/{instance}/size/{label_id}?supervoxels={supervoxels}'
+    url = f'{server}/api/node/{uuid}/{instance}/size/{label_id}?supervoxels={supervoxels}'
     response = fetch_generic_json(url, session=session)
     return response['voxels']
 
@@ -336,7 +336,7 @@ def fetch_sizes(server, uuid, instance, label_ids, supervoxels=False, *, session
     label_ids = np.asarray(label_ids, np.uint64)
     sv_param = str(bool(supervoxels)).lower()
 
-    url = f'http://{server}/api/node/{uuid}/{instance}/sizes?supervoxels={sv_param}'
+    url = f'{server}/api/node/{uuid}/{instance}/sizes?supervoxels={sv_param}'
     sizes = fetch_generic_json(url, label_ids.tolist(), session=session)
     
     sizes = pd.Series(sizes, index=label_ids, name='size')
@@ -369,7 +369,7 @@ def fetch_supervoxel_sizes_for_body(server, uuid, instance, body_id, user=None, 
         query_params['u'] = user
 
     # FIXME: Call fetch_sizes() with a custom session instead of rolling our own request here.
-    url = f'http://{server}/api/node/{uuid}/{instance}/sizes?supervoxels=true'
+    url = f'{server}/api/node/{uuid}/{instance}/sizes?supervoxels=true'
     r = session.get(url, params=query_params, json=supervoxels.tolist())
     r.raise_for_status()
     sizes = np.array(r.json(), np.uint32)
@@ -420,7 +420,7 @@ def fetch_label(server, uuid, instance, coordinate_zyx, supervoxels=False, scale
     if scale != 0:
         params['scale'] = str(scale)
 
-    r = session.get(f'http://{server}/api/node/{uuid}/{instance}/label/{coord_str}', params=params)
+    r = session.get(f'{server}/api/node/{uuid}/{instance}/label/{coord_str}', params=params)
     r.raise_for_status()
     return np.uint64(r.json()["Label"])
 
@@ -473,7 +473,7 @@ def fetch_labels(server, uuid, instance, coordinates_zyx, supervoxels=False, sca
         params['scale'] = str(scale)
 
     coords_xyz = np.array(coordinates_zyx)[:, ::-1].tolist()
-    r = session.get(f'http://{server}/api/node/{uuid}/{instance}/labels', json=coords_xyz, params=params)
+    r = session.get(f'{server}/api/node/{uuid}/{instance}/labels', json=coords_xyz, params=params)
     r.raise_for_status()
     
     labels = np.array(r.json(), np.uint64)
@@ -540,7 +540,7 @@ def fetch_sparsevol_rles(server, uuid, instance, label, supervoxels=False, scale
     See also: neuclease.dvid.rle.parse_rle_response()
     """
     supervoxels = str(bool(supervoxels)).lower() # to lowercase string
-    url = f'http://{server}/api/node/{uuid}/{instance}/sparsevol/{label}?supervoxels={supervoxels}&scale={scale}'
+    url = f'{server}/api/node/{uuid}/{instance}/sparsevol/{label}?supervoxels={supervoxels}&scale={scale}'
     r = session.get(url)
     r.raise_for_status()
     return r.content
@@ -570,7 +570,7 @@ def post_split_supervoxel(server, uuid, instance, supervoxel, rle_payload_bytes,
     Returns:
         The two new IDs resulting from the split: (split_sv_id, remaining_sv_id)
     """
-    url = f'http://{server}/api/node/{uuid}/{instance}/split-supervoxel/{supervoxel}'
+    url = f'{server}/api/node/{uuid}/{instance}/split-supervoxel/{supervoxel}'
 
 
     if bool(split_id) ^ bool(remain_id):
@@ -611,7 +611,7 @@ def fetch_mapping(server, uuid, instance, supervoxel_ids, *, session=None, as_se
         Otherwise, return the bodies as an array, in the same order in which the supervoxels were given.
     """
     supervoxel_ids = list(map(int, supervoxel_ids))
-    body_ids = fetch_generic_json(f'http://{server}/api/node/{uuid}/{instance}/mapping', json=supervoxel_ids, session=session)
+    body_ids = fetch_generic_json(f'{server}/api/node/{uuid}/{instance}/mapping', json=supervoxel_ids, session=session)
     mapping = pd.Series(body_ids, index=np.asarray(supervoxel_ids, np.uint64), dtype=np.uint64, name='body')
     mapping.index.name = 'sv'
     
@@ -663,7 +663,7 @@ def fetch_mappings(server, uuid, instance, as_array=False, *, format=None, sessi
 
     if format == 'binary':
         # This takes ~30 seconds so it's nice to log it.
-        uri = f"http://{server}/api/node/{uuid}/{instance}/mappings?format=binary"
+        uri = f"{server}/api/node/{uuid}/{instance}/mappings?format=binary"
         with Timer(f"Fetching {uri}", logger):
             r = session.get(uri)
             r.raise_for_status()
@@ -676,7 +676,7 @@ def fetch_mappings(server, uuid, instance, as_array=False, *, format=None, sessi
 
     else:
         # This takes ~30 seconds so it's nice to log it.
-        uri = f"http://{server}/api/node/{uuid}/{instance}/mappings"
+        uri = f"{server}/api/node/{uuid}/{instance}/mappings"
         with Timer(f"Fetching {uri}", logger):
             r = session.get(uri)
             r.raise_for_status()
@@ -859,7 +859,7 @@ def post_mappings(server, uuid, instance, mappings, mutid, *, batch_size=None, s
         ops = MappingOps()
         ops.mappings.extend(ops_list)
         payload = ops.SerializeToString()
-        r = session.post(f'http://{server}/api/node/{uuid}/{instance}/mappings', data=payload)
+        r = session.post(f'{server}/api/node/{uuid}/{instance}/mappings', data=payload)
         r.raise_for_status()
 
     progress_bar = tqdm_proxy(total=len(df), disable=(batch_size is None), logger=logger)
@@ -918,7 +918,7 @@ def copy_mappings(src_info, dest_info, batch_size=None, *, session=None):
 
 @dvid_api_wrapper
 def fetch_mutation_id(server, uuid, instance, body_id, *, session=None):
-    response = fetch_generic_json(f'http://{server}/api/node/{uuid}/{instance}/lastmod/{body_id}', session=session)
+    response = fetch_generic_json(f'{server}/api/node/{uuid}/{instance}/lastmod/{body_id}', session=session)
     return response["mutation id"]
 
 
@@ -986,7 +986,7 @@ def fetch_sparsevol_coarse(server, uuid, instance, label_id, supervoxels=False,
     assert format in ('coords', 'mask')
 
     supervoxels = str(bool(supervoxels)).lower()
-    r = session.get(f'http://{server}/api/node/{uuid}/{instance}/sparsevol-coarse/{label_id}?supervoxels={supervoxels}')
+    r = session.get(f'{server}/api/node/{uuid}/{instance}/sparsevol-coarse/{label_id}?supervoxels={supervoxels}')
     r.raise_for_status()
     
     if format == 'coords':
@@ -1272,7 +1272,7 @@ def fetch_labelmap_voxels(server, uuid, instance, box_zyx, scale=0, throttle=Fal
     if supervoxels:
         params['supervoxels'] = str(bool(supervoxels)).lower()
 
-    r = session.get(f'http://{server}/api/node/{uuid}/{instance}/blocks/{shape_str}/{offset_str}', params=params)
+    r = session.get(f'{server}/api/node/{uuid}/{instance}/blocks/{shape_str}/{offset_str}', params=params)
     r.raise_for_status()
 
     def inflate_labelarray_blocks():
@@ -1491,7 +1491,7 @@ def post_labelmap_blocks(server, uuid, instance, corners_zyx, blocks, scale=0, d
         if value:
             params[opt] = str(bool(value)).lower()
 
-    r = session.post(f'http://{server}/api/node/{uuid}/{instance}/blocks', params=params, data=body_data)
+    r = session.post(f'{server}/api/node/{uuid}/{instance}/blocks', params=params, data=body_data)
     r.raise_for_status()
 
 # Deprecated name
@@ -1760,7 +1760,7 @@ def post_cleave(server, uuid, instance, body_id, supervoxel_ids, *, session=None
     """
     supervoxel_ids = list(map(int, supervoxel_ids))
 
-    r = session.post(f'http://{server}/api/node/{uuid}/{instance}/cleave/{body_id}', json=supervoxel_ids)
+    r = session.post(f'{server}/api/node/{uuid}/{instance}/cleave/{body_id}', json=supervoxel_ids)
     r.raise_for_status()
     cleaved_body = r.json()["CleavedLabel"]
     return cleaved_body
@@ -1976,7 +1976,7 @@ def post_merge(server, uuid, instance, main_label, other_labels, *, session=None
     
     content = [main_label] + other_labels
     
-    r = session.post(f'http://{server}/api/node/{uuid}/{instance}/merge', json=content)
+    r = session.post(f'{server}/api/node/{uuid}/{instance}/merge', json=content)
     r.raise_for_status()
     
 

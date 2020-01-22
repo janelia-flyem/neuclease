@@ -61,7 +61,7 @@ def fetch_roi(server, uuid, instance, format='ranges', *, mask_box=None, session
     if mask_box is not None:
         mask_box =  np.asarray(mask_box)
     
-    rle_ranges = fetch_generic_json(f'http://{server}/api/node/{uuid}/{instance}/roi', session=session)
+    rle_ranges = fetch_generic_json(f'{server}/api/node/{uuid}/{instance}/roi', session=session)
     rle_ranges = np.asarray(rle_ranges, np.int32, order='C')
 
     # Special cases for empty ROI
@@ -123,7 +123,7 @@ def post_roi(server, uuid, instance, roi_ranges, *, session=None):
     if isinstance(roi_ranges, np.ndarray):
         roi_ranges = roi_ranges.tolist()
     encoded_ranges = ujson.dumps(roi_ranges)
-    r = session.post(f'http://{server}/api/node/{uuid}/{instance}/roi', data=encoded_ranges)
+    r = session.post(f'{server}/api/node/{uuid}/{instance}/roi', data=encoded_ranges)
     r.raise_for_status()
 
 

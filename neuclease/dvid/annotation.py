@@ -49,7 +49,7 @@ def post_sync(server, uuid, instance, sync_instances, replace=False, *, session=
     if replace:
         params['replace'] = str(bool(replace)).lower()
 
-    r = session.post(f'http://{server}/api/node/{uuid}/{instance}/sync', json=body, params=params)
+    r = session.post(f'{server}/api/node/{uuid}/{instance}/sync', json=body, params=params)
     r.raise_for_status()
 
 # Synonym
@@ -96,7 +96,7 @@ def post_reload(server, uuid, instance, *, check=False, inmemory=True, session=N
     if not inmemory:
         params['inmemory'] = "false"
     
-    r = session.post(f'http://{server}/api/node/{uuid}/{instance}/reload', params=params)
+    r = session.post(f'{server}/api/node/{uuid}/{instance}/reload', params=params)
     r.raise_for_status()
 
 # Synonym
@@ -131,7 +131,7 @@ def fetch_label(server, uuid, instance, label, relationships=False, *, session=N
     """
     params = { 'relationships': str(bool(relationships)).lower() }
     
-    r = session.get(f'http://{server}/api/node/{uuid}/{instance}/label/{label}', params=params)
+    r = session.get(f'{server}/api/node/{uuid}/{instance}/label/{label}', params=params)
     r.raise_for_status()
     return r.json()
 
@@ -164,7 +164,7 @@ def fetch_tag(server, uuid, instance, tag, relationships=False, *, session=None)
     """
     params = { 'relationships': str(bool(relationships)).lower() }
     
-    r = session.get(f'http://{server}/api/node/{uuid}/{instance}/tag/{tag}', params=params)
+    r = session.get(f'{server}/api/node/{uuid}/{instance}/tag/{tag}', params=params)
     r.raise_for_status()
     return r.json()
 
@@ -206,7 +206,7 @@ def fetch_roi(server, uuid, instance, roi, roi_uuid=None, *, session=None):
     """
     if roi_uuid:
         roi = roi + ',' + roi_uuid
-    r = session.get(f'http://{server}/api/node/{uuid}/{instance}/roi/{roi}')
+    r = session.get(f'{server}/api/node/{uuid}/{instance}/roi/{roi}')
     r.raise_for_status()
     return r.json()
 
@@ -259,7 +259,7 @@ def fetch_elements(server, uuid, instance, box_zyx, *, format='json', session=No
     shape_str = '_'.join(map(str, shape[::-1]))
     offset_str = '_'.join(map(str, box_zyx[0, ::-1]))
 
-    url = f'http://{server}/api/node/{uuid}/{instance}/elements/{shape_str}/{offset_str}'
+    url = f'{server}/api/node/{uuid}/{instance}/elements/{shape_str}/{offset_str}'
     data = fetch_generic_json(url, session=session)
     
     # The endooint returns 'null' instead of an empty list, on old servers at least.
@@ -340,7 +340,7 @@ def post_elements(server, uuid, instance, elements, kafkalog=True, *, session=No
     if not kafkalog or kafkalog == 'off':
         params['kafkalog'] = 'off'
     
-    r = session.post(f'http://{server}/api/node/{uuid}/{instance}/elements', json=elements, params=params)
+    r = session.post(f'{server}/api/node/{uuid}/{instance}/elements', json=elements, params=params)
     r.raise_for_status()
 
 
@@ -380,7 +380,7 @@ def fetch_blocks(server, uuid, instance, box_zyx, *, session=None):
     shape_str = '_'.join(map(str, shape[::-1]))
     offset_str = '_'.join(map(str, box_zyx[0, ::-1]))
 
-    url = f'http://{server}/api/node/{uuid}/{instance}/blocks/{shape_str}/{offset_str}'
+    url = f'{server}/api/node/{uuid}/{instance}/blocks/{shape_str}/{offset_str}'
     return fetch_generic_json(url, session=session)
 
 
@@ -409,7 +409,7 @@ def post_blocks(server, uuid, instance, blocks_json, kafkalog=False, *, session=
     if not kafkalog:
         params['kafkalog'] = 'off'
     
-    url = f'http://{server}/api/node/{uuid}/{instance}/blocks'
+    url = f'{server}/api/node/{uuid}/{instance}/blocks'
     data = ujson.dumps(blocks_json).encode('utf-8')
     r = session.post(url, data=data, params=params)
     r.raise_for_status()
@@ -443,7 +443,7 @@ def delete_element(server, uuid, instance, coord_zyx, kafkalog=True, *, session=
     if not kafkalog:
         params['kafkalog'] = 'off'
     
-    r = session.delete(f'http://{server}/api/node/{uuid}/{instance}/element/{coord_str}', params=params)
+    r = session.delete(f'{server}/api/node/{uuid}/{instance}/element/{coord_str}', params=params)
     r.raise_for_status()
 
 

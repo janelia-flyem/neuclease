@@ -227,9 +227,6 @@ def _run_cleave(data):
     segmentation_instance = data["segmentation-instance"]
     body_logger = PrefixedLogger(logger, f"User {user}: Body {body_id}: ")
 
-    if not server.startswith('http://'):
-        server = 'http://' + server
-
     instance_info = DvidInstanceInfo(server, uuid, segmentation_instance)
 
     # Remove empty seed classes (if any)
@@ -343,9 +340,6 @@ def body_edge_table():
     uuid = data["uuid"]
     segmentation_instance = data["segmentation-instance"]
     body_logger = PrefixedLogger(logger, f"User {user}: Body {body_id}: ")
-
-    if not server.startswith('http://'):
-        server = 'http://' + server
 
     instance_info = DvidInstanceInfo(server, uuid, segmentation_instance)
 

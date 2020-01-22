@@ -36,7 +36,7 @@ def fetch_repos_info(server, *, session=None):
     """
     Wrapper for the .../api/repos/info endpoint.
     """
-    return fetch_generic_json(f'http://{server}/api/repos/info', session=session)
+    return fetch_generic_json(f'{server}/api/repos/info', session=session)
 
 @dvid_api_wrapper
 def create_repo(server, alias, description, *, session=None):
@@ -59,7 +59,7 @@ def create_repo(server, alias, description, *, session=None):
     info = {}
     info['alias'] = alias
     info['description'] = description
-    r = session.post(f'http://{server}/api/repos', json=info)
+    r = session.post(f'{server}/api/repos', json=info)
     r.raise_for_status()
 
     repo_uuid = r.json()['root']
@@ -74,7 +74,7 @@ def fetch_info(server, uuid=None, *, session=None):
     See also: ``neuclease.dvid.wrapper_proxies.fetch_info()``
     """
     if uuid is not None:
-        return fetch_generic_json(f'http://{server}/api/repo/{uuid}/info', session=session)
+        return fetch_generic_json(f'{server}/api/repo/{uuid}/info', session=session)
     else:
         # If there's only one repo, the user can omit the uuid.
         repos_info = fetch_repos_info(server, session=session)
@@ -221,7 +221,7 @@ def create_instance(server, uuid, instance, typename, versioned=True, compressio
     
     settings.update(type_specific_settings)
     
-    r = session.post(f"http://{server}/api/repo/{uuid}/instance", json=settings)
+    r = session.post(f"{server}/api/repo/{uuid}/instance", json=settings)
     r.raise_for_status()
 
 

@@ -92,7 +92,7 @@ def dvid_api_wrapper(f):
     and accepts 'session' as a keyword-only argument.
     
     This decorator does the following:
-    - If the server address begins with 'http://', that prefix is stripped from it.
+    - If the server address doesn't begin with 'http://' or 'https://', it is prefixed with 'http://'
     - If 'session' was not provided by the caller, a default one is provided.
     - If an HTTPError is raised, the response body (if any) is also included in the exception text.
       (DVID error responses often include useful information in the response body,
@@ -106,8 +106,8 @@ def dvid_api_wrapper(f):
     @functools.wraps(f)
     def wrapper(server, *args, session=None, **kwargs):
         assert isinstance(server, str)
-        if server.startswith('http://'):
-            server = server[len('http://'):]
+        if not server.startswith('http://') and not server.startswith('https://'):
+            server = 'http://' + server
 
         if session is None:
             session = default_dvid_session()
@@ -136,7 +136,7 @@ def dvid_api_wrapper(f):
 
 @dvid_api_wrapper
 def fetch_generic_json(url, json=None, *, session=None):
-    r = session.get('http://' + url, json=json)
+    r = session.get(url, json=json)
     r.raise_for_status()
     return r.json()
 

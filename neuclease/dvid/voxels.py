@@ -57,7 +57,7 @@ def fetch_raw(server, uuid, instance, box_zyx, throttle=False, *, dtype=np.uint8
     shape_str = '_'.join(map(str, shape_zyx[::-1]))
     offset_str = '_'.join(map(str, box_zyx[0, ::-1]))
 
-    r = session.get(f'http://{server}/api/node/{uuid}/{instance}/raw/0_1_2/{shape_str}/{offset_str}', params=params)
+    r = session.get(f'{server}/api/node/{uuid}/{instance}/raw/0_1_2/{shape_str}/{offset_str}', params=params)
     r.raise_for_status()
 
     if len(r.content) != np.prod(shape_zyx) * np.dtype(dtype).itemsize:
@@ -88,7 +88,7 @@ def post_raw(server, uuid, instance, offset_zyx, volume, throttle=False, mutate=
     shape_str = '_'.join(map(str, volume.shape[::-1]))
     offset_str = '_'.join(map(str, offset_zyx[::-1]))
 
-    r = session.post(f'http://{server}/api/node/{uuid}/{instance}/raw/0_1_2/{shape_str}/{offset_str}',
+    r = session.post(f'{server}/api/node/{uuid}/{instance}/raw/0_1_2/{shape_str}/{offset_str}',
                     params=params, data=bytes(volume))
     r.raise_for_status()
 
@@ -138,7 +138,7 @@ def post_resolution(server, uuid, instance, resolution, *, session=None):
     """
     resolution = np.asarray(resolution).tolist()
     assert len(resolution) == 3
-    r = session.post(f'http://{server}/api/node/{uuid}/{instance}/resolution', json=resolution[::-1])
+    r = session.post(f'{server}/api/node/{uuid}/{instance}/resolution', json=resolution[::-1])
     r.raise_for_status()
 
 
@@ -169,7 +169,7 @@ def post_extents(server, uuid, instance, box_zyx, *, session=None):
     extents_json = { "MinPoint": min_point_xyz.tolist(),
                      "MaxPoint": max_point_xyz.tolist() }
     
-    url = f'http://{server}/api/node/{uuid}/{instance}/extents'
+    url = f'{server}/api/node/{uuid}/{instance}/extents'
     r = session.post(url, json=extents_json)
     r.raise_for_status()
 

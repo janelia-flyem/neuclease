@@ -40,7 +40,7 @@ def fetch_keys(server, uuid, instance, *, session=None):
     Returns:
         list of strings
     """
-    return fetch_generic_json(f'http://{server}/api/node/{uuid}/{instance}/keys', session=session)
+    return fetch_generic_json(f'{server}/api/node/{uuid}/{instance}/keys', session=session)
 
 
 @dvid_api_wrapper
@@ -75,7 +75,7 @@ def fetch_keyrange(server, uuid, instance, key1, key2, *, session=None):
         # This gets everything from 'aaa...' to 'zzzzz...'
         keys = fetch_keyrange('emdata3:8900', 'abc9', 'a', chr(ord('z')+1))
     """
-    url = f'http://{server}/api/node/{uuid}/{instance}/keyrange/{key1}/{key2}'
+    url = f'{server}/api/node/{uuid}/{instance}/keyrange/{key1}/{key2}'
     return fetch_generic_json(url, session=session)
     
 
@@ -103,7 +103,7 @@ def fetch_key(server, uuid, instance, key, as_json=False, *, session=None):
     Returns:
         Bytes or parsed json data (see ``as_json``)
     """
-    r = session.get(f'http://{server}/api/node/{uuid}/{instance}/key/{key}')
+    r = session.get(f'{server}/api/node/{uuid}/{instance}/key/{key}')
     r.raise_for_status()
     if as_json:
         return r.json()
@@ -139,7 +139,7 @@ def post_key(server, uuid, instance, key, data=None, json=None, *, session=None)
     assert data is not None or json is not None, "No data to post"
     if data is not None:
         assert isinstance(data, bytes), f"Raw data must be posted as bytes, not {type(data)}"
-    r = session.post(f'http://{server}/api/node/{uuid}/{instance}/key/{key}', data=data, json=json)
+    r = session.post(f'{server}/api/node/{uuid}/{instance}/key/{key}', data=data, json=json)
     r.raise_for_status()
     
 
@@ -161,7 +161,7 @@ def delete_key(server, uuid, instance, key, *, session=None):
         key:
             A key (string) whose corresponding value will be deleted.
     """
-    r = session.delete(f'http://{server}/api/node/{uuid}/{instance}/key/{key}')
+    r = session.delete(f'{server}/api/node/{uuid}/{instance}/key/{key}')
     r.raise_for_status()
 
 
@@ -230,7 +230,7 @@ def _fetch_keyvalues_via_protobuf(server, uuid, instance, keys, as_json=False, *
     for key in keys:
         proto_keys.keys.append(key)
     
-    r = session.get(f'http://{server}/api/node/{uuid}/{instance}/keyvalues', data=proto_keys.SerializeToString())
+    r = session.get(f'{server}/api/node/{uuid}/{instance}/keyvalues', data=proto_keys.SerializeToString())
     r.raise_for_status()
 
     proto_keyvalues = KeyValues()
@@ -261,7 +261,7 @@ def _fetch_keyvalues_jsontar_via_jsontar(server, uuid, instance, keys, as_json=F
     else:
         keys = list(keys)
     
-    r = session.get(f'http://{server}/api/node/{uuid}/{instance}/keyvalues', params=params, json=keys)
+    r = session.get(f'{server}/api/node/{uuid}/{instance}/keyvalues', params=params, json=keys)
     r.raise_for_status()
     
     tf = TarFile(f'{instance}.tar', fileobj=BytesIO(r.content))
@@ -329,7 +329,7 @@ def post_keyvalues(server, uuid, instance, keyvalues, batch_size=None, *, sessio
         proto_keyvalues = KeyValues()
         proto_keyvalues.kvs.extend(kvs)
     
-        url = f'http://{server}/api/node/{uuid}/{instance}/keyvalues'
+        url = f'{server}/api/node/{uuid}/{instance}/keyvalues'
         r = session.post(url, data=proto_keyvalues.SerializeToString())
         r.raise_for_status()
 

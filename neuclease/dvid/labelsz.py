@@ -51,7 +51,7 @@ def fetch_count(server, uuid, instance, label, index_type, *, session=None):
     Returns:
         JSON. For example: ``{ "Label": 21847,  "PreSyn": 81 }``
     """
-    return fetch_generic_json(f'http://{server}/api/node/{uuid}/{instance}/count/{label}/{index_type}', session=session)
+    return fetch_generic_json(f'{server}/api/node/{uuid}/{instance}/count/{label}/{index_type}', session=session)
 
 
 @dvid_api_wrapper
@@ -83,7 +83,7 @@ def fetch_counts(server, uuid, instance, labels, index_type, *, session=None):
         JSON. For example: ``[{ "Label": 21847,  "PreSyn": 81 }, { "Label": 23, "PreSyn": 65 }, ...]``
     """
     labels = [int(label) for label in labels]
-    return fetch_generic_json(f'http://{server}/api/node/{uuid}/{instance}/counts/{index_type}', json=labels, session=session)
+    return fetch_generic_json(f'{server}/api/node/{uuid}/{instance}/counts/{index_type}', json=labels, session=session)
 
 
 @dvid_api_wrapper
@@ -111,7 +111,7 @@ def fetch_top(server, uuid, instance, n, index_type, *, session=None):
     Returns:
         JSON. For example: ``[{ "Label": 21847,  "PreSyn": 81 }, { "Label": 23, "PreSyn": 65 }, ...]``
     """
-    return fetch_generic_json(f'http://{server}/api/node/{uuid}/{instance}/top/{n}/{index_type}', session=session)
+    return fetch_generic_json(f'{server}/api/node/{uuid}/{instance}/top/{n}/{index_type}', session=session)
 
 
 @dvid_api_wrapper
@@ -161,7 +161,7 @@ def fetch_threshold(server, uuid, instance, threshold, index_type, offset=0, n=1
     if n is not None:
         params['n'] = int(n)
     
-    r = session.get(f'http://{server}/api/node/{uuid}/{instance}/threshold/{threshold}/{index_type}', params=params)
+    r = session.get(f'{server}/api/node/{uuid}/{instance}/threshold/{threshold}/{index_type}', params=params)
     r.raise_for_status()
     return r.json()
 
@@ -197,7 +197,7 @@ def post_sync(server, uuid, instance, sync_instances, replace=False, *, session=
     if replace:
         params['replace'] = str(bool(replace)).lower()
 
-    r = session.post(f'http://{server}/api/node/{uuid}/{instance}/sync', json=body, params=params)
+    r = session.post(f'{server}/api/node/{uuid}/{instance}/sync', json=body, params=params)
     r.raise_for_status()
 
 # Synonym
@@ -220,7 +220,7 @@ def post_reload(server, uuid, instance, *, session=None): # Note: See wrapper_pr
         instance:
             dvid labelsz instance name
     """
-    r = session.post(f'http://{server}/api/node/{uuid}/{instance}/reload')
+    r = session.post(f'{server}/api/node/{uuid}/{instance}/reload')
     r.raise_for_status()
 
 
