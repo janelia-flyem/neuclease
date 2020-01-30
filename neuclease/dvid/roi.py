@@ -286,7 +286,14 @@ def fetch_combined_roi_volume(server, uuid, rois, as_bool=False, box_zyx=None, *
         for p, size in prev_labels_overlap_sizes.items():
             if p == 0:
                 continue
-            overlap_stats.append((reverse_rois[p], reverse_rois[label], size))
+            
+            if p == label:
+                # Note: In the case of combined ROIs, where the user is
+                # mapping more than one ROI to the same label, we
+                # overlaps among ROIs in the same group are still worth noting.
+                # Hence, no special handling in this case.
+                pass
+            overlap_stats.append((reverse_rois[p], roi, size))
 
         # Overwrite view
         if as_bool:
@@ -345,15 +352,10 @@ def determine_point_rois(server, uuid, rois, points_df, combined_vol=None, combi
     assert set(points_df.columns).issuperset(['x', 'y', 'z'])
     
     if combined_vol is None:
-        combined_vol, combined_box, overlapping_pairs = fetch_combined_roi_volume(server, uuid, rois, False, combined_box, session=session)
-        if overlapping_pairs:
-            rois = [*rois]
-            msg = ""
-            for a,b in overlapping_pairs:
-                msg += f"  {rois[a-1]} : {rois[b-1]}\n"
-        
+        combined_vol, combined_box, overlaps = fetch_combined_roi_volume(server, uuid, rois, False, combined_box, session=session)
+        if len(overlaps):
             logger.warning(f"Some ROIs overlap!")
-            logger.warning(f"Overlapping pairs:\n{msg}")
+            logger.warning(f"Overlapping pairs:\n{overlaps}")
 
     assert combined_box is not None
 
