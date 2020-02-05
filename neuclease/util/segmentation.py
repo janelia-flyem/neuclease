@@ -8,7 +8,7 @@ from numba import njit
 
 from dvidutils import LabelMapper
 
-from . import Timer, Grid, boxes_from_grid, box_intersection, box_to_slicing
+from . import Timer, Grid, boxes_from_grid, box_intersection, box_to_slicing, extract_subvol
 
 logger = logging.getLogger(__name__)
 
@@ -296,7 +296,7 @@ def edge_mask_for_axis( label_img, axis ):
     return edge_mask
 
 
-def compute_adjacencies(label_vol, max_dilation=0, include_zero=False, return_dilated=False):
+def compute_adjacencies(label_vol, max_dilation=0, include_zero=False, return_dilated=False, disable_quantization=False):
     """
     Compute the size of the borders between label segments in a label volume.
     Returns a pd.Series of edge sizes, indexed by adjacent label pairs.
@@ -313,10 +313,17 @@ def compute_adjacencies(label_vol, max_dilation=0, include_zero=False, return_di
             Before computing adjacencies, grow the labels by the given
             radius within the empty (zero) regions of the volume as
             described above.
-            Note that the dilation is performed from all labels simultaneously,
-            so if max_dilation=1, gaps of up to 2 voxels wide will be closed.
-            (With this method, there is no way to close gaps of 1 voxel
-            wide without also closing gaps that are 2 voxels wide.)
+            Note:
+                The dilation is performed from all labels simultaneously,
+                so if max_dilation=1, gaps of up to 2 voxels wide will be closed.
+                (With this method, there is no way to close gaps of 1 voxel
+                wide without also closing gaps that are 2 voxels wide.)
+            
+            Note:
+                This feature is optimized if you choose a value that is divisible by 0.25,
+                and <= 63.  In that case, the distance transform is quantized and converted to uint8.
+                Some precision is lost in the quantization, but the watershed step is much faster.
+                This optimization can be disabled via disable_quantization=True.
         
         include_zero:
             If True, include adjacencies to label 0 in the output.
@@ -324,7 +331,16 @@ def compute_adjacencies(label_vol, max_dilation=0, include_zero=False, return_di
         return_dilated:
             If True, also return the pre-processed label volume.
             If max_dilation=0, then the input volume is returned unchanged.
-    
+
+            Note:
+                To avoid unnecessary computation and save RAM, the label_vol
+                is cropped (if possible) to included only the non-zero voxels.
+                Therefore, the 'dilated' output may not have the same shape
+                as the original input.
+        
+        disable_quantization:
+            If True, do not enable the optimization described above.
+
     Returns:
         pd.Series of edgea area values, indexed by label pair
         If return_dilated=True, then a tuple is returned:
@@ -361,7 +377,20 @@ def compute_adjacencies(label_vol, max_dilation=0, include_zero=False, return_di
     if max_dilation > 0:
         with Timer("Computing distance transform", logger):
             nonzero = (label_vol != 0).astype(np.uint32)
+            nz_box = compute_nonzero_box(nonzero)
+            nonzero = extract_subvol(nonzero, nz_box)
+            label_vol = extract_subvol(label_vol, nz_box)
             dt = vigra.filters.distanceTransform(nonzero)
+
+            # If we can safely convert the distance transform to uint8,
+            # that will allow a much faster watershed ("turbo mode").
+            # We convert to uint8 if max_dilation is divisible by 0.25.
+            if not disable_quantization and max_dilation <= 63 and int(4*max_dilation) == 4*max_dilation:
+                logger.info("Quantizing distance transform as uint8 to enable 'turbo' watershed")
+                max_dilation *= 4
+                dt[dt > 63] = 63
+                dt *= 4
+                dt = dt.astype(np.uint8)
         
         with Timer("Computing watershed to fill gaps", logger):
             label_vol = label_vol.astype(np.uint32, copy=True)
