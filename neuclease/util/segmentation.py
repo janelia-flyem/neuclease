@@ -1,5 +1,6 @@
 from collections import OrderedDict
 
+import vigra
 import numpy as np
 import pandas as pd
 from numba import njit
@@ -291,6 +292,103 @@ def edge_mask_for_axis( label_img, axis ):
     edge_mask = (label_img[left_slicing] != label_img[right_slicing])
     return edge_mask
 
+
+def compute_adjacencies(label_vol, max_dilation=0, include_zero=False, return_dilated=False):
+    """
+    Compute the size of the borders between label segments in a label volume.
+    Returns a pd.Series of edge sizes, indexed by adjacent label pairs.
+    
+    If you're interested in labels that are close, but perhaps not exactly adjacent,
+    the max_dilation parameter can be used to pre-process the data by simultaneously
+    dilating all labels within the empty regions between labels, using a distance transform.
+    
+    Args:
+        label_vol:
+            ND label volume
+        
+        max_dilation:
+            Before computing adjacencies, grow the labels by the given
+            radius within the empty (zero) regions of the volume as
+            described above.
+        
+        include_zero:
+            If True, include adjacencies to label 0 in the output.
+        
+        return_dilated:
+            If True, also return the pre-processed label volume.
+            If max_dilation=0, then the input volume is returned unchanged.
+    
+    Returns:
+        pd.Series of edgea area values, indexed by label pair
+        If return_dilated=True, then a tuple is returned:
+        (pd.Series, np.ndarray)
+
+    Example:
+    
+            >>> labels = [[1,1,1,1,2,2],
+            ...           [1,1,1,0,2,2],
+            ...           [1,0,0,0,2,2],
+            ...           [1,0,0,0,2,2],
+            ...           [1,0,0,0,2,2],
+            ...           [1,0,2,2,2,2]]
+    
+
+        >>> compute_adjacencies(labels)
+        
+        >>> adj, dil = compute_adjacencies(labels, 1, return_dilated=True)
+        
+        >>> print(adj)
+        label_a  label_b
+        1        2          6
+        Name: edge_area, dtype: int64
+        
+        >>> print(dil)
+        [[1 1 1 1 2 2]
+         [1 1 1 1 2 2]
+         [1 1 1 2 2 2]
+         [1 1 0 2 2 2]
+         [1 1 2 2 2 2]
+         [1 1 2 2 2 2]]
+    """
+    label_vol = np.asarray(label_vol)
+    if max_dilation > 0:
+        nonzero = (label_vol != 0).astype(np.uint32)
+        dt = vigra.filters.distanceTransform(nonzero)
+        label_vol = label_vol.astype(np.uint32, copy=True)
+        vigra.analysis.watersheds(dt, seeds=label_vol, out=label_vol)
+        label_vol[dt > max_dilation] = 0
+
+    adj = _compute_adjacencies(label_vol, include_zero)
+    if return_dilated:
+        return adj, label_vol
+    else:
+        return adj
+
+
+def _compute_adjacencies(label_vol, include_zero=False):
+    all_label_pairs = []
+    for axis in range(label_vol.ndim):
+        left_slicing = ((slice(None),) * axis) + (np.s_[:-1],)
+        right_slicing = ((slice(None),) * axis) + (np.s_[1:],)
+
+        edge_mask = (label_vol[left_slicing] != label_vol[right_slicing])
+        left_labels = label_vol[left_slicing][edge_mask]
+        right_labels = label_vol[right_slicing][edge_mask]
+        
+        label_pairs = np.array([left_labels, right_labels]).transpose()
+        label_pairs.sort(axis=1)
+        
+        if not include_zero:
+            keep_rows = (label_pairs[:,0] != 0) & (label_pairs[:,1] != 0)
+            label_pairs = label_pairs[keep_rows]
+        
+        all_label_pairs.append(label_pairs)
+    
+    all_label_pairs = np.concatenate(all_label_pairs, axis=0)
+    df = pd.DataFrame(all_label_pairs, columns=['label_a', 'label_b'])
+    areas = df.groupby(['label_a', 'label_b']).size().rename('edge_area')
+    return areas
+    
 
 
 def contingency_table(left_vol, right_vol):
