@@ -357,7 +357,10 @@ def compute_adjacencies(label_vol, max_dilation=0, include_zero=False, return_di
     
 
         >>> compute_adjacencies(labels)
-        
+        label_a  label_b
+        1        2          1
+        Name: edge_area, dtype: int64
+
         >>> adj, dil = compute_adjacencies(labels, 1, return_dilated=True)
         
         >>> print(adj)
