@@ -1,3 +1,4 @@
+import logging
 from collections import OrderedDict
 
 import vigra
@@ -7,7 +8,9 @@ from numba import njit
 
 from dvidutils import LabelMapper
 
-from . import Grid, boxes_from_grid, box_intersection, box_to_slicing
+from . import Timer, Grid, boxes_from_grid, box_intersection, box_to_slicing
+
+logger = logging.getLogger(__name__)
 
 BLOCK_STATS_DTYPES = OrderedDict([ ('segment_id', np.uint64),
                                    ('z', np.int32),
@@ -310,6 +313,10 @@ def compute_adjacencies(label_vol, max_dilation=0, include_zero=False, return_di
             Before computing adjacencies, grow the labels by the given
             radius within the empty (zero) regions of the volume as
             described above.
+            Note that the dilation is performed from all labels simultaneously,
+            so if max_dilation=1, gaps of up to 2 voxels wide will be closed.
+            (With this method, there is no way to close gaps of 1 voxel
+            wide without also closing gaps that are 2 voxels wide.)
         
         include_zero:
             If True, include adjacencies to label 0 in the output.
@@ -352,13 +359,18 @@ def compute_adjacencies(label_vol, max_dilation=0, include_zero=False, return_di
     """
     label_vol = np.asarray(label_vol)
     if max_dilation > 0:
-        nonzero = (label_vol != 0).astype(np.uint32)
-        dt = vigra.filters.distanceTransform(nonzero)
-        label_vol = label_vol.astype(np.uint32, copy=True)
-        vigra.analysis.watersheds(dt, seeds=label_vol, out=label_vol)
-        label_vol[dt > max_dilation] = 0
+        with Timer("Computing distance transform", logger):
+            nonzero = (label_vol != 0).astype(np.uint32)
+            dt = vigra.filters.distanceTransform(nonzero)
+        
+        with Timer("Computing watershed to fill gaps", logger):
+            label_vol = label_vol.astype(np.uint32, copy=True)
+            vigra.analysis.watersheds(dt, seeds=label_vol, out=label_vol)
+            label_vol[dt > max_dilation] = 0
 
-    adj = _compute_adjacencies(label_vol, include_zero)
+    with Timer("Computing adjacencies", logger):
+        adj = _compute_adjacencies(label_vol, include_zero)
+
     if return_dilated:
         return adj, label_vol
     else:
