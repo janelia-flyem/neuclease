@@ -1297,7 +1297,7 @@ fetch_labelarray_voxels = fetch_labelmap_voxels
 
 
 def fetch_labelmap_voxels_chunkwise(server, uuid, instance, box_zyx, scale=0, throttle=False, supervoxels=False,
-                                    *, chunk_shape=(64,64,4096), threads=0):
+                                    *, chunk_shape=(64,64,4096), threads=0, out=None):
     """
     Same as fetch_labelmap_voxels, but internally fetches the volume in
     pieces to avoid fetching too much from DVID in one call.
@@ -1330,13 +1330,27 @@ def fetch_labelmap_voxels_chunkwise(server, uuid, instance, box_zyx, scale=0, th
         supervoxels:
             If True, request supervoxel data from the given labelmap instance.
         
-        block_shape:
-            The size of each 
+        chunk_shape:
+            The size of each chunk
+        
+        threads:
+            If non-zero, fetch chunks in parallel
+        
+        out:
+            If given, write results into the given array.
+            Must have the correct shape for the given ``box_zyx``,
+            but need not have a dtype of ``np.uint64`` if you happen to know the
+            label IDs will not exceed the max value for the output dtype.
 
     Returns:
         ndarray, with shape == (box[1] - box[0])
     """
-    full_vol = np.zeros(box_shape(box_zyx), np.uint64)
+    if out is None:
+        full_vol = np.zeros(box_shape(box_zyx), np.uint64)
+    else:
+        assert (out.shape == box_shape(box_zyx)).all()
+        full_vol = out
+
     chunk_boxes = boxes_from_grid(box_zyx, chunk_shape, clipped=True)
     
     _fetch = partial(_fetch_chunk, server, uuid, instance, scale, throttle, supervoxels)
