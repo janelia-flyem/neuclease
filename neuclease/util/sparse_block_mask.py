@@ -5,7 +5,7 @@ from .view_as_blocks import view_as_blocks
 from .box import box_intersection, box_to_slicing, extract_subvol, round_box
 from .grid import Grid, boxes_from_grid
 from .segmentation import compute_nonzero_box
-from matplotlib.pyplot import box
+from .util import downsample_mask
 
 class SparseBlockMask:
     """
@@ -68,6 +68,31 @@ class SparseBlockMask:
         old_lowres_box = sbm.box // sbm.resolution
         new_lowres_mask = extract_subvol(sbm.lowres_mask, new_lowres_box - old_lowres_box[0]).copy()
         return SparseBlockMask(new_lowres_mask, new_box, new_resolution)
+
+
+    @classmethod
+    def create_from_highres_mask(cls, highres_mask, highres_resolution, fullres_box, lowres_resolution):
+        """
+        Given a mask that is not necessarily at full-res,
+        but still at a higher res than the SBM you want to create,
+        create a SBM at a lower resolution.
+        
+        Args:
+            highres_mask:
+                A binary mask which will be downsampled before creating the SBM
+            highres_resolution:
+                The resolution of the input mask, i.e. the width of each mask voxel, in FULL-RES coordinates.
+            fullres_box:
+                The volume of space covered by the high-res mask, in FULL-RES coordinates.
+            lowres_resolution:
+                The resolution of the returned SBM, in FULL-RES coordinates.
+        Returns:
+            SparseBlockMask
+        """
+        assert not (np.array(lowres_resolution) % highres_resolution).any()
+        lowres_mask = downsample_mask(highres_mask, lowres_resolution // highres_resolution)
+        return SparseBlockMask(lowres_mask, fullres_box, lowres_resolution)
+
 
     @classmethod
     def create_from_lowres_coords(cls, coords_zyx, resolution):
