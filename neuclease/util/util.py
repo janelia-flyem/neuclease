@@ -420,7 +420,7 @@ class _iter_batches_with_len(_iter_batches):
 
 
 def compute_parallel(func, iterable, chunksize=1, threads=None, processes=None, ordered=True,
-                     leave_progress=False, total=None, initial=0, starmap=False, show_progress=True,
+                     leave_progress=False, total=None, initial=0, starmap=False, show_progress=None,
                      **pool_kwargs):
     """
     Use the given function to process the given iterable in a ThreadPool or process Pool,
@@ -462,6 +462,10 @@ def compute_parallel(func, iterable, chunksize=1, threads=None, processes=None, 
             If True, each item should be a tuple, which will be unpacked into
              the arguments to the given function, like ``itertools.starmap()``.
 
+        show_progress:
+            If True, show a progress bar.
+            By default, only show a progress bar if ``iterable`` has more than one element.
+
         pool_kwargs:
             keyword arguments to pass to the underlying Pool object,
             such as ``initializer`` or ``maxtasksperchild``.
@@ -484,6 +488,12 @@ def compute_parallel(func, iterable, chunksize=1, threads=None, processes=None, 
     
     if starmap:
         func = partial(apply_star, func)
+
+    if show_progress is None:
+        if hasattr(iterable, '__len__') and len(iterable) == 1:
+            show_progress = False
+        else:
+            show_progress = True
 
     with pool:
         items = f_map(func, iterable, chunksize)
