@@ -661,16 +661,22 @@ def downsample_mask(mask, factor, method='or'):
     """
     Downsample a boolean mask by the given factor.
     """
-    assert factor >= 1
     assert method in ('or', 'and')
+
+    mask = np.asarray(mask)
+    if not isinstance(factor, Iterable):
+        factor = mask.ndim*(factor,)
+    
+    factor = np.asarray(factor)
+    assert (factor >= 1).all()
     assert not any(mask.shape % factor), \
         "mask shape must be divisible by the downsampling factor"
 
-    if factor == 1:
+    if (factor == 1).all():
         return mask
 
     mask = np.asarray(mask, order='C')
-    v = view_as_blocks(mask, mask.ndim*(factor,))
+    v = view_as_blocks(mask, (*factor,))
     last_axes = (*range(v.ndim),)[-mask.ndim:]
     
     if method == 'or':
