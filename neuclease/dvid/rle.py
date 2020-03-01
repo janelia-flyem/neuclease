@@ -580,7 +580,7 @@ def runlength_decode_from_ranges_to_mask(rle_array_zyx, mask_box=None):
 
     # Discard ranges that are out of bounds in Z/Y, or were cropped to nothing in X
     keep =  (ranges_array[:, :2] >= 0).all(axis=1)
-    keep &= (ranges_array[:, :2] <= mask_shape[:2]).all(axis=1)
+    keep &= (ranges_array[:, :2] < mask_shape[:2]).all(axis=1)
     keep &= (ranges_array[:, 2] < ranges_array[:, 3])
 
     ranges_array = np.asarray(ranges_array[keep, :], order='C')
