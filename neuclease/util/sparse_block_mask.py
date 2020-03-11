@@ -220,6 +220,13 @@ class SparseBlockMask:
         Returns:
             boxes, shape=(N,2,3) of non-empty bricks, as indicated by block_mask.    
         """
+        if brick_grid is None:
+            brick_grid = Grid(self.resolution)
+        
+        if not isinstance(brick_grid, Grid):
+            assert isinstance(brick_grid, collections.abc.Iterable)
+            brick_grid = Grid(brick_grid)
+        
         assert (brick_grid.modulus_offset == (0,0,0)).all(), \
             "TODO: This function doesn't yet support brick grids with non-zero offsets"
         assert ((brick_grid.block_shape % self.resolution) == 0).all(), \
