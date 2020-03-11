@@ -1414,9 +1414,6 @@ def post_labelmap_voxels(server, uuid, instance, offset_zyx, volume, scale=0, do
             If True, passed via the query string to DVID, in which case DVID might return a '503' error
             if the server is too busy to service the request.
             It is your responsibility to catch DVIDExceptions in that case.
-        
-        supervoxels:
-            If True, request supervoxel data from the given labelmap instance.
     """
     offset_zyx = np.asarray(offset_zyx)
     shape = np.array(volume.shape)
