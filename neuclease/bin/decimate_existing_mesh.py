@@ -92,10 +92,10 @@ def main():
         if args.output_directory:
             output_path = f'{args.output_directory}/{body_id}.{args.format}'
 
-        decimate_existing_mesh(args.server, args.uuid, args.tsv_instance, body_id, args.fraction, args.format, output_path, output_dvid)
+        decimate_existing_mesh(args.server, args.uuid, args.tsv_instance, body_id, args.fraction, 1e9, args.format, output_path, output_dvid)
 
 
-def decimate_existing_mesh(server, uuid, instance, body_id, fraction, output_format=None, output_path=None, output_dvid=None, tar_bytes=None):
+def decimate_existing_mesh(server, uuid, instance, body_id, fraction, max_vertices=1e9, output_format=None, output_path=None, output_dvid=None, tar_bytes=None):
     """
     Fetch all supervoxel meshes for the given body, combine them into a
     single mesh, and then decimate that mesh at the specified fraction.
@@ -116,7 +116,7 @@ def decimate_existing_mesh(server, uuid, instance, body_id, fraction, output_for
     if output_format is None:
         raise RuntimeError("You must specify an output format (or an output path with a file extension)")
 
-    assert output_format in ('drc', 'obj'), \
+    assert output_format in Mesh.MESH_FORMATS, \
         f"Unknown output format: {output_format}"
 
     assert output_path is not None or output_dvid is not None, \
@@ -131,7 +131,8 @@ def decimate_existing_mesh(server, uuid, instance, body_id, fraction, output_for
 
     mesh_mb = mesh.uncompressed_size() / 1e6
     logger.info(f"Body: {body_id}: Original mesh has {len(mesh.vertices_zyx)} vertices and {len(mesh.faces)} faces ({mesh_mb:.1f} MB)")
-        
+
+    fraction = min(fraction, max_vertices / len(mesh.vertices_zyx))    
     with Timer(f"Body: {body_id}: Decimating at {fraction:.2f}", logger):
         mesh.simplify(fraction, in_memory=True)
 
