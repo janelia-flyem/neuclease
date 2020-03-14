@@ -119,6 +119,19 @@ def box_intersection(box_A, box_B):
     return intersection
 
 
+def box_union(*boxes):
+    """
+    Compute the bounding box of the given boxes,
+    i.e. the smallest box that still encompasses
+    all of the given boxes.
+    """
+    boxes = np.asarray(boxes)
+    union = boxes[0].copy()
+    union[0] = boxes[:, 0].min(axis=0)
+    union[1] = boxes[:, 1].max(axis=0)
+    return union
+
+
 def is_box_coverage_complete(boxes, full_box):
     """
     When overlaid with each other, do the given
