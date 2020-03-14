@@ -130,7 +130,8 @@ def decimate_existing_mesh(server, uuid, instance, body_id, fraction, max_vertic
         mesh = Mesh.from_tarfile(tar_bytes, keep_normals=False)
 
     mesh_mb = mesh.uncompressed_size() / 1e6
-    logger.info(f"Body: {body_id}: Original mesh has {len(mesh.vertices_zyx)} vertices and {len(mesh.faces)} faces ({mesh_mb:.1f} MB)")
+    orig_vertices = len(mesh.vertices_zyx)
+    logger.info(f"Body: {body_id}: Original mesh has {orig_vertices} vertices and {len(mesh.faces)} faces ({mesh_mb:.1f} MB)")
 
     fraction = min(fraction, max_vertices / len(mesh.vertices_zyx))    
     with Timer(f"Body: {body_id}: Decimating at {fraction:.2f}", logger):
@@ -153,7 +154,7 @@ def decimate_existing_mesh(server, uuid, instance, body_id, fraction, max_vertic
                 with open(output_path, 'wb') as f:
                     f.write(mesh_bytes)
     
-    return len(mesh.vertices_zyx)
+    return len(mesh.vertices_zyx), fraction, orig_vertices
 
 if __name__ == "__main__":
     DEBUG = False
