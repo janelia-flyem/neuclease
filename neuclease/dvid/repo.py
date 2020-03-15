@@ -391,8 +391,19 @@ def find_branch_nodes(server, repo_uuid=None, branch="", *, full_info=False, ses
         return nodes
     else:
         node_infos = [repo_info['DAG']['Nodes'][node] for node in nodes]
-        return pd.DataFrame(node_infos)
+        nodes_df = pd.DataFrame(node_infos)
 
+        created = pd.to_datetime(nodes_df['Created'])
+        updated = pd.to_datetime(nodes_df['Updated'])
+        del nodes_df['Created']
+        del nodes_df['Updated']
+        nodes_df['Created'] = created
+        nodes_df['Updated'] = updated
+        
+        nodes_df = nodes_df.set_index(nodes_df['UUID'].rename('uuid'))
+        return nodes_df
+
+fetch_branch_nodes = find_branch_nodes # Alternate name
 
 def find_master(server, repo_uuid=None):
     """
