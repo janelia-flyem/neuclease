@@ -8,6 +8,7 @@ import os
 import sys
 import logging
 import argparse
+from collections.abc import Iterable
 
 import numpy as np
 import pandas as pd
@@ -27,8 +28,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--fraction', type=float,
                         help='Fraction of vertices to retain in the decimated mesh.  Between 0.0 and 1.0')
+    parser.add_argument('--max-vertices', type=float, default=1e9,
+                        help='If necessary, decimate the mesh even further so that it has no more than this vertex count (approximately).')
     parser.add_argument('--format',
                         help='Either obj or drc', required=True)
+    parser.add_argument('--rescale', type=float,
+                        help='Multiply all vertex coordinates by this factor before storing the mesh. Important for writing to ngmesh format.')
     parser.add_argument('--output-directory', '-d',
                         help='Directory to dump decimated meshes.')
     parser.add_argument('--output-url', '-u',
@@ -51,7 +56,12 @@ def main():
 
     if args.output_directory:
         os.makedirs(args.output_directory, exist_ok=True)
-            
+
+    if args.format == "ngmesh" and args.rescale is None:
+        raise RuntimeError("When writing to ngmesh, please specify an explict rescale factor.")
+
+    args.rescale = args.rescale or 1.0
+
     output_dvid = None    
     if args.output_url:
         if '/api/node' not in args.output_url:
@@ -92,10 +102,10 @@ def main():
         if args.output_directory:
             output_path = f'{args.output_directory}/{body_id}.{args.format}'
 
-        decimate_existing_mesh(args.server, args.uuid, args.tsv_instance, body_id, args.fraction, 1e9, args.format, output_path, output_dvid)
+        decimate_existing_mesh(args.server, args.uuid, args.tsv_instance, body_id, args.fraction, args.max_vertices, args.rescale, args.format, output_path, output_dvid)
 
 
-def decimate_existing_mesh(server, uuid, instance, body_id, fraction, max_vertices=1e9, output_format=None, output_path=None, output_dvid=None, tar_bytes=None):
+def decimate_existing_mesh(server, uuid, instance, body_id, fraction, max_vertices=1e9, rescale=1.0, output_format=None, output_path=None, output_dvid=None, tar_bytes=None):
     """
     Fetch all supervoxel meshes for the given body, combine them into a
     single mesh, and then decimate that mesh at the specified fraction.
@@ -139,6 +149,13 @@ def decimate_existing_mesh(server, uuid, instance, body_id, fraction, max_vertic
 
     mesh_mb = mesh.uncompressed_size() / 1e6
     logger.info(f"Body: {body_id}: Final mesh has {len(mesh.vertices_zyx)} vertices and {len(mesh.faces)} faces ({mesh_mb:.1f} MB)")
+
+    if not isinstance(rescale, Iterable):
+        rescale = 3*[rescale]
+    
+    rescale = np.asarray(rescale)
+    if not (rescale == 1.0).all():
+        mesh.vertices_zyx[:] *= rescale
 
     with Timer(f"Body: {body_id}: Serializing", logger):
         mesh_bytes = None
