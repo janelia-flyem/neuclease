@@ -5,18 +5,19 @@ from numba.typed import List
 
 import pandas as pd
 
+
 def extract_rle_size_and_first_coord(rle_payload_bytes):
     """
     Given a binary RLE payload as returned by the /sparsevol endpoint,
-    extract the count of voxels in the RLE and the first coordinate in the RLE. 
-    
+    extract the count of voxels in the RLE and the first coordinate in the RLE.
+
     Args:
         rle_payload_bytes:
             Bytes. Must be in DVID's "Legacy RLEs" format.
 
     Useful for sampling label value under a given RLE geometry
     (assuming all of the points in the RLE share the same label).
-    
+
     Returns:
         voxel_count, coord_zyx
     """
@@ -37,14 +38,14 @@ def construct_rle_payload(coords_zyx):
     including the header bytes.
     """
     coords_zyx = coords_zyx.astype(np.int32, copy=False)
-    rles_zyx  = runlength_encode_to_lengths(coords_zyx, assume_sorted=False)
+    rles_zyx = runlength_encode_to_lengths(coords_zyx, assume_sorted=False)
     rles_xyz = rles_zyx[:, (2,1,0,3)]
-    
+
     payload_items = []
     payload_items.append( np.array([0, 3, 0, 0], dtype=np.uint8) )
     payload_items.append( np.array([0, len(rles_xyz)], dtype=np.uint32) )
     payload_items.append( rles_xyz )
-    
+
     payload = b''.join( list(map(bytes, payload_items)) )
     return payload
 
@@ -59,15 +60,15 @@ def combine_sparsevol_rle_responses(rle_payloads):
     return construct_rle_payload(combined_coords)
 
 
-def parse_rle_response(response_bytes, dtype=np.int32, format='coords'): # @ReservedAssignment
+def parse_rle_response(response_bytes, dtype=np.int32, format='coords'):  # @ReservedAssignment
     """
     Parse a (legacy) RLE response from DVID, used by various endpoints
     such as 'sparsevol' and 'sparsevol-coarse'.
-    
+
     Args:
         response_bytes:
             RLE bytes as returned by a DVID endpoint, e.g. /sparsevol
-        
+
         dtype:
             The dtype of the returned coordinate array.
             Must be either np.int32 (the default) or np.int16.
@@ -79,15 +80,15 @@ def parse_rle_response(response_bytes, dtype=np.int32, format='coords'): # @Rese
 
     Return:
         If format == 'rle', returns the RLE start coordinates and RLE lengths as two arrays:
-        
+
             (start_coords, lengths)
-            
+
             where start_coords is in the form:
-            
+
                 [[Z,Y,X], [Z,Y,X], ...]
-            
+
             and lengths is a 1-D array:
-            
+
                 [length, length, ...]
 
         If format == 'ranges':
@@ -119,7 +120,7 @@ def parse_rle_response(response_bytes, dtype=np.int32, format='coords'): # @Rese
     assert run_dimension == 0, "This function assumes the RLE run dimension is X"
 
     content_as_int32 = np.frombuffer(response_bytes, np.int32)
-    _voxel_count = content_as_int32[1]
+    _voxel_count = content_as_int32[1]  # noqa
     run_count = content_as_int32[2]
     rle_items = content_as_int32[3:].reshape(-1,4)
 
@@ -131,7 +132,7 @@ def parse_rle_response(response_bytes, dtype=np.int32, format='coords'): # @Rese
     rle_lengths = rle_items[:,3]
 
     # For now, DVID always returns a voxel_count of 0, so we can't make this assertion.
-    #assert rle_lengths.sum() == _voxel_count,\
+    # assert rle_lengths.sum() == _voxel_count,\
     #    f"Voxel count ({voxel_count}) doesn't match expected sum of run-lengths ({rle_lengths.sum()})"
 
     if dtype == np.int16:
@@ -145,20 +146,20 @@ def parse_rle_response(response_bytes, dtype=np.int32, format='coords'): # @Rese
     if format == 'ranges':
         ranges = np.zeros((len(rle_items), 4), dtype)
         ranges[:, :3] = rle_starts_zyx
-        ranges[:, 3] = rle_starts_zyx[:,2] + rle_lengths - 1 # end is INCLUSIVE, as noted above
+        ranges[:, 3] = rle_starts_zyx[:,2] + rle_lengths - 1  # end is INCLUSIVE, as noted above
         return ranges
 
     if format == 'rle':
         return rle_starts_zyx, rle_lengths
-    
+
     if format == 'coords':
         # Sadly, the decode function requires contiguous arrays, so we must copy.
         rle_starts_zyx = rle_starts_zyx.copy('C')
         rle_lengths = rle_lengths.copy('C')
-    
+
         dense_coords = runlength_decode_from_lengths(rle_starts_zyx, rle_lengths)
         assert dense_coords.dtype == dtype
-        
+
         assert rle_lengths.sum() == len(dense_coords), "Got the wrong number of coordinates!"
         return dense_coords
 
@@ -167,24 +168,24 @@ def rle_box_dilation(start_coords, lengths, radius):
     """
     Dilate the given RLEs by some radius, using simple
     "box" dilation (not a proper spherical dilation).
-    
+
     Equivalent to decoding the given RLEs, constructing a binary mask,
     dilating it with a rectangular structuring element,
     and then re-encoding the resulting nonzero coordinates.
-    
+
     But much faster than that, and requiring much less RAM.
-    
+
     Args:
         start_coords, lengths:
             See runlength_decode_from_lengths()
-        
+
         radius:
             The "radius" of the cube-shaped structuring element used to dilate.
     """
     assert start_coords.ndim == 2
     assert lengths.ndim == 1
     assert len(start_coords) == len(lengths)
-    
+
     if len(start_coords) == 0:
         return np.zeros((0, 3), np.int32), np.zeros((0,), np.int32)
 
@@ -226,12 +227,12 @@ def _condense_rles(table, chunk_size):
     """
     Given an RLE table (columns Z,Y,X,L) which may contain overlapping RLEs,
     condense it into a minmal RLE table.
-    
+
     This is done by decoding it, dropping duplicate coordinates, and re-encoding it.
     The table is processed in chunks to avoid too much instantaneous RAM usage.
     """
     assert len(table) > 0
-    
+
     # Sort by Z,Y columns
     order = np.lexsort(table[:, :2].transpose()[::-1])
     table = table[order]
@@ -247,7 +248,7 @@ def _condense_rles(table, chunk_size):
         stop = start+chunk_size
         while stop < len(table) and (table[stop, :2] == table[stop-1, :2]).all():
             stop += 1
-    
+
         # Must copy because C-order is required
         chunk = table[start:stop]
         start = stop
@@ -260,39 +261,39 @@ def _condense_rles(table, chunk_size):
         condensed_chunk = runlength_encode_to_lengths(chunk_coords, True)
         condensed_chunks.append( condensed_chunk )
         del chunk_coords
-    
+
     condensed_table = np.concatenate( condensed_chunks )
     return condensed_table
-    
+
 
 def runlength_encode_to_ranges(coord_list_zyx, assume_sorted=False):
     """
     Given an array of coordinates in the form:
-        
+
         [[Z,Y,X],
          [Z,Y,X],
          [Z,Y,X],
          ...
         ]
-        
+
     Return an array of run-length encodings of the form:
-    
+
         [[Z,Y,X1,X2],
          [Z,Y,X1,X2],
          [Z,Y,X1,X2],
          ...
         ]
-    
+
     Note: The interval [X1,X2] is INCLUSIVE, following DVID conventions, not Python conventions.
-    
+
     Args:
         coord_list_zyx:
             Array of shape (N,3)
-        
+
         assume_sorted:
             If True, the provided coordinates are assumed to be pre-sorted in Z-Y-X order.
             Otherwise, this function sorts them before the RLEs are computed.
-    
+
     Timing notes:
         The FIB-25 'seven_column_roi' consists of 927971 block indices.
         On that ROI, this function takes 1.65 seconds, but with numba installed,
@@ -305,7 +306,7 @@ def runlength_encode_to_ranges(coord_list_zyx, assume_sorted=False):
     coord_list_zyx = np.asarray(coord_list_zyx)
     assert coord_list_zyx.ndim == 2
     assert coord_list_zyx.shape[1] == 3
-    
+
     if not assume_sorted:
         sorting_ind = np.lexsort(coord_list_zyx.transpose()[::-1])
         coord_list_zyx = coord_list_zyx[sorting_ind]
@@ -323,19 +324,19 @@ def _runlength_encode_to_ranges(coord_list_zyx):
         coord_list_zyx:
             Array of shape (N,3), of form [[Z,Y,X], [Z,Y,X], ...],
             pre-sorted in Z-Y-X order.  Duplicates permitted.
-    
+
     Returns:
         Flattened runlength encoding, as a numba typed.List:
-        
+
             [Z,Y,X1,X2,Z,Y,X1,X2,Z,Y,X1,X2,...]
 
         (Must be converted to np.array and un-flattened by the caller.)
     """
     runs = List.empty_list(item_type=int32)
-    
+
     # Start the first run
     (prev_z, prev_y, prev_x) = current_run_start = coord_list_zyx[0]
-    
+
     for i in range(1, len(coord_list_zyx)):
         (z,y,x) = coord = coord_list_zyx[i]
 
@@ -358,25 +359,25 @@ def runlength_encode_mask_to_ranges(mask, mask_box=None):
     """
     Given a binary mask, return an array of
     run-length encodings of the form:
-    
+
         [[Z,Y,X1,X2],
          [Z,Y,X1,X2],
          [Z,Y,X1,X2],
          ...
         ]
-    
+
     Note:
         The interval [X1,X2] is INCLUSIVE, following DVID conventions,
         not Python conventions (i.e. X2 is not one-past-the-end).
-    
+
     Args:
         mask:
             binary volume, 3D
-        
+
         mask_box:
             If provided, should correspond to the location of the mask in global coordinates.
             The returned ranges will be offset to reflect global coordinates.
-        
+
     Returns:
         Ranges array as described above, shape (N,4)
     """
@@ -389,11 +390,11 @@ def runlength_encode_mask_to_ranges(mask, mask_box=None):
         assert mask_box.shape == (2,3)
         assert mask.shape == tuple(mask_box[1] - mask_box[0]), \
             "mask shape doesn't correspond to mask_box"
-        
+
         ranges[:] += mask_box[0, (0,1,2,2)]
         assert (ranges >= mask_box[0, (0,1,2,2)]).all()
         assert (ranges <= mask_box[1, (0,1,2,2)]).all()
-        
+
     return ranges
 
 
@@ -405,10 +406,10 @@ def _runlength_encode_mask_to_ranges(mask):
     Args:
         mask:
             binary volume, 3D
-    
+
     Returns:
         Flattened runlength encoding, as a numba typed.List:
-        
+
             [Z,Y,X1,X2,Z,Y,X1,X2,Z,Y,X1,X2,...]
 
         Must be converted to np.array and un-flattened by the caller.
@@ -441,27 +442,27 @@ def _runlength_encode_mask_to_ranges(mask):
 def runlength_encode_to_lengths(coord_list_zyx, assume_sorted=False):
     """
     Given an array of coordinates in the form:
-        
+
         [[Z,Y,X],
          [Z,Y,X],
          [Z,Y,X],
          ...
         ]
-        
+
     Return an array of run-length encodings of the form:
-    
+
         [[Z,Y,X,N],
          [Z,Y,X,N],
          [Z,Y,X,N],
          ...
         ]
-    
+
     ... where N is the length of each run.
-    
+
     Args:
         coord_list_zyx:
             Array of shape (C,3)
-        
+
         assume_sorted:
             If True, the provided coordinates are assumed to be pre-sorted in Z-Y-X order.
             Otherwise, this function sorts them before the RLEs are computed.    """
@@ -471,7 +472,7 @@ def runlength_encode_to_lengths(coord_list_zyx, assume_sorted=False):
     coord_list_zyx = np.asarray(coord_list_zyx)
     assert coord_list_zyx.ndim == 2
     assert coord_list_zyx.shape[1] == 3
-    
+
     if not assume_sorted:
         sorting_ind = np.lexsort(coord_list_zyx.transpose()[::-1])
         coord_list_zyx = coord_list_zyx[sorting_ind]
@@ -481,17 +482,17 @@ def runlength_encode_to_lengths(coord_list_zyx, assume_sorted=False):
     rle_result = np.array(runs, coord_list_zyx.dtype).reshape((-1,4))
     rle_result[:,3] = 1 + rle_result[:,3] - rle_result[:,2]
     return rle_result
-    
 
-@jit(["i8[:,:](i8[:,::1],i8[::1])", "i4[:,:](i4[:,::1],i4[::1])", "i2[:,:](i2[:,::1],i2[::1])"], nopython=True, nogil=True) # See note about signature, below.
+
+@jit(["i8[:,:](i8[:,::1],i8[::1])", "i4[:,:](i4[:,::1],i4[::1])", "i2[:,:](i2[:,::1],i2[::1])"], nopython=True, nogil=True)  # See note about signature, below.
 def runlength_decode_from_lengths(rle_start_coords_zyx, rle_lengths):
     """
     Given a 2D array of coordinates and a 1D array of runlengths, i.e.:
-        
+
         [[Z,Y,X], [Z,Y,X], [Z,Y,X],...]
 
-        and 
-        
+        and
+
         [Length, Length, Length,...]
 
     Return an array of coordinates of the form:
@@ -501,26 +502,26 @@ def runlength_decode_from_lengths(rle_start_coords_zyx, rle_lengths):
          [Z,Y,X],
          ...
         ]
-    
+
     In which every run-length has been expanded into a run
     of consecutive coordinates in the result.
     That is, result.shape == (rle_lengths.sum(), 3)
-    
+
     Note: The "runs" are expanded along the X AXIS.
-    
+
     Note about Signature:
-    
+
         Due to an apparent numba bug, it is dangerous to pass non-contiguous arrays to this function.
         (It returns incorrect results.)
-        
+
         Therefore, the signature is explicitly written above to require contiguous arrays (e.g. i4[::1]),
         If you attempt to pass a non-contiguous array, you'll see an error like this:
-        
+
             TypeError: No matching definition for argument type(s) readonly array(int32, 2d, A), readonly array(int32, 1d, C)
     """
     coords = np.empty((rle_lengths.sum(), 3), rle_start_coords_zyx.dtype)
 
-    c = 0 # coord row
+    c = 0  # coord row
     for i in range(len(rle_start_coords_zyx)):
         (z, y, x0) = rle_start_coords_zyx[i]
         length = rle_lengths[i]
@@ -536,10 +537,10 @@ def runlength_decode_from_lengths(rle_start_coords_zyx, rle_lengths):
 def runlength_decode_from_ranges_to_mask(rle_array_zyx, mask_box=None):
     """
     Used for parsing the result of DVID's /roi endpoint.
-    
+
     Args:
         Array of run-length encodings in the form:
-        
+
         [[Z,Y,X1,X2],
          [Z,Y,X1,X2],
          [Z,Y,X1,X2],
@@ -569,7 +570,7 @@ def runlength_decode_from_ranges_to_mask(rle_array_zyx, mask_box=None):
 
     # Switch from inclusive conventions for python conventions (one-past-the-end)
     ranges_array = rle_array_zyx + np.asarray([0,0,0,1], dtype=np.int32)
-    
+
     # Offset to mask-local coordinates
     ranges_array -= mask_box[0, (0,1,2,2)]
 
@@ -596,19 +597,19 @@ def _write_mask_from_ranges(ranges_array, mask):
         mask[z, y, x0:x1] = 1
 
 
-@jit(["i8[:,:](i8[:,::1])", "i4[:,:](i4[:,::1])", "i2[:,:](i2[:,::1])"], nopython=True, nogil=True) # See note about signature, below.
+@jit(["i8[:,:](i8[:,::1])", "i4[:,:](i4[:,::1])", "i2[:,:](i2[:,::1])"], nopython=True, nogil=True)  # See note about signature, below.
 def runlength_decode_from_ranges(rle_array_zyx):
     """
     Used for parsing the result of DVID's /roi endpoint.
-    
+
     Given an array of run-length encodings in the form:
-        
+
         [[Z,Y,X1,X2],
          [Z,Y,X1,X2],
          [Z,Y,X1,X2],
          ...
         ]
-        
+
     Return an array of coordinates of the form:
 
         [[Z,Y,X],
@@ -620,13 +621,13 @@ def runlength_decode_from_ranges(rle_array_zyx):
     Note: The interval [X1,X2] is INCLUSIVE, following DVID conventions, not Python conventions.
 
     Note about Signature:
-    
+
         Due to an apparent numba bug, it is dangerous to pass non-contiguous arrays to this function.
         (It returns incorrect results.)
-        
+
         Therefore, the signature is explicitly written above to require contiguous arrays (e.g. i4[:,::1]),
         If you attempt to pass a non-contiguous array, you'll see an error like this:
-        
+
             TypeError: No matching definition for argument type(s) readonly array(int32, 2d, A)
     """
     total_coords = 0
@@ -635,7 +636,7 @@ def runlength_decode_from_ranges(rle_array_zyx):
 
     coords = np.empty((total_coords, 3), rle_array_zyx.dtype)
 
-    c = 0 # coord row
+    c = 0  # coord row
     for i in range(len(rle_array_zyx)):
         (z, y, x1, x2) = rle_array_zyx[i]
         for x in range(x1, x2+1):
