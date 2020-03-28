@@ -26,13 +26,13 @@ def reset_kafka_offset(server, uuid, instance, group_id):
     DVID instance info. The offset position is stored on the kafka server,
     so subsequent consumers will start at the new offset, even if they are
     created in different processes.
-    
+
     Note:
         This operation is not instantaneous.
         After this function executes, consumers of the kafka topic may
         fail to extract any messages at all for a few seconds,
         giving the appearance that they have consumed all messages from the log.
-        
+
     Args:
         server, uuid, instance:
             dvid instance details, which will be used to determine the kafka topic name.
@@ -41,7 +41,7 @@ def reset_kafka_offset(server, uuid, instance, group_id):
     """
     from pykafka import KafkaClient
     from pykafka.common import OffsetType
-    
+
     logger.info(f"Resetting kafka offset for group id '{group_id}'")
     kafka_servers, topic_name, _dag = kafka_info_for_dvid_instance(server, uuid, instance)
     client = KafkaClient(hosts=','.join(kafka_servers))
@@ -65,13 +65,13 @@ def read_kafka_messages(server, uuid, instance, action_filter=None, dag_filter='
     Args:
         server:
             dvid server, e.g. 'emdata3:8900'
-        
+
         uuid:
             dvid node, e.g. 'a9f2' or a dvid branch, e.g. 'master'
-        
+
         instance:
             dvid instance name, e.g. 'segmentation'
-        
+
         action_filter:
             A list of actions to use as a filter for the returned messages.
             For example, if action_filter=['split', 'split-complete'],
@@ -93,21 +93,21 @@ def read_kafka_messages(server, uuid, instance, action_filter=None, dag_filter='
             Note: If you re-use group IDs, then subsequent calls to this function will
                   not yield repeated messages.  The log will resume where it left off
                   from the previous call.
-        
+
         consumer_timeout:
             Seconds to timeout (after which we assume we've read all messages).
-        
+
         kafka_servers:
             Normally the kafka servers to read from are determined automatically
             by parsing the DVID /server/info.  But if you are attempting to read the kafka
             log of a DVID server whose kafka logging is temporarily disabled, you will need
             to specify the kafka servers here (as a list of strings).
-        
+
         topic_prefix:
             Normally the topic prefix for all of DVID's kafka topics is determined automatically
             by parsing the DVID /server/info.  But if you know what you are doing and you want
             to force this function to use a different prefix, you can specify it here.
-    
+
     Returns:
         Filtered list of kafka ConsumerRecord or list of JSON dict (depending on return_format).
     """
@@ -147,19 +147,24 @@ def kafka_info_for_dvid_instance(server, uuid, instance, kafka_servers=None, top
     """
     Return the kafka topic and kafka servers for the given dvid instance,
     along with the repo DAG (which was needed to determine the topic name).
-    
+
     Args:
         server:
             dvid server, e.g. 'emdata3:8900'
-        
+
         uuid:
             dvid node, e.g. 'a9f2' or a dvid branch, e.g. 'master'
-        
+
         instance:
             dvid instance name, e.g. 'segmentation'
-    
+
     Returns:
         kafka_servers, topic, dag
+
+    Special notes for hemibrain:
+        The topic for the OLD segmentation repo (before the huge rebase in 2018-October) is:
+        dvidrepo-a776af0b132f44c3a428fe7607ba0da0-data-fc893872cef64c498f45e640cf4fae79
+        (with no prefix).
     """
     if kafka_servers is None or topic_prefix is None:
         server_info = fetch_server_info(server, session=session)
@@ -192,7 +197,7 @@ def _read_complete_kafka_log(topic_name, kafka_servers, group_id=None, timeout_s
     Helper function.
     Read the complete kafka log for the given topic.
     Return a list of ConsumerRecord objects.
-    
+
     Special care is taken to ensure that the complete log was read.
     An error is raised if it appears that the log was terminated early.
     """
@@ -202,7 +207,7 @@ def _read_complete_kafka_log(topic_name, kafka_servers, group_id=None, timeout_s
     consumer = topic.get_simple_consumer( consumer_group=group_id,
                                           consumer_timeout_ms=int(1000*timeout_seconds),
                                           auto_commit_enable=(group_id is not None) )
-    
+
     try:
         # Consumer isn't fully initialized until the first message is fetched.
         # (For example, consumer.assignment() can't be used until we fetch a message first.)
@@ -255,13 +260,13 @@ def _filter_records_for_dag(records_and_values, dag_filter, dag, uuid):
         records_and_values = filter(lambda r_v: uuids_match(r_v[1]["UUID"], uuid), records_and_values)
 
     elif dag_filter == 'leaf-and-parents':
-        
+
         # Determine full name of leaf uuid, for proper set membership
         matching_uuids = list(filter(lambda u: uuids_match(u, uuid), dag.nodes()))
         assert matching_uuids != 0, f"DAG does not contain uuid: {uuid}"
         assert len(matching_uuids) == 1, f"More than one UUID in the server DAG matches the leaf uuid: {uuid}"
         full_uuid = matching_uuids[0]
-        
+
         # Filter based on set of leaf-and-parents
         leaf_and_parents = {full_uuid} | nx.ancestors(dag, full_uuid)
         records_and_values = filter(lambda r_v: r_v[1]["UUID"] in leaf_and_parents, records_and_values)
@@ -291,21 +296,21 @@ def kafka_msgs_to_df(msgs, drop_duplicates=False, default_timestamp=DEFAULT_TIME
     """
     Load the messages into a DataFrame with columns for
     timestamp, uuid, mut_id (if present), key (if present), and msg (the complete message).
-    
+
     Note: See `neuclease.util.DEFAULT_TIMESTAMP`.
     (At the time of this writing, `2018-01-01`).
-    
+
     Args:
         msgs:
             JSON messages, either as strings or pre-parsed into a list-of-dicts.
-            
+
         drop_duplicates:
             If the kafka messages contain exact duplicates for some reason,
             this option can be used to drop the duplicates from the result.
             Use with caution, especially if you are trying to disambiguate
             messages from a 'mirror' server.  (Especially 'complete' messages,
             which might be *correctly* duplicated.)
-        
+
         default_timestamp:
             Any messages that lack a 'Timestamp' field will have
             their 'timestamp' column set to this in the output dataframe.
@@ -315,22 +320,22 @@ def kafka_msgs_to_df(msgs, drop_duplicates=False, default_timestamp=DEFAULT_TIME
     """
     if len(msgs) == 0:
         return pd.DataFrame([], columns=['timestamp', 'uuid', 'mutid', 'msg'])
-        
+
     if drop_duplicates:
         if isinstance(msgs[0], str):
             msg_strings = msgs
         else:
             # Convert to strings for hashing
             msg_strings = [ujson.dumps(msg, sort_keys=True) for msg in msgs]
-        
+
         msg_strings = pd.Series(msg_strings)
         msg_strings.drop_duplicates(inplace=True)
         msgs = msg_strings.values
 
-    # Parse JSON if necessary    
+    # Parse JSON if necessary
     if isinstance(msgs[0], str):
         msgs = [ujson.loads(msg) for msg in msgs]
-    
+
     timestamps = np.repeat(None, len(msgs))
     timestamps[:] = default_timestamp
 
@@ -343,7 +348,7 @@ def kafka_msgs_to_df(msgs, drop_duplicates=False, default_timestamp=DEFAULT_TIME
     msgs_df['timestamp'] = pd.to_datetime(msgs_df['timestamp'])
     msgs_df['uuid'] = [msg['UUID'] for msg in msgs_df['msg']]
     msgs_df['uuid'] = msgs_df['uuid'].astype('category')
-    
+
     if 'MutationID' in msgs[0]:
         mutids = []
         for msg in msgs_df['msg']:
@@ -352,7 +357,7 @@ def kafka_msgs_to_df(msgs, drop_duplicates=False, default_timestamp=DEFAULT_TIME
             except KeyError:
                 mutids.append( 0 )
         msgs_df['mutid'] = mutids
-    
+
     if 'Key' in msgs[0]:
         msgs_df['key'] = [msg['Key'] for msg in msgs_df['msg']]
 
@@ -363,7 +368,7 @@ def kafka_msgs_to_df(msgs, drop_duplicates=False, default_timestamp=DEFAULT_TIME
 
     if 'key' not in msgs_df.columns:
         columns.remove('key')
-    
+
     return msgs_df[columns]
 
 
@@ -374,21 +379,21 @@ def filter_kafka_msgs_by_timerange(kafka_msgs, min_timestamp=None, max_timestamp
 
     For example, this call removes messages except those with at least
     mutation ID 1002213701 and occurred no later than "2018-10-16 13:00":
-    
+
         all_msgs = read_kafka_messages('emdata3:8900', 'ef1d', 'segmentation')
         filtered_msgs = filter_kafka_msgs_by_timerange(all_msgs, min_mutid=1002213701, max_timestamp='2018-10-16 13:00')
-    
+
     Args:
         kafka_msgs:
             Either a list of JSON messages from a dvid instance kafka log,
             or a DataFrame of kafka messages as returned by kafka_msgs_to_df()
-        
+
         min_timestamp, max_timestamp:
             min/max timestamps, as a datetime or string
-        
+
         min_mutid, max_mutid:
             min/max DVID mutation IDs (integers)
-    
+
     Returns:
         Filtered list or DataFrame (depending on input type)
     """
@@ -399,14 +404,14 @@ def filter_kafka_msgs_by_timerange(kafka_msgs, min_timestamp=None, max_timestamp
     if min_timestamp is not None:
         min_timestamp = parse_timestamp(min_timestamp)
         queries.append('timestamp >= @min_timestamp')
-    
+
     if max_timestamp is not None:
         max_timestamp = parse_timestamp(max_timestamp)
         queries.append('timestamp <= @max_timestamp')
-    
+
     if min_mutid is not None:
         queries.append('mutid >= @min_mutid')
-        
+
     if max_mutid is not None:
         queries.append('mutid <= @max_mutid')
 
@@ -423,7 +428,5 @@ def filter_kafka_msgs_by_timerange(kafka_msgs, min_timestamp=None, max_timestamp
 
     if isinstance(kafka_msgs, pd.DataFrame):
         return kafka_df
-    else:    
+    else:
         return kafka_df['msg'].tolist()
-
-
