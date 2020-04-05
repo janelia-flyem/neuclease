@@ -934,26 +934,31 @@ def fetch_sparsevol_coarse(server, uuid, instance, label_id, supervoxels=False,
     Args:
         server:
             dvid server, e.g. 'emdata3:8900'
-        
+
         uuid:
             dvid uuid, e.g. 'abc9'
-        
+
         instance:
             dvid labelmap instance name, e.g. 'segmentation'
-    
+
         label_id:
             body ID in dvid, or supervoxel ID is supervoxels=True
-        
+
         supervoxels:
             Whether or not to interpret label_id as a body or supervoxel
-        
+
         format:
-            Either 'coords', or 'mask'.
+            Either 'coords', 'ranges', or 'mask'.
+
             If 'coords, return the coordinates (at scale 6) of the
             dvid blocks intersected by the body.
+
+            If 'ranges', return the decoded ranges from DVID.
+            See ``runlength_decode_from_ranges()`` for details on the ranges format.
+
             If 'mask', return a dense boolean volume (scale 6) indicating
             which blocks the body intersects, and return the volume's box.
-        
+
         mask_box:
             Only valid when format='mask'.
             If provided, specifies the box within which the body mask should
@@ -978,22 +983,25 @@ def fetch_sparsevol_coarse(server, uuid, instance, label_id, supervoxels=False,
             cropped to the bounding box of the body. The mask's bounding box
             is also returned. (If you passed in a custom ``mask_box``, it
             will be unchanged.)
-        
+
     See also: ``fetch_sparsevol_coarse_via_labelindex()``
-    
+
     Note: The returned coordinates are not necessarily sorted.
     """
-    assert format in ('coords', 'mask')
+    assert format in ('coords', 'ranges', 'mask')
 
     supervoxels = str(bool(supervoxels)).lower()
     r = session.get(f'{server}/api/node/{uuid}/{instance}/sparsevol-coarse/{label_id}?supervoxels={supervoxels}')
     r.raise_for_status()
-    
+
     if format == 'coords':
         return parse_rle_response( r.content, format='coords' )
 
+    rle_ranges = parse_rle_response( r.content, format='ranges' )
+    if format == 'ranges':
+        return rle_ranges
+
     if format == 'mask':
-        rle_ranges = parse_rle_response( r.content, format='ranges' )
         mask, mask_box = runlength_decode_from_ranges_to_mask(rle_ranges, mask_box)
         return mask, mask_box
 
