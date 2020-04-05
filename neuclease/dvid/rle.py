@@ -558,14 +558,10 @@ def runlength_decode_from_ranges_to_mask(rle_array_zyx, mask_box=None):
         and mask_box is the bounding-box of the mask, in scale-5 units.
     """
     rle_array_zyx = np.asarray(rle_array_zyx, dtype=np.int32)
-
     if mask_box is None:
-        min_coord =   rle_array_zyx[:, (0,1,2)].min(axis=0)
-        max_coord = 1+rle_array_zyx[:, (0,1,3)].max(axis=0)
-        mask_box = np.asarray([min_coord, max_coord])
-    else:
-        mask_box = np.asarray(mask_box, dtype=np.int32)
+        mask_box = rle_ranges_box(rle_array_zyx)
 
+    mask_box = np.asarray(mask_box, dtype=np.int32)
     mask_shape = tuple((mask_box[1] - mask_box[0]).tolist())
 
     # Switch from inclusive conventions for python conventions (one-past-the-end)
@@ -588,6 +584,32 @@ def runlength_decode_from_ranges_to_mask(rle_array_zyx, mask_box=None):
     mask = np.zeros(mask_shape, dtype=np.uint8)
     _write_mask_from_ranges(ranges_array, mask)
     return mask.astype(bool), mask_box
+
+
+def rle_ranges_box(rle_array_zyx):
+    """
+    Given a list of run-length encodings from DVID's /roi endpoint,
+    return the bounding-box of the encoded sparse volume.
+
+    Args:
+        Array of run-length encodings in the form:
+
+        [[Z,Y,X1,X2],
+         [Z,Y,X1,X2],
+         [Z,Y,X1,X2],
+         ...
+        ]
+
+    Note: The interval [X1,X2] is INCLUSIVE, following DVID conventions, not Python conventions.
+
+    Returns:
+        bounding_box (start, stop)
+    """
+    rle_array_zyx = np.asarray(rle_array_zyx, dtype=np.int32)
+    min_coord =   rle_array_zyx[:, (0,1,2)].min(axis=0)
+    max_coord = 1+rle_array_zyx[:, (0,1,3)].max(axis=0)
+    mask_box = np.asarray([min_coord, max_coord])
+    return mask_box
 
 
 @jit(nopython=True)
