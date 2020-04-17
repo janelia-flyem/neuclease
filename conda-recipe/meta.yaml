@@ -45,7 +45,7 @@ requirements:
 test:
   requires:
     - pytest
-    - dvid >=dvid-0.8.24
+    - dvid >=dvid-0.9.6.post64
     - libdvid-cpp
 
   imports:

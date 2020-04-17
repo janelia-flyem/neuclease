@@ -8,6 +8,7 @@ from collections import defaultdict
 
 import numpy as np
 import pandas as pd
+import networkx as nx
 from requests import HTTPError
 
 from libdvid import DVIDNodeService, encode_label_block
@@ -17,7 +18,7 @@ from ...util import (Timer, round_box, extract_subvol, DEFAULT_TIMESTAMP, tqdm_p
                      overwrite_subvol)
 
 from .. import dvid_api_wrapper, fetch_generic_json, fetch_repo_info
-from ..repo import create_voxel_instance, fetch_repo_dag
+from ..repo import create_voxel_instance, fetch_repo_dag, resolve_ref
 from ..kafka import read_kafka_messages, kafka_msgs_to_df
 from ..rle import parse_rle_response, runlength_decode_from_ranges_to_mask
 
@@ -1999,11 +2000,69 @@ def post_merge(server, uuid, instance, main_label, other_labels, *, session=None
     r.raise_for_status()
 
 
+@dvid_api_wrapper
+def fetch_mutations(server, uuid, instance, userid=None, *, dag_filter='leaf-only', action_filter=None, format='pandas', session=None):
+    """
+    Fetch the log of successfully completed mutations.
+    The log is returned in the same format as the kafka log.
+
+    For consistency with :py:func:``read_kafka_msgs()``, this function adds
+    the ``dag_filter`` and ``action_filter`` options, which are not part
+    of the DVID REST API.
+
+
+    """
+    assert dag_filter in ('leaf-only', 'leaf-and-parents', None)
+
+    # json-values is a synonym, for compatibility with read_kafka_messages
+    assert format in ('pandas', 'json', 'json-values')
+
+    uuid = resolve_ref(server, uuid)
+
+    if userid:
+        params = {'userid': userid}
+    else:
+        params = {}
+
+    if dag_filter == 'leaf-only':
+        uuids = [uuid]
+    else:
+        dag = fetch_repo_dag(server, uuid, session=session)
+        if dag_filter == 'leaf-and-parents':
+            uuids = {uuid} | nx.ancestors(dag, uuid)
+        else:
+            assert dag_filter is None
+            uuids = dag.nodes()
+        uuids = nx.topological_sort(dag.subgraph(uuids))
+
+    msgs = []
+    for uuid in uuids:
+        r = session.get(f'{server}/api/node/{uuid}/{instance}/mutations', params=params)
+        r.raise_for_status()
+        msgs.extend(r.json())
+
+    if isinstance(action_filter, str):
+        action_filter = [action_filter]
+
+    if action_filter is not None:
+        action_filter = {*action_filter}
+        msgs = [*filter(lambda m: m['Action'] in action_filter, msgs)]
+
+    if format == 'pandas':
+        return labelmap_kafka_msgs_to_df(msgs)
+    else:
+        return msgs
+
+
 def read_labelmap_kafka_df(server, uuid, instance='segmentation', default_timestamp=DEFAULT_TIMESTAMP, drop_completes=True, group_id=None):
     """
     Convenience function for reading the kafka log for
     a labelmap instance and loading it into a DataFrame.
-    Basically a combination of
+    A convenience function that combines ``read_kafka_messages()``
+    and ``labelmap_kafka_msgs_to_df``.
+
+    See also:
+        :py:func:`fetch_mutations`
 
     Args:
         server, uuid, instance:

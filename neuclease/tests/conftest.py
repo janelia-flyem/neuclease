@@ -37,6 +37,10 @@ logfile = "{TEST_DATA_DIR}/dvid.log"
 max_log_size = 500 # MB
 max_log_age = 30   # days
 
+[mutations]
+jsonstore = "{DVID_STORE_PATH}/json-mutations"
+blobstore = "mutable"
+
 [backend]
     [backend.default]
     store = "mutable"
@@ -49,7 +53,7 @@ max_log_age = 30   # days
 
 [store.mutationlog]
     engine = "filelog"
-    path = "{DVID_STORE_PATH}/mutationlog"
+    path = "{DVID_STORE_PATH}/mutlogs"
 """
 
 @pytest.fixture(scope="session")
@@ -80,6 +84,7 @@ def labelmap_setup():
 
 def _launch_dvid_server():
     os.makedirs(DVID_STORE_PATH, exist_ok=True)
+    os.makedirs(f"{DVID_STORE_PATH}/json-mutations", exist_ok=True)
     with open(DVID_CONFIG_PATH, 'w') as f:
         f.write(DVID_CONFIG)
 
@@ -144,7 +149,7 @@ def init_labelmap_nodes():
 
     merge_table_path = f'{TEST_DATA_DIR}/merge-table.npy'
     np.save(merge_table_path, merge_table.to_records(index=False))
-    
+
     create_labelmap_instance(TEST_SERVER, TEST_REPO, 'segmentation', max_scale=2)
     create_labelmap_instance(TEST_SERVER, TEST_REPO, 'segmentation-scratch', max_scale=2)
 
@@ -167,7 +172,7 @@ def init_labelmap_nodes():
 
     mapping = np.array([[1,1],[2,1],[3,1],[4,1],[5,1]], np.uint64)
     #mapping = pd.DataFrame(mapping, columns=['sv', 'body']).set_index('sv')['body']
-    
+
     mapping_path = f'{TEST_DATA_DIR}/mapping.npy'
     np.save(mapping_path, mapping)
 
