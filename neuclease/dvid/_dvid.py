@@ -90,7 +90,7 @@ def dvid_api_wrapper(f):
     """
     Decorator for functions whose first arg is a dvid server address,
     and accepts 'session' as a keyword-only argument.
-    
+
     This decorator does the following:
     - If the server address doesn't begin with 'http://' or 'https://', it is prefixed with 'http://'
     - If 'session' was not provided by the caller, a default one is provided.
@@ -102,7 +102,7 @@ def dvid_api_wrapper(f):
     argspec = inspect.getfullargspec(f)
     assert 'session' in argspec.kwonlyargs, \
         f"Cannot wrap {f.__name__}: DVID API wrappers must accept 'session' as a keyword-only argument."
-    
+
     @functools.wraps(f)
     def wrapper(server, *args, session=None, **kwargs):
         assert isinstance(server, str)
@@ -121,9 +121,18 @@ def dvid_api_wrapper(f):
                 msg = ""
                 if (ex.request is not None):
                     msg += f"Error accessing {ex.request.method} {ex.request.url}\n"
-                
-                if (ex.response is not None and ex.response.content and len(ex.response.content) <= 200):
-                    msg += str(ex.args[0]) + "\n" + ex.response.content.decode('utf-8') + "\n"
+
+                if ex.response is not None and ex.response.content:
+                    # Decode up to 10_000 bytes of the content,
+                    MAX_ERR_DISPLAY = 10_000
+                    try:
+                        err = ex.response.content[:MAX_ERR_DISPLAY].decode('utf-8')
+                    except UnicodeDecodeError as unicode_err:
+                        # Last byte cuts off a character by chance.
+                        # Discard it.
+                        err = ex.response.content[:unicode_err.start].decode('utf-8')
+
+                    msg += str(ex.args[0]) + "\n" + err + "\n"
 
                 new_ex = copy.copy(ex)
                 new_ex.args = (msg, *ex.args[1:])
