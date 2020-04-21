@@ -2105,14 +2105,15 @@ def labelmap_kafka_msgs_to_df(kafka_msgs, default_timestamp=DEFAULT_TIMESTAMP, d
             still be included in the output.
 
     """
-    FINAL_COLUMNS = ['timestamp', 'uuid', 'mutid', 'action', 'target_body', 'target_sv', 'msg']
+    FINAL_COLUMNS = ['timestamp', 'uuid', 'mutid', 'action', 'target_body', 'target_sv', 'user', 'msg']
     df = kafka_msgs_to_df(kafka_msgs, drop_duplicates=False, default_timestamp=default_timestamp)
 
     if len(df) == 0:
         return pd.DataFrame([], columns=FINAL_COLUMNS)
 
-    # Append action and 'body'
+    # Append action
     df['action'] = [msg['Action'] for msg in df['msg']]
+    df['user'] = [msg['User'] if 'User' in msg else '' for msg in df['msg']]
 
     if drop_completes:
         completes = df['action'].map(lambda s: s.endswith('-complete'))
