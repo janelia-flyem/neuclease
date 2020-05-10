@@ -51,6 +51,8 @@ def box_shape(box):
 def round_coord(coord, grid_spacing, how):
     """
     Round the given coordinate up or down to the nearest grid position.
+    (If how='closest' each axis is rounded up/down independently,
+    so some might go up and some might go down.)
     """
     coord = np.asarray(coord)
     assert how in ('down', 'up', 'closest')
