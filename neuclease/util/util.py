@@ -27,7 +27,7 @@ import pandas as pd
 from numba import jit
 
 from .downsample_with_numba import downsample_binary_3d_suppress_zero
-from .box import extract_subvol, box_intersection
+from .box import extract_subvol, box_intersection, round_coord
 from .view_as_blocks import view_as_blocks
 
 logger = logging.getLogger(__name__)
@@ -218,6 +218,27 @@ class ndrange:
         span = (np.array(self.stop) - self.start)
         step = np.array(self.step)
         return np.prod( (span + step-1) // step )
+
+
+def ndrange_array(start, stop=None, step=None):
+    """
+    Like np.ndindex, but accepts start/stop/step instead of
+    assuming that start is always (0,0,0) and step is (1,1,1),
+    and returns an array instead of an iterator.
+    """
+    if stop is None:
+        stop = start
+        start = (0,)*len(stop)
+
+    start, stop = box = np.array((start, stop))
+    aligned_box = box - start
+    if step is None:
+        # Step is implicitly 1
+        shape = aligned_box[1]
+        return start + ndindex_array(*shape)
+    else:
+        shape = round_coord(aligned_box[1], step, 'up') // step
+        return start + step * ndindex_array(*shape)
 
 
 def ndindex_array(*shape, dtype=np.int32):

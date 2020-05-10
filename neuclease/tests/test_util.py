@@ -9,7 +9,7 @@ import pandas as pd
 from neuclease.util import (uuids_match, read_csv_header, read_csv_col, connected_components,
                             connected_components_nonconsecutive, graph_tool_available,
                             closest_approach, approximate_closest_approach, upsample, is_lexsorted, lexsort_columns,
-                            lexsort_inplace, gen_json_objects, ndrange, compute_parallel, iter_batches,
+                            lexsort_inplace, gen_json_objects, ndrange, ndrange_array, compute_parallel, iter_batches,
                             is_box_coverage_complete)
 
 def test_uuids_match():
@@ -329,6 +329,21 @@ def test_ndrange():
 
     assert len(r) == len(expected)
     assert list(r) == expected
+
+
+def test_ndrange_array():
+    r = ndrange_array((1,2,3), (3,5,6), (1,2,2))
+    expected = [(1, 2, 3),
+                (1, 2, 5),
+                (1, 4, 3),
+                (1, 4, 5),
+                (2, 2, 3),
+                (2, 2, 5),
+                (2, 4, 3),
+                (2, 4, 5)]
+
+    assert len(r) == len(expected)
+    assert (r == np.array(expected)).all()
 
 
 def _double(x):

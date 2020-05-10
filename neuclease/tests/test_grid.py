@@ -3,17 +3,19 @@ import numpy as np
 from neuclease.util import Grid, boxes_from_grid, slabs_from_box
 
 
-def test_boxes_from_grid_0():
+@pytest.mark.parametrize("lazy", [True, False])
+def test_boxes_from_grid_0(lazy):
     # Simple: bounding_box starts at zero, no offset
     grid = Grid( (10,20), (0,0) )
     bounding_box = [(0,0), (100,300)]
-    boxes = np.array(list(boxes_from_grid(bounding_box, grid)))
+    boxes = np.array(list(boxes_from_grid(bounding_box, grid, lazy=lazy)))
     assert boxes.shape == (np.prod( np.array(bounding_box[1]) / grid.block_shape ), 2, 2)
     assert (boxes % grid.block_shape == 0).all()
     assert (boxes[:, 1, :] - boxes[:, 0, :] == grid.block_shape).all()
 
 
-def test_boxes_from_grid_1():
+@pytest.mark.parametrize("lazy", [True, False])
+def test_boxes_from_grid_1(lazy):
     # Set a non-aligned bounding box
     grid = Grid( (10,20), (0,0) )
     bounding_box = np.array([(15,30), (95,290)])
@@ -23,13 +25,14 @@ def test_boxes_from_grid_1():
     
     algined_bb_shape = aligned_bounding_box[1] - aligned_bounding_box[0]
     
-    boxes = np.array(list(boxes_from_grid(bounding_box, grid)))
+    boxes = np.array(list(boxes_from_grid(bounding_box, grid, lazy=lazy)))
     assert boxes.shape == (np.prod( algined_bb_shape / grid.block_shape ), 2, 2)
     assert (boxes % grid.block_shape == 0).all()
     assert (boxes[:, 1, :] - boxes[:, 0, :] == grid.block_shape).all()
 
 
-def test_boxes_from_grid_2():
+@pytest.mark.parametrize("lazy", [True, False])
+def test_boxes_from_grid_2(lazy):
     # Use a grid offset
     grid = Grid( (10,20), (2,3) )
     bounding_box = np.array([(5,10), (95,290)])
@@ -39,7 +42,7 @@ def test_boxes_from_grid_2():
     
     aligned_bb_shape = aligned_bounding_box[1] - aligned_bounding_box[0]
     
-    boxes = np.array(list(boxes_from_grid(bounding_box, grid)))
+    boxes = np.array(list(boxes_from_grid(bounding_box, grid, lazy=lazy)))
     assert boxes.shape == (np.prod( aligned_bb_shape / grid.block_shape ), 2, 2)
     
     # Boxes should be offset by grid.offset.

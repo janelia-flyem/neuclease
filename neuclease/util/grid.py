@@ -1,8 +1,9 @@
 import numpy as np
 import pandas as pd
 
-from .util import ndrange, tqdm_proxy, compute_parallel
+from .util import ndrange, tqdm_proxy, compute_parallel, ndrange_array
 from .box import box_intersection, round_box, overwrite_subvol
+
 
 class Grid:
     """
@@ -56,54 +57,106 @@ class Grid:
     def __repr__(self):
         return f"Grid(block_shape={tuple(self.block_shape)}, offset={tuple(self.offset)}, halo={tuple(self.halo_shape)})"
 
-class boxes_from_grid:
+
+def boxes_from_grid(bounding_box, grid, include_halos=True, clipped=False, lazy=False):
     """
-    Iterable.
-    
     Given a bounding box and a Grid, this class can be used to iterate
     over the boxes of the Grid that intersect the bounding box.
-    See __init__ for options.
-    
-    This iterable declares __len__, so it can be used with tqdm, for instance.
+
+    Args:
+        bounding_box:
+            The extents of the region to pull boxes from.
+            Note:
+                If clipped=False and this bounding box is not aligned to the grid,
+                then some boxes will extend beyond the the bounding_box.
+        grid:
+            An instance of Grid, or a block shape (tuple).
+
+        include_halos:
+            If True, yielded boxes will include the Grid halo, otherwise the Grid
+            halo is ignored and only the 'internal' portion of each Grid box
+            is yielded (as if the Grid has no halo).
+
+        clipped:
+            If True, boxes that intersect the bounding box edges will be "clipped"
+            (truncated) to their intersecting portion, and thus no yielded boxes
+            will extend outside of the bounding box (but some boxes may be smaller
+            than others).
+
+        lazy:
+            If True, don't pre-compute the complete set of boxes.
+            Instead, return an iterable that will compute them one-at-a-time.
+            The iterable declares __len__, so it can be used with tqdm, for instance.
+            Note: Technically this saves RAM, but comes at a considerable computational cost.
+
+    Returns:
+        Either ndarray with shape (N,2,D) or an iterable which yields arrays of shape (2,D).
+        See 'lazy' arg.
+
+    Examples:
+
+        >>> for box in boxes_from_grid([[0,0], [10,10]], (5,6)):
+        ...     print(box.tolist())
+        [[0, 0], [5, 6]]
+        [[0, 6], [5, 12]]
+        [[5, 0], [10, 6]]
+        [[5, 6], [10, 12]]
+
+        >>> for box in boxes_from_grid([[0,0], [10,10]], (5,6), clipped=True):
+        ...     print(box.tolist())
+        [[0, 0], [5, 6]]
+        [[0, 6], [5, 10]]
+        [[5, 0], [10, 6]]
+        [[5, 6], [10, 10]]
     """
+    # If necessary, auto-convert blockshape into a Grid
+    if not isinstance(grid, Grid):
+        if not hasattr(grid, '__len__'):
+            # If we were given an int, convert to isotropic blockshape
+            grid = (grid,)*len(bounding_box[0])
+        grid = Grid(grid)
+
+    if lazy:
+        return _lazy_boxes_from_grid(bounding_box, grid, include_halos, clipped)
+    else:
+        return _boxes_from_grid_array(bounding_box, grid, include_halos, clipped)
+
+
+def _boxes_from_grid_array(bounding_box, grid, include_halos=True, clipped=False, lazy=False):
+    if include_halos:
+        halo = grid.halo_shape
+    else:
+        halo = 0
+
+    bounding_box = np.asarray(bounding_box, dtype=int)
+    halo_shape = np.zeros((len(grid.block_shape),), dtype=np.int32)
+    halo_shape[:] = halo
+
+    # Call ndrange in the offset coordinate space instead of global coordinates
+    # (i.e. in the coordinate space relative to the grid offset)
+    offset_box = bounding_box - grid.modulus_offset
+    aligned_offet_box = round_box(offset_box, grid.block_shape, 'out')
+
+    all_starts = ndrange_array(*aligned_offet_box, grid.block_shape)
+    all_boxes = np.concatenate((all_starts[:, None, :], all_starts[:, None, :]), axis=1)
+    all_boxes[:, 1, :] += grid.block_shape
+
+    # Un-offset, back to global coordinates.
+    all_boxes += grid.modulus_offset
+
+    if include_halos and grid.halo_shape.any():
+        all_boxes[:, 0, :] -= halo_shape
+        all_boxes[:, 1, :] += halo_shape
+
+    if clipped:
+        all_boxes[:, 0, :] = np.maximum(bounding_box[0], all_boxes[:, 0, :])
+        all_boxes[:, 1, :] = np.minimum(bounding_box[1], all_boxes[:, 1, :])
+
+    return all_boxes
+
+
+class _lazy_boxes_from_grid:
     def __init__(self, bounding_box, grid, include_halos=True, clipped=False):
-        """
-        Args:
-            bounding_box:
-                The extents of the region to pull boxes from.
-                Note:
-                    If clipped=False and this bounding box is not aligned to the grid,
-                    then some boxes will extend beyond the the bounding_box.
-            grid:
-                An instance of Grid, or a block shape (tuple).
-            
-            include_halos:
-                If True, yielded boxes will include the Grid halo, otherwise the Grid
-                halo is ignored and only the 'internal' portion of each Grid box
-                is yielded (as if the Grid has no halo).
-            
-            clipped:
-                If True, boxes that intersect the bounding box edges will be "clipped"
-                (truncated) to their intersecting portion, and thus no yielded boxes
-                will extend outside of the bounding box (but some boxes may be smaller
-                than others).
-        
-        Examples:
-
-            >>> for box in boxes_from_grid([[0,0], [10,10]], (5,6)):
-            ...     print(box.tolist())
-            [[0, 0], [5, 6]]
-            [[0, 6], [5, 12]]
-            [[5, 0], [10, 6]]
-            [[5, 6], [10, 12]]
-
-            >>> for box in boxes_from_grid([[0,0], [10,10]], (5,6), clipped=True):
-            ...     print(box.tolist())
-            [[0, 0], [5, 6]]
-            [[0, 6], [5, 10]]
-            [[5, 0], [10, 6]]
-            [[5, 6], [10, 10]]
-        """
         # If necessary, auto-convert blockshape into a Grid
         if not isinstance(grid, Grid):
             if not hasattr(grid, '__len__'):
@@ -129,12 +182,12 @@ class boxes_from_grid:
         return num_boxes
 
 
-def clipped_boxes_from_grid(bounding_box, grid, include_halos=True):
+def clipped_boxes_from_grid(bounding_box, grid, include_halos=True, lazy=False):
     """
     Convenience function for boxes_from_grid(..., clipped=True).
     (Mostly here for backwards compatibility with old code.)
     """
-    return boxes_from_grid(bounding_box, grid, include_halos, clipped=True)
+    return boxes_from_grid(bounding_box, grid, include_halos, clipped=True, lazy=lazy)
 
 
 def _boxes_from_grid(bounding_box, grid, include_halos=True):
@@ -252,7 +305,7 @@ def slabs_from_box( full_res_box, slab_depth, scale=0, scaling_policy='round-out
     # This grid outlines the slabs -- each box in slab_grid is a full slab
     grid_offset = scaled_input_bb_zyx[0].copy()
     grid_offset[slab_cutting_axis] = 0 # See note about slab alignment, above.
-    
+
     slab_grid = Grid(slab_shape_zyx, grid_offset)
     slab_boxes = clipped_boxes_from_grid(scaled_input_bb_zyx, slab_grid)
     

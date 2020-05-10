@@ -10,9 +10,9 @@ from .util import downsample_mask
 class SparseBlockMask:
     """
     Tiny class to hold a low-resolution binary mask and the box it corresponds to.
-    
+
     In other words, a simple way of sparsely marking blocks of a large volume.
-    
+
     If your blocks of interest are VERY sparse, it would be cheaper to simply
     store the list of block coordinate tuples.  But for semi-sparse data, storing
     a binary mask as done here is cheaper, assuming your chosen block 'resolution'
@@ -37,7 +37,7 @@ class SparseBlockMask:
             self.resolution = np.asarray(resolution)
         else:
             self.resolution = np.array( [resolution]*lowres_mask.ndim )
-            
+
         assert (((self.box[1] - self.box[0]) // self.resolution) == self.lowres_mask.shape).all(), \
             f"Inconsistent mask shape ({lowres_mask.shape}) and box {self.box.tolist()} for the given resolution ({resolution}).\n"\
             "Note: box should be specified in FULL resolution coordinates."
@@ -59,12 +59,12 @@ class SparseBlockMask:
         Create a SparseBlockMask by extract a portion of an existing SparseBlockMask.
         If sub_box isn't aligned to the given sbm resolution, it will be expanded to make it aligned.
         """
-        sub_box = round_box(sub_box, sbm.resolution, 'out') 
+        sub_box = round_box(sub_box, sbm.resolution, 'out')
 
         new_box = box_intersection(sub_box, sbm.box)
         new_resolution = sbm.resolution.copy()
         new_lowres_box = new_box // new_resolution
-        
+
         old_lowres_box = sbm.box // sbm.resolution
         new_lowres_mask = extract_subvol(sbm.lowres_mask, new_lowres_box - old_lowres_box[0]).copy()
         return SparseBlockMask(new_lowres_mask, new_box, new_resolution)
@@ -76,7 +76,7 @@ class SparseBlockMask:
         Given a mask that is not necessarily at full-res,
         but still at a higher res than the SBM you want to create,
         create a SBM at a lower resolution.
-        
+
         Args:
             highres_mask:
                 A binary mask which will be downsampled before creating the SBM
@@ -100,7 +100,7 @@ class SparseBlockMask:
         Convenience constructor.
         Create a SparseBlockMask from an array of block coordinates
         (i.e. 'lowres' coordinates).
-        
+
         Args:
             coords_zyx:
                 ndarray, shape (N,3), indicating the 'blocks' that are masked.
@@ -123,7 +123,7 @@ class SparseBlockMask:
 
         return SparseBlockMask(mask, resolution*mask_box, resolution)
 
-    
+
     def change_resolution(self, new_resolution):
         """
         Without changing the mask data,
@@ -142,15 +142,15 @@ class SparseBlockMask:
         """
         Sample a subvolume of the mask, using full-resolution
         coordinates and returning a full-resolution mask subvolume.
-        
+
         This means creating an array of the requested shape, and overwriting
         the portion of it that intersects (if any) with our stored lowres_mask.
-        
+
         Any box can be requested.  If the requested box does not intersect
         with the stored voxels, the returned mask will be zeros.
         """
         # Here's a guide to the variable names below:
-        # 
+        #
         # +-----------------------+
         # | stored                |
         # | (self.lowres_mask)    |
@@ -172,7 +172,7 @@ class SparseBlockMask:
         # Unless otherwise noted, all boxes/masks below are in low-res coordinates/voxels.
         req_box = req_box_fullres // self.resolution
         stored_box = (self.box // self.resolution)
-        
+
         clipped_box = box_intersection(req_box, stored_box)
         if (clipped_box[1] <= clipped_box[0]).any():
             # No intersection; return zeros
@@ -184,7 +184,7 @@ class SparseBlockMask:
 
         # Extract intersecting region from within stored voxels
         clipped_mask = self.lowres_mask[box_to_slicing(*clipped_within_stored)]
-        
+
         # Use the view_as_blocks() trick to create a 6D view,
         # which we will write to via broadcasting from low-res voxels
         result_mask_view = view_as_blocks(result_mask_fullres, tuple(self.resolution))
@@ -192,7 +192,7 @@ class SparseBlockMask:
         # Overwrite within result view (broadcasting achieves upsampling here)
         slicing = (Ellipsis,) + (None,)*self.lowres_mask.ndim
         result_mask_view[box_to_slicing(*clipped_within_req)] = clipped_mask[slicing]
-        
+
         # Return the full-res voxels
         return result_mask_fullres
 
@@ -201,50 +201,49 @@ class SparseBlockMask:
         """
         Overlay a coarse grid (brick_grid) on top of this SparseBlockMask
         and extract the list of non-empty boxes from the given coarse grid.
-    
+
         Args:
             brick_grid:
                 The desired grid to use for the output.
                 Does not need to be equivalent to the lowres grid that this SBM corresponds to.
-            
+
             halo:
                 If nonzero, expand each box by the given width in all dimensions.
                 Note: This will result in boxes that are wider than the brick grid's native block shape.
-            
+
             return_logical_boxes:
                 If True, the result is returned as a list of full-size "logical" boxes.
                 Otherwise, each box is shrunken to the minimal size while still
                 encompassing all data with its grid box (i.e. a physical box), plus halo, if given.
                 Note: It is not valid to use this option if halo is nonzero.
-    
+
         Returns:
-            boxes, shape=(N,2,3) of non-empty bricks, as indicated by block_mask.    
+            boxes, shape=(N,2,3) of non-empty bricks, as indicated by block_mask.
         """
         if brick_grid is None:
             brick_grid = Grid(self.resolution)
-        
+
         if not isinstance(brick_grid, Grid):
             assert isinstance(brick_grid, collections.abc.Iterable)
             brick_grid = Grid(brick_grid)
-        
+
         assert (brick_grid.modulus_offset == (0,0,0)).all(), \
             "TODO: This function doesn't yet support brick grids with non-zero offsets"
         assert ((brick_grid.block_shape % self.resolution) == 0).all(), \
             "Brick grid must be a multiple of the block grid"
         assert not (halo > 0 and return_logical_boxes), \
             "The return_logical_boxes option makes no sense if halo > 0"
-    
+
         block_mask_box = np.asarray(self.box)
-        
+
         lowres_brick_grid = Grid( brick_grid.block_shape // self.resolution )
         lowres_block_mask_box = block_mask_box // self.resolution
-        
-        lowres_logical_and_clipped_boxes = ( (box, box_intersection(box, lowres_block_mask_box))
-                                             for box in boxes_from_grid(lowres_block_mask_box, lowres_brick_grid) )
-    
+
+        lowres_logical_boxes = boxes_from_grid(lowres_block_mask_box, lowres_brick_grid)
+        lowres_clipped_boxes = boxes_from_grid(lowres_block_mask_box, lowres_brick_grid, clipped=True)
+
         lowres_boxes = []
-        
-        for logical_lowres_box, clipped_lowres_box in lowres_logical_and_clipped_boxes:
+        for logical_lowres_box, clipped_lowres_box in zip(lowres_logical_boxes, lowres_clipped_boxes):
             box_within_mask = clipped_lowres_box - lowres_block_mask_box[0]
             brick_mask = self.lowres_mask[box_to_slicing(*box_within_mask)]
             brick_coords = np.transpose(brick_mask.nonzero()).astype(np.int32)
@@ -255,20 +254,19 @@ class SparseBlockMask:
             else:
                 physical_lowres_box = ( brick_coords.min(axis=0),
                                         brick_coords.max(axis=0) + 1 )
-                
+
                 physical_lowres_box += box_within_mask[0] + lowres_block_mask_box[0]
-                
+
                 lowres_boxes.append( physical_lowres_box )
-        
-        
+
         if len(lowres_boxes) == 0:
             nonempty_boxes = np.zeros((0,2,3), dtype=np.int32)
         else:
             nonempty_boxes = np.array(lowres_boxes, dtype=np.int32) * self.resolution
-    
+
             halo_shape = np.zeros((3,), dtype=np.int32)
             halo_shape[:] = halo
             if halo_shape.any():
                 nonempty_boxes[:] += (-halo_shape, halo_shape)
-        
+
         return nonempty_boxes
