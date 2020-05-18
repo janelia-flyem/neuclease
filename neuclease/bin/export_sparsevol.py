@@ -24,14 +24,14 @@ Example Usage:
 
     # Export a mask for each group listed in neuron-groups.csv
     # If the CSV file does not have a 'group' column, each neuron is exported individually.
-    export_sparsevol --scale=5 emdata4.int.janeloa.org:8900 master segmentation neuron-groups.csv
+    export_sparsevol --scale=5 emdata4.int.janelia.org:8900 master segmentation neuron-groups.csv
 
     # If you don't need grouping, body IDs can be specified directly on the command line.
     # By default, each neuron is exported individually.
-    export_sparsevol -s=5 emdata4.int.janeloa.org:8900 master segmentation 1735382530 1672315788 1766413024
+    export_sparsevol -s=5 emdata4.int.janelia.org:8900 master segmentation 1735382530 1672315788 1766413024
 
     # The --combine-all flag merges all neurons into one big group (only one combined mask is exported).
-    export_sparsevol -s=5 --combine-all emdata4.int.janeloa.org:8900 master segmentation 1735382530 1672315788 1766413024
+    export_sparsevol -s=5 --combine-all emdata4.int.janelia.org:8900 master segmentation 1735382530 1672315788 1766413024
 
 See below for option/parameter reference.
 """
