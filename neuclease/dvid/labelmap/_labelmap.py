@@ -2001,7 +2001,7 @@ def post_merge(server, uuid, instance, main_label, other_labels, *, session=None
 
 
 @dvid_api_wrapper
-def fetch_mutations(server, uuid, instance, userid=None, *, dag_filter='leaf-only', action_filter=None, format='pandas', session=None):
+def fetch_mutations(server, uuid, instance, userid=None, *, action_filter=None, dag_filter='leaf-only', format='pandas', session=None):
     """
     Fetch the log of successfully completed mutations.
     The log is returned in the same format as the kafka log.
@@ -2010,7 +2010,40 @@ def fetch_mutations(server, uuid, instance, userid=None, *, dag_filter='leaf-onl
     the ``dag_filter`` and ``action_filter`` options, which are not part
     of the DVID REST API.
 
+    Args:
+        server, uuid, instance:
+            A labelmap instance for which a kafka log exists.
 
+        userid:
+            If given, limit the query to only include mutations
+            which were performed by the given user.
+            Note: This need not be the same as the current user
+            calling this function.
+
+        action_filter:
+            A list of actions to use as a filter for the returned messages.
+            For example, if action_filter=['split', 'split-supervoxel'],
+            all messages with other actions will be filtered out.
+            (This is not part of the DVID API.  It's implemented in this
+            python function a post-processing step.)
+
+        dag_filter:
+            Specifies which UUIDs for which to fetch mutations,
+            relative to the specified ``uuid``.
+
+            One of:
+            - 'leaf-only' (only messages whose uuid matches the one provided),
+            - 'leaf-and-parents' (only messages matching the given uuid or its ancestors), or
+            - None (no filtering by UUID).
+            (This is not part of the DVID API.  It's implemented in this
+            python function by calling the /mutations endpoint for multiple UUIDs.)
+
+        format:
+            How to return the data. Either 'pandas' or 'json'.
+
+    Returns:
+        Either a DataFrame or list of parsed json values, depending
+        on what you passed as 'format'.
     """
     assert dag_filter in ('leaf-only', 'leaf-and-parents', None)
 
