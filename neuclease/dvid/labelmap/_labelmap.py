@@ -2087,7 +2087,8 @@ def fetch_mutations(server, uuid, instance, userid=None, *, action_filter=None, 
         return msgs
 
 
-def read_labelmap_kafka_df(server, uuid, instance='segmentation', default_timestamp=DEFAULT_TIMESTAMP, drop_completes=True, group_id=None):
+def read_labelmap_kafka_df(server, uuid, instance='segmentation', action_filter=None, dag_filter='leaf-and-parents',
+                           default_timestamp=DEFAULT_TIMESTAMP, drop_completes=True, group_id=None):
     """
     Convenience function for reading the kafka log for
     a labelmap instance and loading it into a DataFrame.
@@ -2101,6 +2102,18 @@ def read_labelmap_kafka_df(server, uuid, instance='segmentation', default_timest
         server, uuid, instance:
             A labelmap instance for which a kafka log exists.
 
+        action_filter:
+            A list of actions to use as a filter for the returned messages.
+            For example, if action_filter=['split', 'split-complete'],
+            all messages with other actions will be filtered out.
+
+        dag_filter:
+            How to filter out messages based on the UUID.
+            One of:
+            - 'leaf-only' (only messages whose uuid matches the one provided),
+            - 'leaf-and-parents' (only messages matching the given uuid or its ancestors), or
+            - None (no filtering by UUID).
+
         default_timestamp:
             See labelmap_kafka_msgs_to_df()
 
@@ -2111,7 +2124,7 @@ def read_labelmap_kafka_df(server, uuid, instance='segmentation', default_timest
         DataFrame with columns:
             ['timestamp', 'uuid', 'mutid', 'action', 'target_body', 'target_sv', 'msg']
     """
-    msgs = read_kafka_messages(server, uuid, instance, group_id=group_id)
+    msgs = read_kafka_messages(server, uuid, instance, action_filter, dag_filter, group_id=group_id)
     msgs_df = labelmap_kafka_msgs_to_df(msgs, default_timestamp, drop_completes)
     return msgs_df
 
