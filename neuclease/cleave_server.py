@@ -58,6 +58,9 @@ def main(debug_mode=False):
                             help="Which DVID server to use for initializing the edge table (for splits and focused edges)")
     parser.add_argument('--initialization-uuid')
     parser.add_argument('--initialization-labelmap-instance')
+    parser.add_argument('--primary-kafka-log', required=False,
+                        help="Normally the startup procedure involves reading the entire kafka log for the primary dvid instance. "
+                        "But if you supply one here in 'jsonl' format, it will be used instead of downloading the log from kafka.")
     args = parser.parse_args()
 
     # By default, initialization is same as primary unless otherwise specified
@@ -88,6 +91,13 @@ def main(debug_mode=False):
         primary_instance_info = DvidInstanceInfo(args.primary_dvid_server, args.primary_uuid, args.primary_labelmap_instance)
         initialization_instance_info = DvidInstanceInfo(args.initialization_dvid_server, args.initialization_uuid, args.initialization_labelmap_instance)
 
+        kafka_msgs = None
+        if args.primary_kafka_log:
+            assert args.primary_kafka_log.endswith('.jsonl'), "Supply the kafka log in .jsonl format"
+            kafka_msgs = []
+            for line in open(args.primary_kafka_log, 'r'):
+                kafka_msgs.append(ujson.loads(line))
+
         print("Loading merge table...")
         with Timer(f"Loading merge table from: {args.merge_table}", logger):
             MERGE_GRAPH = LabelmapMergeGraph(args.merge_table, primary_instance_info.uuid, args.debug_export_dir, no_kafka=args.testing)
@@ -99,7 +109,7 @@ def main(debug_mode=False):
         # Apply splits first
         if all(primary_instance_info):
             with Timer(f"Appending split supervoxel edges for supervoxels in", logger):
-                bad_edges = MERGE_GRAPH.append_edges_for_split_supervoxels( initialization_instance_info, read_from='dvid' )
+                bad_edges = MERGE_GRAPH.append_edges_for_split_supervoxels( initialization_instance_info, read_from='dvid', kafka_msgs=kafka_msgs )
 
                 if len(bad_edges) > 0:
                     bad_edges_name = f'BAD-SPLIT-EDGES-{args.primary_uuid[:4]}.csv'
@@ -112,7 +122,7 @@ def main(debug_mode=False):
         if args.mapping_file:
             MERGE_GRAPH.apply_mapping(args.mapping_file)
         elif all(primary_instance_info):
-            MERGE_GRAPH.fetch_and_apply_mapping(*primary_instance_info)
+            MERGE_GRAPH.fetch_and_apply_mapping(*primary_instance_info, kafka_msgs)
 
         if args.suspend_before_launch:
             pid = os.getpid()

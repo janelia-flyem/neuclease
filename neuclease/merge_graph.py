@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 
 from .util import Timer
-from .dvid import fetch_repo_info, fetch_supervoxels, fetch_labels, fetch_complete_mappings, fetch_mutation_id, fetch_supervoxel_splits
+from .dvid import fetch_repo_info, fetch_supervoxels, fetch_labels, fetch_complete_mappings, fetch_mutation_id, fetch_supervoxel_splits, fetch_supervoxel_splits_from_kafka
 from .merge_table import MERGE_TABLE_DTYPE, load_mapping, load_merge_table, normalize_merge_table, apply_mapping_to_mergetable
 from .focused.ingest import fetch_focused_decisions
 from .adjacency import find_missing_adjacencies
@@ -102,9 +102,8 @@ class LabelmapMergeGraph:
         self.mapping = mapping
 
 
-    def fetch_and_apply_mapping(self, server, uuid, instance):
+    def fetch_and_apply_mapping(self, server, uuid, instance, kafka_msgs=None):
         # For testing purposes, we have a special means of avoiding kafkas
-        kafka_msgs = None
         if self.no_kafka:
             kafka_msgs = []
         mapping = fetch_complete_mappings(server, uuid, instance, include_retired=True, kafka_msgs=kafka_msgs)
@@ -145,7 +144,7 @@ class LabelmapMergeGraph:
         return len(focused_merges)
 
 
-    def append_edges_for_split_supervoxels(self, instance_info, parent_sv_handling='unmap', read_from='kafka'):
+    def append_edges_for_split_supervoxels(self, instance_info, parent_sv_handling='unmap', read_from='kafka', kafka_msgs=None):
         """
         Append edges to the merge table for the given split supervoxels (do not remove edges for their parents).
         
@@ -174,7 +173,10 @@ class LabelmapMergeGraph:
         assert parent_sv_handling in ('keep', 'drop', 'unmap')
         assert read_from in ('dvid', 'kafka')
         
-        split_events = fetch_supervoxel_splits(*instance_info, read_from)
+        if read_from == 'kafka':
+            split_events = fetch_supervoxel_splits_from_kafka(*instance_info, kafka_msgs=kafka_msgs)
+        else:
+            split_events = fetch_supervoxel_splits(*instance_info, 'dvid')
 
         # Drop 'type' field, keep only the int fields.
         all_split_events = []
