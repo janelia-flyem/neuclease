@@ -13,7 +13,8 @@ setup( name='neuclease',
                'check_tarsupervoxels_status = neuclease.bin.check_tarsupervoxels_status:main',
                'ingest_synapses = neuclease.bin.ingest_synapses:main',
                'decimate_existing_mesh = neuclease.bin.decimate_existing_mesh:main',
-               'export_sparsevol = neuclease.bin.export_sparsevol:main'
+               'export_sparsevol = neuclease.bin.export_sparsevol:main',
+               'neuron_mito_stats = neuclease.misc.neuron_mito_stats:main',
            ]
        }
      )
