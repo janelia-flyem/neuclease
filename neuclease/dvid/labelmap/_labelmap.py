@@ -433,7 +433,7 @@ fetch_label_for_coordinate = fetch_label
 
 
 @dvid_api_wrapper
-def fetch_labels(server, uuid, instance, coordinates_zyx, supervoxels=False, scale=0, *, session=None):
+def fetch_labels(server, uuid, instance, coordinates_zyx, scale=0, supervoxels=False, *, session=None):
     """
     Fetch the labels at a list of coordinates.
 
@@ -464,6 +464,11 @@ def fetch_labels(server, uuid, instance, coordinates_zyx, supervoxels=False, sca
     See also:
         ``fetch_label()``, ``fectch_labels_batched()``
     """
+    # I changed the order of these two args, so let's verify
+    # that no old code is sending them in the wrong order.
+    assert isinstance(supervoxels, bool)
+    assert np.issubdtype(type(scale), np.integer)
+
     coordinates_zyx = np.asarray(coordinates_zyx, np.int32)
     assert coordinates_zyx.ndim == 2 and coordinates_zyx.shape[1] == 3
 
@@ -503,7 +508,7 @@ def fetch_labels_batched(server, uuid, instance, coordinates_zyx, supervoxels=Fa
             del coords_df['by']
             del coords_df['bx']
 
-    fetch_batch = partial(_fetch_labels_batch, server, uuid, instance, supervoxels, scale)
+    fetch_batch = partial(_fetch_labels_batch, server, uuid, instance, scale, supervoxels)
 
     batch_dfs = []
     for batch_start in range(0, len(coords_df), batch_size):
@@ -523,13 +528,13 @@ def fetch_labels_batched(server, uuid, instance, coordinates_zyx, supervoxels=Fa
     return pd.concat(batch_result_dfs).sort_index()['label'].values
 
 
-def _fetch_labels_batch(server, uuid, instance, supervoxels, scale, batch_df):
+def _fetch_labels_batch(server, uuid, instance, scale, supervoxels, batch_df):
     """
     Helper for fetch_labels_batched(), defined at top-level so it can be pickled.
     """
     batch_coords = batch_df[['z', 'y', 'x']].values
     # don't pass session: We want a unique session per thread
-    batch_df.loc[:, 'label'] = fetch_labels(server, uuid, instance, batch_coords, supervoxels, scale)
+    batch_df.loc[:, 'label'] = fetch_labels(server, uuid, instance, batch_coords, scale, supervoxels)
     return batch_df
 
 
