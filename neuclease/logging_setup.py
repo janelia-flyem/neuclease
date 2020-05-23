@@ -72,6 +72,7 @@ class ExceptionLogger:
     """
     def __init__(self, logger):
         self.logger = logger
+        self.last_traceback = None
     
     def __enter__(self):
         return self
@@ -81,6 +82,7 @@ class ExceptionLogger:
             sio = StringIO()
             traceback.print_exception( exc_type, exc_value, exc_tb, file=sio )
             self.logger.error( sio.getvalue() )
+            self.last_traceback = sio.getvalue()
 
 
 def log_exceptions(logger):
