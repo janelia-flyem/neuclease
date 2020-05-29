@@ -254,7 +254,7 @@ class LabelmapMergeGraph:
         return bad_edges
 
 
-    def extract_edges(self, server, uuid, instance, body_id, *, session=None, logger=None):
+    def extract_edges(self, server, uuid, instance, body_id, find_missing=True, *, session=None, logger=None):
         body_id = np.uint64(body_id)
         if logger is None:
             logger = _logger
@@ -286,24 +286,29 @@ class LabelmapMergeGraph:
             else:
                 subset_df = self.extract_rows_by_sv(dvid_supervoxels)
 
-            with Timer() as timer:                
-                known_edges = subset_df[['id_a', 'id_b']].values
-                extra_edges, orig_num_cc, final_num_cc, block_table = \
-                    find_missing_adjacencies(server, uuid, instance, body_id, known_edges,
-                                             svs=dvid_supervoxels, search_distance=10, connect_non_adjacent=True)
-                extra_scores = np.zeros(len(extra_edges), np.float32)
-            
+            orig_num_cc = 0
+            extra_edges = extra_scores = []
+            if find_missing:
+                with Timer() as timer:
+                    known_edges = subset_df[['id_a', 'id_b']].values
+                    extra_edges, orig_num_cc, final_num_cc, block_table = \
+                        find_missing_adjacencies(server, uuid, instance, body_id, known_edges,
+                                                 svs=dvid_supervoxels, search_distance=10, connect_non_adjacent=True)
+                    extra_scores = np.zeros(len(extra_edges), np.float32)
+
             if orig_num_cc == 1:
                 logger.info("Graph is contiguous")
-            else:
+            elif find_missing:
                 logger.info(f"Searched {len(block_table)} blocks for missing adjacencies.")
                 if final_num_cc == 1:
                     logger.info(f"Finding missing adjacencies between {orig_num_cc} disjoint components took {timer.timedelta}")
                 else:
                     logger.warning(f"Graph is not contiguous, but some missing adjacencies could not be found.")
                     logger.warning(f"Reducing {orig_num_cc} disjoint components into {final_num_cc} took {timer.timedelta}")
-            
-            edges = known_edges
+            else:
+                logger.warning(f"Not looking for missing edges (if any)")
+
+            edges = subset_df[['id_a', 'id_b']].values
             scores = subset_df['score'].values
 
             if len(extra_edges) > 0:

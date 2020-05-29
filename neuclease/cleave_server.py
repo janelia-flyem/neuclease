@@ -235,6 +235,8 @@ def _run_cleave(data):
     server = data["server"] + ':' + str(data["port"])
     uuid = data["uuid"]
     segmentation_instance = data["segmentation-instance"]
+    find_missing_edges = data.get("find-missing-edges", True)
+
     body_logger = PrefixedLogger(logger, f"User {user}: Body {body_id}: ")
 
     instance_info = DvidInstanceInfo(server, uuid, segmentation_instance)
@@ -261,7 +263,7 @@ def _run_cleave(data):
     with Timer() as timer:
         try:
             session = default_dvid_session(appname='cleave-server', user=user)
-            mutid, supervoxels, edges, scores = MERGE_GRAPH.extract_edges(*instance_info, body_id, session=session, logger=body_logger)
+            mutid, supervoxels, edges, scores = MERGE_GRAPH.extract_edges(*instance_info, body_id, find_missing_edges, session=session, logger=body_logger)
         except requests.HTTPError as ex:
             status_name = str(HTTPStatus(ex.response.status_code)).split('.')[1]
             if ex.response.status_code == HTTPStatus.NOT_FOUND:
@@ -349,6 +351,8 @@ def body_edge_table():
     server = data["server"] + ':' + str(data["port"])
     uuid = data["uuid"]
     segmentation_instance = data["segmentation-instance"]
+    find_missing_edges = data.get("find-missing-edges", True)
+
     body_logger = PrefixedLogger(logger, f"User {user}: Body {body_id}: ")
 
     instance_info = DvidInstanceInfo(server, uuid, segmentation_instance)
@@ -357,7 +361,7 @@ def body_edge_table():
 
     try:
         session = default_dvid_session(appname='cleave-server', user=user)
-        _mutid, _supervoxels, edges, scores = MERGE_GRAPH.extract_edges(*instance_info, body_id, session=session, logger=body_logger)
+        _mutid, _supervoxels, edges, scores = MERGE_GRAPH.extract_edges(*instance_info, body_id, find_missing_edges, session=session, logger=body_logger)
     except requests.HTTPError as ex:
         status_name = str(HTTPStatus(ex.response.status_code)).split('.')[1]
         if ex.response.status_code == HTTPStatus.NOT_FOUND:
