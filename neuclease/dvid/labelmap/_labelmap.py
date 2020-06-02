@@ -14,7 +14,7 @@ from requests import HTTPError
 from libdvid import DVIDNodeService, encode_label_block
 
 from ...util import (Timer, round_box, extract_subvol, DEFAULT_TIMESTAMP, tqdm_proxy,
-                     ndrange, box_to_slicing, compute_parallel, boxes_from_grid, box_shape,
+                     ndrange, ndrange_array, box_to_slicing, compute_parallel, boxes_from_grid, box_shape,
                      overwrite_subvol)
 
 from .. import dvid_api_wrapper, fetch_generic_json, fetch_repo_info
@@ -1596,7 +1596,7 @@ def encode_labelarray_blocks(corners_zyx, blocks, gzip_level=6, progress=False):
     return body_data
 
 
-def encode_labelarray_volume(offset_zyx, volume, gzip_level=6):
+def encode_labelarray_volume(offset_zyx, volume, gzip_level=6, omit_empty_blocks=False):
     """
     Encode a uint64 volume as labelarray data, located at the given offset coordinate.
     The coordinate and volume shape must be 64-px aligned.
@@ -1612,6 +1612,10 @@ def encode_labelarray_volume(offset_zyx, volume, gzip_level=6):
         gzip_level:
             The level of gzip compression to use, from 0 (no compression) to 9.
 
+        omit_empty_blocks:
+            If True, don't encode blocks that are completely zero-filled.
+            Omit them from the output.
+
     See ``decode_labelarray_volume()`` for the corresponding decode function.
     """
     offset_zyx = np.asarray(offset_zyx)
@@ -1620,7 +1624,16 @@ def encode_labelarray_volume(offset_zyx, volume, gzip_level=6):
     assert (offset_zyx % 64 == 0).all(), "Data must be block-aligned"
     assert (shape % 64 == 0).all(), "Data must be block-aligned"
 
-    corners_zyx = list(ndrange(offset_zyx, offset_zyx + volume.shape, (64,64,64)))
+    corners_zyx = ndrange_array(offset_zyx, offset_zyx + volume.shape, (64,64,64))
+
+    if omit_empty_blocks:
+        old_corners = corners_zyx.copy()
+        corners_zyx = []
+        for corner in old_corners:
+            vol_corner = corner - offset_zyx
+            block = volume[box_to_slicing(vol_corner, vol_corner+64)]
+            if block.any():
+                corners_zyx.append(corner)
 
     def gen_blocks():
         for corner in corners_zyx:
