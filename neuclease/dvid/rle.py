@@ -600,7 +600,11 @@ def rle_ranges_box(rle_array_zyx):
          ...
         ]
 
-    Note: The interval [X1,X2] is INCLUSIVE, following DVID conventions, not Python conventions.
+    Note:
+        The input interval [X1,X2] is INCLUSIVE, following DVID conventions,
+        not Python conventions. But this function returns a bounding box
+        according to the usual conventions, i.e. [start, stop], where stop
+        is one-past-the-end.
 
     Returns:
         bounding_box (start, stop)
