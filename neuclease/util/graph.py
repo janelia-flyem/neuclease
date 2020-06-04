@@ -111,6 +111,8 @@ def connected_components(edges, num_nodes, _lib=None):
         return cc_pmap.get_array()
 
     else:
+        edges = np.asarray(edges, dtype=np.int64)
+
         g = nx.Graph()
         g.add_nodes_from(range(num_nodes))
         g.add_edges_from(edges)
