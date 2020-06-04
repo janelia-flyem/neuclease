@@ -15,7 +15,8 @@ from libdvid import DVIDNodeService
 
 from neuclease.dvid import (dvid_api_wrapper, DvidInstanceInfo, fetch_supervoxels, fetch_supervoxel_sizes_for_body,
                             fetch_label, fetch_labels, fetch_labels_batched, fetch_mappings, fetch_complete_mappings, post_mappings,
-                            fetch_mutation_id, generate_sample_coordinate, fetch_labelmap_voxels, post_labelmap_blocks, post_labelmap_voxels,
+                            fetch_mutation_id, generate_sample_coordinate, fetch_labelmap_voxels, fetch_labelmap_voxels_chunkwise,
+                            post_labelmap_blocks, post_labelmap_voxels,
                             encode_labelarray_volume, encode_nonaligned_labelarray_volume, fetch_raw, post_raw,
                             fetch_labelindex, post_labelindex, fetch_labelindices, create_labelindex, PandasLabelIndex,
                             copy_labelindices,
@@ -282,6 +283,28 @@ def test_fetch_labelmap_voxels(labelmap_setup):
     voxels_proxy = fetch_labelmap_voxels(*instance_info, [(0,0,0), supervoxel_vol.shape], supervoxels=True, format='lazy-array')
     assert len(voxels_proxy.content) < supervoxel_vol.nbytes, \
         "Fetched data was apparently not compressed"
+    assert (voxels_proxy() == supervoxel_vol).all()
+
+
+def test_fetch_labelmap_voxels_chunkwise(labelmap_setup):
+    dvid_server, dvid_repo, _merge_table_path, _mapping_path, supervoxel_vol = labelmap_setup
+    instance_info = DvidInstanceInfo(dvid_server, dvid_repo, 'segmentation')
+
+    # Use a ridiculously small chunk shape, since the test data is quite tiny
+    CHUNK_SHAPE=(1,1,10)
+
+    # Test raw supervoxels
+    voxels = fetch_labelmap_voxels_chunkwise(*instance_info, [(0,0,0), supervoxel_vol.shape], supervoxels=True, chunk_shape=CHUNK_SHAPE)
+    assert (voxels == supervoxel_vol).all()
+
+    # Test mapped bodies
+    voxels = fetch_labelmap_voxels_chunkwise(*instance_info, [(0,0,0), supervoxel_vol.shape], supervoxels=False, chunk_shape=CHUNK_SHAPE)
+    assert (voxels == 1).all()
+
+    # Test uninflated mode
+    voxels_proxy = fetch_labelmap_voxels_chunkwise(*instance_info, [(0,0,0), supervoxel_vol.shape], supervoxels=True, chunk_shape=CHUNK_SHAPE,
+                                                   format='lazy-array')
+
     assert (voxels_proxy() == supervoxel_vol).all()
 
 

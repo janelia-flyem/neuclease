@@ -1311,7 +1311,7 @@ fetch_labelarray_voxels = fetch_labelmap_voxels
 
 
 def fetch_labelmap_voxels_chunkwise(server, uuid, instance, box_zyx, scale=0, throttle=False, supervoxels=False,
-                                    *, chunk_shape=(64,64,4096), threads=0, out=None):
+                                    *, chunk_shape=(64,64,4096), threads=0, format='array', out=None):
     """
     Same as fetch_labelmap_voxels, but internally fetches the volume in
     pieces to avoid fetching too much from DVID in one call.
@@ -1350,6 +1350,11 @@ def fetch_labelmap_voxels_chunkwise(server, uuid, instance, box_zyx, scale=0, th
         threads:
             If non-zero, fetch chunks in parallel
 
+        format:
+            If 'array', inflate the compressed voxels from DVID and return an ordinary ndarray
+            If 'lazy-array', return a callable proxy that stores the compressed data internally,
+            and that will inflate the data when called.
+
         out:
             If given, write results into the given array.
             Must have the correct shape for the given ``box_zyx``,
@@ -1359,6 +1364,7 @@ def fetch_labelmap_voxels_chunkwise(server, uuid, instance, box_zyx, scale=0, th
     Returns:
         ndarray, with shape == (box[1] - box[0])
     """
+    assert format in ('array', 'lazy-array')
     if out is None:
         full_vol = np.zeros(box_shape(box_zyx), np.uint64)
     else:
@@ -1369,14 +1375,22 @@ def fetch_labelmap_voxels_chunkwise(server, uuid, instance, box_zyx, scale=0, th
 
     _fetch = partial(_fetch_chunk, server, uuid, instance, scale, throttle, supervoxels)
 
+    logger.info("Fetching compressed chunks")
     if threads == 0:
-        boxes_and_blocks = [*tqdm_proxy(map(_fetch, chunk_boxes), total=len(chunk_boxes))]
+        boxes_and_chunks = [*tqdm_proxy(map(_fetch, chunk_boxes), total=len(chunk_boxes))]
     else:
-        boxes_and_blocks = compute_parallel(_fetch, chunk_boxes, ordered=False, threads=threads)
+        boxes_and_chunks = compute_parallel(_fetch, chunk_boxes, ordered=False, threads=threads)
 
-    for block_box, block_vol in boxes_and_blocks:
-        overwrite_subvol(full_vol, block_box - box_zyx[0], block_vol)
+    def inflate_labelarray_chunks():
+        logger.info("Inflating chunks")
+        for block_box, lazy_chunk in tqdm_proxy(boxes_and_chunks):
+            overwrite_subvol(full_vol, block_box - box_zyx[0], lazy_chunk())
+        return full_vol
 
+    if format == 'array':
+        return inflate_labelarray_chunks()
+    elif format == 'lazy-array':
+        return inflate_labelarray_chunks
     return full_vol
 
 
@@ -1384,7 +1398,7 @@ def _fetch_chunk(server, uuid, instance, scale, throttle, supervoxels, box):
     """
     Helper for fetch_labelmap_voxels_chunkwise()
     """
-    return box, fetch_labelmap_voxels(server, uuid, instance, box, scale, throttle, supervoxels)
+    return box, fetch_labelmap_voxels(server, uuid, instance, box, scale, throttle, supervoxels, format='lazy-array')
 
 
 def post_labelmap_voxels(server, uuid, instance, offset_zyx, volume, scale=0, downres=False, noindexing=False, throttle=False, *, session=None):
