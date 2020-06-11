@@ -1690,7 +1690,7 @@ def delete_psds(point_df, partner_df, obsolete_partner_df):
     dropped_tbar_ids = obsolete_partner_df.query('pre_id not in @remaining_tbar_ids')['pre_id'].unique()
     point_df = point_df.query('kind == "PostSyn" or point_id not in @dropped_tbar_ids')
     
-    return point_df.copy(), partner_df.copy()
+    return point_df.copy(), partner_df.copy(), dropped_tbar_ids
 
 
 def delete_tbars(point_df, partner_df, obsolete_tbar_ids):
