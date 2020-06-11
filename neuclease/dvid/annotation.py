@@ -694,7 +694,8 @@ def fetch_synapses_in_batches(server, uuid, synapses_instance, bounding_box_zyx=
             
             Note that the two tables will likely NOT be identical,
             unless the given elements include every synapse in your volume.
-            By default, combine (and de-duplicate) the two tables.
+            When return_both_partner_tables=False, then automatically combine
+            (and de-duplicate) the two tables.
 
     Returns:
         If format == 'json', a list of JSON elements.
@@ -707,7 +708,7 @@ def fetch_synapses_in_batches(server, uuid, synapses_instance, bounding_box_zyx=
             Columns: ['z', 'y', 'x', 'conf', 'kind', 'user']
             Index: np.uint64, an encoded version of [z,y,x]
         
-        [post_]partner_df:
+        [pre_]partner_df:
             Indicates which T-bar each PSD is associated with.
             One row for every psd in the file.
             Columns: ['pre_id', 'post_id']
@@ -717,7 +718,7 @@ def fetch_synapses_in_batches(server, uuid, synapses_instance, bounding_box_zyx=
                 load into dvid, every PSD (PostSyn) is
                 associated with exactly one T-bar (PreSyn).
         
-        [pre_partner_df]:
+        [post_partner_df]:
             Only returned if return_both_partner_tables=True            
     """
     assert format in ('pandas', 'json')
