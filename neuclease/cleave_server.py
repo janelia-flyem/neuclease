@@ -16,7 +16,8 @@ import requests
 from flask import Flask, request, abort, redirect, url_for, jsonify, Response, make_response
 
 from .logging_setup import init_logging, log_exceptions, PrefixedLogger
-from .merge_graph import  LabelmapMergeGraph
+from .merge_table import MERGE_TABLE_DTYPE
+from .merge_graph import LabelmapMergeGraph
 from .cleave import cleave, InvalidCleaveMethodError
 from .dvid import DvidInstanceInfo
 from .util import Timer
@@ -30,7 +31,7 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 
 
-def main(debug_mode=False):
+def main(debug_mode=False, stdout_logging=False):
     global MERGE_GRAPH
     global LOGFILE
 
@@ -39,7 +40,7 @@ def main(debug_mode=False):
 
     parser = argparse.ArgumentParser()
     parser.add_argument('-p', '--port', default=5555, type=int)
-    parser.add_argument('--merge-table', required=True)
+    parser.add_argument('--merge-table')
     parser.add_argument('--primary-dvid-server', required=True)
 
     parser.add_argument('--log-dir', required=False)
@@ -61,6 +62,9 @@ def main(debug_mode=False):
     parser.add_argument('--primary-kafka-log', required=False,
                         help="Normally the startup procedure involves reading the entire kafka log for the primary dvid instance. "
                         "But if you supply one here in 'jsonl' format, it will be used instead of downloading the log from kafka.")
+
+    parser.add_argument('--skip-focused-merge-update', action='store_true')
+    parser.add_argument('--skip-split-sv-update', action='store_true')
     args = parser.parse_args()
 
     # By default, initialization is same as primary unless otherwise specified
@@ -76,15 +80,17 @@ def main(debug_mode=False):
         ##
         print("Configuring logging...")
         if not args.log_dir:
+            assert args.merge_table, \
+                "If you don't supply a merge-table, please provide an explicit --log-dir"
             args.log_dir = os.path.dirname(args.merge_table)
 
-        LOGFILE = init_logging(logger, args.log_dir, args.merge_table, debug_mode)
+        LOGFILE = init_logging(logger, args.log_dir, args.merge_table or 'no-merge-table', stdout_logging)
         logger.info("Server started with command: " + ' '.join(sys.argv))
     
         ##
         ## Load merge table
         ##
-        if not os.path.exists(args.merge_table):
+        if args.merge_table and not os.path.exists(args.merge_table):
             sys.stderr.write(f"Merge table not found: {args.merge_table}\n")
             sys.exit(-1)
 
@@ -93,21 +99,23 @@ def main(debug_mode=False):
 
         kafka_msgs = None
         if args.primary_kafka_log:
-            assert args.primary_kafka_log.endswith('.jsonl'), "Supply the kafka log in .jsonl format"
+            assert args.primary_kafka_log.endswith('.jsonl'), \
+                "Supply the kafka log in .jsonl format"
             kafka_msgs = []
             for line in open(args.primary_kafka_log, 'r'):
                 kafka_msgs.append(ujson.loads(line))
 
         print("Loading merge table...")
-        with Timer(f"Loading merge table from: {args.merge_table}", logger):
+        with Timer(f"Loading merge table from: {args.merge_table or 'NONE'}", logger):
             MERGE_GRAPH = LabelmapMergeGraph(args.merge_table, primary_instance_info.uuid, args.debug_export_dir, no_kafka=args.testing)
 
-        with Timer(f"Loading focused merge decisions", logger):
-            num_focused_merges = MERGE_GRAPH.append_edges_for_focused_merges(*initialization_instance_info[:2], 'segmentation_merged')
-        logger.info(f"Loaded {num_focused_merges} merge decisions.")
+        if not args.skip_focused_merge_update:
+            with Timer(f"Loading focused merge decisions", logger):
+                num_focused_merges = MERGE_GRAPH.append_edges_for_focused_merges(*initialization_instance_info[:2], 'segmentation_merged')
+            logger.info(f"Loaded {num_focused_merges} merge decisions.")
 
         # Apply splits first
-        if all(primary_instance_info):
+        if all(primary_instance_info) and not args.skip_split_sv_update:
             with Timer(f"Appending split supervoxel edges for supervoxels in", logger):
                 bad_edges = MERGE_GRAPH.append_edges_for_split_supervoxels( initialization_instance_info, read_from='dvid', kafka_msgs=kafka_msgs )
 

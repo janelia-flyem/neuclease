@@ -33,7 +33,7 @@ class LabelmapMergeGraph:
     dynamically-queried supervoxel members.
     """
         
-    def __init__(self, table, primary_uuid=None, debug_export_dir=None, no_kafka=False):
+    def __init__(self, table=None, primary_uuid=None, debug_export_dir=None, no_kafka=False):
         """
         Constructor.
         
@@ -64,7 +64,11 @@ class LabelmapMergeGraph:
 
         self.no_kafka = no_kafka
 
-        if isinstance(table, str):
+        if table is None:
+            # Empty table -- allowed for debugging.
+            self.merge_table_df = pd.DataFrame(np.zeros((0,), dtype=MERGE_TABLE_DTYPE))
+            self.merge_table_df['body'] = np.uint64(0)
+        elif isinstance(table, str):
             self.merge_table_df = load_merge_table(table, normalize=True)
         elif isinstance(table, np.ndarray):
             self.merge_table_df = pd.DataFrame(table)

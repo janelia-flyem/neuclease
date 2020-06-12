@@ -8,7 +8,7 @@ import functools
 from io import StringIO
 
 
-def init_logging(logger, log_dir, db_path, debug_mode=False):
+def init_logging(logger, log_dir, db_path, stdout_logging=False):
     if not os.path.exists(log_dir):
         os.makedirs(log_dir)
     db_name = os.path.basename(db_path)
@@ -31,8 +31,8 @@ def init_logging(logger, log_dir, db_path, debug_mode=False):
 
     rootLogger.setLevel(logging.INFO)
     rootLogger.addHandler(handler)
-    
-    if debug_mode:
+
+    if stdout_logging:
         rootLogger.addHandler( logging.StreamHandler(sys.stdout) )
 
     # FIXME: For some reason monkey-patching threading.Thread.run()
