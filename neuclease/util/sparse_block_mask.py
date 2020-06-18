@@ -214,7 +214,8 @@ class SparseBlockMask:
             return_logical_boxes:
                 If True, the result is returned as a list of full-size "logical" boxes.
                 Otherwise, each box is shrunken to the minimal size while still
-                encompassing all data with its grid box (i.e. a physical box), plus halo, if given.
+                encompassing all non-zero mask voxels with its grid box (i.e. a physical box),
+                plus halo, if given.
                 Note: It is not valid to use this option if halo is nonzero.
 
         Returns:
@@ -249,12 +250,18 @@ class SparseBlockMask:
             brick_coords = np.transpose(brick_mask.nonzero()).astype(np.int32)
             if len(brick_coords) == 0:
                 continue
+
             if return_logical_boxes:
                 lowres_boxes.append( logical_lowres_box )
             else:
+                # Find the smallest box that still encompasses the non-zero
+                # lowres voxels in this brick (denoted by brick_coords)
                 physical_lowres_box = ( brick_coords.min(axis=0),
                                         brick_coords.max(axis=0) + 1 )
 
+                # Translate back to global coordinates.
+                # Offset by this brick's location within the overall mask volume,
+                # and by the mask volume's location in global coordinates.
                 physical_lowres_box += box_within_mask[0] + lowres_block_mask_box[0]
 
                 lowres_boxes.append( physical_lowres_box )
