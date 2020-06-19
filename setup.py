@@ -15,6 +15,7 @@ setup( name='neuclease',
                'decimate_existing_mesh = neuclease.bin.decimate_existing_mesh:main',
                'export_sparsevol = neuclease.bin.export_sparsevol:main',
                'neuron_mito_stats = neuclease.misc.neuron_mito_stats:main',
+               'copy_vnc_subvolume = neuclease.misc.copy_vnc_subvolume:main',
            ]
        }
      )
