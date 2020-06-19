@@ -1,6 +1,8 @@
 import logging
 import numpy as np
+from io import BytesIO
 
+from ..util import box_to_slicing, boxes_from_grid, tqdm_proxy, round_box
 from .node import fetch_instance_info
 from . import dvid_api_wrapper
 
@@ -91,6 +93,119 @@ def post_raw(server, uuid, instance, offset_zyx, volume, throttle=False, mutate=
     r = session.post(f'{server}/api/node/{uuid}/{instance}/raw/0_1_2/{shape_str}/{offset_str}',
                     params=params, data=bytes(volume))
     r.raise_for_status()
+
+
+@dvid_api_wrapper
+def fetch_subvolblocks(server, uuid, instance, box_zyx, compression='jpeg', throttle=False, *, session=None):
+    """
+    Fetch a grayscale volume using the /subvolblocks endpoint,
+    which returns blocks in their compressed form.
+    The blocks will be decompressed here and assembled into
+    a single volume of the requested shape.
+
+    Args:
+        server:
+            dvid server, e.g. 'emdata3:8900'
+
+        uuid:
+            dvid uuid, e.g. 'abc9'
+
+        instance:
+            dvid instance name, e.g. 'grayscale'
+
+        box_zyx:
+            The bounds of the volume to fetch in the coordinate system for the requested scale.
+            Given as a pair of coordinates (start, stop), e.g. [(0,0,0), (10,20,30)], in Z,Y,X order.
+
+            The box need not be block-aligned.  If it is not aligned, excess data will be requested to
+            ensure only block-aligned requests, and then that excess data will be cropped out before
+            the result is returned to you.
+    Returns:
+        np.ndarray, uint8, with shape = (box_zyx[1] - box_zyx[0])
+    """
+    box_zyx = np.asarray(box_zyx)
+    assert np.issubdtype(box_zyx.dtype, np.integer), \
+        f"Box has the wrong dtype.  Use an integer type, not {box_zyx.dtype}"
+    assert box_zyx.shape == (2,3)
+    assert compression == 'jpeg', "For now, only jpeg compression is supported."
+
+    # pre-align the box
+    orig_box = box_zyx
+    box_zyx = round_box(box_zyx, 64, 'out')
+
+    params = {}
+    if throttle:
+        params['throttle'] = 'true'
+
+    # jpeg is default compression
+    if compression != 'jpeg':
+        params['compression'] = compression
+
+    shape_zyx = (box_zyx[1] - box_zyx[0])
+    shape_str = '_'.join(map(str, shape_zyx[::-1]))
+    offset_str = '_'.join(map(str, box_zyx[0, ::-1]))
+
+    r = session.get(f'{server}/api/node/{uuid}/{instance}/subvolblocks/{shape_str}/{offset_str}', params=params)
+    r.raise_for_status()
+
+    from PIL import Image
+
+    pos = 0
+    result = np.zeros(box_zyx[1] - box_zyx[0], np.uint8)
+    while pos < len(r.content):
+        if len(r.content) < pos+16:
+            raise RuntimeError("Response from /subvolblocks is malformed: buffer truncated")
+        header = r.content[pos:(pos+16)]
+        bx, by, bz, nbytes = np.frombuffer(header, np.int32)
+        pos += 16
+
+        block_offset = 64*np.array([bz, by, bx])
+        block_box = [block_offset, block_offset+64]
+        if (block_offset < box_zyx[0]).any() or (block_offset >= box_zyx[1]).any():
+            raise RuntimeError(f"Response from /subvolblocks is malformed:\n"
+                               f"block_offset {block_offset.tolist()} is out-of-bounds for requested subvol {box_zyx.tolist()}")
+
+        if len(r.content) < pos+nbytes:
+            raise RuntimeError("Response from /subvolblocks is malformed: buffer truncated or block header is incorrect")
+        jpeg_buf = r.content[pos:(pos+nbytes)]
+        pos += nbytes
+
+        img = Image.open(BytesIO(jpeg_buf))
+        block_data = np.array(img).reshape((64,64,64))
+
+        result_block_box = block_box - box_zyx[0]
+        result[box_to_slicing(*result_block_box)] = block_data
+
+    # Return only the requested data, discarding the
+    # padding we added for alignment purposes.
+    internal_box = orig_box - box_zyx[0]
+    return result[box_to_slicing(*internal_box)]
+
+
+def fetch_subvol(server, uuid, instance, box_zyx, *, session=None, progress=True):
+    """
+    Call fetch_subvolblocks() repeatedly to fetch an entire volume.
+    In theory, this shouldn't be necessary since /subvolblocks is supposed to return multiple blocks at once.
+    But at the moment, it /subvolblocks can only handle one block at a time.
+    """
+    box_zyx = np.asarray(box_zyx)
+    assert np.issubdtype(box_zyx.dtype, np.integer), \
+        f"Box has the wrong dtype.  Use an integer type, not {box_zyx.dtype}"
+    assert box_zyx.shape == (2,3)
+
+    # pre-align the box
+    orig_box = box_zyx
+    box_zyx = round_box(box_zyx, 64, 'out')
+
+    result = np.zeros(box_zyx[1] - box_zyx[0], np.uint8)
+    for block_box in tqdm_proxy(boxes_from_grid(box_zyx, (64,64,64)), leave=False, disable=not progress):
+        res_box = block_box - box_zyx[0]
+        result[box_to_slicing(*res_box)] = fetch_subvolblocks(server, uuid, instance, block_box, session=session)
+
+    # Return only the requested data, discarding the
+    # padding we added for alignment purposes.
+    internal_box = orig_box - box_zyx[0]
+    return result[box_to_slicing(*internal_box)]
 
 
 @dvid_api_wrapper
