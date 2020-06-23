@@ -42,6 +42,7 @@ ConfigSchema = {
     "description": "Volume source config",
     "default": {},
     "required": ["segmentation", "mito-objects", "mito-masks"],
+    "additionalProperties": False,
     "properties": {
         "scale": {
             "description": "Which scale to use when downloading segmentation/mask data and analyzing it.",
@@ -172,6 +173,7 @@ def _process_block(seg_src, mito_cc_src, mito_class_src, body_id, scale, block_c
     from neuclease.util import ndindex_array
     from neuclease.dvid import fetch_labelmap_voxels
 
+    block_coord = (block_coord // 2**scale)
     block_box = np.array((block_coord, block_coord+64))
     block_seg = fetch_labelmap_voxels(*seg_src, block_box, scale)
     mito_labels = fetch_labelmap_voxels(*mito_cc_src, block_box, scale)
