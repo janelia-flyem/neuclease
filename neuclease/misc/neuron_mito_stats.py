@@ -83,7 +83,11 @@ def neuron_mito_stats(seg_src, mito_cc_src, mito_class_src, body_id, scale=0, mi
     mito_cc_src[1] = resolve_ref(*mito_cc_src[:2])
     mito_class_src[1] = resolve_ref(*mito_class_src[:2])
 
+    # Fetch block coords; re-scale for the analysis scale
     block_coords = (2**6) * fetch_sparsevol_coarse(*seg_src, body_id)
+    bc_df = pd.DataFrame(block_coords, columns=[*'zyx'])
+    bc_df[[*'zyx']] //= 2**scale
+    block_coords = bc_df.drop_duplicates().values
 
     #
     # Blockwise stats
@@ -173,7 +177,6 @@ def _process_block(seg_src, mito_cc_src, mito_class_src, body_id, scale, block_c
     from neuclease.util import ndindex_array
     from neuclease.dvid import fetch_labelmap_voxels
 
-    block_coord = (block_coord // 2**scale)
     block_box = np.array((block_coord, block_coord+64))
     block_seg = fetch_labelmap_voxels(*seg_src, block_box, scale)
     mito_labels = fetch_labelmap_voxels(*mito_cc_src, block_box, scale)
