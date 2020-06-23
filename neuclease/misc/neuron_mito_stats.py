@@ -99,7 +99,7 @@ def neuron_mito_stats(seg_src, mito_cc_src, mito_class_src, body_id, scale=0, mi
     #
     # Combine stats
     #
-    full_table = pd.concat(block_tables).fillna(0)
+    full_table = pd.concat(block_tables, sort=True).fillna(0)
     class_cols = [*filter(lambda c: c.startswith('class'), full_table.columns)]
     full_table = full_table.astype({c: np.int32 for c in class_cols})
 
