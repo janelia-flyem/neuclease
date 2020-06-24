@@ -104,36 +104,43 @@ post_annotation_reload = post_reload
 
 
 @dvid_api_wrapper
-def fetch_label(server, uuid, instance, label, relationships=False, *, session=None):
+def fetch_label(server, uuid, instance, label, relationships=False, *, format='json', session=None):
     """
     Returns all point annotations within the given label as an array of elements.
     This endpoint is only available if the annotation data instance is synced with
     voxel label data instances (labelblk, labelarray, labelmap).
-    
+
     Args:
         server:
             dvid server, e.g. 'emdata3:8900'
-        
+
         uuid:
             dvid uuid, e.g. 'abc9'
-        
+
         instance:
             dvid annotations instance name, e.g. 'synapses'
-        
+
         label:
             Body ID
-            
+
         relationships:
             Set to true to return all relationships for each annotation.
 
+        format:
+            Either 'json' or 'pandas'.
+
     Returns:
-        JSON list
+        JSON list or pandas DataFrame
     """
+    assert format in ('json', 'pandas')
     params = { 'relationships': str(bool(relationships)).lower() }
-    
+
     r = session.get(f'{server}/api/node/{uuid}/{instance}/label/{label}', params=params)
     r.raise_for_status()
-    return r.json()
+    if format == 'json':
+        return r.json()
+    else:
+        return load_elements_as_dataframe(r.json())
 
 # Synonym.  See wrapper_proxies.py
 fetch_annotation_label = fetch_label
