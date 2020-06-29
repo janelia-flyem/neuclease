@@ -1,5 +1,8 @@
 .project
 .pydevproject
+.settings
+
+__pycache__/
 *.pyc
 *~
 
@@ -7,3 +10,4 @@
 logs
 .test-data
 *.egg-info
+.vscode/
