@@ -67,6 +67,9 @@ ConfigSchema = {
         "segmentation": {**LabelmapSchema, "description": "Neuron segmentation location"},
         "mito-objects": {**LabelmapSchema, "description": "Mitochondria connected component location"},
         "mito-masks": {**LabelmapSchema, "description": "Mitochondria classification mask location"},
+        # "roi-segmentation": {**LabelmapSchema,
+        #                      "description": "Optional. If provided, download the given ROI segmentation and\n"
+        #                                     "use it to assign an ROI to every centroid in the results.\n"}
     }
 }
 
@@ -95,7 +98,6 @@ def neuron_mito_stats(seg_src, mito_cc_src, mito_class_src, body_id, scale=0, mi
     block_fn = partial(_process_block, seg_src, mito_cc_src, mito_class_src, body_id, scale)
     block_tables = compute_parallel(block_fn, block_coords, processes=processes)
     block_tables = [*filter(lambda t: t is not None, block_tables)]
-
     #
     # Combine stats
     #
@@ -217,6 +219,7 @@ def _process_block(seg_src, mito_cc_src, mito_class_src, body_id, scale, block_c
     block_table['total_size'] = block_table.sum(axis=1).astype(np.int32)
 
     # Compute block centroid for each mito
+    # FIXME: I think precision is lost here because I'm using the wrong dtype.
     mito_points = unraveled_df.groupby('mito_id')[['z', 'y', 'x']].mean().astype(np.float32)
     block_table = block_table.merge(mito_points, 'left', left_index=True, right_index=True)
     return block_table
