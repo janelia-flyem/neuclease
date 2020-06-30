@@ -2,7 +2,15 @@
 
 # Neuclease
 
-Tools for computing interactive "cleaves" of agglomerated neuron fragments from a DVID server.
+Miscellaneous Python utilities for interacting with DVID and assisting with proofreading infrastructure.
+
+Most users will only be interested in the [`neuclease.dvid` subpackage][ndvid], which provides Python bindings for most of [DVID's REST API][dvid-docs].
+Eventually, that subpackage will be migrated into its own Python package.
+
+[ndvid]: https://github.com/janelia-flyem/neuclease/tree/master/neuclease/dvid
+[dvid-docs]: https://hemibrain-dvid.janelia.org/api/help/
+
+Unfortunately, there is no web-based documentation at the moment.  But each function has a docstring.  Try your Python interpreter's built-in help feature.
 
 ## Install
 
@@ -10,51 +18,82 @@ Tools for computing interactive "cleaves" of agglomerated neuron fragments from 
 conda install -c flyem-forge -c conda-forge neuclease
 ```
 
-## Server Launch Example
-
-```bash
-neuclease_cleave_server \
-    --port 5555 \
-    --merge-table /path/to/merge-table.npy \
-    --primary-dvid-server emdata3:8900 \
-    --primary-uuid 017a \
-    --primary-labelmap-instance segmentation \
-    --log-dir /path/to/logs
-```
-
-**FlyEM developers:** See [`flyem-production-commands.sh`](flyem-production-commands.sh) for example launch commands.
-
-## Example Client Request
+## Example
 
 ```python
-import requests
+In [1]: from neuclease.dvid import *
 
-data = { "user": "bergs",
-         "body-id": 673509195,
-         "port": 8900,
-         "seeds": {"1": [675222237], "2": [1266560684], "3": [1142805921]},
-         "server": "emdata3.int.janelia.org", # DVID server
-         "uuid": "017a",
-         "segmentation-instance": "segmentation",
-         "mesh-instance": "segmentation_meshes_tars" }
+In [2]: server = 'http://hemibrain-dvid.janelia.org:8000'
 
-r = requests.post('http://bergs-ws1.int.janelia.org:5556/compute-cleave', json=data)
-print(r.json())
+In [3]: find_master('http://hemibrain-dvid.janelia.org:8000')
+Out[3]: '20631f94c3f446d7864bc55bf515706e'
 
-# { "assignments": {
-#      "1": [675222237, 12345, ...],
-#      "2": [1266560684, 23456, ...],
-#      "3": [1142805921, ....] },
-#   ...
-# }
+In [4]: x, y, z = 17019, 21341, 20789
+
+In [5]: # Note: neuclease uses Z,Y,X order for all image volumes, coordinates, and bounding-boxes.
+   ...: fetch_label(server, '20631f', 'segmentation', (z,y,x))
+Out[5]: 5812980291
+
+In [6]: fetch_label(server, '20631f', 'segmentation', (z,y,x), supervoxels=True)
+Out[6]: 1351718075
+
+In [7]: box_zyx = [[20789, 21341, 17019], [20889, 21441, 17119]]
+   ...: subvol = fetch_labelmap_voxels(server, '20631f', 'segmentation', box)
+   ...: subvol.shape
+Out[7]: (100, 100, 100)
+
+In [8]: # Read the docstring
+   ...: fetch_labelmap_voxels?
+Signature:
+fetch_labelmap_voxels(
+    server,
+    uuid,
+    instance,
+    box_zyx,
+    scale=0,
+    throttle=False,
+    supervoxels=False,
+    *,
+    format='array',
+    session=None,
+)
+Docstring:
+Fetch a volume of voxels from the given instance.
+
+Args:
+    server:
+        dvid server, e.g. 'emdata3:8900'
+
+    uuid:
+        dvid uuid, e.g. 'abc9'
+
+    instance:
+        dvid instance name, e.g. 'segmentation'
+
+    box_zyx:
+        The bounds of the volume to fetch in the coordinate system for the requested scale.
+        Given as a pair of coordinates (start, stop), e.g. [(0,0,0), (10,20,30)], in Z,Y,X order.
+        The box need not be block-aligned, but the request to DVID will be block aligned
+        to 64px boundaries, and the retrieved volume will be truncated as needed before
+        it is returned.
+
+    scale:
+        Which downsampling scale to fetch from
+
+    throttle:
+        If True, passed via the query string to DVID, in which case DVID might return a '503' error
+        if the server is too busy to service the request.
+        It is your responsibility to catch DVIDExceptions in that case.
+
+    supervoxels:
+        If True, request supervoxel data from the given labelmap instance.
+
+    format:
+        If 'array', inflate the compressed voxels from DVID and return an ordinary ndarray
+        If 'lazy-array', return a callable proxy that stores the compressed data internally,
+        and that will inflate the data when called.
+        If 'raw-response', return DVID's raw /blocks response buffer without inflating it.
+
+Returns:
+    ndarray, with shape == (box[1] - box[0])
 ```
-
-### Optional dependency
-
-One step in the algorithm can be sped up slightly if you install `graph-tool`:
-
-```
-conda install -c flyem-forge graph-tool
-```
-
-(Otherwise, `networkx` is used. It doesn't matter much, except for very large cleaves.)
