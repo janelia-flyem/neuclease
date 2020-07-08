@@ -41,6 +41,7 @@ requirements:
     - networkx >=2.1
     - asciitree
     - protobuf 3.9.1
+    - confiddler
     #- graph-tool  <-- Optional dependency. Install to your own conda env if desired (but check the license).
 
 test:

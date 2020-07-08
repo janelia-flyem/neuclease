@@ -16,6 +16,7 @@ setup( name='neuclease',
                'export_sparsevol = neuclease.bin.export_sparsevol:main',
                'neuron_mito_stats = neuclease.misc.neuron_mito_stats:main',
                'copy_vnc_subvolume = neuclease.misc.copy_vnc_subvolume:main',
+               'point_neighborhoods = neuclease.misc.point_neighborhoods:main',
            ]
        }
-     )
+    )
