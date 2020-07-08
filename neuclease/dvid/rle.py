@@ -419,21 +419,21 @@ def _runlength_encode_mask_to_ranges(mask):
     runs = List.empty_list(item_type=int32)
 
     Z, Y, X = mask.shape
-    for z in range(Z):
-        for y in range(Y):
-            x0 = x1 = 0
+    for z in np.arange(Z, dtype=np.int32):
+        for y in np.arange(Y, dtype=np.int32):
+            x0 = x1 = int32(0)
             in_run = False
-            for x in range(X):
+            for x in np.arange(X, dtype=np.int32):
                 if not in_run and mask[z,y,x]:
                     x0 = x
                     in_run = True
                 elif in_run and not mask[z,y,x]:
-                    x1 = x-1
+                    x1 = np.int32(x-1)
                     in_run = False
                     runs.extend([z, y, x0, x1])
 
             if in_run:
-                x1 = X-1
+                x1 = np.int32(X-1)
                 runs.extend([z, y, x0, x1])
 
     return runs
