@@ -445,7 +445,7 @@ def add_link_col(points, config):
     for i, coord in enumerate(points[[*'xyz']].values):
         ng_settings["position"] = coord.tolist()
         assert points.columns[-1] == 'link'
-        link = ng_server + '#!' + urllib.parse.quote(json.dumps(ng_settings))
+        link = ng_server + '/#!' + urllib.parse.quote(json.dumps(ng_settings))
         points.iloc[i, -1] = link
 
 
