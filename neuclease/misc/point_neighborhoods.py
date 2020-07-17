@@ -422,8 +422,8 @@ def write_assignment_file(seg_dst, points, path):
         "file version": 1,
         # FIXME don't hardcode grayscale source
         "grayscale source": "precomputed://gs://neuroglancer-janelia-flyem-hemibrain/emdata/clahe_yz/jpeg",
-        "mito ROI source": "dvid://{server}/{uuid}/neighborhood-masks",
-        "DVID source": "{server}/#/repo/{uuid}",
+        "mito ROI source": f"dvid://{server}/{uuid}/neighborhood-masks",
+        "DVID source": f"{server}/#/repo/{uuid}",
         "task list": []
     }
 
