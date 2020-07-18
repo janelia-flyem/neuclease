@@ -583,10 +583,13 @@ def main():
         logger.info(f"Output labelmap not found. Creating new label instance: {' / '.join(output_seg)}")
 
         # Copy details from input instance.
+        # But only provide a single value for each, even though the info provides three.
+        # Otherwise, DVID kicks back errors like this:
+        # Setting for 'VoxelUnits' was not a string: [nanometers nanometers nanometers]
         settings = {
-            'block_size': input_info['Extended']['BlockSize'],
-            'voxel_size': input_info['Extended']['VoxelSize'],
-            'voxel_units': input_info['Extended']['VoxelUnits'],
+            'block_size': input_info['Extended']['BlockSize'][0],
+            'voxel_size': input_info['Extended']['VoxelSize'][0],
+            'voxel_units': input_info['Extended']['VoxelUnits'][0],
             'max_scale': input_info['Extended']['MaxDownresLevel']
         }
         create_labelmap_instance(*output_seg, **settings)
