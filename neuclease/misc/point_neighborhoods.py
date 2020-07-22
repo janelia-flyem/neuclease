@@ -49,7 +49,6 @@ import logging
 import argparse
 import urllib.parse
 from textwrap import dedent
-from functools import lru_cache
 from collections.abc import Iterable
 
 import numpy as np
@@ -60,7 +59,7 @@ from vol2mesh import Mesh
 from confiddler import load_config, dump_default_config
 
 from neuclease import configure_default_logging
-from neuclease.util import round_box, box_to_slicing as b2s, tqdm_proxy, swc_to_dataframe
+from neuclease.util import round_box, box_to_slicing as b2s, tqdm_proxy, swc_to_dataframe, mask_centroid, sphere_mask
 from neuclease.dvid import (post_key, determine_point_rois, fetch_sparsevol, fetch_roi_roi,
                             runlength_encode_mask_to_ranges, fetch_volume_box, fetch_instance_info,
                             fetch_annotation_label, fetch_labelmap_voxels, post_labelmap_voxels,
@@ -194,15 +193,16 @@ def write_point_neighborhoods(seg_src, seg_dst, points_zyx, radius=125, src_bodi
         else:
             dst_body = dst_bodies
 
-        src_body, dst_body, dst_voxels = process_point(seg_src, seg_dst, point, radius, src_body, dst_body)
-        results.append( (src_body, dst_body, dst_voxels) )
+        point, centroid, top_point, src_body, dst_body, dst_voxels = \
+            process_point(seg_src, seg_dst, point, radius, src_body, dst_body)
 
-    results_df = pd.DataFrame(results, columns=['src_body', 'dst_body', 'dst_voxels'])
-    results_df['z'] = points_zyx[:, 0]
-    results_df['y'] = points_zyx[:, 1]
-    results_df['x'] = points_zyx[:, 2]
+        results.append( (*point, *centroid, *top_point, src_body, dst_body, dst_voxels) )
 
-    return results_df[[*'xyz', 'src_body', 'dst_body', 'dst_voxels']]
+    cols = ['z', 'y', 'x']
+    cols += ['cz', 'cy', 'cx']
+    cols += ['tz', 'ty', 'tx']
+    cols += ['src_body', 'dst_body', 'dst_voxels']
+    return pd.DataFrame(results, columns=cols)
 
 
 def process_point(seg_src, seg_dst, point, radius, src_body, dst_body):
@@ -239,18 +239,12 @@ def process_point(seg_src, seg_dst, point, radius, src_body, dst_body):
     mesh.simplify(0.05, in_memory=True)
     post_key(*seg_dst[:2], f'{seg_dst[2]}_meshes', f'{dst_body}.ngmesh', mesh.serialize(fmt='ngmesh'))
 
-    return src_body, dst_body, mask.sum()
+    centroid = src_box[0] + mask_centroid(mask, True)
+    top_z = mask.sum(axis=(1,2)).nonzero()[0][0]
+    top_coords = np.transpose(mask[top_z].nonzero())
+    top_point = src_box[0] + (top_z, *top_coords[len(top_coords)//2])
 
-
-@lru_cache(maxsize=1)
-def sphere_mask(radius):
-    """
-    Return the binary mask of a sphere.
-    """
-    r = radius
-    cz, cy, cx = np.ogrid[-r:r+1, -r:r+1, -r:r+1]
-    distances = np.sqrt(cz**2 + cy**2 + cx**2)
-    return (distances <= r)
+    return point, centroid, top_point, src_body, dst_body, mask.sum()
 
 
 def encode_point_to_uint64(point_zyx, bitwidth):
@@ -427,10 +421,16 @@ def write_assignment_file(seg_dst, points, path):
         "task list": []
     }
 
-    for p in points[[*'xyz']].values.tolist():
+    for row in points.itertuples():
         task = {
             "task type": "mito count",
-            "focal point": p,
+            "source body id": row.src_body,
+            "focal point": [row.tx, row.ty, row.tz],
+            "neighborhood id": row.dst_body,
+            "neighborhood size": row.dst_voxels,
+            "neighborhood origin": [row.x, row.y, row.z],
+            "neighborhood top": [row.tx, row.ty, row.tz],
+            "neighborhood centroid": [row.cx, row.cy, row.cz],
         }
         assignment["task list"].append(task)
 
@@ -599,8 +599,6 @@ def main():
 
     results_df = write_point_neighborhoods(input_seg, output_seg, points, radius, args.body)
 
-    cols = [*'xyz'] + list({*results_df.columns} - {*'xyz'})
-    results_df = results_df[cols]
     add_link_col(results_df, config)
     export_as_html(results_df, csv_path)
     write_assignment_file(output_seg, results_df, assignment_path)
@@ -618,6 +616,6 @@ if __name__ == "__main__":
         # sys.argv += ['-g', '--ng-links', '-c=100', '--body=1071121755', '--tbars', '/tmp/neighborhood-config.yaml']
         # sys.argv += ['-g', '--ng-links', '-c=100', '--roi=FB', '--body=1071121755', '/tmp/neighborhood-config.yaml']
         # sys.argv += ['-g', '--ng-links', '-c=100', '--roi=FB', '--body=1071121755', '--skeleton', '/tmp/neighborhood-config.yaml']
-        sys.argv += ['--ng-links', '-c=10', '--roi=FB', '--body=1071121755', '--skeleton', '/tmp/neighborhood-config.yaml']
+        sys.argv += ['--ng-links', '-c=3', '--roi=FB', '--body=1071121755', '--skeleton', '/tmp/neighborhood-config.yaml']
 
     main()

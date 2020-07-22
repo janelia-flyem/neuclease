@@ -8,7 +8,7 @@ import vigra
 import logging
 import inspect
 import contextlib
-from functools import partial
+from functools import partial, lru_cache
 from multiprocessing.pool import Pool, ThreadPool
 from datetime import datetime, timedelta
 from itertools import product, starmap
@@ -1135,3 +1135,40 @@ def decode_coords_from_uint64(encoded_coords):
         coords[i] = (z,y,x)
 
     return coords
+
+
+def mask_centroid(mask, as_int=False):
+    """
+    Compute the centroid of an ND mask.
+    Requires N passes but not much RAM overhead.
+    """
+    # Use broadcasting tricks to avoid creating a full field of coordinates
+    # When implicitly broadcasted with the 'where' arg below,
+    # the operation sums over all coordinates that belong to a non-zero voxel.
+    mask = mask.astype(bool, copy=False)
+    slicing = tuple(slice(None, s) for s in mask.shape)
+    coords = np.ogrid[slicing]
+
+    size = mask.sum()
+    centroid = []
+    for a in coords:
+        c = np.add.reduce(a, axis=None, where=mask) / size
+        centroid.append(c)
+
+    centroid = np.array(centroid)
+    if as_int:
+        return centroid.astype(np.int32)
+    else:
+        return centroid
+
+
+@lru_cache(maxsize=1)
+def sphere_mask(radius):
+    """
+    Return the binary mask of a sphere.
+    Resulting array is a cube with side 2R+1
+    """
+    r = radius
+    cz, cy, cx = np.ogrid[-r:r+1, -r:r+1, -r:r+1]
+    distances = np.sqrt(cz**2 + cy**2 + cx**2)
+    return (distances <= r)
