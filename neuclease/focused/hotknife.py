@@ -78,7 +78,7 @@ def compute_roi_tab_divisions(server, uuid, roi):
     
     Returns:
         DataFrame
-    
+
     Example:
     
         >>> compute_roi_tab_divisions('emdata4:8900', '0b0b54', 'LH')
@@ -98,6 +98,9 @@ def compute_roi_tab_divisions(server, uuid, roi):
         23   29743           0  0.000000e+00   0.000000
         22   32360           0  0.000000e+00   0.000000
     """
+
+    # TODO: This would be much more efficient for large ROIs if we used
+    # the 'ranges' representation instead of the 'coords' representation.
     roi_coords = fetch_roi(server, uuid, roi, format='coords')
     
     # round tab boundaries to the nearest 32px (since that's how ROIs are defined)
