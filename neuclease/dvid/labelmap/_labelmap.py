@@ -15,7 +15,7 @@ from libdvid import DVIDNodeService, encode_label_block
 
 from ...util import (Timer, round_box, extract_subvol, DEFAULT_TIMESTAMP, tqdm_proxy,
                      ndrange, ndrange_array, box_to_slicing, compute_parallel, boxes_from_grid, box_shape,
-                     overwrite_subvol)
+                     overwrite_subvol, iter_batches)
 
 from .. import dvid_api_wrapper, fetch_generic_json, fetch_repo_info
 from ..repo import create_voxel_instance, fetch_repo_dag, resolve_ref
@@ -306,7 +306,7 @@ fetch_body_size = fetch_size
 
 
 @dvid_api_wrapper
-def fetch_sizes(server, uuid, instance, label_ids, supervoxels=False, *, session=None):
+def fetch_sizes(server, uuid, instance, label_ids, supervoxels=False, *, session=None, batch_size=None, threads=0, processes=0):
     """
     Wrapper for DVID's /sizes endpoint.
     Returns the size (voxel count) of the given bodies (or supervoxels),
@@ -335,8 +335,34 @@ def fetch_sizes(server, uuid, instance, label_ids, supervoxels=False, *, session
         Indexed by label ID.
     """
     label_ids = np.asarray(label_ids, np.uint64)
-    sv_param = str(bool(supervoxels)).lower()
 
+    if batch_size is None or (threads == 0 and processes == 0):
+        return _fetch_sizes(server, uuid, instance, label_ids, supervoxels, session)
+
+    batches = iter_batches(label_ids, batch_size)
+
+    if (threads == 0 and processes == 0):
+        sizes = []
+        for batch in tqdm_proxy(batches):
+            s = _fetch_sizes(server, uuid, instance, batch, supervoxels, session)
+            sizes.append(s)
+        sizes = pd.concat(sizes)
+    else:
+        fn = partial(_fetch_sizes, server, uuid, instance, supervoxels=supervoxels)
+        unordered_sizes = compute_parallel(fn, batches, threads=threads, processes=processes, ordered=False)
+        unordered_sizes = pd.concat(unordered_sizes)
+        sizes = unordered_sizes.reindex(label_ids)
+
+    if supervoxels:
+        sizes.index.name = 'sv'
+    else:
+        sizes.index.name = 'body'
+
+    return sizes
+
+
+def _fetch_sizes(server, uuid, instance, label_ids, supervoxels, session=None):
+    sv_param = str(bool(supervoxels)).lower()
     url = f'{server}/api/node/{uuid}/{instance}/sizes?supervoxels={sv_param}'
     sizes = fetch_generic_json(url, label_ids.tolist(), session=session)
 
