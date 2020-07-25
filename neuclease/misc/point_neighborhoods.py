@@ -8,7 +8,7 @@ Additionally, multiple files are emitted:
 
   - A CSV file of the points and corresponding neighborhood IDs
   - An html file with the same information, but also neuroglancer links to each point
-  - An assingment file for FlyEM's neuroglancer-based protocol for inspecting such
+  - An assignment file for FlyEM's neuroglancer-based protocol for inspecting such
     neighborhoods
 
 To use this script, provide a config file to specify the input and output segmentation
@@ -91,6 +91,28 @@ LabelmapSchema = {
     }
 }
 
+NeuroglancerSettingsSchema = {
+    "type": "object",
+    "default": {
+        "showSlices": False,
+        "layout": "4panel",
+        "layers": [
+            {
+                "type": "image",
+                "source": {
+                    "url": "precomputed://gs://neuroglancer-janelia-flyem-hemibrain/emdata/clahe_yz/jpeg",
+                    "subsources": {
+                        "default": True
+                    },
+                    "enableDefaultSubsources": False
+                },
+                "blend": "default",
+                "name": "emdata"
+            }
+        ]
+    }
+}
+
 ConfigSchema = {
     "description": "Point neighborhoods segmentation sources and settings configuration",
     "default": {},
@@ -114,27 +136,7 @@ ConfigSchema = {
                     "type": "string",
                     "default": "http://emdata4.int.janelia.org:8900"
                 },
-                "settings": {
-                    "type": "object",
-                    "default": {
-                        "showSlices": False,
-                        "layout": "4panel",
-                        "layers": [
-                            {
-                                "type": "image",
-                                "source": {
-                                    "url": "precomputed://gs://neuroglancer-janelia-flyem-hemibrain/emdata/clahe_yz/jpeg",
-                                    "subsources": {
-                                        "default": True
-                                    },
-                                    "enableDefaultSubsources": False
-                                },
-                                "blend": "default",
-                                "name": "emdata"
-                            }
-                        ]
-                    }
-                }
+                "settings": NeuroglancerSettingsSchema
             }
         }
     }
@@ -616,6 +618,8 @@ if __name__ == "__main__":
         # sys.argv += ['-g', '--ng-links', '-c=100', '--body=1071121755', '--tbars', '/tmp/neighborhood-config.yaml']
         # sys.argv += ['-g', '--ng-links', '-c=100', '--roi=FB', '--body=1071121755', '/tmp/neighborhood-config.yaml']
         # sys.argv += ['-g', '--ng-links', '-c=100', '--roi=FB', '--body=1071121755', '--skeleton', '/tmp/neighborhood-config.yaml']
-        sys.argv += ['--ng-links', '-c=3', '--roi=FB', '--body=1071121755', '--skeleton', '/tmp/neighborhood-config.yaml']
+        #sys.argv += ['--ng-links', '-c=3', '--roi=FB', '--body=1071121755', '--skeleton', '/tmp/neighborhood-config.yaml']
+
+        sys.argv += ['-c=10', '--roi=FB', '--body=1071121755', '--skeleton', '/tmp/cloud_config.yaml']
 
     main()
