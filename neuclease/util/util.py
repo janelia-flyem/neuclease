@@ -1170,5 +1170,5 @@ def sphere_mask(radius):
     """
     r = radius
     cz, cy, cx = np.ogrid[-r:r+1, -r:r+1, -r:r+1]
-    distances = np.sqrt(cz**2 + cy**2 + cx**2)
-    return (distances <= r)
+    distances_sq = cz**2 + cy**2 + cx**2
+    return (distances_sq <= r**2)
