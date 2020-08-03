@@ -77,8 +77,11 @@ def fetch_labelindices(server, uuid, instance, labels, *, format='protobuf', ses
         If format='list-of-protobuf', a list of LabelIndex (protobuf) objects.
         If format='pandas', a list of PandasLabelIndex (tuple) objects,
         which each contain a DataFrame representation of the labelindex.
+        If format='single-dataframe', all of the label indexes will be converted
+        to pandas dataframes and concatenated into a single dataframe, with an
+        extra column for 'label'.
     """
-    assert format in ('protobuf', 'list-of-protobuf', 'pandas')
+    assert format in ('protobuf', 'list-of-protobuf', 'pandas', 'single-dataframe')
     if isinstance(labels, np.ndarray):
         labels = labels.tolist()
     elif not isinstance(labels, list):
@@ -96,7 +99,14 @@ def fetch_labelindices(server, uuid, instance, labels, *, format='protobuf', ses
         return list(labelindices.indices)
     if format == 'pandas':
         return list(map(convert_labelindex_to_pandas, labelindices.indices))
-    
+    if format == 'single-dataframe':
+        dfs = []
+        for idx in labelindices.indices:
+            df = convert_labelindex_to_pandas(idx)
+            df.blocks['label'] = idx.label
+            dfs.append(df.blocks)
+        return pd.concat(dfs, ignore_index=True)
+
 
 @dvid_api_wrapper
 def post_labelindex(server, uuid, instance, label, proto_index, *, session=None):

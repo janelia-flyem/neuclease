@@ -15,7 +15,7 @@ from libdvid import DVIDNodeService, encode_label_block
 
 from ...util import (Timer, round_box, extract_subvol, DEFAULT_TIMESTAMP, tqdm_proxy,
                      ndrange, ndrange_array, box_to_slicing, compute_parallel, boxes_from_grid, box_shape,
-                     overwrite_subvol, iter_batches)
+                     overwrite_subvol, iter_batches, extract_labels_from_volume)
 
 from .. import dvid_api_wrapper, fetch_generic_json, fetch_repo_info
 from ..repo import create_voxel_instance, fetch_repo_dag, resolve_ref
@@ -405,6 +405,97 @@ def fetch_supervoxel_sizes_for_body(server, uuid, instance, body_id, user=None, 
     series.index.name = 'sv'
     series.name = 'size'
     return series
+
+
+@dvid_api_wrapper
+def compute_roi_distributions(server, uuid, labelmap_instance, label_ids, rois, *, session=None, batch_size=None, processes=1):
+    """
+    For a list of bodies and a list of ROIs, determine the voxel
+    distribution of each body within all of the ROIs.
+    The distribution is calculated using the label indexes,
+    rather than the segmentation.
+
+    Note:
+        Although ROIs are specified at scale-5 resolution (32px),
+        Label index coordinates are specified at scale-6 (64px).
+        Therefore, this function is not 100% precise in cases where
+        a neuron crosses from one ROI into another.
+
+    Args:
+        server:
+            dvid server, e.g. 'emdata3:8900'
+
+        uuid:
+            dvid uuid, e.g. 'abc9'
+
+        labelmap_instance:
+            dvid instance name, e.g. 'segmentation'
+
+        label_ids:
+            List of body IDs to process.
+
+        rois:
+            List of ROIs to include in the results.
+            If the ROIs overlap, the results are undefined.
+
+        batch_size:
+            Labels will be processed in batches, rather than all at once.
+            This specifies the batch size.
+
+        processes:
+            Label indexes will be fetched in parallel, in a process pool.
+            This is the size of the process pool.
+
+    Returns:
+        pd.DataFrame
+    """
+    from ..roi import fetch_combined_roi_volume
+    from . import fetch_labelindices  # late import to avoid recursive import
+
+    assert processes, "Must use at least one process."
+
+    label_ids = np.asarray(label_ids)
+    rois = sorted(rois)
+
+    logger.info(f"Fetching ROI segmentation for {len(rois)} ROIs")
+    combined_vol, combined_box, overlaps = fetch_combined_roi_volume(server, uuid, rois, session=session)
+
+    batch_size = batch_size or len(label_ids)
+    batches = iter_batches(label_ids, batch_size)
+
+    _fetch_indices = partial(fetch_labelindices, server, uuid, labelmap_instance, format='single-dataframe')
+
+    results = []
+    logger.info(f"Processing {len(label_ids)} labels in {len(batches)} batches")
+    for batch in tqdm_proxy(batches):
+        #minibatch_size = max(1, len(batch) // processes // 2)
+        minibatch_size = 2
+        minibatches = iter_batches(batch, minibatch_size)
+        dfs = compute_parallel(_fetch_indices, minibatches, processes=processes, ordered=False)
+        index_df = pd.concat(dfs, ignore_index=True)
+
+        # Offset by 32 to move coordinate to the center of the 64px block
+        index_df[[*'zyx']] += (2**5)
+
+        # extract_labels_from_volume() uses the name 'label' for its own
+        # purposes, so rename it 'body' before calling.
+        index_df.rename(columns={'label': 'body'}, inplace=True)
+
+        extract_labels_from_volume(index_df, combined_vol, combined_box, 5, rois)
+        index_df.rename(inplace=True, columns={'label': 'roi_label', 'label_name': 'roi'})
+
+        roi_dist_df = (index_df[['body', 'roi_label', 'roi', 'count']]
+                        .groupby(['body', 'roi_label'], sort=False)
+                        .agg({'roi': 'first', 'count': 'sum'})
+                        .reset_index())
+
+        results.append(roi_dist_df)
+
+    full_dist_df = pd.concat(results, ignore_index=True)
+    full_dist_df = full_dist_df.rename(columns={'count': 'voxels'})
+    full_dist_df = full_dist_df.sort_values(['body', 'voxels'], ascending=[True, False])
+    full_dist_df['roi'] = full_dist_df['roi'].cat.rename_categories({'<unspecified>': '<none>'})
+    return full_dist_df[['body', 'roi', 'voxels']]
 
 
 @dvid_api_wrapper
