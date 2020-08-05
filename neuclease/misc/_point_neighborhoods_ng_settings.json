@@ -1,0 +1,159 @@
+  {
+    "dimensions": {
+      "x": [
+        8e-9,
+        "m"
+      ],
+      "y": [
+        8e-9,
+        "m"
+      ],
+      "z": [
+        8e-9,
+        "m"
+      ]
+    },
+    "position": [
+      25425,
+      21607,
+      17888
+    ],
+    "crossSectionScale": 0.2535664103224064,
+    "crossSectionDepth": -7.239642214791052,
+    "projectionScale": 812.022844140178,
+    "layers": [
+      {
+        "type": "image",
+        "source": {
+          "url": "precomputed://gs://neuroglancer-janelia-flyem-hemibrain/emdata/clahe_yz/jpeg",
+          "subsources": {
+            "default": true
+          },
+          "enableDefaultSubsources": false
+        },
+        "blend": "default",
+        "name": "emdata"
+      },
+      {
+        "type": "segmentation",
+        "source": {
+          "url": "dvid://http://emdata4.int.janelia.org:8900/20631f94c3f446d7864bc55bf515706e/segmentation",
+          "subsources": {
+            "default": true,
+            "meshes": true
+          },
+          "enableDefaultSubsources": false
+        },
+        "selectedAlpha": 0.32,
+        "objectAlpha": 0.34,
+        "skeletonRendering": {
+          "mode2d": "lines_and_points",
+          "mode3d": "lines"
+        },
+        "name": "segmentation",
+        "visible": false
+      },
+      {
+        "type": "segmentation",
+        "source": {
+          "url": "dvid://http://emdata4:8900/20631f94c3f446d7864bc55bf515706e/segmentation_roi_voxels"
+        },
+        "selectedAlpha": 0.26,
+        "skeletonRendering": {
+          "mode2d": "lines_and_points",
+          "mode3d": "lines"
+        },
+        "name": "segmentation_roi_voxels",
+        "visible": false
+      },
+      {
+        "type": "segmentation",
+        "source": {
+          "url": "dvid://http://emdata4.int.janelia.org:8900/20631f94c3f446d7864bc55bf515706e/mito_20190717.27250582",
+          "subsources": {
+            "default": true,
+            "skeletons": true
+          },
+          "enableDefaultSubsources": false
+        },
+        "skeletonRendering": {
+          "mode2d": "lines_and_points",
+          "mode3d": "lines"
+        },
+        "name": "mito_20190717.27250582",
+        "visible": false
+      },
+      {
+        "type": "segmentation",
+        "source": {
+          "url": "dvid://http://emdata3:8900/62f6394a18d4490c93892fbd9f1416b5/masked-mito-cc",
+          "subsources": {
+            "default": true,
+            "meshes": true
+          },
+          "enableDefaultSubsources": false
+        },
+        "skeletonRendering": {
+          "mode2d": "lines_and_points",
+          "mode3d": "lines"
+        },
+        "name": "mito-sv",
+        "visible": false
+      },
+      {
+        "type": "segmentation",
+        "source": {
+          "url": "dvid://http://emdata3:8900/d31b64ac81444923a0319961736a6c31/masked-mito-cc",
+          "subsources": {
+            "default": true,
+            "meshes": true
+          },
+          "enableDefaultSubsources": false
+        },
+        "tab": "source",
+        "selectedAlpha": 0.43,
+        "skeletonRendering": {
+          "mode2d": "lines_and_points",
+          "mode3d": "lines"
+        },
+        "name": "mito-bodies",
+        "visible": false
+      },
+      {
+        "type": "segmentation",
+        "source": {
+          "url": "dvid://http://emdata3:8900/d31b64ac81444923a0319961736a6c31/masked-mito-cc",
+          "subsources": {
+            "default": true,
+            "meshes": true
+          },
+          "enableDefaultSubsources": false
+        },
+        "selectedAlpha": 1,
+        "saturation": 0,
+        "skeletonRendering": {
+          "mode2d": "lines_and_points",
+          "mode3d": "lines"
+        },
+        "name": "mito-bodies-white",
+        "visible": false
+      },
+      {
+        "type": "segmentation",
+        "source": {
+          "url": "dvid://http://emdata3:8900/d31b64ac81444923a0319961736a6c31/neighborhood-masks"
+        },
+        "skeletonRendering": {
+          "mode2d": "lines_and_points",
+          "mode3d": "lines"
+        },
+        "name": "neighborhood-masks"
+      }
+    ],
+    "showSlices": false,
+    "selectedLayer": {
+      "layer": "neighborhood-masks",
+      "visible": true
+    },
+    "layout": "4panel"
+  }
