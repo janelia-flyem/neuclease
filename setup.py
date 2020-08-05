@@ -5,7 +5,7 @@ setup( name='neuclease',
        description='Tools for computing interactive "cleaves" of agglomerated neuron fragments from a DVID server.',
        url='https://github.com/janelia-flyem/neuclease',
        packages=find_packages(),
-       package_data={},
+       package_data={'neuclease.misc': ['*.json']},
        entry_points={
            'console_scripts': [
                'neuclease_cleave_server = neuclease.bin.cleave_server_main:main',

@@ -69,6 +69,10 @@ from neuclease.dvid import (post_key, determine_point_rois, fetch_sparsevol, fet
 
 logger = logging.getLogger(__name__)
 
+this_dir = os.path.dirname(__file__)
+ng_settings_path = f'{this_dir}/_point_neighborhoods_ng_settings.json'
+DefaultNeuroglancerSettings = json.load(open(ng_settings_path, 'r'))
+
 LabelmapSchema = {
     "description": "dvid labelmap location",
     "type": "object",
@@ -91,28 +95,6 @@ LabelmapSchema = {
     }
 }
 
-NeuroglancerSettingsSchema = {
-    "type": "object",
-    "default": {
-        "showSlices": False,
-        "layout": "4panel",
-        "layers": [
-            {
-                "type": "image",
-                "source": {
-                    "url": "precomputed://gs://neuroglancer-janelia-flyem-hemibrain/emdata/clahe_yz/jpeg",
-                    "subsources": {
-                        "default": True
-                    },
-                    "enableDefaultSubsources": False
-                },
-                "blend": "default",
-                "name": "emdata"
-            }
-        ]
-    }
-}
-
 ConfigSchema = {
     "description": "Point neighborhoods segmentation sources and settings configuration",
     "default": {},
@@ -127,7 +109,7 @@ ConfigSchema = {
         },
         "enforce-minimum-distance": {
             "description": "If true, do not allow auto-generated points to fall close to\n"
-                           "each other (where 'close' is defined by the given radius)\n",
+                           "each other (where 'close' is defined by 2x the given radius)\n",
             "type": "boolean",
             "default": True
         },
@@ -140,6 +122,12 @@ ConfigSchema = {
             ],
             "default": None
         },
+        "grayscale-source": {
+            "description": "What neuroglancer source layer to use as the grayscale source\n"
+                           "when emitting the assignment file and HTML table. (Not used in the computation.)\n",
+            "type": "string",
+            "default": "precomputed://gs://neuroglancer-janelia-flyem-hemibrain/emdata/clahe_yz/jpeg"
+        },
         "input": {**LabelmapSchema, "description": "Input neuron segmentation instance info"},
         "output": {**LabelmapSchema, "description": "Where to write neighborhood segmentation.\n"
                                                     "Instance will be created if necessary."},
@@ -151,7 +139,10 @@ ConfigSchema = {
                     "type": "string",
                     "default": "http://emdata4.int.janelia.org:8900"
                 },
-                "settings": NeuroglancerSettingsSchema
+                "settings": {
+                    "type": "object",
+                    "default": DefaultNeuroglancerSettings
+                }
             }
         }
     }
@@ -312,8 +303,9 @@ def autogen_points(input_seg, count, roi, body, tbars, use_skeleton, random_seed
             tbars = tbars.query('roi == @roi')[[*'zyx']]
 
         if minimum_distance:
-            logger.info(f"Pruning close points from {len(tbars)} total tbars points")
+            logger.info(f"Pruning close points from {len(tbars)} total tbar points")
             tbars = prune_close_pairs(tbars, minimum_distance, rng)
+            logger.info(f"After pruning, {len(tbars)} tbars remain.")
 
         if count:
             count = min(count, len(tbars))
@@ -321,6 +313,7 @@ def autogen_points(input_seg, count, roi, body, tbars, use_skeleton, random_seed
             choices = rng.choice(tbars.index, size=count, replace=False)
             tbars = tbars.loc[choices]
 
+        logger.info(f"Returning {len(tbars)} tbar points")
         return tbars
 
     elif use_skeleton:
@@ -348,6 +341,7 @@ def autogen_points(input_seg, count, roi, body, tbars, use_skeleton, random_seed
                 skeleton_df = skeleton_df.sample(min(4*count, len(skeleton_df)), random_state=None)
             logger.info(f"Pruning close points from {len(skeleton_df)} skeleton points")
             prune_close_pairs(skeleton_df, minimum_distance, rng)
+            logger.info(f"After pruning, {len(skeleton_df)} skeleton points remain.")
 
         if count:
             count = min(count, len(skeleton_df))
@@ -355,6 +349,7 @@ def autogen_points(input_seg, count, roi, body, tbars, use_skeleton, random_seed
             choices = rng.choice(skeleton_df.index, size=count, replace=False)
             skeleton_df = skeleton_df.loc[choices]
 
+        logger.info(f"Returning {len(skeleton_df)} skeleton points")
         return skeleton_df
 
     elif body:
@@ -380,8 +375,11 @@ def autogen_points(input_seg, count, roi, body, tbars, use_skeleton, random_seed
         if minimum_distance > 0:
             logger.info(f"Pruning close points from {len(points)} body points")
             prune_close_pairs(points, minimum_distance, rng)
+            logger.info(f"After pruning, {len(points)} body points remain")
 
-        return points.iloc[:count]
+        points = points.iloc[:count]
+        logger.info(f"Returning {len(points)} body points")
+        return points
 
     elif roi:
         assert count
@@ -402,8 +400,11 @@ def autogen_points(input_seg, count, roi, body, tbars, use_skeleton, random_seed
         if minimum_distance > 0:
             logger.info(f"Pruning close points from {len(points)} roi points")
             prune_close_pairs(points, minimum_distance, rng)
+            logger.info(f"After pruning, points from {len(points)} roi points remain")
 
-        return points.iloc[:count]
+        points = points.iloc[:count]
+        logger.info(f"Returning {len(points)} roi points")
+        return points
     else:
         # No body or roi specified, just sample from the whole non-zero segmentation area
         assert count
@@ -427,7 +428,15 @@ def autogen_points(input_seg, count, roi, body, tbars, use_skeleton, random_seed
         points_s0 = rng.integers(corners_s0, corners_s0 + (2**6))
 
         points = pd.DataFrame(points_s0, columns=[*'zyx'])
-        return points.iloc[:count]
+
+        if minimum_distance > 0:
+            logger.info(f"Pruning close points from {len(points)} segmentation points")
+            prune_close_pairs(points, minimum_distance, rng)
+            logger.info(f"After pruning, points from {len(points)} segmentation points remain")
+
+        points = points.iloc[:count]
+        logger.info(f"Returning {len(points)} segmentation points")
+        return points
 
 
 def sample_points_from_ranges(ranges, count, rng=None):
@@ -510,15 +519,14 @@ def prune_close_pairs(points, radius, rng=None):
     return points.iloc[sorted(g.nodes())]
 
 
-def write_assignment_file(seg_dst, points, path):
+def write_assignment_file(seg_dst, points, path, config):
     server, uuid, mask_instance = seg_dst
     if not server.startswith('http'):
         server = f'https://{server}'
 
     assignment = {
         "file version": 1,
-        # FIXME don't hardcode grayscale source
-        "grayscale source": "precomputed://gs://neuroglancer-janelia-flyem-hemibrain/emdata/clahe_yz/jpeg",
+        "grayscale source": config["grayscale-source"],
         "mito ROI source": f"dvid://{server}/{uuid}/neighborhood-masks",
         "DVID source": f"{server}/#/repo/{uuid}",
         "task list": []
@@ -541,10 +549,52 @@ def write_assignment_file(seg_dst, points, path):
         json.dump(assignment, f, indent=2)
 
 
+def update_ng_settings(config):
+    """
+    Edit the layer sources in the config's neuroglancer-settings
+    (which were probably copied and pasted from an old link)
+    to make them consistent with the input/output sources at
+    the top of the config.
+    """
+    input_server = config["input"]["server"]
+    input_uuid = config["input"]["uuid"]
+    input_instance = config["input"]["instance"]
+
+    output_server = config["output"]["server"]
+    output_uuid = config["output"]["uuid"]
+    output_instance = config["output"]["instance"]
+
+    if not input_server.startswith("http"):
+        input_server = f"http://{input_server}"
+    if not output_server.startswith("http"):
+        output_server = f"http://{output_server}"
+
+    for layer in config["neuroglancer"]["settings"]["layers"]:
+        if layer["name"] in ("emdata", "grayscale"):
+            layer["source"]["url"] = config["grayscale-source"]
+        elif layer["name"] == "segmentation":
+            layer["source"]["url"] = f"dvid://{input_server}/{input_uuid}/{input_instance}"
+        elif layer["name"] == "neighborhood-masks":
+            layer["source"]["url"] = f"dvid://{output_server}/{output_uuid}/{output_instance}"
+
+        # Replace the server with the user's input server
+        # Edit: Nah, force the user specify other layers themselves, in the config.
+        # else:
+        #     type, protocol, path = layer["source"]["url"].split("://")
+        #     if type == "dvid":
+        #         server, *endpoint = path.split("/")
+        #         layer["source"]["url"] = f"{type}://{input_server}/" + "/".join(endpoint)
+
+
 def add_link_col(points, config):
+    """
+    Add a column to points dataframe containing a
+    neuroglancer links for each point.
+    """
     points['link'] = ""
     ng_server = config["neuroglancer"]["server"]
     ng_settings = config["neuroglancer"]["settings"]
+
     for i, coord in enumerate(points[[*'xyz']].values):
         ng_settings["position"] = coord.tolist()
         assert points.columns[-1] == 'link'
@@ -618,6 +668,7 @@ def main():
     configure_default_logging()
 
     config = load_config(args.config, ConfigSchema)
+    update_ng_settings(config)
     input_seg = [*config["input"].values()]
     output_seg = [*config["output"].values()]
     radius = config["radius"]
@@ -711,7 +762,7 @@ def main():
 
     add_link_col(results_df, config)
     export_as_html(results_df, csv_path)
-    write_assignment_file(output_seg, results_df, assignment_path)
+    write_assignment_file(output_seg, results_df, assignment_path, config)
     if not args.ng_links:
         del results_df['link']
     results_df.to_csv(csv_path, index=False, header=True, quoting=csv.QUOTE_NONE)
@@ -731,7 +782,7 @@ if __name__ == "__main__":
 
         #sys.argv += ['-c=3', '--roi=FB', '--body=1113371822', '--skeleton', '/tmp/config.yaml']
         #sys.argv += ['-c=3', '--roi=FB', '--body=1113371822', '--tbars', '/tmp/config.yaml']
-        sys.argv += ['-c=3', '--roi=FB', '--body=1113371822', '--skeleton', '/tmp/config.yaml']
+        sys.argv += ['-c=20', '--roi=FB', '--body=1113371822', '--tbars', '/tmp/config.yaml']
 
         #sys.argv += ['-c=10', '--roi=FB', '--body=1071121755', '--skeleton', '/tmp/cloud_config.yaml']
 
