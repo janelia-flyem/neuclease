@@ -716,8 +716,8 @@ def main():
         csv_path = output_path + '.csv'
 
     kd = scipy.spatial.cKDTree(points[[*'zyx']].values)
-    if len(kd.query_pairs(radius)) > 0:
-        msg = ("Some of the chosen points are closer to each other than the "
+    if len(kd.query_pairs(2*radius)) > 0:
+        msg = ("Some of the chosen points are closer to each other than 2x the "
                f"configured radius ({radius}). Their neighborhood segments may "
                "be mangled in the output.")
         logger.warning(msg)
