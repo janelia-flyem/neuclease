@@ -55,6 +55,8 @@ import numpy as np
 from numpy.random import default_rng
 import pandas as pd
 import scipy.spatial
+import networkx as nx
+
 from vol2mesh import Mesh
 from confiddler import load_config, dump_default_config
 
@@ -122,6 +124,12 @@ ConfigSchema = {
                            "Hint: In the hemibrain, 1 micron = 125 voxels.\n",
             "type": "number",
             "default": 125
+        },
+        "enforce-minimum-distance": {
+            "description": "If true, do not allow auto-generated points to fall close to\n"
+                           "each other (where 'close' is defined by the given radius)\n",
+            "type": "boolean",
+            "default": True
         },
         "random-seed": {
             "description": "For reproducible results, specify a seed (an integer) to the random number generator.\n"
@@ -270,7 +278,7 @@ def encode_point_to_uint64(point_zyx, bitwidth):
     return encoded
 
 
-def autogen_points(input_seg, count, roi, body, tbars, use_skeleton, random_seed=None):
+def autogen_points(input_seg, count, roi, body, tbars, use_skeleton, random_seed=None, minimum_distance=0):
     """
     Generate a list of points within the input segmentation, based on the given criteria.
     See the main help text below for details.
@@ -286,7 +294,9 @@ def autogen_points(input_seg, count, roi, body, tbars, use_skeleton, random_seed
             sys.exit("You must supply a body ID if you want to use a skeleton.")
         if tbars:
             sys.exit("You can't select both tbar points and skeleton points.  Pick one or the other.")
-        if not count and not roi:
+        if not count and minimum_distance > 0:
+            sys.exit("You must supply a --count if you want skeleton point samples to respect the minimum distance.")
+        if not count and not roi and minimum_distance == 0:
             logger.warning("You are using all nodes of a skeleton without any ROI filter! Is that what you meant?")
 
     rng = default_rng(random_seed)
@@ -300,6 +310,10 @@ def autogen_points(input_seg, count, roi, body, tbars, use_skeleton, random_seed
             logger.info(f"Filtering tbars for roi {roi}")
             determine_point_rois(*input_seg[:2], [roi], tbars)
             tbars = tbars.query('roi == @roi')[[*'zyx']]
+
+        if minimum_distance:
+            logger.info(f"Pruning close points from {len(tbars)} total tbars points")
+            tbars = prune_close_pairs(tbars, minimum_distance, rng)
 
         if count:
             count = min(count, len(tbars))
@@ -324,6 +338,17 @@ def autogen_points(input_seg, count, roi, body, tbars, use_skeleton, random_seed
             determine_point_rois(*input_seg[:2], [roi], skeleton_df)
             skeleton_df = skeleton_df.query('roi == @roi')[[*'zyx']]
 
+        if minimum_distance:
+            assert count
+            # Distance-pruning is very expensive on a huge number of close points.
+            # If skeleton is large, first reduce the workload by pre-selecting a
+            # random sample of skeleton points, and prune more from there.
+            if len(skeleton_df) > 10_000:
+                # FIXME: random_state can't use rng until I upgrade to pandas 1.0
+                skeleton_df = skeleton_df.sample(min(4*count, len(skeleton_df)), random_state=None)
+            logger.info(f"Pruning close points from {len(skeleton_df)} skeleton points")
+            prune_close_pairs(skeleton_df, minimum_distance, rng)
+
         if count:
             count = min(count, len(skeleton_df))
             logger.info(f"Sampling {count} skeleton points")
@@ -333,6 +358,7 @@ def autogen_points(input_seg, count, roi, body, tbars, use_skeleton, random_seed
         return skeleton_df
 
     elif body:
+        assert count
         if roi:
             # TODO: intersect the ranges with the ROI.
             raise NotImplementedError("Sorry, I haven't yet implemented support for "
@@ -342,19 +368,45 @@ def autogen_points(input_seg, count, roi, body, tbars, use_skeleton, random_seed
         logger.info(f"Fetching sparsevol for body {body}")
         ranges = fetch_sparsevol(*input_seg, body, format='ranges')
         logger.info("Sampling from sparsevol")
-        points = sample_points_from_ranges(ranges, count, rng)
-        return pd.DataFrame(points, columns=[*'zyx'])
+
+        if minimum_distance > 0:
+            # Sample 4x extra so we still have enough after pruning.
+            points = sample_points_from_ranges(ranges, 4*count, rng)
+        else:
+            points = sample_points_from_ranges(ranges, count, rng)
+
+        points = pd.DataFrame(points, columns=[*'zyx'])
+
+        if minimum_distance > 0:
+            logger.info(f"Pruning close points from {len(points)} body points")
+            prune_close_pairs(points, minimum_distance, rng)
+
+        return points.iloc[:count]
 
     elif roi:
+        assert count
         logger.info(f"Fetching roi {roi}")
         roi_ranges = fetch_roi_roi(*input_seg[:2], roi, format='ranges')
         logger.info("Sampling from ranges")
-        points_s5 = sample_points_from_ranges(roi_ranges, count, rng)
+
+        if minimum_distance > 0:
+            # Sample 4x extra so we can prune some out if necessary.
+            points_s5 = sample_points_from_ranges(roi_ranges, 4*count, rng)
+        else:
+            points_s5 = sample_points_from_ranges(roi_ranges, count, rng)
+
         corners_s0 = points_s5 * (2**5)
         points_s0 = rng.integers(corners_s0, corners_s0 + (2**5))
-        return pd.DataFrame(points_s0, columns=[*'zyx'])
+        points = pd.DataFrame(points_s0, columns=[*'zyx'])
+
+        if minimum_distance > 0:
+            logger.info(f"Pruning close points from {len(points)} roi points")
+            prune_close_pairs(points, minimum_distance, rng)
+
+        return points.iloc[:count]
     else:
         # No body or roi specified, just sample from the whole non-zero segmentation area
+        assert count
         logger.info("Sampling random points from entire input segmentation")
         logger.info("Fetching low-res input volume")
         box_s6 = round_box(fetch_volume_box(*input_seg), 2**6, 'out') // 2**6
@@ -362,11 +414,20 @@ def autogen_points(input_seg, count, roi, body, tbars, use_skeleton, random_seed
         mask_s6 = seg_s6.astype(bool)
         logger.info("Encoding segmentation as ranges")
         seg_ranges = runlength_encode_mask_to_ranges(mask_s6, box_s6)
+
         logger.info("Sampling from ranges")
-        points_s6 = sample_points_from_ranges(seg_ranges, count, rng)
+
+        if minimum_distance > 0:
+            # Sample 4x extra so we can prune some out if necessary.
+            points_s6 = sample_points_from_ranges(seg_ranges, 4*count, rng)
+        else:
+            points_s6 = sample_points_from_ranges(seg_ranges, count, rng)
+
         corners_s0 = points_s6 * (2**6)
         points_s0 = rng.integers(corners_s0, corners_s0 + (2**6))
-        return pd.DataFrame(points_s0, columns=[*'zyx'])
+
+        points = pd.DataFrame(points_s0, columns=[*'zyx'])
+        return points.iloc[:count]
 
 
 def sample_points_from_ranges(ranges, count, rng=None):
@@ -414,6 +475,39 @@ def sample_points_from_ranges(ranges, count, rng=None):
         points.append((z, y, x))
 
     return np.array(points, dtype=int)
+
+
+def prune_close_pairs(points, radius, rng=None):
+    """
+    Given a DataFrame containing points in the xyz columns,
+    find points that are too close to at least one other point
+    (as defined by the given radius), and delete them one at a
+    time in random order until no remaining points are too close
+    to each other.
+    """
+    if radius == 0:
+        return points
+
+    if rng is None:
+        rng = default_rng()
+
+    # Contruct a graph of point IDs, with edges between points
+    # that are too close to each other.
+    kd = scipy.spatial.cKDTree(points[[*'zyx']].values)
+    edges = kd.query_pairs(radius, output_type='ndarray')
+    g = nx.Graph()
+    g.add_nodes_from(range(len(points)))
+    g.add_edges_from(edges)
+
+    # In random order, delete points that still have any edges.
+    nodes = list(g.nodes())
+    rng.shuffle(nodes)
+    for n in nodes:
+        if g.degree(n) > 0:
+            g.remove_node(n)
+
+    # Remaining nodes indicate which points to return.
+    return points.iloc[sorted(g.nodes())]
 
 
 def write_assignment_file(seg_dst, points, path):
@@ -529,6 +623,11 @@ def main():
     radius = config["radius"]
     random_seed = config["random-seed"]
 
+    if config["enforce-minimum-distance"]:
+        minimum_distance = radius
+    else:
+        minimum_distance = 0
+
     if args.points and any([args.count, args.roi, args.body, args.tbars, args.skeleton]):
         msg = ("If you're providing your own list of points, you shouldn't"
                " specify any of the auto-generation arguments, such as"
@@ -545,7 +644,7 @@ def main():
         output_path = name + '-neighborhoods.csv'
         points = pd.read_csv(args.points)
     else:
-        points = autogen_points(input_seg, args.count, args.roi, args.body, args.tbars, args.skeleton, random_seed)
+        points = autogen_points(input_seg, args.count, args.roi, args.body, args.tbars, args.skeleton, random_seed, minimum_distance)
 
         uuid = input_seg[1]
         output_path = f'neighborhoods-from-{uuid[:6]}'
@@ -565,9 +664,8 @@ def main():
         assignment_path = output_path + '.json'
         csv_path = output_path + '.csv'
 
-    distances = scipy.spatial.distance.cdist(points[[*'zyx']].values, points[[*'zyx']].values)
-    distances[np.eye(len(points)).astype(bool)] = np.inf
-    if (distances < radius).any():
+    kd = scipy.spatial.cKDTree(points[[*'zyx']].values)
+    if len(kd.query_pairs(radius)) > 0:
         msg = ("Some of the chosen points are closer to each other than the "
                f"configured radius ({radius}). Their neighborhood segments may "
                "be mangled in the output.")
@@ -632,7 +730,8 @@ if __name__ == "__main__":
         # sys.argv += ['-g', '--ng-links', '-c=100', '--roi=FB', '--body=1071121755', '--skeleton', '/tmp/neighborhood-config.yaml']
 
         #sys.argv += ['-c=3', '--roi=FB', '--body=1113371822', '--skeleton', '/tmp/config.yaml']
-        sys.argv += ['-c=3', '--roi=FB', '--body=1113371822', '--tbars', '--skeleton', '/tmp/config.yaml']
+        #sys.argv += ['-c=3', '--roi=FB', '--body=1113371822', '--tbars', '/tmp/config.yaml']
+        sys.argv += ['-c=3', '--roi=FB', '--body=1113371822', '--skeleton', '/tmp/config.yaml']
 
         #sys.argv += ['-c=10', '--roi=FB', '--body=1071121755', '--skeleton', '/tmp/cloud_config.yaml']
 
