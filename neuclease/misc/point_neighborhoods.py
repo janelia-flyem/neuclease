@@ -624,7 +624,7 @@ def main():
     random_seed = config["random-seed"]
 
     if config["enforce-minimum-distance"]:
-        minimum_distance = radius
+        minimum_distance = 2*radius
     else:
         minimum_distance = 0
 
