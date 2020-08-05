@@ -123,6 +123,15 @@ ConfigSchema = {
             "type": "number",
             "default": 125
         },
+        "random-seed": {
+            "description": "For reproducible results, specify a seed (an integer) to the random number generator.\n"
+                           "Otherwise, omit this setting and you'll get different points every time.\n",
+            "oneOf": [
+                {"type": "integer"},
+                {"type": "null"}
+            ],
+            "default": None
+        },
         "input": {**LabelmapSchema, "description": "Input neuron segmentation instance info"},
         "output": {**LabelmapSchema, "description": "Where to write neighborhood segmentation.\n"
                                                     "Instance will be created if necessary."},
@@ -388,7 +397,7 @@ def sample_points_from_ranges(ranges, count, rng=None):
         ndarray [[z,y,x], [z,y,x], ...]
     """
     if rng is None:
-        rng = default_rng(0)
+        rng = default_rng()
     ranges = ranges.copy()
     points = []
     _Z, _Y, X0, X1 = ranges.transpose()
@@ -509,9 +518,6 @@ def main():
     parser.add_argument('--ng-links', '-n', action='store_true',
                         help='If given, include neuroglancer links in the output CSV.'
                              'Your config should specify the basic neuroglancer view settings; only the "position" will be overwritten in each link.')
-    parser.add_argument('--random-seed', '-s', type=int,
-                        help='For reproducible results, specify a seed to the random number generator. '
-                             'Otherwise, omit this setting and you\'ll get different points every time.')
     parser.add_argument('config')
     args = parser.parse_args()
 
@@ -521,6 +527,7 @@ def main():
     input_seg = [*config["input"].values()]
     output_seg = [*config["output"].values()]
     radius = config["radius"]
+    random_seed = config["random-seed"]
 
     if args.points and any([args.count, args.roi, args.body, args.tbars, args.skeleton]):
         msg = ("If you're providing your own list of points, you shouldn't"
@@ -538,7 +545,7 @@ def main():
         output_path = name + '-neighborhoods.csv'
         points = pd.read_csv(args.points)
     else:
-        points = autogen_points(input_seg, args.count, args.roi, args.body, args.tbars, args.skeleton, args.random_seed)
+        points = autogen_points(input_seg, args.count, args.roi, args.body, args.tbars, args.skeleton, random_seed)
 
         uuid = input_seg[1]
         output_path = f'neighborhoods-from-{uuid[:6]}'
