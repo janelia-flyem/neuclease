@@ -539,7 +539,9 @@ def main():
         points = pd.read_csv(args.points)
     else:
         points = autogen_points(input_seg, args.count, args.roi, args.body, args.tbars, args.skeleton, args.random_seed)
-        output_path = 'neighborhoods-from'
+
+        uuid = input_seg[1]
+        output_path = f'neighborhoods-from-{uuid[:6]}'
 
         if not any([args.roi, args.body, args.tbars, args.skeleton]):
             output_path += input_seg[2]
