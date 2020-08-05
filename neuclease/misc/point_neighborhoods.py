@@ -67,8 +67,6 @@ from neuclease.dvid import (post_key, determine_point_rois, fetch_sparsevol, fet
 
 logger = logging.getLogger(__name__)
 
-RANDOM_SEED = 0
-
 LabelmapSchema = {
     "description": "dvid labelmap location",
     "type": "object",
@@ -263,7 +261,7 @@ def encode_point_to_uint64(point_zyx, bitwidth):
     return encoded
 
 
-def autogen_points(input_seg, count, roi, body, tbars, use_skeleton):
+def autogen_points(input_seg, count, roi, body, tbars, use_skeleton, random_seed=None):
     """
     Generate a list of points within the input segmentation, based on the given criteria.
     See the main help text below for details.
@@ -282,7 +280,7 @@ def autogen_points(input_seg, count, roi, body, tbars, use_skeleton):
         if not count and not roi:
             logger.warning("You are using all nodes of a skeleton without any ROI filter! Is that what you meant?")
 
-    rng = default_rng(RANDOM_SEED)
+    rng = default_rng(random_seed)
 
     if tbars:
         logger.info(f"Fetching synapses for body {body}")
@@ -390,7 +388,7 @@ def sample_points_from_ranges(ranges, count, rng=None):
         ndarray [[z,y,x], [z,y,x], ...]
     """
     if rng is None:
-        rng = default_rng(RANDOM_SEED)
+        rng = default_rng(0)
     ranges = ranges.copy()
     points = []
     _Z, _Y, X0, X1 = ranges.transpose()
@@ -511,6 +509,9 @@ def main():
     parser.add_argument('--ng-links', '-n', action='store_true',
                         help='If given, include neuroglancer links in the output CSV.'
                              'Your config should specify the basic neuroglancer view settings; only the "position" will be overwritten in each link.')
+    parser.add_argument('--random-seed', '-s', type=int,
+                        help='For reproducible results, specify a seed to the random number generator. '
+                             'Otherwise, omit this setting and you\'ll get different points every time.')
     parser.add_argument('config')
     args = parser.parse_args()
 
@@ -537,7 +538,7 @@ def main():
         output_path = name + '-neighborhoods.csv'
         points = pd.read_csv(args.points)
     else:
-        points = autogen_points(input_seg, args.count, args.roi, args.body, args.tbars, args.skeleton)
+        points = autogen_points(input_seg, args.count, args.roi, args.body, args.tbars, args.skeleton, args.random_seed)
         output_path = 'neighborhoods-from'
 
         if not any([args.roi, args.body, args.tbars, args.skeleton]):
@@ -612,14 +613,18 @@ def main():
 if __name__ == "__main__":
     DEBUG = False
     if DEBUG:
+        import os
+        os.chdir('/tmp')
         # sys.argv += ['-g', '--ng-links', '-c=100', '/tmp/neighborhood-config.yaml']
         # sys.argv += ['-g', '--ng-links', '-c=100', '--roi=FB', '/tmp/neighborhood-config.yaml']
         # sys.argv += ['-g', '--ng-links', '-c=100', '--body=1071121755', '/tmp/neighborhood-config.yaml']
         # sys.argv += ['-g', '--ng-links', '-c=100', '--body=1071121755', '--tbars', '/tmp/neighborhood-config.yaml']
         # sys.argv += ['-g', '--ng-links', '-c=100', '--roi=FB', '--body=1071121755', '/tmp/neighborhood-config.yaml']
         # sys.argv += ['-g', '--ng-links', '-c=100', '--roi=FB', '--body=1071121755', '--skeleton', '/tmp/neighborhood-config.yaml']
-        #sys.argv += ['--ng-links', '-c=3', '--roi=FB', '--body=1071121755', '--skeleton', '/tmp/neighborhood-config.yaml']
 
-        sys.argv += ['-c=10', '--roi=FB', '--body=1071121755', '--skeleton', '/tmp/cloud_config.yaml']
+        #sys.argv += ['-c=3', '--roi=FB', '--body=1113371822', '--skeleton', '/tmp/config.yaml']
+        sys.argv += ['-c=3', '--roi=FB', '--body=1113371822', '--tbars', '--skeleton', '/tmp/config.yaml']
+
+        #sys.argv += ['-c=10', '--roi=FB', '--body=1071121755', '--skeleton', '/tmp/cloud_config.yaml']
 
     main()
