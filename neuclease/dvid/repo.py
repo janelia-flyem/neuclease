@@ -3,7 +3,7 @@ from collections.abc import Iterable
 import pandas as pd
 import networkx as nx
 
-from ..util import uuids_match
+from ..util import uuids_match, round_coord
 from . import dvid_api_wrapper, fetch_generic_json
 
 VOXEL_INSTANCE_TYPENAMES = """\
@@ -228,10 +228,24 @@ def create_instance(server, uuid, instance, typename, versioned=True, compressio
 @dvid_api_wrapper
 def create_voxel_instance(server, uuid, instance, typename, versioned=True, compression=None, tags=[],
                           block_size=64, voxel_size=8.0, voxel_units='nanometers', background=None,
-                          type_specific_settings={}, *, session=None):
+                          grid_store=None, min_point=None, max_point=None, type_specific_settings={},
+                          *, session=None):
     """
-    Generic function ot create an instance of one of the voxel datatypes, such as uint8blk or labelmap.
-    
+    Generic function to create an instance of one of the voxel datatypes, such as uint8blk or labelmap.
+
+    Args:
+        grid_store:
+            If provided, create this instance as a proxy for a precomputed volume hosted elsewhere.
+            The name of the grid_store provided here must match one of the stores listed in the dvid
+            server's TOML file.
+
+            For example:
+
+                [store]
+                    [store.vnc-grayscale-v3]
+                    engine = "ngprecomputed"
+                    ref = "flyem-vnc-2-26-213dba213ef26e094c16c860ae7f4be0/v3_emdata_clahe_xy/jpeg"
+
     Note: For labelmap instances in particular, it's more convenient to call create_labelmap_instance().
     """
     assert typename in ("uint8blk", "uint16blk", "uint32blk", "uint64blk", "float32blk", "labelblk", "labelarray", "labelmap")
@@ -242,19 +256,39 @@ def create_voxel_instance(server, uuid, instance, typename, versioned=True, comp
     if not isinstance(voxel_size, Iterable):
         voxel_size = 3*(voxel_size,)
 
+    if isinstance(voxel_units, str):
+        voxel_units = 3*[voxel_units]
+
     block_size_str = ','.join(map(str, block_size))
     voxel_size_str = ','.join(map(str, voxel_size))
+    voxel_units_str = ','.join(voxel_units)
 
     type_specific_settings = dict(type_specific_settings)
     type_specific_settings["BlockSize"] = block_size_str
     type_specific_settings["VoxelSize"] = voxel_size_str
-    type_specific_settings["VoxelUnits"] = voxel_units
-    
+    type_specific_settings["VoxelUnits"] = voxel_units_str
+
+    if grid_store:
+        type_specific_settings["GridStore"] = grid_store
+
+    min_index = max_index = None
+    if min_point is not None:
+        assert len(min_point) == 3
+        min_index = round_coord(min_point, block_size, 'down')
+        type_specific_settings["MinPoint"] = ','.join(map(str, min_point))
+        type_specific_settings["MinIndex"] = ','.join(map(str, min_index))
+
+    if max_point is not None:
+        assert len(max_point) == 3
+        max_index = round_coord(max_point, block_size, 'up')
+        type_specific_settings["MaxPoint"] = ','.join(map(str, max_point))
+        type_specific_settings["MaxIndex"] = ','.join(map(str, max_index))
+
     if background is not None:
         assert typename in ("uint8blk", "uint16blk", "uint32blk", "uint64blk", "float32blk"), \
             "Background value is only valid for block-based instance types."
         type_specific_settings["Background"] = str(background)
-    
+
     create_instance(server, uuid, instance, typename, versioned, compression, tags, type_specific_settings, session=session)
 
 
