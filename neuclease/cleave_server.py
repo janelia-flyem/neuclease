@@ -25,7 +25,7 @@ from neuclease.dvid._dvid import default_dvid_session
 
 # Globals
 MERGE_GRAPH = None
-DEFAULT_METHOD = "seeded-watershed"
+DEFAULT_METHOD = "seeded-mst"
 LOGFILE = None # Will be set in __main__, below
 logger = logging.getLogger(__name__)
 app = Flask(__name__)
@@ -190,7 +190,7 @@ def compute_cleave():
             "4": [234, 235, 236],
         },
 
-        "method": "seeded-watershed",
+        "method": "seeded-mst",
         "user": "bergs",
         "server": "emdata2.int.janelia.org",
         "port": 8700,

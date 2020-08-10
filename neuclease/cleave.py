@@ -2,7 +2,7 @@ from collections import namedtuple
 import numpy as np
 import pandas as pd
 import vigra.graphs as vg
-import nifty.graph
+import networkx as nx
 
 from dvidutils import LabelMapper
 
@@ -19,8 +19,10 @@ def get_cleave_method(method_string):
     
     Returns (func, requires_sizes)
     """
+    if method_string == 'seeded-mst':
+        return seeded_mst, False
     if method_string == 'seeded-watershed':
-        return edge_weighted_watershed, False
+        return edge_weighted_watershed, False # note: requires package: "nifty"
     if method_string == 'agglomerative-clustering':
         return agglomerative_clustering, False
     if method_string == 'agglomerative-clustering-with-ward':
@@ -32,7 +34,7 @@ def get_cleave_method(method_string):
 
 
 CleaveResults = namedtuple("CleaveResults", "output_labels disconnected_components contains_unlabeled_components")
-def cleave(edges, edge_weights, seeds_dict, node_ids, node_sizes=None, method='seeded-watershed'):
+def cleave(edges, edge_weights, seeds_dict, node_ids, node_sizes=None, method='seeded-mst'):
     """
     Cleave the graph with the given edges and edge weights.
     
@@ -53,7 +55,7 @@ def cleave(edges, edge_weights, seeds_dict, node_ids, node_sizes=None, method='s
             in the results as disconnected components.
         
         method:
-            One of: 'seeded-watershed', 'agglomerative-clustering', 'echo-seeds'
+            One of: 'seeded-mst', 'seeded-watershed', 'agglomerative-clustering', 'echo-seeds'
 
     Returns:
     
@@ -115,6 +117,80 @@ def cleave(edges, edge_weights, seeds_dict, node_ids, node_sizes=None, method='s
     cleave_results = cleave_func(cons_edges, edge_weights, seed_labels, node_sizes)
     assert isinstance(cleave_results, CleaveResults)
     return cleave_results
+
+
+def seeded_mst(cleaned_edges, edge_weights, seed_labels, _node_sizes=None):
+    """
+    Partition a graph using the a minimum-spanning tree.
+    To ensure that seeded nodes cannot be merged together prematurely,
+    a virtual root node is inserted into the graph and given artificially
+    strong affinity (low edge weight) to all seeded nodes.
+    Thanks to their low weights, the root node's edges will always be
+    included in the MST, thus ensuring that seeded nodes can only be
+    joined via the root node. After the MST is computed, the root node is
+    deleted, leaving behind a forest in which each connected component
+    contains at most only one seed node.
+
+    Args:
+        cleaned_edges:
+            array, (E,2), uint32
+
+        edge_weights:
+            array, (E,), float32
+
+        seed_labels:
+            array (N,), uint32
+            All un-seeded nodes should be marked as 0.
+
+    Returns:
+        (output_labels, disconnected_components, contains_unlabeled_components)
+
+        Where:
+            output_labels:
+                array (N,), uint32
+                Agglomerated node labeling.
+
+            disconnected_components:
+                A set of seeds which ended up with more than one component in the result.
+
+            contains_unlabeled_components:
+                True if the input contains one or more disjoint components that were not seeded
+                and thus not labeled during agglomeration. False otherwise.
+    """
+    g = nx.Graph()
+    g.add_nodes_from(np.arange(len(seed_labels)))
+
+    TINY_WEIGHT = edge_weights.min() - 1000.0  # fixme: would -np.inf work here?
+
+    assert len(cleaned_edges) == len(edge_weights)
+    for (u,v), w in zip(cleaned_edges, edge_weights):
+        g.add_edge(u,v, weight=w)
+
+    # Add a special root node and connect it to all seed nodes.
+    root = len(seed_labels)
+    for seed_node in seed_labels.nonzero()[0]:
+        g.add_edge(root, seed_node, weight=TINY_WEIGHT)
+
+    # Perform MST and then drop the root node
+    # (and all its edges), leaving a forest
+    mst = nx.minimum_spanning_tree(g)
+    mst.remove_node(root)
+
+    output_labels = np.empty_like(seed_labels)
+    contains_unlabeled_components = False
+
+    for i, cc in enumerate(nx.connected_components(mst), start=1):
+        cc = [*cc]
+        cc_seeds = set(pd.unique(seed_labels[cc])) - {0}
+        assert len(cc_seeds) <= 1
+        if len(cc_seeds) == 1:
+            output_labels[cc] = cc_seeds.pop()
+        else:
+            output_labels[cc] = 0
+            contains_unlabeled_components = True
+
+    disconnected_components = _find_disconnected_components(cleaned_edges, output_labels)
+    return CleaveResults(output_labels, disconnected_components, contains_unlabeled_components)
 
 
 def agglomerative_clustering(cleaned_edges, edge_weights, seed_labels, node_sizes=None, num_classes=None):
@@ -284,15 +360,18 @@ def agglomerative_clustering(cleaned_edges, edge_weights, seed_labels, node_size
 
 def edge_weighted_watershed(cleaned_edges, edge_weights, seed_labels, _node_sizes=None):
     """
-    FIXME:
+    Run nifty.graph.edgeWeightedWatershedsSegmentation() on the given graph with N nodes and E edges.
+    The graph node IDs must be consecutive, starting with zero, dtype=np.uint32
+
+    NOTE:
+        Nifty is now an optional dependency of neuclease.
+        This function won't work unless you install nifty.
+
+    NOTE:
         It's probably not worth pulling in a large dependency like
         nifty for such a simple algorithm, unless the size of the input is huge.
         (And plus, nifty seems to introduce segfaults on occasion...)
         For cleaving, it's simpler to just use Kruskal from networkx.
-    
-    Run nifty.graph.edgeWeightedWatershedsSegmentation() on the given graph with N nodes and E edges.
-    The graph node IDs must be consecutive, starting with zero, dtype=np.uint32
-    
     
     Args:
         cleaned_edges:
@@ -325,6 +404,8 @@ def edge_weighted_watershed(cleaned_edges, edge_weights, seed_labels, _node_size
                 True if the input contains one or more disjoint components that were not seeded
                 and thus not labeled during agglomeration. False otherwise.
     """
+    import nifty.graph
+
     assert cleaned_edges.dtype == np.uint32
     assert cleaned_edges.ndim == 2
     assert cleaned_edges.shape[1] == 2

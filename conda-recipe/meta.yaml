@@ -32,7 +32,6 @@ requirements:
     - numba >=0.45
     - vigra
     - pillow
-    - nifty
     - libdvid-cpp >=0.3.post83
     - dvidutils >=0.0.post81
     - tqdm
@@ -42,7 +41,10 @@ requirements:
     - asciitree
     - protobuf 3.9.1
     - confiddler
-    #- graph-tool  <-- Optional dependency. Install to your own conda env if desired (but check the license).
+
+    # Optional dependencies
+    #- graph-tool  # <-- Faster connected-components for very large graphs
+    #- nifty       # <-- Alternative cleaving algorithm "seeded-watershed"
 
 test:
   requires:

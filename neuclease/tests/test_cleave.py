@@ -2,7 +2,7 @@ import pytest
 import numpy as np
 from neuclease.cleave import cleave, CleaveResults
 
-@pytest.fixture(params=('seeded-watershed', 'agglomerative-clustering'))
+@pytest.fixture(params=('seeded-mst', 'seeded-watershed', 'agglomerative-clustering'))
 def cleave_method(request):
     yield request.param
     
@@ -135,14 +135,12 @@ def test_discontiguous_unlabeled_components(cleave_method):
     assert (output_labels == [0,1,1,1,1,2,2,2,2,0]).all()
 
 
+@pytest.mark.xfail(reason='None of our cleaving methods are stable.')
 def test_stability(cleave_method):
     """
     Cleaving with the same inputs should always produce
     the same outputs, even if many weights are tied.
     """
-    if cleave_method == 'agglomerative-clustering':
-        pytest.xfail("agglomerative-clustering method is not stable??")
-    
     N = 1000
     E = 10_000
 
