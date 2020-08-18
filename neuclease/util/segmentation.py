@@ -619,3 +619,102 @@ def approximate_hull_for_segment(label_img, segment_id, downsample_factor=2):
     mask = downsample_mask(label_img == segment_id, downsample_factor)
     hull = fill_hull_for_segment(mask)
     return upsample(hull, downsample_factor)
+
+
+def fill_triangle(image, verts):
+    """
+    Paint a triangle into the given image
+    by successively calling line_nd() from every
+    corner to all points on the opposite edge.
+    (If you only do it from one corner, you can
+    end up with holes.)
+
+    Note: This requires a version of line_nd that can
+    handle a list of point pairs and process all of them.
+    """
+    def _fill(image, verts):
+        a,b,c = verts
+        ab = np.transpose(line_nd(a,b,endpoint=True))
+        z, y, x = line_nd(ab,c,endpoint=True)
+        z = z.reshape(-1)
+        y = y.reshape(-1)
+        x = x.reshape(-1)
+        image[(z, y, x)] = True
+
+    a,b,c = verts
+    _fill(image, (a,b,c))
+    _fill(image, (b,c,a))
+    _fill(image, (c,a,b))
+
+def line_nd(start, stop, *, endpoint=False, integer=True):
+    """
+    This is a copy of ``skimage.morphology.line_nd()``,
+    but slightly modified so that it supports lists of start/stop
+    coordinates instead of only one line at a time.
+
+    Draw a single-pixel thick line in n dimensions.
+    The line produced will be ndim-connected. That is, two subsequent
+    pixels in the line will be either direct or diagonal neighbours in
+    n dimensions.
+    Parameters
+    ----------
+    start : array-like, shape (D,) or (N,D)
+        The start coordinates of the line.
+    stop : array-like, shape (D,) or (N,D)
+        The end coordinates of the line.
+    endpoint : bool, optional
+        Whether to include the endpoint in the returned line. Defaults
+        to False, which allows for easy drawing of multi-point paths.
+    integer : bool, optional
+        Whether to round the coordinates to integer. If True (default),
+        the returned coordinates can be used to directly index into an
+        array. `False` could be used for e.g. vector drawing.
+    Returns
+    -------
+    coords : tuple of arrays
+        The coordinates of points on the line.
+    Examples
+    --------
+    >>> lin = line_nd((1, 1), (5, 2.5), endpoint=False)
+    >>> lin
+    (array([1, 2, 3, 4]), array([1, 1, 2, 2]))
+    >>> im = np.zeros((6, 5), dtype=int)
+    >>> im[lin] = 1
+    >>> im
+    array([[0, 0, 0, 0, 0],
+           [0, 1, 0, 0, 0],
+           [0, 1, 0, 0, 0],
+           [0, 0, 1, 0, 0],
+           [0, 0, 1, 0, 0],
+           [0, 0, 0, 0, 0]])
+    >>> line_nd([2, 1, 1], [5, 5, 2.5], endpoint=True)
+    (array([2, 3, 4, 4, 5]), array([1, 2, 3, 4, 5]), array([1, 1, 2, 2, 2]))
+
+    >>> line_nd([0,0,0], [10,10,10])
+    >>> line_nd([[10,10,10], [-10, -10, -10]], [[0,0,0], [1,1,1]])
+    >>> line_nd([0,0,0], [[10,10,10], [-10, -10, -10]])
+    >>> line_nd([[10,10,10], [-10, -10, -10]], [0,0,0])
+    """
+    def _round_safe(coords):
+        # Round coords while ensuring successive values are less than 1 apart.
+        # When rounding coordinates for `line_nd`, we want coordinates that are less
+        # than 1 apart (always the case, by design) to remain less than one apart.
+        # However, NumPy rounds values to the nearest *even* integer, so:
+        # >>> np.round([0.5, 1.5, 2.5, 3.5, 4.5])
+        # array([0., 2., 2., 4., 4.])
+        # As a workaround, just nudge all .5-values down so they always round down.
+        coords[(coords % 1 == 0.5) & (coords[...,1:2] - coords[...,0:1] == 1)] -= 0.01
+        return np.round(coords).astype(int)
+
+    start = np.asarray(start)
+    stop = np.asarray(stop)
+    npoints = int(np.ceil(np.max(np.abs(stop - start))))
+    if endpoint:
+        npoints += 1
+    coords = []
+    for dim in range(start.shape[-1]):
+        dimcoords = np.linspace(start[..., dim], stop[..., dim], npoints, endpoint)
+        if integer:
+            dimcoords = _round_safe(dimcoords).astype(int)
+        coords.append(dimcoords)
+    return tuple(coords)
