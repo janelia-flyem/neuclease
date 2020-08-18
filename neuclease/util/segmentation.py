@@ -214,23 +214,26 @@ def _compute_nonzero_box_numba(mask):
     return box
 
 
-def edge_mask(label_img, mode='before'):
+def edge_mask(label_img, mode='before', mark_volume_edges=False):
     """
     Find all boundaries between labels in the given ND volume,
     and return a boolean mask that selects all voxels that lie
     just "before" the inter-voxel boundary,
     or just "after" the inter-voxel boudnary,
     or both.
-    
+
+    If mark_volume_edge=True, also mask the first/last voxel
+    along all sides of the volume.
+
     Example:
-    
+
         >>> labels = [[1,1,1,1,2,2],
         ...           [1,1,1,1,2,2],
         ...           [1,1,2,2,2,2],
         ...           [1,1,2,2,2,2],
         ...           [1,1,2,2,2,2],
         ...           [1,2,2,2,2,2]]
-        
+
         >>> mask = edge_mask(labels, 'before')
         >>> print(mask.astype(int))
         [[0 0 0 1 0 0]
@@ -239,7 +242,7 @@ def edge_mask(label_img, mode='before'):
          [0 1 0 0 0 0]
          [0 1 0 0 0 0]
          [1 0 0 0 0 0]]
- 
+
         >>> mask = edge_mask(labels, 'after')
         >>> print(mask.astype(int))
         [[0 0 0 0 1 0]
@@ -248,7 +251,7 @@ def edge_mask(label_img, mode='before'):
          [0 0 1 0 0 0]
          [0 0 1 0 0 0]
          [0 1 0 0 0 0]]
- 
+
         >>> mask = edge_mask(labels, 'both')
         >>> print(mask.astype(int))
         [[0 0 0 1 1 0]
@@ -256,7 +259,7 @@ def edge_mask(label_img, mode='before'):
          [0 1 1 1 0 0]
          [0 1 1 0 0 0]
          [0 1 1 0 0 0]
-         [1 1 0 0 0 0]]       
+         [1 1 0 0 0 0]]
     """
     label_img = np.asarray(label_img)
     mask = np.zeros(label_img.shape, bool)
@@ -271,7 +274,15 @@ def edge_mask(label_img, mode='before'):
 
         if mode in ('after', 'both'):
             mask[right_slicing] |= m
-    
+
+    if mark_volume_edges:
+        for axis in range(mask.ndim):
+            left_slicing = ((slice(None),) * axis) + (0,)
+            right_slicing = ((slice(None),) * axis) + (-1,)
+
+            mask[left_slicing] = 1
+            mask[right_slicing] = 1
+
     return mask
 
 
