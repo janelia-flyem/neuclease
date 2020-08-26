@@ -1644,6 +1644,60 @@ def _fetch_chunk(server, uuid, instance, scale, throttle, supervoxels, box):
     return box, fetch_labelmap_voxels(server, uuid, instance, box, scale, throttle, supervoxels, format='lazy-array')
 
 
+def fetch_seg_around_point(server, uuid, instance, point_zyx, radius, scale=0, sparse_body=None, session=None):
+    """
+    Fetch the segmentation around a given point, possibly
+    limited to the blocks that contain a particular body.
+
+    Args:
+        server:
+            dvid server
+        uuid:
+            dvid uuid
+        instance:
+            labelmap instance
+        point_zyx:
+            The point around which the segmentation will be fetched,
+            specified in units that correspond to the given scale.
+        radius:
+            The radius of the volume to be fetched around the point,
+            specified in units that correspond to the given scale
+        scale:
+            The scale at which to fetch the data
+        sparse_body:
+            If provided, only fetch blocks which contain this body ID.
+            The returned volume will be mostly empty (zeros),
+            except for the blocks which intersect this body's coarse sparsevol blocks.
+            Note: This is not the same as the body's sparsevol representation,
+            becuase the other bodies in those blocks are not masked out.
+
+    Returns:
+        seg:
+            A volume of segmentation at large enough to contain the point
+            and the given radius in all directions, and then expanded to
+            align with dvid's 64-px grid.
+        box:
+            The box ([z0, y0, x0], [z1, y1, x1]) of the returned segmentation subvolume
+        p:
+            Where the requested point lies in the output subvolume.
+    """
+    p = np.array(point_zyx)
+    R = radius
+
+    box = [p-R, p+R+1]
+    aligned_box = round_box(box, 64, 'out')
+
+    if sparse_body:
+        svc = (2**6)*fetch_sparsevol_coarse(server, uuid, instance, sparse_body, session=session)
+        svc = svc // 2**scale
+        svc = svc[(svc >= aligned_box[0]).all(axis=1) & (svc < aligned_box[1]).all(axis=1)]
+        svc = pd.DataFrame(svc // 64 * 64).drop_duplicates().values
+        seg = fetch_labelmap_specificblocks(server, uuid, instance, svc, scale=scale, format='array', threads=8, session=session)
+    else:
+        seg = fetch_labelmap_voxels_chunkwise(server, uuid, instance, aligned_box, scale=scale, session=session)
+
+    return seg, aligned_box, np.array([R,R,R]) + (box[0] - aligned_box[0])
+
 
 def post_labelmap_voxels(server, uuid, instance, offset_zyx, volume, scale=0, downres=False, noindexing=False, throttle=False, *, session=None):
     """
