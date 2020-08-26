@@ -3,6 +3,7 @@ import gzip
 import logging
 from io import BytesIO
 from functools import partial
+from itertools import starmap
 from multiprocessing.pool import ThreadPool
 from collections import defaultdict
 
@@ -1428,7 +1429,7 @@ fetch_labelarray_voxels = fetch_labelmap_voxels
 
 
 @dvid_api_wrapper
-def fetch_labelmap_specificblocks(server, uuid, instance, corners_zyx, scale=0, supervoxels=False, format='array', *, session=None):
+def fetch_labelmap_specificblocks(server, uuid, instance, corners_zyx, scale=0, supervoxels=False, format='array', *, threads=0, session=None):
     """
     Fetch a set of blocks from a labelmap instance.
 
@@ -1467,6 +1468,10 @@ def fetch_labelmap_specificblocks(server, uuid, instance, corners_zyx, scale=0, 
             block has not been inflated. Each block can be inflated with
             ``libdvid.DVIDNodeService.inflate_labelarray_blocks3D_from_raw(buf, (64,64,64), corner)``
 
+        threads:
+            How many threads to use to inflate blocks in parallel.
+            This only has a modest effect on performance.
+
     Returns:
         See ``format`` argument.
     """
@@ -1474,6 +1479,8 @@ def fetch_labelmap_specificblocks(server, uuid, instance, corners_zyx, scale=0, 
     corners_zyx = np.asarray(corners_zyx)
     assert corners_zyx.ndim == 2
     assert corners_zyx.shape[1] == 3
+
+    assert not (corners_zyx % 64).any(), "corners_zyx must be block-aligned!"
 
     block_ids = corners_zyx[:, ::-1] // 64
     params = {
@@ -1498,19 +1505,12 @@ def fetch_labelmap_specificblocks(server, uuid, instance, corners_zyx, scale=0, 
     #   ...
     #   byteN1
 
+    if format == 'raw-response':
+        return r.content
+
     min_corner = corners_zyx.min(axis=0)
     max_corner = corners_zyx.max(axis=0) + 64
     full_shape = max_corner - min_corner
-
-    def inflate_blocks_to_combined_volume():
-        return DVIDNodeService.inflate_labelarray_blocks3D_from_raw(r.content, full_shape, min_corner)
-
-    if format == 'array':
-        return inflate_blocks_to_combined_volume()
-    elif format == 'lazy-array':
-        return inflate_blocks_to_combined_volume
-    elif format == 'raw-response':
-        return r.content
 
     blocks = {}
     start = 0
@@ -1521,10 +1521,20 @@ def fetch_labelmap_specificblocks(server, uuid, instance, corners_zyx, scale=0, 
         start += 16+nbytes
 
     def inflate_blocks():
-        inflated_blocks = {}
-        for corner, buf in blocks.items():
-            inflated_blocks[corner] = DVIDNodeService.inflate_labelarray_blocks3D_from_raw(buf, (64,64,64), corner)
-        return inflated_blocks
+        if threads == 0:
+            inflated_blocks = [*starmap(_inflate_block, blocks.items())]
+        else:
+            inflated_blocks = compute_parallel(
+                _inflate_block, blocks.items(), starmap=True, threads=threads, show_progress=False)
+
+        if format in ('blocks', 'lazy-blocks'):
+            return dict(inflated_blocks)
+        elif format in ('array', 'lazy-array'):
+            vol = np.zeros(full_shape, np.uint64)
+            for corner, block in inflated_blocks:
+                z,y,x = corner - min_corner
+                vol[z:z+64, y:y+64, x:x+64] = block
+            return vol
 
     if format == 'raw-blocks':
         return blocks
@@ -1532,6 +1542,15 @@ def fetch_labelmap_specificblocks(server, uuid, instance, corners_zyx, scale=0, 
         return inflate_blocks
     elif format == 'blocks':
         return inflate_blocks()
+    elif format == 'array':
+        return inflate_blocks()
+    elif format == 'lazy-array':
+        return inflate_blocks
+
+
+def _inflate_block(corner, buf):
+    block = DVIDNodeService.inflate_labelarray_blocks3D_from_raw(buf, (64,64,64), corner)
+    return (corner, block)
 
 
 def fetch_labelmap_voxels_chunkwise(server, uuid, instance, box_zyx, scale=0, throttle=False, supervoxels=False,
