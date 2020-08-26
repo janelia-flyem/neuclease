@@ -1427,6 +1427,113 @@ def fetch_labelmap_voxels(server, uuid, instance, box_zyx, scale=0, throttle=Fal
 fetch_labelarray_voxels = fetch_labelmap_voxels
 
 
+@dvid_api_wrapper
+def fetch_labelmap_specificblocks(server, uuid, instance, corners_zyx, scale=0, supervoxels=False, format='array', *, session=None):
+    """
+    Fetch a set of blocks from a labelmap instance.
+
+    Args:
+        server:
+            dvid server, e.g. 'emdata3:8900'
+
+        uuid:
+            dvid uuid, e.g. 'abc9'
+
+        instance:
+            dvid instance name, e.g. 'segmentation'
+
+        corners_zyx:
+            List of blocks to fetch, specified via their starting corners at the
+
+        scale:
+            Which downsampling scale to fetch from
+
+        supervoxels:
+            If True, request supervoxel data from the given labelmap instance.
+
+        format:
+            One of the following:
+                ('array', 'lazy-array', 'raw-response', 'blocks', 'lazy-blocks', 'raw-blocks')
+
+            If 'array', inflate the compressed voxels from DVID into a single combined array, and return it.
+            (Omitted or empty blocks will be filled with zeros in the result.)
+            If 'lazy-array', return a callable proxy that stores the compressed data internally,
+            and that will inflate the data into a single combined array when called.
+            If 'raw-response', return DVID's raw /blocks response buffer without inflating it.
+            If 'blocks', return a dict of {corner: block}
+            If 'lazy-blocks': return a callable proxy that stores the compressed data internally,
+            and that will inflate the data into a blocks dict when called.
+            If 'raw-blocks', return a dict {corner: compressed_block}, in which each compressed
+            block has not been inflated. Each block can be inflated with
+            ``libdvid.DVIDNodeService.inflate_labelarray_blocks3D_from_raw(buf, (64,64,64), corner)``
+
+    Returns:
+        See ``format`` argument.
+    """
+    assert format in ('array', 'lazy-array', 'raw-response', 'blocks', 'lazy-blocks', 'raw-blocks')
+    corners_zyx = np.asarray(corners_zyx)
+    assert corners_zyx.ndim == 2
+    assert corners_zyx.shape[1] == 3
+
+    block_ids = corners_zyx[:, ::-1] // 64
+    params = {
+        'blocks': ','.join(map(str, block_ids.reshape(-1)))
+    }
+    if scale:
+        params['scale'] = scale
+    if supervoxels:
+        params['supervoxels'] = str(bool(supervoxels)).lower()
+
+    url = f"{server}/api/node/{uuid}/{instance}/specificblocks"
+    r = session.get(url, params=params)
+    r.raise_for_status()
+
+    # From the DVID docs, regarding the block stream format:
+    #   int32  Block 1 coordinate X (Note that this may not be starting block coordinate if it is unset.)
+    #   int32  Block 1 coordinate Y
+    #   int32  Block 1 coordinate Z
+    #   int32  # bytes for first block (N1)
+    #   byte0  Bytes of block data in compressed format.
+    #   byte1
+    #   ...
+    #   byteN1
+
+    min_corner = corners_zyx.min(axis=0)
+    max_corner = corners_zyx.max(axis=0) + 64
+    full_shape = max_corner - min_corner
+
+    def inflate_blocks_to_combined_volume():
+        return DVIDNodeService.inflate_labelarray_blocks3D_from_raw(r.content, full_shape, min_corner)
+
+    if format == 'array':
+        return inflate_blocks_to_combined_volume()
+    elif format == 'lazy-array':
+        return inflate_blocks_to_combined_volume
+    elif format == 'raw-response':
+        return r.content
+
+    blocks = {}
+    start = 0
+    while start < len(r.content):
+        header = np.frombuffer(r.content[start:start+16], dtype=np.int32)
+        bx, by, bz, nbytes = header
+        blocks[(64*bz, 64*by, 64*bx)] = bytes(r.content[start:start+16+nbytes])
+        start += 16+nbytes
+
+    def inflate_blocks():
+        inflated_blocks = {}
+        for corner, buf in blocks.items():
+            inflated_blocks[corner] = DVIDNodeService.inflate_labelarray_blocks3D_from_raw(buf, (64,64,64), corner)
+        return inflated_blocks
+
+    if format == 'raw-blocks':
+        return blocks
+    elif format == 'lazy-blocks':
+        return inflate_blocks
+    elif format == 'blocks':
+        return inflate_blocks()
+
+
 def fetch_labelmap_voxels_chunkwise(server, uuid, instance, box_zyx, scale=0, throttle=False, supervoxels=False,
                                     *, chunk_shape=(64,64,4096), threads=0, format='array', out=None):
     """
@@ -1516,6 +1623,7 @@ def _fetch_chunk(server, uuid, instance, scale, throttle, supervoxels, box):
     Helper for fetch_labelmap_voxels_chunkwise()
     """
     return box, fetch_labelmap_voxels(server, uuid, instance, box, scale, throttle, supervoxels, format='lazy-array')
+
 
 
 def post_labelmap_voxels(server, uuid, instance, offset_zyx, volume, scale=0, downres=False, noindexing=False, throttle=False, *, session=None):
