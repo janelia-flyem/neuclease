@@ -1,3 +1,4 @@
+from neuclease.util.util import ndindex_array
 import re
 import gzip
 import logging
@@ -1517,7 +1518,7 @@ def fetch_labelmap_specificblocks(server, uuid, instance, corners_zyx, scale=0, 
     while start < len(r.content):
         header = np.frombuffer(r.content[start:start+16], dtype=np.int32)
         bx, by, bz, nbytes = header
-        blocks[(64*bz, 64*by, 64*bx)] = bytes(r.content[start:start+16+nbytes])
+        blocks[(64*bz, 64*by, 64*bx)] = r.content[start:start+16+nbytes]
         start += 16+nbytes
 
     def inflate_blocks():
@@ -1680,6 +1681,9 @@ def fetch_seg_around_point(server, uuid, instance, point_zyx, radius, scale=0, s
             The box ([z0, y0, x0], [z1, y1, x1]) of the returned segmentation subvolume
         p:
             Where the requested point lies in the output subvolume.
+        block_coords:
+            The block coordinates that are included in the result,
+            in units corresponding to the requested scale.
     """
     p = np.array(point_zyx)
     R = radius
@@ -1688,15 +1692,21 @@ def fetch_seg_around_point(server, uuid, instance, point_zyx, radius, scale=0, s
     aligned_box = round_box(box, 64, 'out')
 
     if sparse_body:
-        svc = (2**6)*fetch_sparsevol_coarse(server, uuid, instance, sparse_body, session=session)
-        svc = svc // 2**scale
-        svc = svc[(svc >= aligned_box[0]).all(axis=1) & (svc < aligned_box[1]).all(axis=1)]
-        svc = pd.DataFrame(svc // 64 * 64).drop_duplicates().values
-        seg = fetch_labelmap_specificblocks(server, uuid, instance, svc, scale=scale, format='array', threads=8, session=session)
+        corners = (2**6)*fetch_sparsevol_coarse(server, uuid, instance, sparse_body, session=session)
+        corners = corners // 2**scale
+        corners = corners[(corners >= aligned_box[0]).all(axis=1) & (corners < aligned_box[1]).all(axis=1)]
+        corners = pd.DataFrame(corners // 64 * 64).drop_duplicates().values
+
+        # Update aligned box, if the blocks can fit within a smaller bounding-box
+        aligned_box = np.array([corners.min(axis=0), 64+corners.max(axis=0)])
+        seg = fetch_labelmap_specificblocks(server, uuid, instance, corners, scale=scale, format='array', threads=8, session=session)
     else:
         seg = fetch_labelmap_voxels_chunkwise(server, uuid, instance, aligned_box, scale=scale, session=session)
+        corners = ndrange_array(*aligned_box, 64)
 
-    return seg, aligned_box, np.array([R,R,R]) + (box[0] - aligned_box[0])
+    p_out = np.array([R,R,R]) + (box[0] - aligned_box[0])
+    assert (seg.shape == (aligned_box[1] - aligned_box[0])).all()
+    return seg, aligned_box, p_out, corners
 
 
 def post_labelmap_voxels(server, uuid, instance, offset_zyx, volume, scale=0, downres=False, noindexing=False, throttle=False, *, session=None):
