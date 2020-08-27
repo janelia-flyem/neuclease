@@ -14,6 +14,7 @@ from neuclease.dvid.labelmap import fetch_labelmap_specificblocks, fetch_seg_aro
 
 logger = logging.getLogger(__name__)
 
+
 def measure_tbar_mito_distances(seg_src, mito_src, body,
                                 initial_radius_s0=512, max_radius_s0=1024, radius_step_s0=128,
                                 scale=0, mito_min_size_s0=10_000, npclient=None, tbars=None):
@@ -45,6 +46,23 @@ def _measure_tbar_mito_distances(seg_src, mito_src, body, main_tbar_point_s0, tb
     mito_min_size = mito_min_size_s0 // ((2**scale)**3)
     radius = radius_s0 // (2**scale)
 
+    body_mask, mask_box, body_block_corners = _fetch_body_mask(seg_src, p, radius, scale, body)
+    body_mito_mask = _fetch_mito_mask(mito_src, body_mask, body_block_corners, scale, mito_min_size, mito_scale_offset)
+
+    p_local = p - mask_box[0]
+    distances, mito_points_local = _calc_distances(body_mask, body_mito_mask, [p_local])
+
+    mito_points = mito_points_local + mask_box[0]
+    return (2**scale)*distances[0], (2**scale)*mito_points[0]
+
+
+def _fetch_body_mask(seg_src, p, radius, scale, body):
+    """
+    Fetch a mask for the given body around the given point, with the given radius.
+    Only the connected component that covers the given point will be returned.
+    If the component doesn't extend out to the given radius in all dimensions,
+    then the returned subvolume may be smaller than the requested radius would seem to imply.
+    """
     with Timer("Fetching body segmentation", logger):
         seg, seg_box, p_local, _ = fetch_seg_around_point(*seg_src, p, radius, scale, body)
 
@@ -67,18 +85,21 @@ def _measure_tbar_mito_distances(seg_src, mito_src, body, main_tbar_point_s0, tb
     body_mask = (body_cc == body_cc[(*p_local,)])
     body_block_mask = view_as_blocks(body_mask, (64,64,64)).any(axis=(3,4,5))
     body_block_corners = seg_box[0] + (64 * np.argwhere(body_block_mask))
-    analysis_box = (body_block_corners.min(axis=0),
-                    body_block_corners.max(axis=0) + 64)
+    mask_box = (body_block_corners.min(axis=0),
+                body_block_corners.max(axis=0) + 64)
 
-    local_box = analysis_box - seg_box[0]
-    p_local -= (analysis_box[0] - seg_box[0])
+    local_box = mask_box - seg_box[0]
     body_mask = body_mask[box_to_slicing(*local_box)]
 
+    return body_mask, mask_box, body_block_corners
+
+
+def _fetch_mito_mask(mito_src, body_mask, body_block_corners, scale, mito_min_size, mito_scale_offset):
     assert scale - mito_scale_offset >= 0, \
         "FIXME: need to upsample the mito seg if using scale 0.  Not implemented yet."
 
     with Timer("Fetching mito mask", logger):
-        mito_seg = fetch_labelmap_specificblocks(*mito_src, body_block_corners, scale-mito_scale_offset, threads=4)
+        mito_seg = fetch_labelmap_specificblocks(*mito_src, body_block_corners, scale - mito_scale_offset, threads=4)
 
     mito_mask = np.array([0,1,1,1,0], np.uint8)[mito_seg]  # mito mask class 4 means "empty"
 
@@ -91,20 +112,7 @@ def _measure_tbar_mito_distances(seg_src, mito_src, body, main_tbar_point_s0, tb
     mito_sizes = np.bincount(body_mito_cc.reshape(-1))
     mito_sizes[0] = 0
     body_mito_mask = (mito_sizes > mito_min_size)[body_mito_cc]
-
-    if body_mito_mask.sum() == 0:
-        return np.inf, (0,0,0)
-
-    # Find the minimum cost from any mito point to the p_local,
-    # restricted to the body mask.
-    #
-    # TODO:
-    #   Check if it would be faster to go in the other direction.
-    #   If not, try finding paths to all tbars
-    distances, mito_points_local = _calc_distances(body_mask, body_mito_mask, [p_local])
-
-    mito_points = mito_points_local + analysis_box[0]
-    return (2**scale)*distances[0], (2**scale)*mito_points[0]
+    return body_mito_mask
 
 
 def _calc_distances(body_mask, body_mito_mask, local_points_zyx):
@@ -114,6 +122,9 @@ def _calc_distances(body_mask, body_mito_mask, local_points_zyx):
 
     Uses skimage.graph.MCP_Geometric to perform the graph search.
     """
+    if body_mito_mask.sum() == 0:
+        return np.inf, (0,0,0)
+
     # MCP uses float64, so we may as well use that now and avoid copies
     body_costs = np.where(body_mask, 1.0, np.inf)
 
