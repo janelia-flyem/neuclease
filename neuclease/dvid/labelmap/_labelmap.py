@@ -3,7 +3,7 @@ import re
 import gzip
 import logging
 from io import BytesIO
-from functools import partial
+from functools import partial, lru_cache, wraps
 from itertools import starmap
 from multiprocessing.pool import ThreadPool
 from collections import defaultdict
@@ -1048,8 +1048,8 @@ def fetch_mutation_id(server, uuid, instance, body_id, *, session=None):
 
 
 @dvid_api_wrapper
-def fetch_sparsevol_coarse(server, uuid, instance, label_id, supervoxels=False,
-                           *, format='coords', mask_box=None, session=None): # @ReservedAssignment
+def _fetch_sparsevol_coarse_impl(server, uuid, instance, label_id, supervoxels=False, *,
+                                 format='coords', mask_box=None, session=None, cache=False):
     """
     Return the 'coarse sparsevol' representation of a given body/supervoxel.
     This is similar to the sparsevol representation at scale=6,
@@ -1090,6 +1090,9 @@ def fetch_sparsevol_coarse(server, uuid, instance, label_id, supervoxels=False,
             be returned, in scale-6 coordinates.
             Voxels outside the box will be omitted from the returned mask.
 
+        cache:
+            If True, the results will be stored in a ``lru_cache``.
+
     Returns:
 
         If format='coords', return an array of coordinates of the form:
@@ -1115,6 +1118,11 @@ def fetch_sparsevol_coarse(server, uuid, instance, label_id, supervoxels=False,
     """
     assert format in ('coords', 'ranges', 'mask')
 
+    # The cache arg is only listed on this function for the sake of the docstring.
+    assert not cache, \
+        "Don't call this function directly.  Call fetch_sparsevol_coarse(), "\
+        "which wraps this function and implements caching logic."
+
     supervoxels = str(bool(supervoxels)).lower()
     r = session.get(f'{server}/api/node/{uuid}/{instance}/sparsevol-coarse/{label_id}?supervoxels={supervoxels}')
     r.raise_for_status()
@@ -1129,6 +1137,34 @@ def fetch_sparsevol_coarse(server, uuid, instance, label_id, supervoxels=False,
     if format == 'mask':
         mask, mask_box = runlength_decode_from_ranges_to_mask(rle_ranges, mask_box)
         return mask, mask_box
+
+
+@lru_cache(maxsize=1000)
+def _fetch_sparsevol_coarse_cached(*args, **kwargs):
+    result = _fetch_sparsevol_coarse_impl(*args, **kwargs)
+
+    # Since we're caching the result,
+    # make sure it can't be overwritten by the caller!
+    if isinstance(result, np.ndarray):
+        result.flags['WRITEABLE'] = False
+    else:
+        for item in result:
+            item.flags['WRITEABLE'] = False
+
+    return result
+
+
+@wraps(_fetch_sparsevol_coarse_impl)
+def fetch_sparsevol_coarse(*args, mask_box=None, cache=False, **kwargs):
+    if not cache:
+        return _fetch_sparsevol_coarse_impl(*args, mask_box=mask_box, **kwargs)
+
+    # Convert to mask_box to tuple so it can be hashed for the cache
+    if mask_box is not None:
+        ((z0, y0, x0), (z1, y1, x1)) = mask_box
+        mask_box = ((z0, y0, x0), (z1, y1, x1))
+
+    return _fetch_sparsevol_coarse_cached(*args, mask_box=mask_box, **kwargs)
 
 
 def fetch_sparsevol_coarse_threaded(server, uuid, instance, labels, supervoxels=False, num_threads=2):
@@ -1645,7 +1681,7 @@ def _fetch_chunk(server, uuid, instance, scale, throttle, supervoxels, box):
     return box, fetch_labelmap_voxels(server, uuid, instance, box, scale, throttle, supervoxels, format='lazy-array')
 
 
-def fetch_seg_around_point(server, uuid, instance, point_zyx, radius, scale=0, sparse_body=None, session=None):
+def fetch_seg_around_point(server, uuid, instance, point_zyx, radius, scale=0, sparse_body=None, session=None, cache_svc=True):
     """
     Fetch the segmentation around a given point, possibly
     limited to the blocks that contain a particular body.
@@ -1671,6 +1707,11 @@ def fetch_seg_around_point(server, uuid, instance, point_zyx, radius, scale=0, s
             except for the blocks which intersect this body's coarse sparsevol blocks.
             Note: This is not the same as the body's sparsevol representation,
             becuase the other bodies in those blocks are not masked out.
+        cache_svc:
+            If True, make use of the lru_cache offered by fetch_sparsevol_coarse().
+            That way, you can call this function repeatedly for different points
+            without hitting DVID every time, or parsing the sparsevol-coarse
+            response every time.
 
     Returns:
         seg:
@@ -1692,7 +1733,7 @@ def fetch_seg_around_point(server, uuid, instance, point_zyx, radius, scale=0, s
     aligned_box = round_box(box, 64, 'out')
 
     if sparse_body:
-        svc = (2**6)*fetch_sparsevol_coarse(server, uuid, instance, sparse_body, session=session)
+        svc = (2**6)*fetch_sparsevol_coarse(server, uuid, instance, sparse_body, session=session, cache=cache_svc)
         corners = svc // 2**scale
         corners = corners[(corners >= aligned_box[0]).all(axis=1) & (corners < aligned_box[1]).all(axis=1)]
         corners = pd.DataFrame(corners // 64 * 64).drop_duplicates().values
