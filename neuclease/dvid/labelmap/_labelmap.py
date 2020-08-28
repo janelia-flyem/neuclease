@@ -1692,8 +1692,8 @@ def fetch_seg_around_point(server, uuid, instance, point_zyx, radius, scale=0, s
     aligned_box = round_box(box, 64, 'out')
 
     if sparse_body:
-        corners = (2**6)*fetch_sparsevol_coarse(server, uuid, instance, sparse_body, session=session)
-        corners = corners // 2**scale
+        svc = (2**6)*fetch_sparsevol_coarse(server, uuid, instance, sparse_body, session=session)
+        corners = svc // 2**scale
         corners = corners[(corners >= aligned_box[0]).all(axis=1) & (corners < aligned_box[1]).all(axis=1)]
         corners = pd.DataFrame(corners // 64 * 64).drop_duplicates().values
 
