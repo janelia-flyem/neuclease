@@ -1,5 +1,5 @@
 import logging
-from neuclease.util.box import box_intersection
+from collections import namedtuple
 
 import numpy as np
 import pandas as pd
@@ -10,22 +10,87 @@ import vigra
 from vigra.analysis import labelMultiArrayWithBackground
 
 from neuprint import SynapseCriteria as SC, fetch_synapses
-from neuclease.util import tqdm_proxy, Timer, box_to_slicing
+from neuclease.util import tqdm_proxy, Timer, box_to_slicing, box_intersection
 from neuclease.dvid.labelmap import fetch_labelmap_specificblocks, fetch_seg_around_point
 
 logger = logging.getLogger(__name__)
 EXPORT_DEBUG_VOLUMES = False
+SearchConfig = namedtuple('SearchConfig', 'radius_s0 scale')
+
+DEFAULT_SEARCH_CONFIGS = [
+    SearchConfig(radius_s0=500, scale=3),
+    SearchConfig(radius_s0=1000, scale=3),
+    SearchConfig(radius_s0=2000, scale=3),
+]
 
 
-def measure_tbar_mito_distances(seg_src, mito_src, body,
-                                initial_radius_s0=512, max_radius_s0=1024, radius_step_s0=128,
-                                scale=0, mito_min_size_s0=10_000, npclient=None, tbars=None):
+def measure_tbar_mito_distances(seg_src,
+                                mito_src,
+                                body,
+                                search_configs=DEFAULT_SEARCH_CONFIGS,
+                                mito_min_size_s0=10_000,
+                                mito_scale_offset=1,
+                                npclient=None,
+                                tbars=None):
+    """
+    Search for the closest mito to each tbar in a list of tbars
+    (or any set of points, really).
+
+    Args:
+        seg_src:
+            (server, uuid, instance)
+            Labelmap instance for the neuron segmentation.
+        mito_src:
+            (server, uuid, instance)
+            Labelmap instance for the mitochondria "mask"
+            (actually a segmentation with a few classes.)
+        body:
+            The body ID of interest, on which the tbars reside.
+        search_configs:
+            A list of pairs ``[(radius_s0, scale), (radius_s0, scale), ...]``.
+            For each tbar, this function tries to locate a mitochondria within
+            he given radius, using data downloaded from the given scale.
+            If the search fails and no mito can be found, the function tries
+            again using the next search criteria in the list.
+            The radius should always be specified in scale-0 units,
+            regardless of the scale at which you want to perform the analysis.
+            Notes:
+                - Scale 4 is too low-res.  Stick with scale-3 or better.
+                - Higher radius is more expensive, but some of that expense is
+                  recouped because all points that fall within the radius are
+                  analyzed at once.  See _measure_tbar_mito_distances()
+                  implementation for details.
+        mito_min_size_s0:
+            Mito mask voxels that fall outside the body mask will be discarded,
+            and then the mito mask is segmented via a connected components step.
+            Components below this size threshold will be discarded before
+            distances are computed.  Specify this threshold in units of scale 0
+            voxels, regardless of the scale at which the analysis is being performed.
+        mito_scale_offset:
+            If the mito mask layer is stored at a lower resolution than the
+            neuron segmentation, specify the difference between the two scales
+            using this parameter. (It's assumed that the scales differ by a power of two.)
+            For instance, if the segmentation is stored at 8nm resolution,
+            but the mito masks are stored at 16nm resolution, use mito_scale_offset=1.
+        npclient:
+            ``neuprint.Client`` to use when fetching the list of tbars that belong
+            to the given body, unless you provide your own tbar points in the next
+            argument.
+        tbars:
+            A DataFrame of tbar coordinates at least with columns ``['x', 'y', 'z']``.
+
+    Returns:
+        DataFrame of tbar coordinates, mito distances, and mito coordinates.
+        Points for which no nearby mito could be found (after trying all the given search_configs)
+        will be marked with `done=False` in the results.
+    """
     # Fetch tbars
     if tbars is None:
         tbars = fetch_synapses(body, SC(type='pre', primary_only=True), client=npclient)
     else:
         tbars = tbars.copy()
 
+    tbars['body'] = body
     tbars['mito-distance'] = np.inf
     tbars['done'] = False
     tbars['mito-x'] = 0
@@ -36,17 +101,28 @@ def measure_tbar_mito_distances(seg_src, mito_src, body,
         for row in tbars.itertuples():
             if row.done:
                 continue
-            radius = initial_radius_s0
-            num_done = _measure_tbar_mito_distances(seg_src, mito_src, body, tbars, row.Index, radius, scale, mito_min_size_s0)
-            if tbars.loc[row.Index, 'mito-distance'] == np.inf:
-                num_done += 1
-            progress.update(num_done)
+
+            for radius_s0, scale in search_configs:
+                num_done = _measure_tbar_mito_distances(seg_src, mito_src, body, tbars, row.Index, radius_s0, scale, mito_min_size_s0, mito_scale_offset)
+                progress.update(num_done)
+                success = (tbars.loc[row.Index, 'mito-distance'] != np.inf)
+                if success:
+                    break
+                logger.info("Search failed for primary tbar. Trying next search config!")
+
+            if not success:
+                logger.warn(f"Failed to find a nearby mito for tbar at point {(row.x, row.y, row.z)}")
+                progress.update(1)
+
+    num_done = tbars['done'].sum()
+    num_failed = (~tbars['done']).sum()
+    logger.info(f"Found mitos for {num_done} tbars, failed for {num_failed} tbars")
 
     return tbars
 
 
 def _measure_tbar_mito_distances(seg_src, mito_src, body, tbar_points_s0, primary_point_index,
-                                 radius_s0, scale, mito_min_size_s0, mito_scale_offset=1):
+                                 radius_s0, scale, mito_min_size_s0, mito_scale_offset):
     """
     Download the segmentation for a single body around one tbar point as a mask,
     and also the corresponding mitochondria mask for those voxels.
@@ -71,7 +147,7 @@ def _measure_tbar_mito_distances(seg_src, mito_src, body, tbar_points_s0, primar
             Labelmap instance for the mitochondria "mask"
             (actually a segmentation with a few classes.)
         body:
-            The body on which the tbars reside.
+            The body ID on which the tbars reside.
         tbar_points_s0:
             DataFrame with ALL tbar coordinates you plan to analyze.
             The coordinates should be specified at scale 0,
