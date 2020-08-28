@@ -22,7 +22,7 @@ def measure_tbar_mito_distances(seg_src, mito_src, body,
                                 scale=0, mito_min_size_s0=10_000, npclient=None, tbars=None):
     # Fetch tbars
     if tbars is None:
-        tbars = fetch_synapses(body, SC(rois='FB', type='pre', primary_only=True), client=npclient)
+        tbars = fetch_synapses(body, SC(type='pre', primary_only=True), client=npclient)
     else:
         tbars = tbars.copy()
 
