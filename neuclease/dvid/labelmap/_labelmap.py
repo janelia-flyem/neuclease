@@ -1,4 +1,3 @@
-from neuclease.util.util import ndindex_array
 import re
 import gzip
 import logging
@@ -14,10 +13,11 @@ import networkx as nx
 from requests import HTTPError
 
 from libdvid import DVIDNodeService, encode_label_block
+from vigra.analysis import labelMultiArrayWithBackground
 
 from ...util import (Timer, round_box, extract_subvol, DEFAULT_TIMESTAMP, tqdm_proxy,
                      ndrange, ndrange_array, box_to_slicing, compute_parallel, boxes_from_grid, box_shape,
-                     overwrite_subvol, iter_batches, extract_labels_from_volume)
+                     overwrite_subvol, iter_batches, extract_labels_from_volume, box_intersection, downsample_mask)
 
 from .. import dvid_api_wrapper, fetch_generic_json, fetch_repo_info
 from ..repo import create_voxel_instance, fetch_repo_dag, resolve_ref
@@ -1681,7 +1681,7 @@ def _fetch_chunk(server, uuid, instance, scale, throttle, supervoxels, box):
     return box, fetch_labelmap_voxels(server, uuid, instance, box, scale, throttle, supervoxels, format='lazy-array')
 
 
-def fetch_seg_around_point(server, uuid, instance, point_zyx, radius, scale=0, sparse_body=None, session=None, cache_svc=True):
+def fetch_seg_around_point(server, uuid, instance, point_zyx, radius, scale=0, sparse_body=None, sparse_component_only=False, session=None, cache_svc=True):
     """
     Fetch the segmentation around a given point, possibly
     limited to the blocks that contain a particular body.
@@ -1707,6 +1707,16 @@ def fetch_seg_around_point(server, uuid, instance, point_zyx, radius, scale=0, s
             except for the blocks which intersect this body's coarse sparsevol blocks.
             Note: This is not the same as the body's sparsevol representation,
             becuase the other bodies in those blocks are not masked out.
+        sparse_component_only:
+            If True, this indicates that you are only interested in the connected component
+            of the segmentation that overlaps with the given point, so blocks of segmentation
+            that are clearly disconnected from that component can be omitted from the results,
+            at least as can be seen from the sparsevol-coarse representation (scale-6).
+            This doesn't guarantee that all returned blocks contain the sparse component,
+            but it will omit the blocks that can be easily omitted, since they aren't connected
+            to the component of interest at scale-6 resolution.
+            It is assumed that the given point lies on the given sparse_body;
+            if not, an error will be raised if sparse_body doesn't intersect the same block as the point.
         cache_svc:
             If True, make use of the lru_cache offered by fetch_sparsevol_coarse().
             That way, you can call this function repeatedly for different points
@@ -1726,6 +1736,9 @@ def fetch_seg_around_point(server, uuid, instance, point_zyx, radius, scale=0, s
             The block coordinates that are included in the result,
             in units corresponding to the requested scale.
     """
+    assert not sparse_component_only or sparse_body, \
+        "Can't use sparse_component_only without providing a sparse_body"
+
     p = np.array(point_zyx)
     R = radius
 
@@ -1733,9 +1746,19 @@ def fetch_seg_around_point(server, uuid, instance, point_zyx, radius, scale=0, s
     aligned_box = round_box(box, 64, 'out')
 
     if sparse_body:
-        svc = (2**6)*fetch_sparsevol_coarse(server, uuid, instance, sparse_body, session=session, cache=cache_svc)
-        corners = svc // 2**scale
-        corners = corners[(corners >= aligned_box[0]).all(axis=1) & (corners < aligned_box[1]).all(axis=1)]
+        svc_mask, svc_box = fetch_sparsevol_coarse(server, uuid, instance, sparse_body, format='mask', session=session, cache=cache_svc)
+        aligned_box = box_intersection((2**(6-scale))*svc_box, aligned_box)
+        svc_mask = svc_mask[box_to_slicing(*(aligned_box//(2**(6-scale)) - svc_box[0]))]
+        svc_box = aligned_box // (2**(6-scale))
+
+        if sparse_component_only:
+            svc_cc = labelMultiArrayWithBackground(svc_mask.view(np.uint8))
+            p_cc = svc_cc[tuple(p // (2**(6-scale)) - svc_box[0])]
+            if p_cc == 0:
+                raise RuntimeError(f"The given point {p.tolist()} does not lie on the given sparse_body {sparse_body}")
+            svc_mask = (svc_cc == p_cc)
+
+        corners = (np.argwhere(svc_mask) + svc_box[0]) * (2**(6-scale))
         corners = pd.DataFrame(corners // 64 * 64).drop_duplicates().values
 
         # Update aligned box, if the blocks can fit within a smaller bounding-box

@@ -261,8 +261,8 @@ def _fetch_body_mask(seg_src, p, radius, scale, body, tbar_points):
     If the component doesn't extend out to the given radius in all dimensions,
     then the returned subvolume may be smaller than the requested radius would seem to imply.
     """
-    with Timer("Fetching body segmentation", logger, logging.DEBUG):
-        seg, seg_box, p_local, _ = fetch_seg_around_point(*seg_src, p, radius, scale, body)
+    with Timer("Fetching body segmentation", logger):
+        seg, seg_box, p_local, _ = fetch_seg_around_point(*seg_src, p, radius, scale, body, sparse_component_only=True)
 
     # Due to downsampling effects, it's possible that the
     # main tbar fell off its body in the downsampled image.
@@ -303,7 +303,7 @@ def _fetch_mito_mask(mito_src, body_mask, body_block_corners, scale, mito_min_si
     assert scale - mito_scale_offset >= 0, \
         "FIXME: need to upsample the mito seg if using scale 0.  Not implemented yet."
 
-    with Timer("Fetching mito mask", logger, logging.DEBUG):
+    with Timer("Fetching mito mask", logger):
         mito_seg = fetch_labelmap_specificblocks(*mito_src, body_block_corners, scale - mito_scale_offset, threads=4)
 
     # mito classes 1,2,3 are valid;
@@ -368,4 +368,4 @@ if __name__ == "__main__":
     tbars = fetch_synapses(body, SC(rois='FB', type='pre', primary_only=True))
     v11_seg = ('emdata4:8900', '20631f94c3f446d7864bc55bf515706e', 'segmentation')
     mito_mask = ('emdata4.int.janelia.org:8900', 'fbd7db9ebde6426e9f8474af10fe4386', 'mito_20190717.46637005.combined')
-    measure_tbar_mito_distances(v11_seg, mito_mask, body, scale=4, npclient=c, tbars=tbars.iloc[4:5])
+    measure_tbar_mito_distances(v11_seg, mito_mask, body, npclient=c, tbars=tbars.iloc[4:5])
