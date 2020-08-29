@@ -78,7 +78,6 @@ def measure_tbar_mito_distances(seg_src,
             argument.
         tbars:
             A DataFrame of tbar coordinates at least with columns ``['x', 'y', 'z']``.
-
     Returns:
         DataFrame of tbar coordinates, mito distances, and mito coordinates.
         Points for which no nearby mito could be found (after trying all the given search_configs)
@@ -105,12 +104,12 @@ def measure_tbar_mito_distances(seg_src,
             for radius_s0, scale in search_configs:
                 num_done = _measure_tbar_mito_distances(seg_src, mito_src, body, tbars, row.Index, radius_s0, scale, mito_min_size_s0, mito_scale_offset)
                 progress.update(num_done)
-                success = (tbars.loc[row.Index, 'mito-distance'] != np.inf)
-                if success:
+                done = (tbars.loc[row.Index, 'done'])
+                if done:
                     break
                 logger.info("Search failed for primary tbar. Trying next search config!")
 
-            if not success:
+            if not done:
                 logger.warn(f"Failed to find a nearby mito for tbar at point {(row.x, row.y, row.z)}")
                 progress.update(1)
 
@@ -201,6 +200,20 @@ def _measure_tbar_mito_distances(seg_src, mito_src, body, tbar_points_s0, primar
         np.save('/tmp/body_mask.npy', 1*body_mask.astype(np.uint64))
         np.save('/tmp/mito_mask.npy', 2*mito_mask.astype(np.uint64))
 
+    if (body_mask & mito_mask).sum() == 0:
+        # The body mask contains no mitochondria at all.
+        if ( body_mask[0, :, :].any() or body_mask[-1, :, :].any() or
+             body_mask[:, 0, :].any() or body_mask[:, -1, :].any() or
+             body_mask[:, :, 0].any() or body_mask[:, :, -1].any() ):
+            # The body mask touches the edge of the volume,
+            # so we should expand our radius and keep trying.
+            return 0
+        else:
+            # Doesn't touch volume edges.
+            # We're done with it, even though we can't find a mito.
+            tbar_points_s0.loc[primary_point_index, 'done'] = True
+            return 1
+
     # Find the set of all points that fall within the mask.
     # That's that batch of tbars we'll find mito distances for.
     batch_tbars = batch_tbars.query('not done')
@@ -262,7 +275,8 @@ def _fetch_body_mask(seg_src, p, radius, scale, body, tbar_points):
     then the returned subvolume may be smaller than the requested radius would seem to imply.
     """
     with Timer("Fetching body segmentation", logger):
-        seg, seg_box, p_local, _ = fetch_seg_around_point(*seg_src, p, radius, scale, body, sparse_component_only=True)
+        seg, seg_box, p_local, _ = fetch_seg_around_point(*seg_src, p, radius, scale, body,
+                                                          sparse_component_only=True, map_on_client=True, threads=16)
 
     # Due to downsampling effects, it's possible that the
     # main tbar fell off its body in the downsampled image.
@@ -304,7 +318,7 @@ def _fetch_mito_mask(mito_src, body_mask, body_block_corners, scale, mito_min_si
         "FIXME: need to upsample the mito seg if using scale 0.  Not implemented yet."
 
     with Timer("Fetching mito mask", logger):
-        mito_seg = fetch_labelmap_specificblocks(*mito_src, body_block_corners, scale - mito_scale_offset, threads=4)
+        mito_seg = fetch_labelmap_specificblocks(*mito_src, body_block_corners, scale - mito_scale_offset, supervoxels=True, threads=4)
 
     # mito classes 1,2,3 are valid;
     # mito mask class 4 means "empty", as does 0.
@@ -368,4 +382,5 @@ if __name__ == "__main__":
     tbars = fetch_synapses(body, SC(rois='FB', type='pre', primary_only=True))
     v11_seg = ('emdata4:8900', '20631f94c3f446d7864bc55bf515706e', 'segmentation')
     mito_mask = ('emdata4.int.janelia.org:8900', 'fbd7db9ebde6426e9f8474af10fe4386', 'mito_20190717.46637005.combined')
-    measure_tbar_mito_distances(v11_seg, mito_mask, body, npclient=c, tbars=tbars.iloc[4:5])
+    processed_tbars = measure_tbar_mito_distances(v11_seg, mito_mask, body, npclient=c, tbars=tbars.iloc[4:5])
+    print(processed_tbars)
