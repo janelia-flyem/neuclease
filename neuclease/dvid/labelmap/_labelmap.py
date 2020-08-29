@@ -13,6 +13,7 @@ import networkx as nx
 from requests import HTTPError
 
 from libdvid import DVIDNodeService, encode_label_block
+from dvidutils import LabelMapper
 from vigra.analysis import labelMultiArrayWithBackground
 
 from ...util import (Timer, round_box, extract_subvol, DEFAULT_TIMESTAMP, tqdm_proxy,
@@ -1466,7 +1467,8 @@ fetch_labelarray_voxels = fetch_labelmap_voxels
 
 
 @dvid_api_wrapper
-def fetch_labelmap_specificblocks(server, uuid, instance, corners_zyx, scale=0, supervoxels=False, format='array', *, threads=0, session=None):
+def fetch_labelmap_specificblocks(server, uuid, instance, corners_zyx, scale=0, supervoxels=False, format='array',
+                                  *, map_on_client=False, threads=0, session=None):
     """
     Fetch a set of blocks from a labelmap instance.
 
@@ -1516,6 +1518,9 @@ def fetch_labelmap_specificblocks(server, uuid, instance, corners_zyx, scale=0, 
     corners_zyx = np.asarray(corners_zyx)
     assert corners_zyx.ndim == 2
     assert corners_zyx.shape[1] == 3
+    assert not map_on_client or not supervoxels, \
+        "If you're fetching supervoxels, there's no mapping "\
+        "necessary, on the client or otherwise."
 
     assert not (corners_zyx % 64).any(), "corners_zyx must be block-aligned!"
 
@@ -1525,8 +1530,8 @@ def fetch_labelmap_specificblocks(server, uuid, instance, corners_zyx, scale=0, 
     }
     if scale:
         params['scale'] = scale
-    if supervoxels:
-        params['supervoxels'] = str(bool(supervoxels)).lower()
+    if supervoxels or map_on_client:
+        params['supervoxels'] = 'true'
 
     url = f"{server}/api/node/{uuid}/{instance}/specificblocks"
     r = session.get(url, params=params)
@@ -1557,12 +1562,33 @@ def fetch_labelmap_specificblocks(server, uuid, instance, corners_zyx, scale=0, 
         blocks[(64*bz, 64*by, 64*bx)] = r.content[start:start+16+nbytes]
         start += 16+nbytes
 
+    @profile
     def inflate_blocks():
+        print("block count", len(blocks))
         if threads == 0:
             inflated_blocks = [*starmap(_inflate_block, blocks.items())]
         else:
             inflated_blocks = compute_parallel(
                 _inflate_block, blocks.items(), starmap=True, threads=threads, show_progress=False)
+
+        if map_on_client:
+            block_svs = []
+            for _corner, block in inflated_blocks:
+                block_svs.append(pd.unique(block.ravel()))
+
+            svs = pd.unique(np.concatenate(block_svs))
+            print("block count", len(inflated_blocks))
+            print("sv count", len(svs))
+            bodies = fetch_mapping(server, uuid, instance, svs)
+            assert svs.dtype == bodies.dtype == np.uint64
+            mapper = LabelMapper(svs, bodies)
+
+            if threads == 0:
+                for _corner, block_vol in inflated_blocks:
+                    mapper.apply_inplace(block_vol)
+            else:
+                _, block_vols = zip(*inflated_blocks)
+                compute_parallel(mapper.apply_inplace, block_vols, threads=threads, show_progress=False)
 
         if format in ('blocks', 'lazy-blocks'):
             return dict(inflated_blocks)
