@@ -1507,9 +1507,23 @@ def fetch_labelmap_specificblocks(server, uuid, instance, corners_zyx, scale=0, 
             block has not been inflated. Each block can be inflated with
             ``libdvid.DVIDNodeService.inflate_labelarray_blocks3D_from_raw(buf, (64,64,64), corner)``
 
+        map_on_client:
+            If True, request supervoxels from dvid, then fetch the mapping for those supervoxels
+            separately, and use that mapping to transform the volume into body IDs locally.
+            This spares DVID the CPU burden of decompressing the labelblocks and applying the mapping
+            mapping, and recompressing the blocks before sending them.
+            Using this option with threads=0 will generally be slower than normal, for multiple reasons:
+                - It incurs the extra latency of fetching the mapping from DVID
+                - On the server, DVID uses multithreading to perform the remapping
+            But if you set threads=8 or 16, you can acheive comparable or (barely) faster results than
+            letting DVID do the remapping, despite the extra call to dvid.
+            The main scenario in which this option is useful is when you are hitting DVID from several
+            threads, and thus DVID's CPU is the bottleneck for your workload.
+
         threads:
-            How many threads to use to inflate blocks in parallel.
-            This only has a modest effect on performance.
+            How many threads to use to inflate (and remap) blocks in parallel.
+            This only has a modest effect on performance (e.g. ~20%), unless using
+            map_on_client=True, in which case the improvement is non-trivial (~50%).
 
     Returns:
         See ``format`` argument.
@@ -1562,9 +1576,18 @@ def fetch_labelmap_specificblocks(server, uuid, instance, corners_zyx, scale=0, 
         blocks[(64*bz, 64*by, 64*bx)] = r.content[start:start+16+nbytes]
         start += 16+nbytes
 
-    @profile
+    def map_blocks_inplace(block_vols):
+        svs = []
+        for vol in block_vols:
+            svs.append(pd.unique(vol.ravel()))
+        svs = pd.unique(np.concatenate(svs))
+        bodies = fetch_mapping(server, uuid, instance, svs)
+        assert svs.dtype == bodies.dtype == np.uint64
+        mapper = LabelMapper(svs, bodies)
+        for vol in block_vols:
+            mapper.apply_inplace(vol)
+
     def inflate_blocks():
-        print("block count", len(blocks))
         if threads == 0:
             inflated_blocks = [*starmap(_inflate_block, blocks.items())]
         else:
@@ -1572,23 +1595,12 @@ def fetch_labelmap_specificblocks(server, uuid, instance, corners_zyx, scale=0, 
                 _inflate_block, blocks.items(), starmap=True, threads=threads, show_progress=False)
 
         if map_on_client:
-            block_svs = []
-            for _corner, block in inflated_blocks:
-                block_svs.append(pd.unique(block.ravel()))
-
-            svs = pd.unique(np.concatenate(block_svs))
-            print("block count", len(inflated_blocks))
-            print("sv count", len(svs))
-            bodies = fetch_mapping(server, uuid, instance, svs)
-            assert svs.dtype == bodies.dtype == np.uint64
-            mapper = LabelMapper(svs, bodies)
-
+            _corners, block_vols = zip(*inflated_blocks)
             if threads == 0:
-                for _corner, block_vol in inflated_blocks:
-                    mapper.apply_inplace(block_vol)
+                map_blocks_inplace(block_vols)
             else:
-                _, block_vols = zip(*inflated_blocks)
-                compute_parallel(mapper.apply_inplace, block_vols, threads=threads, show_progress=False)
+                block_batches = iter_batches(block_vols, (len(block_vols)+threads-1) // threads)
+                compute_parallel(map_blocks_inplace, block_batches, ordered=False, threads=threads, show_progress=False)
 
         if format in ('blocks', 'lazy-blocks'):
             return dict(inflated_blocks)
@@ -1707,7 +1719,8 @@ def _fetch_chunk(server, uuid, instance, scale, throttle, supervoxels, box):
     return box, fetch_labelmap_voxels(server, uuid, instance, box, scale, throttle, supervoxels, format='lazy-array')
 
 
-def fetch_seg_around_point(server, uuid, instance, point_zyx, radius, scale=0, sparse_body=None, sparse_component_only=False, session=None, cache_svc=True):
+def fetch_seg_around_point(server, uuid, instance, point_zyx, radius, scale=0, sparse_body=None, sparse_component_only=False,
+                           *, session=None, cache_svc=True, map_on_client=False, threads=0):
     """
     Fetch the segmentation around a given point, possibly
     limited to the blocks that contain a particular body.
@@ -1748,6 +1761,12 @@ def fetch_seg_around_point(server, uuid, instance, point_zyx, radius, scale=0, s
             That way, you can call this function repeatedly for different points
             without hitting DVID every time, or parsing the sparsevol-coarse
             response every time.
+        map_on_client:
+            Whether or not to use map_on_client when calling fetch_labelmap_specificblocks().
+            See that function for details.
+        threads:
+            How many threads to use when calling fetch_labelmap_specificblocks().
+            See that function for details.
 
     Returns:
         seg:
@@ -1771,13 +1790,16 @@ def fetch_seg_around_point(server, uuid, instance, point_zyx, radius, scale=0, s
     box = [p-R, p+R+1]
     aligned_box = round_box(box, 64, 'out')
 
-    if sparse_body:
+    if not sparse_body:
+        corners = ndrange_array(*aligned_box, 64)
+        seg = fetch_labelmap_voxels_chunkwise(server, uuid, instance, aligned_box, scale=scale)
+    else:
         svc_mask, svc_box = fetch_sparsevol_coarse(server, uuid, instance, sparse_body, format='mask', session=session, cache=cache_svc)
         aligned_box = box_intersection((2**(6-scale))*svc_box, aligned_box)
         svc_mask = svc_mask[box_to_slicing(*(aligned_box//(2**(6-scale)) - svc_box[0]))]
         svc_box = aligned_box // (2**(6-scale))
 
-        if sparse_component_only:
+        if not sparse_component_only:
             svc_cc = labelMultiArrayWithBackground(svc_mask.view(np.uint8))
             p_cc = svc_cc[tuple(p // (2**(6-scale)) - svc_box[0])]
             if p_cc == 0:
@@ -1789,10 +1811,8 @@ def fetch_seg_around_point(server, uuid, instance, point_zyx, radius, scale=0, s
 
         # Update aligned box, if the blocks can fit within a smaller bounding-box
         aligned_box = np.array([corners.min(axis=0), 64+corners.max(axis=0)])
-        seg = fetch_labelmap_specificblocks(server, uuid, instance, corners, scale=scale, format='array', threads=8, session=session)
-    else:
-        seg = fetch_labelmap_voxels_chunkwise(server, uuid, instance, aligned_box, scale=scale, session=session)
-        corners = ndrange_array(*aligned_box, 64)
+        seg = fetch_labelmap_specificblocks(server, uuid, instance, corners, scale=scale, format='array',
+                                            map_on_client=map_on_client, threads=threads, session=session)
 
     p_out = np.array([R,R,R]) + (box[0] - aligned_box[0])
     assert (seg.shape == (aligned_box[1] - aligned_box[0])).all()
