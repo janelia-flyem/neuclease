@@ -18,9 +18,9 @@ EXPORT_DEBUG_VOLUMES = False
 SearchConfig = namedtuple('SearchConfig', 'radius_s0 scale')
 
 DEFAULT_SEARCH_CONFIGS = [
-    SearchConfig(radius_s0=500, scale=3),
-    SearchConfig(radius_s0=1000, scale=3),
-    SearchConfig(radius_s0=2000, scale=3),
+    SearchConfig(radius_s0=250, scale=3),  # 2 microns (empirically, this captures ~90% of FB tbars)
+    SearchConfig(radius_s0=625, scale=3),  # 5 microns
+    SearchConfig(radius_s0=1250, scale=3)  # 10 microns
 ]
 
 
@@ -256,7 +256,7 @@ def _measure_tbar_mito_distances(seg_src, mito_src, body, tbar_points_s0, primar
         if (p_cube == box_intersection(p_cube, batch_cube)).all():
             valid_rows.append(i)
 
-    logger.info(f"Kept {len(valid_rows)}/{len(batch_tbars)} mito distances.")
+    logger.info(f"Kept {len(valid_rows)}/{len(batch_tbars)} mito distances (R={radius_s0})")
     batch_tbars = batch_tbars.loc[valid_rows]
 
     # Update the input DataFrame (and rescale)
