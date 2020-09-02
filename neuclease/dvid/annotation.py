@@ -13,6 +13,7 @@ import pandas as pd
 from dvidutils import LabelMapper
 
 from . import dvid_api_wrapper, fetch_generic_json
+from .common import post_tags
 from .node import fetch_instance_info
 from .voxels import fetch_volume_box
 from ..util import Timer, Grid, boxes_from_grid, round_box, tqdm_proxy, compute_parallel, gen_json_objects, encode_coords_to_uint64, decode_coords_from_uint64
@@ -55,6 +56,8 @@ def post_sync(server, uuid, instance, sync_instances, replace=False, *, session=
 # Synonym
 post_annotation_sync = post_sync
 
+# The common post_tags() function works for annotation instances.
+#post_tags = post_tags
 
 @dvid_api_wrapper
 def post_reload(server, uuid, instance, *, check=False, inmemory=True, session=None): # Note: See wrapper_proxies.post_reload()

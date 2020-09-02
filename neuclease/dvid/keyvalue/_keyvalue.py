@@ -10,6 +10,7 @@ import requests
 
 from ...util import tqdm_proxy
 from .. import dvid_api_wrapper, fetch_generic_json
+from ..common import post_tags
 from ..node import fetch_instance_info
 from ..repo import create_instance
 
@@ -17,6 +18,10 @@ from ..repo import create_instance
 from .ingest_pb2 import Keys, KeyValue, KeyValues
 
 logger = logging.getLogger(__name__)
+
+# The common post_tags() function works for keyvalue instances.
+#post_tags = post_tags
+
 
 @dvid_api_wrapper
 def fetch_keys(server, uuid, instance, *, session=None):

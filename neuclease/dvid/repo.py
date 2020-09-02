@@ -5,6 +5,7 @@ import networkx as nx
 
 from ..util import uuids_match, round_coord
 from . import dvid_api_wrapper, fetch_generic_json
+from .common import post_tags
 
 VOXEL_INSTANCE_TYPENAMES = """\
 float32blk
@@ -171,7 +172,7 @@ def fetch_repo_instances(server, uuid, typenames=None, *, session=None):
 def create_instance(server, uuid, instance, typename, versioned=True, compression=None, tags=[], type_specific_settings={}, *, session=None):
     """
     Create a data instance of the given type.
-    
+
     Note:
         Some datatypes, such as labelmap or tarsupervoxels, have their own creation functions below,
         which are more convenient than calling this function directly.
@@ -179,21 +180,29 @@ def create_instance(server, uuid, instance, typename, versioned=True, compressio
     Args:
         typename:
             Valid instance names are listed in INSTANCE_TYPENAMES
-        
+
         versioned:
             Whether or not the instance should be versioned.
-    
+
         compression:
             Which compression DVID should use when storing the data in the instance.
             Different instance types support different compression options.
             Typical choices are: ['none', 'snappy', 'lz4', 'gzip'].
-            
+
             Note: Here, the string 'none' means "use no compression",
                   whereas a Python None value means "Let DVID choose a default compression type".
-    
+
         tags:
-            Optional 'tags' to initialize the instance with, e.g. "type=meshes".
-            
+            Optional 'tags' to initialize the instance with, either as a dict
+            {name: tag} or as a list of strings ["name=tag", "name=tag", ...],
+            e.g. ["type=meshes", "foo=bar"].
+
+            Note: The DVID API allows us to provide tags in the /instance call, as query string
+                  parameters, but that restricts the set of allowed strings.  Here, we post the tags
+                  separately, via POST /tags, immediately after the instance is created.
+                  Therefore, the given instance type must support the POST /tags endpoint.
+
+
         type_specific_settings:
             Additional datatype-specific settings to send in the JSON body.
     """
@@ -205,7 +214,7 @@ def create_instance(server, uuid, instance, typename, versioned=True, compressio
 
     if not versioned:
         settings["versioned"] = 'false'
-    
+
     if typename == 'tarsupervoxels':
         # Will DVID return an error for us in these cases?
         # If so, we can remove these asserts...
@@ -215,14 +224,18 @@ def create_instance(server, uuid, instance, typename, versioned=True, compressio
     if compression is not None:
         assert compression.startswith('jpeg') or compression in ('none', 'snappy', 'lz4', 'gzip')
         settings["Compression"] = compression
-    
-    if tags:
-        settings["Tags"] = ','.join(tags)
-    
+
     settings.update(type_specific_settings)
-    
+
     r = session.post(f"{server}/api/repo/{uuid}/instance", json=settings)
     r.raise_for_status()
+
+    if tags:
+        if isinstance(tags, list):
+            # Convert from the old list-based format
+            # to the dictionary expected by post_tags()
+            tags = dict(t.split('=') for t in tags)
+        post_tags(server, uuid, instance, tags, session=session)
 
 
 @dvid_api_wrapper
