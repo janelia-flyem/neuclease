@@ -265,10 +265,11 @@ def _fetch_supervoxels_for_body(server, uuid, instance, body):
     """
     try:
         svs = fetch_supervoxels(server, uuid, instance, body)
+        return (body, svs)
     except HTTPError as ex:
         if (ex.response is not None and ex.response.status_code == 404):
             return (body, None)
-    return (body, svs)
+        raise
 
 
 @dvid_api_wrapper
@@ -382,32 +383,23 @@ fetch_body_sizes = fetch_sizes
 
 
 @dvid_api_wrapper
-def fetch_supervoxel_sizes_for_body(server, uuid, instance, body_id, user=None, *, session=None):
+def fetch_supervoxel_sizes_for_body(server, uuid, instance, body_id, *, session=None):
     """
     Return the sizes of all supervoxels in a body.
-    Convenience function to call fetch_supervoxels() followed by fetch_sizes()
+
+    Equivalent to calling fetch_supervoxels() followed by fetch_sizes(),
+    except that this implementation fetching the labelindex for the whole body
+    and computes the sizes locally.  For a large body, this is much faster than
+    reading the supervoxel sizes via fetch_sizes(..., supervoxels=True), because
+    the labelindex will only be read once. (DVID would read it N times for
+    N supervoxels.)
 
     Returns:
         pd.Series, indexed by supervoxel
     """
-
-    # FIXME: Remove 'user' param in favor of 'session' param.
-    supervoxels = fetch_supervoxels(server, uuid, instance, body_id, user, session=session)
-
-    query_params = {}
-    if user:
-        query_params['u'] = user
-
-    # FIXME: Call fetch_sizes() with a custom session instead of rolling our own request here.
-    url = f'{server}/api/node/{uuid}/{instance}/sizes?supervoxels=true'
-    r = session.get(url, params=query_params, json=supervoxels.tolist())
-    r.raise_for_status()
-    sizes = np.array(r.json(), np.uint32)
-
-    series = pd.Series(data=sizes, index=supervoxels)
-    series.index.name = 'sv'
-    series.name = 'size'
-    return series
+    from . import fetch_labelindex # late import to avoid recursive import
+    li = fetch_labelindex(server, uuid, instance, body_id, format='pandas')
+    return li.blocks.groupby('sv')['count'].sum().rename('size')
 
 
 @dvid_api_wrapper
