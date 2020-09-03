@@ -1,62 +1,76 @@
+from neuclease.util.util import unsplit_json_int_lists
+import os
 import json
+
 import numpy as np
 import pandas as pd
 
+from neuclease.util import iter_batches, convert_nans, dump_json
+
+
 ASSIGNMENT_EXAMPLE = """\
 {
-  "file type": "Neu3 task list",
-  "file version": 1,
-  "grayscale source": "precomputed://gs://neuroglancer-janelia-flyem-hemibrain/emdata/clahe_yz/jpeg",
-  "segmentation source": "precomputed://gs://neuroglancer-janelia-flyem-hemibrain/v1.1/segmentation",
-  "task list": [
-    {
-      "task type": "body merge",
-      "supervoxel ID 1": 1684779791,
-      "supervoxel point 1": [
-        3234,
-        11621,
-        24172
-      ],
-      "supervoxel ID 2": 1684783860,
-      "supervoxel point 2": [
-        3233,
-        11621,
-        24172
-      ],
-      "body point 1": [
-        3234,
-        11621,
-        24172
-      ],
-      "body point 2": [
-        3233,
-        11621,
-        24172
-      ],
-      "default body ID 1": 1499248377,
-      "default body ID 2": 1684783860,
-      "default bounding box 1": {
-        "minvoxel": [0, 9088, 16960],
-        "maxvoxel": [9087, 25535, 36287]
+    "file type": "Neu3 task list",
+    "file version": 1,
+    "grayscale source": "precomputed://gs://neuroglancer-janelia-flyem-hemibrain/emdata/clahe_yz/jpeg",
+    "segmentation source": "precomputed://gs://neuroglancer-janelia-flyem-hemibrain/v1.1/segmentation",
+    "task set description": "example task set",
+    "task list": [
+      {
+        "task type": "body merge",
+        "supervoxel ID 1": 1684779791,
+        "supervoxel point 1": [
+          3234,
+          11621,
+          24172
+        ],
+        "supervoxel ID 2": 1684783860,
+        "supervoxel point 2": [
+          3233,
+          11621,
+          24172
+        ],
+        "body point 1": [
+          3234,
+          11621,
+          24172
+        ],
+        "body point 2": [
+          3233,
+          11621,
+          24172
+        ],
+        "default body ID 1": 1499248377,
+        "default body ID 2": 1684783860,
+        "default bounding box 1": {
+          "minvoxel": [0, 9088, 16960],
+          "maxvoxel": [9087, 25535, 36287]
+        },
+        "default bounding box 2": {
+          "minvoxel": [3072, 11520, 23872],
+          "maxvoxel": [3263, 11647, 24191]
+        }
       },
-      "default bounding box 2": {
-        "minvoxel": [3072, 11520, 23872],
-        "maxvoxel": [3263, 11647, 24191]
-      }
-    },
-  ]
+    ]
 }
 """
 
 
-def edges_to_assignment(path, gray_source, seg_source, sv_as_body=False, output_path=None):
-    df = pd.read_csv(path)
+def edges_to_assignment(df, gray_source, seg_source, sv_as_body=False, output_path=None, shuffle=False, description=""):
+    if isinstance(df, str):
+        df = pd.read_csv(df)
+
+    assert isinstance(df, pd.DataFrame)
 
     dupes = df.duplicated(['sv_a', 'sv_b']).sum()
     if dupes:
         print(f"Dropping {dupes} duplicate tasks!")
         df = df.drop_duplicates(['sv_a', 'sv_b'])
         print(f"Writing {len(df)} tasks")
+
+    if shuffle:
+        print("Shuffling task order")
+        df = df.sample(frac=1)
 
     tasks = []
     for row in df.itertuples():
@@ -83,6 +97,11 @@ def edges_to_assignment(path, gray_source, seg_source, sv_as_body=False, output_
             body_a, body_b = row.sv_a, row.sv_b
             box_a, box_b = sv_box_a, sv_box_b
 
+        edge_info = {}
+        for col in df.columns:
+            if 'box' not in col:
+                edge_info[col] = getattr(row, col)
+
         task = {
             "task type": "body merge",
 
@@ -97,6 +116,8 @@ def edges_to_assignment(path, gray_source, seg_source, sv_as_body=False, output_
 
             "default body ID 1": body_a,
             "default body ID 2": body_b,
+
+            "edge_info": edge_info
         }
 
         # Only add the bounding box keys if the box is legit
@@ -118,11 +139,44 @@ def edges_to_assignment(path, gray_source, seg_source, sv_as_body=False, output_
         "segmentation source": seg_source,
         "task list": tasks
     }
+
+    if description:
+        assignment["task set description"] = description
+
+    assignment = convert_nans(assignment)
     if output_path:
-        with open(output_path, 'w') as f:
-            json.dump(assignment, f, indent=2)
+        dump_json(assignment, output_path, unsplit_int_lists=True)
 
     return assignment
+
+
+def edges_to_assignments(df, gray_source, seg_source, sv_as_body=False, batch_size=100, output_path=None, *, shuffle=False, description=""):
+    if isinstance(df, str):
+        df = pd.read_csv(df)
+    assert isinstance(df, pd.DataFrame)
+
+    dupes = df.duplicated(['sv_a', 'sv_b']).sum()
+    if dupes:
+        print(f"Dropping {dupes} duplicate tasks!")
+        df = df.drop_duplicates(['sv_a', 'sv_b'])
+        print(f"Writing {len(df)} tasks")
+
+    if shuffle:
+        print("Shuffling task order")
+        df = df.sample(frac=1)
+
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+
+    assignments = []
+    for i, batch_df in enumerate(iter_batches(df, batch_size)):
+        if output_path:
+            base, _ = os.path.splitext(output_path)
+            batch_path = f"{base}-{i:03d}.json"
+        else:
+            batch_path = None
+
+        a = edges_to_assignment(batch_df, gray_source, seg_source, sv_as_body, batch_path, description=description)
+        assignments.append(a)
 
 
 if __name__ == "__main__":
@@ -134,9 +188,63 @@ if __name__ == "__main__":
     # agglo_output_path = '/tmp/rsg32-tasks-agglo-ids.json'
     # sv_output_path = '/tmp/rsg32-tasks-sv-ids.json'
 
-    bq_export_path = '/Users/bergs/Downloads/rsg16-task-table.csv'
-    agglo_output_path = '/tmp/rsg16-tasks-agglo-ids.json'
-    sv_output_path = '/tmp/rsg16-tasks-sv-ids.json'
+    # bq_export_path = '/Users/bergs/Downloads/rsg16-task-table.csv'
+    # agglo_output_path = '/tmp/rsg16-tasks-agglo-ids.json'
+    # sv_output_path = '/tmp/rsg16-tasks-sv-ids.json'
 
-    _ = edges_to_assignment(bq_export_path, VNC_GRAY, VNC_AGGLO, output_path=agglo_output_path)
-    _ = edges_to_assignment(bq_export_path, VNC_GRAY, VNC_BASE, sv_as_body=True, output_path=sv_output_path)
+    # _ = edges_to_assignment(bq_export_path, VNC_GRAY, VNC_AGGLO, output_path=agglo_output_path)
+    # _ = edges_to_assignment(bq_export_path, VNC_GRAY, VNC_BASE, sv_as_body=True, output_path=sv_output_path)
+
+    os.chdir('/tmp')
+
+    # from google.cloud import bigquery
+    # client = bigquery.Client('janelia-flyem')
+
+    # def fetch_focused_task_table(rsg):
+    #     q = f"""\
+    #         select
+    #         floor(score/0.1)/10 as scorebin,
+    #         floor(least(sv_tbars_a, sv_tbars_b) / 10)*10 tbarbin,
+    #         *  
+    #         from vnc_rc4_focused_exports.all_rsg{rsg}_2tbar_neuropil_edges
+    #         where
+    #         least(score_ab, score_ba) > 0.1
+    #         and sv_tbars_a >= 2 and sv_tbars_b >= 2
+    #         order by tbarbin desc, score desc
+    #     """
+    #     r = client.query(q).result()
+    #     df = pd.DataFrame((row.values() for row in tqdm_proxy(r, total=r.total_rows)), columns=[f.name for f in r.schema])
+    #     return df
+    
+    # tasks_8 = fetch_focused_task_table(8)
+    # tasks_16 = fetch_focused_task_table(16)
+    # tasks_32 = fetch_focused_task_table(32)
+
+    # tasks_8.to_csv('focused-edges/focused-rsg8.csv', header=True, index=False)
+    # tasks_16.to_csv('focused-edges/focused-rsg16.csv', header=True, index=False)
+    # tasks_32.to_csv('focused-edges/focused-rsg32.csv', header=True, index=False)
+
+    # dfs = []
+    # for rsg in [8, 16, 32]:
+    #     df = pd.read_csv(f'/tmp/focused-edges/focused-rsg{rsg}.csv')
+    #     df['rsg'] = rsg
+    #     dfs.append(df)
+    # df = pd.concat(dfs, ignore_index=True)
+    # sv_output_path = '/tmp/vnc-sv-focused-assignments/focused.json'
+    # _ = edges_to_assignments(df, VNC_GRAY, VNC_BASE, sv_as_body=True, output_path=sv_output_path)
+
+    np.random.seed(0)
+    p = '/tmp/excluded-1M-1M-edges-from-rsg8.csv'
+    description = "excluded-1M-1M-from-rsg8-sv-ids"
+    _ = edges_to_assignments(p, VNC_GRAY, VNC_BASE, sv_as_body=True,
+                             output_path=f'/tmp/{description}/tasks.json',
+                             shuffle=True,
+                             description=description)
+
+    np.random.seed(0)
+    p = '/tmp/excluded-1M-1M-edges-from-rsg8.csv'
+    description = "excluded-1M-1M-from-rsg8-AGGLO-ids"
+    _ = edges_to_assignments(p, VNC_GRAY, VNC_AGGLO, sv_as_body=False,
+                             output_path=f'/tmp/{description}/tasks.json',
+                             shuffle=True,
+                             description=description)
