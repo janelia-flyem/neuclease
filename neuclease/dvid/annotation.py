@@ -1457,8 +1457,40 @@ def check_synapse_consistency(syn_point_df, pre_partner_df, post_partner_df):
 
 
 def post_tbar_jsons(server, uuid, instance, partner_df, merge_existing=True, processes=32, chunk_shape=(256, 256, 64000)):
-   
+    """
+    Post a large set of tbars (including their PSD relationships) to dvid,
+    using the POST /blocks annotation endpoint.
+
+    If you're posting T-bars only, with no associated PSDs,
+    you can omit the _post coordinate columns.
+
+    The points will be divided into block-aligned sets, serialized as JSON,
+    and sent to DVID via multiple processes.
+
+    Args:
+        server, uuid, instance:
+            annotation instance info
+        partner_df:
+            A DataFrame containing the following columns:
+            [
+                # tbar coordinates
+                'z_pre', 'y_pre', 'x_pre',
+
+                # confidence
+                'conf_pre',
+
+                # psd coordinates
+                'z_post', 'y_post', 'x_post',
+
+                # unique ID for each tbar. Appended for you if this is missing.
+                'pre_id',
+            ]
+    """
     logger.info("Computing chunk/block IDs")
+
+    if 'pre_id' not in partner_df.columns:
+        partner_df['pre_id'] = encode_coords_to_uint64(partner_df[['z_pre', 'y_pre', 'x_pre']].values)
+
     partner_df['cz_pre'] = partner_df['z_pre'] // chunk_shape[0]
     partner_df['cy_pre'] = partner_df['y_pre'] // chunk_shape[1]
     partner_df['cx_pre'] = partner_df['x_pre'] // chunk_shape[2]
@@ -1563,22 +1595,35 @@ def _erase_chunk(server, uuid, instance, chunk_box):
 
 def compute_tbar_jsons(partner_df):
     """
-    Compute the element JSON data that corresponds to the tbars in the given partner table
+    Compute the element JSON data that corresponds
+    to the tbars in the given partner table.
+    
+    If you are posting an initial set of tbar points without any PSDs,
+    simply omit the '_post' columns from the table.
     """
     block_ids = partner_df[['z_pre', 'y_pre', 'z_pre']].values // 64
     assert np.equal.reduce(block_ids, axis=0).all()
     
+    tbars_only = ('x_post' not in partner_df.columns)
+
     tbar_jsons = []
     for _pre_id, tbar_df in partner_df.groupby('pre_id'):
         tbar_xyz = tbar_df[['x_pre', 'y_pre', 'z_pre']].values[0].tolist()
         tbar_conf = tbar_df['conf_pre'].iloc[0]
-        tbar_jsons.append({
+        tbar_json = {
             "Pos": tbar_xyz,
             "Kind": "PreSyn",
             "Tags": [],
             "Prop": {"conf": str(tbar_conf), "user": "$fpl"},
-            "Rels": [{"Rel": "PreSynTo", "To":c} for c in tbar_df[['x_post', 'y_post', 'z_post']].values.tolist()]
-        })
+        }
+
+        if tbars_only:
+            tbar_json["Rels"] = []
+        else:
+            tbar_json["Rels"] = [{"Rel": "PreSynTo", "To":c} for c in tbar_df[['x_post', 'y_post', 'z_post']].values.tolist()]
+
+        tbar_jsons.append(tbar_json)
+
     return tbar_jsons
 
 
