@@ -125,3 +125,81 @@ def fetch_blob(server, uuid, instance, reference, as_json=False, *, session=None
     if as_json:
         return r.json()
     return r.content
+
+
+@dvid_api_wrapper
+def fetch_note(server, uuid, *, session=None):
+    """
+    Fetch the node "note" stored in DVID for the given uuid.
+    """
+    r = session.get(f"{server}/api/node/{uuid}/log")
+    r.raise_for_status()
+    return r.json()["note"]
+
+
+@dvid_api_wrapper
+def post_note(server, uuid, note, *, session=None):
+    """
+    Set the node "note" stored in DVID for the given uuid.
+    """
+    assert isinstance(note, str)
+    body = {"note": note}
+    r = session.post(f"{server}/api/node/{uuid}/note", json=body)
+    r.raise_for_status()
+
+
+@dvid_api_wrapper
+def fetch_log(server, uuid, *, session=None):
+    """
+    Fetch the node log stored in DVID.
+
+    The node log is a list of strings associated with the node.
+    The messages should be usable by clients to reconstruct the
+    types of operations done to that version of data.
+
+    Note:
+        This is the node log.  For the repo log, see
+        ``dvid.repo.fetch_log()``
+
+    Note:
+        Not to be confused with other logs produced by dvid,
+        such as the node note, the repo log, the http log,
+        the kafka log, or the mutation log.
+    """
+    r = session.get(f"{server}/api/node/{uuid}/log")
+    r.raise_for_status()
+    return r.json()["log"]
+
+
+# Synonym
+fetch_node_log = fetch_log
+
+
+@dvid_api_wrapper
+def post_log(server, uuid, messages, *, session=None):
+    """
+    Append messages to the node log stored in DVID for the given uuid.
+
+    The node log is a list of strings associated with the node.
+    The messages should be usable by clients to reconstruct the
+    types of operations done to that version of data.
+
+    Note:
+        This is the node log.  For the repo log, see
+        ``dvid.repo.fetch_log()``
+
+    Note:
+        Not to be confused with other logs produced by dvid,
+        such as the node note, the repo log, the http log,
+        the kafka log, or the mutation log.
+    """
+    if isinstance(messages, str):
+        messages = [messages]
+    assert all(isinstance(s, str) for s in messages)
+    body = {"log": [*messages]}
+    r = session.post(f"{server}/api/node/{uuid}/log", json=body)
+    r.raise_for_status()
+
+
+# Synonym
+post_node_log = post_log

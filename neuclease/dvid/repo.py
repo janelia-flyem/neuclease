@@ -88,10 +88,68 @@ def fetch_info(server, uuid=None, *, session=None):
 
         # Return the first (and only) info from repos/info
         return next(iter(repos_info.values()))
-    
+
 
 # Synonym
 fetch_repo_info = fetch_info
+
+
+@dvid_api_wrapper
+def fetch_log(server, repo_uuid, *, session=None):
+    """
+    Fetch the repo log stored in DVID.
+
+    The log is a list of strings that will be appended to the repo's log.
+    They are descriptions for the entire repo and not just one node.
+    For particular uuids, use node-level logging.
+
+    Note:
+        This is the repo log.  For individual node logs, see
+        ``dvid.node.fetch_log()``
+
+    Note:
+        Not to be confused with other logs produced by dvid,
+        such as the node note, the node log, the http log,
+        the kafka log, or the mutation log.
+    """
+    r = session.get(f"{server}/api/repo/{repo_uuid}/log")
+    r.raise_for_status()
+    return r.json()["log"]
+
+
+# Synonym
+fetch_repo_log = fetch_log
+
+
+@dvid_api_wrapper
+def post_log(server, repo_uuid, messages, *, session=None):
+    """
+    Append messages to the repo log stored in DVID.
+
+    The log is a list of strings that will be appended to the repo's log.
+    They are descriptions for the entire repo and not just one node.
+    For particular uuids, use node-level logging.
+
+    Note:
+        This is the repo log.  For individual node logs, see
+        ``dvid.node.post_log()``
+
+    Note:
+        Not to be confused with other logs produced by dvid,
+        such as the node note, the node log, the http log,
+        the kafka log, or the mutation log.
+    """
+    if isinstance(messages, str):
+        messages = [messages]
+    assert all(isinstance(s, str) for s in messages)
+    body = {"log": [*messages]}
+    r = session.post(f"{server}/api/repo/{repo_uuid}/log", json=body)
+    r.raise_for_status()
+
+
+# Synonym
+post_repo_log = post_log
+
 
 @dvid_api_wrapper
 def expand_uuid(server, uuid, repo_uuid=None, repo_info=None, *, session=None):
