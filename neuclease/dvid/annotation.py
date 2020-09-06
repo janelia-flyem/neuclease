@@ -1602,7 +1602,8 @@ def compute_tbar_jsons(partner_df):
     simply omit the '_post' columns from the table.
     """
     block_ids = partner_df[['z_pre', 'y_pre', 'z_pre']].values // 64
-    assert np.equal.reduce(block_ids, axis=0).all()
+    assert not np.diff(block_ids, axis=0).any(), \
+        f"DataFrame contains multiple blocks!\n{partner_df}"
     
     tbars_only = ('x_post' not in partner_df.columns)
 
