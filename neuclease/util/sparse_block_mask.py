@@ -132,10 +132,18 @@ class SparseBlockMask:
         if (new_resolution == self.resolution).all():
             return
 
-        factor = (new_resolution // self.resolution)
-        self.resolution = new_resolution
-        self.box[:] *= factor
-        self.nonzero_box[:] *= factor
+        if (new_resolution > self.resolution).all():
+            factor = (new_resolution // self.resolution)
+            self.resolution = new_resolution
+            self.box[:] *= factor
+            self.nonzero_box[:] *= factor
+        elif (new_resolution <= self.resolution).all():
+            factor = (self.resolution // new_resolution)
+            self.resolution = new_resolution
+            self.box[:] //= factor
+            self.nonzero_box[:] //= factor
+        else:
+            raise RuntimeError("Can't change to a resolution that is bigger in some axes and smaller in others.")
 
 
     def get_fullres_mask(self, requested_box_fullres):
