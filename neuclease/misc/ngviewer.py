@@ -2,7 +2,7 @@ import sys
 import logging
 
 import neuroglancer
-from neuroglancer import Viewer, LocalVolume, CoordinateSpace
+from neuroglancer import Viewer, LocalVolume, CoordinateSpace, ManagedLayer
 
 logger = logging.getLogger(__name__)
 
@@ -11,8 +11,12 @@ def init_ngserver(bind='0.0.0.0', port=8080):
     neuroglancer.set_server_bind_address('0.0.0.0', port)
 
 
-def create_viewer():
+def create_viewer(axes='xyz', units='nm', scales=[8,8,8]):
     viewer = Viewer()
+    dimensions = CoordinateSpace(names=[*axes], units=units, scales=scales)
+    with viewer.txn() as s:
+        s.dimensions = dimensions
+
     try:
         import ipykernel.iostream
         from IPython.display import HTML, display
@@ -23,16 +27,16 @@ def create_viewer():
     return viewer
 
 
-def update_layers(viewer, clear=True, axes='zyx', units='nm', scales=[8,8,8], **volumes):
-    cnames = [*axes][::-1]
-    scales = scales[::-1]
+def update_layers(viewer, clear=True, axes='zyx', units='nm', scales=[8,8,8], volume_type=None, **volumes):
+    """
+    Args:
+        volume_type:
+            Either 'image' or 'segmentation'. If None, neuroglancer guesses from dtype
+    """
     with viewer.txn() as s:
         if clear:
             s.layers.clear()
 
         for name, vol in volumes.items():
-            cspace = CoordinateSpace(names=cnames, units=units, scales=scales)
-            layer = LocalVolume(vol.transpose(), cspace)
-            s.layers.append(name=name, layer=layer)
-
-
+            cspace = CoordinateSpace(names=[*axes], units='nm', scales=scales)
+            s.layers[name] = ManagedLayer(name, LocalVolume(vol, cspace, volume_type=volume_type))
