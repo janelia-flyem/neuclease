@@ -351,8 +351,11 @@ def boxes_from_mask(mask, mask_offset=(0,0,0), grid=(64,64,64), clipped=False):
     """
     assert mask.ndim == 3, \
         f"mask must be 3D.  Your mask has shape: {mask.shape}"
-    
-    coords = np.array(mask.nonzero()).transpose()
+
+    mask_offset = np.asarray(mask_offset)
+    assert mask_offset.shape == (3,)
+
+    coords = np.argwhere(mask)
     coords += mask_offset
     return boxes_from_coords(coords, grid, clipped)
 

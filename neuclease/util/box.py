@@ -114,10 +114,17 @@ def box_intersection(box_A, box_B):
 
     >>> intersection = box_intersection(box_A, box_B)
     >>> assert (intersection[1] - intersection[0] > 0).all(), "Boxes do not intersect."
+
+    You may pass multiple boxes in either argument, in which case broadcasting rules apply.
     """
-    intersection = np.empty_like(box_A)
-    intersection[0] = np.maximum( box_A[0], box_B[0] )
-    intersection[1] = np.minimum( box_A[1], box_B[1] )
+    box_A = np.asarray(box_A)
+    box_B = np.asarray(box_B)
+
+    assert box_A.shape[-2:] == box_B.shape[-2:]
+
+    intersection = np.empty(np.broadcast(box_A, box_B).shape, np.int32)
+    intersection[..., 0, :] = np.maximum( box_A[..., 0, :], box_B[..., 0, :] )
+    intersection[..., 1, :] = np.minimum( box_A[..., 1, :], box_B[..., 1, :] )
     return intersection
 
 
