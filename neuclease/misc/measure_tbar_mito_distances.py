@@ -1,5 +1,7 @@
 import logging
 from collections import namedtuple
+from collections.abc import Mapping
+from typing import Sequence
 
 import numpy as np
 import pandas as pd
@@ -10,8 +12,14 @@ import vigra
 from vigra.analysis import labelMultiArrayWithBackground
 
 from neuprint import SynapseCriteria as SC, fetch_synapses
-from neuclease.util import tqdm_proxy, Timer, box_to_slicing, box_intersection
+from neuclease.util import tqdm_proxy, Timer, box_to_slicing, box_intersection, round_box
 from neuclease.dvid.labelmap import fetch_labelmap_specificblocks, fetch_seg_around_point
+
+try:
+    from flyemflows.volumes import VolumeService
+    _have_flyemflows = True
+except ImportError:
+    _have_flyemflows = False
 
 logger = logging.getLogger(__name__)
 EXPORT_DEBUG_VOLUMES = False
@@ -38,10 +46,10 @@ def measure_tbar_mito_distances(seg_src,
 
     Args:
         seg_src:
-            (server, uuid, instance)
+            (server, uuid, instance) OR a flyemflows VolumeService
             Labelmap instance for the neuron segmentation.
         mito_src:
-            (server, uuid, instance)
+            (server, uuid, instance) OR a flyemflows VolumeService
             Labelmap instance for the mitochondria "mask"
             (actually a segmentation with a few classes.)
         body:
@@ -104,7 +112,7 @@ def measure_tbar_mito_distances(seg_src,
             for radius_s0, scale in search_configs:
                 num_done = _measure_tbar_mito_distances(seg_src, mito_src, body, tbars, row.Index, radius_s0, scale, mito_min_size_s0, mito_scale_offset)
                 progress.update(num_done)
-                done = (tbars.loc[row.Index, 'done'])
+                done = (tbars['done'].loc[row.Index])
                 if done:
                     break
                 logger.info("Search failed for primary tbar. Trying next search config!")
@@ -139,10 +147,10 @@ def _measure_tbar_mito_distances(seg_src, mito_src, body, tbar_points_s0, primar
 
     Args:
         seg_src:
-            (server, uuid, instance)
+            (server, uuid, instance) OR a flyemflows VolumeService
             Labelmap instance for the neuron segmentation.
         mito_src:
-            (server, uuid, instance)
+            (server, uuid, instance) OR a flyemflows VolumeService
             Labelmap instance for the mitochondria "mask"
             (actually a segmentation with a few classes.)
         body:
@@ -182,8 +190,8 @@ def _measure_tbar_mito_distances(seg_src, mito_src, body, tbar_points_s0, primar
         (Where "batch" is the set of not-yet-done tbars that overlap with the body mask
         near the "primary" tbar point.)
     """
-    assert not tbar_points_s0.loc[primary_point_index, 'done']
-    primary_point_s0 = tbar_points_s0.loc[primary_point_index, [*'zyx']].values
+    assert not tbar_points_s0['done'].loc[primary_point_index]
+    primary_point_s0 = tbar_points_s0[[*'zyx']].loc[primary_point_index].values
     batch_tbars = tbar_points_s0.copy()
 
     # Adjust for scale
@@ -193,7 +201,7 @@ def _measure_tbar_mito_distances(seg_src, mito_src, body, tbar_points_s0, primar
     batch_tbars[[*'zyx']] //= (2**scale)
 
     body_mask, mask_box, body_block_corners = _fetch_body_mask(seg_src, primary_point, radius, scale, body, batch_tbars[[*'zyx']].values)
-    mito_mask = _fetch_mito_mask(mito_src, body_mask, body_block_corners, scale, mito_min_size, mito_scale_offset)
+    mito_mask = _fetch_mito_mask(mito_src, body_mask, mask_box, body_block_corners, scale, mito_min_size, mito_scale_offset)
 
     if EXPORT_DEBUG_VOLUMES:
         print(f"Primary point in the local volume is: {(primary_point - mask_box[0])[::-1]}")
@@ -247,8 +255,8 @@ def _measure_tbar_mito_distances(seg_src, mito_src, body, tbar_points_s0, primar
 
         # Define a box (cube) around the point,
         # whose radius is the mito distance.
-        p = batch_tbars.loc[i, [*'zyx']].values
-        d = batch_tbars.loc[i, 'mito-distance']
+        p = batch_tbars[[*'zyx']].loc[i].values
+        d = batch_tbars['mito-distance'].loc[i]
         p_cube = [p - d, p + d + 1]
 
         # If the cube around our point doesn't exceed the box that was
@@ -275,8 +283,20 @@ def _fetch_body_mask(seg_src, p, radius, scale, body, tbar_points):
     then the returned subvolume may be smaller than the requested radius would seem to imply.
     """
     with Timer("Fetching body segmentation", logger):
-        seg, seg_box, p_local, _ = fetch_seg_around_point(*seg_src, p, radius, scale, body,
-                                                          sparse_component_only=True, map_on_client=True, threads=16)
+        if _have_flyemflows and isinstance(seg_src, VolumeService):
+            p = np.asarray(p)
+            R = radius
+            seg_box = [p-R, p+R+1]
+
+            # Align to 64-px for consistency with the dvid case,
+            # and compatibility with the code below.
+            seg_box = round_box(seg_box, 64, 'out')
+            p_local = (p - seg_box[0])
+            seg = seg_src.get_subvolume(seg_box, scale)
+        else:
+            assert len(seg_src) == 3 and all(isinstance(s, str) for s in seg_src)
+            seg, seg_box, p_local, _ = fetch_seg_around_point(*seg_src, p, radius, scale, body,
+                                                              sparse_component_only=True, map_on_client=True, threads=16)
 
     # Due to downsampling effects, it's possible that the
     # main tbar fell off its body in the downsampled image.
@@ -299,7 +319,7 @@ def _fetch_body_mask(seg_src, p, radius, scale, body, tbar_points):
     body_mask = vigra.taggedView(body_mask, 'zyx')
     body_cc = labelMultiArrayWithBackground(body_mask)
 
-    # Update mask
+    # Update mask. Limit to extents of the main cc, but align box to nearest 64px
     body_mask = (body_cc == body_cc[(*p_local,)])
     body_block_mask = view_as_blocks(body_mask, (64,64,64)).any(axis=(3,4,5))
     body_block_corners = seg_box[0] + (64 * np.argwhere(body_block_mask))
@@ -313,12 +333,16 @@ def _fetch_body_mask(seg_src, p, radius, scale, body, tbar_points):
     return body_mask, mask_box, body_block_corners
 
 
-def _fetch_mito_mask(mito_src, body_mask, body_block_corners, scale, mito_min_size, mito_scale_offset):
+def _fetch_mito_mask(mito_src, body_mask, mask_box, body_block_corners, scale, mito_min_size, mito_scale_offset):
     assert scale - mito_scale_offset >= 0, \
         "FIXME: need to upsample the mito seg if using scale 0.  Not implemented yet."
 
     with Timer("Fetching mito mask", logger):
-        mito_seg = fetch_labelmap_specificblocks(*mito_src, body_block_corners, scale - mito_scale_offset, supervoxels=True, threads=4)
+        if _have_flyemflows and isinstance(mito_src, VolumeService):
+            mito_seg = mito_src.get_subvolume(mask_box, scale)
+        else:
+            assert len(mito_src) == 3 and all(isinstance(s, str) for s in mito_src)
+            mito_seg = fetch_labelmap_specificblocks(*mito_src, body_block_corners, scale - mito_scale_offset, supervoxels=True, threads=4)
 
     # mito classes 1,2,3 are valid;
     # mito mask class 4 means "empty", as does 0.
@@ -380,7 +404,39 @@ if __name__ == "__main__":
     c = Client('neuprint.janelia.org', 'hemibrain:v1.1')
     body = 519046655
     tbars = fetch_synapses(body, SC(rois='FB', type='pre', primary_only=True))
-    v11_seg = ('emdata4:8900', '20631f94c3f446d7864bc55bf515706e', 'segmentation')
-    mito_mask = ('emdata4.int.janelia.org:8900', 'fbd7db9ebde6426e9f8474af10fe4386', 'mito_20190717.46637005.combined')
-    processed_tbars = measure_tbar_mito_distances(v11_seg, mito_mask, body, npclient=c, tbars=tbars.iloc[4:5])
+
+    #v11_seg = ('emdata4:8900', '20631f94c3f446d7864bc55bf515706e', 'segmentation')
+    #mito_mask = ('emdata4.int.janelia.org:8900', 'fbd7db9ebde6426e9f8474af10fe4386', 'mito_20190717.46637005.combined')
+    #mito_scale_offset = 1
+
+    seg_cfg = {
+        "zarr": {
+            "path": "/Users/bergs/data/hemibrain-v1.1.zarr",
+            "dataset": "s3",
+            "store-type": "NestedDirectoryStore",
+            "out-of-bounds-access": "permit-empty"
+        },
+        "adapters": {
+            "rescale-level": -3
+        }
+    }
+
+    seg_svc = VolumeService.create_from_config(seg_cfg)
+
+    mito_cfg = {
+        "zarr": {
+            "path": "/Users/bergs/data/hemibrain-mito-mask.zarr",
+            "dataset": "s3",
+            "store-type": "NestedDirectoryStore",
+            "out-of-bounds-access": "permit-empty"
+        },
+        "adapters": {
+            "rescale-level": -3
+        }
+    }
+    mito_svc = VolumeService.create_from_config(mito_cfg)
+    mito_scale_offset = 0
+
+    processed_tbars = measure_tbar_mito_distances(seg_svc, mito_svc, body, npclient=c, tbars=tbars.iloc[:10],
+                                                  mito_scale_offset=mito_scale_offset)
     print(processed_tbars)
