@@ -2,7 +2,7 @@ import sys
 import logging
 
 import neuroglancer
-from neuroglancer import Viewer, LocalVolume, CoordinateSpace, ManagedLayer
+from neuroglancer import Viewer, LocalVolume, CoordinateSpace, ManagedLayer, PointAnnotation
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +27,7 @@ def create_viewer(axes='xyz', units='nm', scales=[8,8,8]):
     return viewer
 
 
-def update_layers(viewer, clear=True, axes='zyx', units='nm', scales=[8,8,8], volume_type=None, **volumes):
+def update_layers(viewer, clear=False, axes='zyx', units='nm', scales=[8,8,8], volume_type=None, voxel_offset=(0,0,0), **volumes):
     """
     Args:
         volume_type:
@@ -39,4 +39,4 @@ def update_layers(viewer, clear=True, axes='zyx', units='nm', scales=[8,8,8], vo
 
         for name, vol in volumes.items():
             cspace = CoordinateSpace(names=[*axes], units='nm', scales=scales)
-            s.layers[name] = ManagedLayer(name, LocalVolume(vol, cspace, volume_type=volume_type))
+            s.layers[name] = ManagedLayer(name, LocalVolume(vol, cspace, volume_type, voxel_offset))
