@@ -1791,7 +1791,7 @@ def fetch_seg_around_point(server, uuid, instance, point_zyx, radius, scale=0, s
         svc_mask = svc_mask[box_to_slicing(*(aligned_box//(2**(6-scale)) - svc_box[0]))]
         svc_box = aligned_box // (2**(6-scale))
 
-        if not sparse_component_only:
+        if sparse_component_only:
             svc_cc = labelMultiArrayWithBackground(svc_mask.view(np.uint8))
             p_cc = svc_cc[tuple(p // (2**(6-scale)) - svc_box[0])]
             if p_cc == 0:
