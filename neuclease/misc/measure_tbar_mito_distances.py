@@ -44,6 +44,20 @@ def measure_tbar_mito_distances(seg_src,
     Search for the closest mito to each tbar in a list of tbars
     (or any set of points, really).
 
+    TODO:
+        - Distinguish between "download scale" and "analysis scale".
+          The data can be downloaded at a higher scale and then downscaled
+          using continuity-preserving downsampling before analysis.
+
+        - Try morphological closing (or simply dilating) the body before
+          running the path search, to close small gaps between segments.
+
+        - Right now, disconnected components result in an early stop,
+          marking a tbar as 'done' without trying more aggressive
+          search criteria. Should that be changed, or will the above two
+          changes be sufficient to ensure that remaining gaps are really
+          unclosable even at higher resolution?
+
     Args:
         seg_src:
             (server, uuid, instance) OR a flyemflows VolumeService
