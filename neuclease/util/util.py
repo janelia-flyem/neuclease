@@ -747,11 +747,12 @@ def closest_approach_between_masks(mask_a, mask_b):
     come closest to touching, even if they don't actually touch.
     """
     # Wrapper function just for visibility to profilers
-    def vectorDistanceTransform():
-        return vigra.filters.vectorDistanceTransform(mask_b.astype(np.uint32))
+    def vectorDistanceTransform(mask):
+        mask = vigra.taggedView(mask, 'zyx'[-mask.ndim:])
+        return vigra.filters.vectorDistanceTransform(mask.astype(np.uint32))
 
     # For all voxels, find the shortest vector toward id_b
-    to_b_vectors = vectorDistanceTransform()
+    to_b_vectors = vectorDistanceTransform(mask_b)
     
     # Magnitude of those vectors == distance to id_b
     to_b_distances = np.linalg.norm(to_b_vectors, axis=-1)
