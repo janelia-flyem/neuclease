@@ -308,6 +308,34 @@ def edge_mask_for_axis( label_img, axis ):
     return edge_mask
 
 
+def binary_edge_mask(mask, mode='inner', mark_volume_edges=False):
+    """
+    For a binary image (mask), select the pixels that lie
+    immediately inside or outside of the masked region, or both.
+
+    """
+    if mask.dtype != bool:
+        mask = (mask != 0)
+
+    if mode in ('before', 'after', 'both'):
+        return edge_mask(mask, mode, mark_volume_edges)
+
+    em = edge_mask(mask, 'both')
+    if mode == 'inner':
+        em &= mask
+    if mode == 'outer':
+        em &= ~mask
+
+    if mark_volume_edges:
+        for axis in range(mask.ndim):
+            left_slicing = ((slice(None),) * axis) + (0,)
+            right_slicing = ((slice(None),) * axis) + (-1,)
+
+            em[left_slicing] = 1
+            em[right_slicing] = 1
+
+    return em
+
 def compute_adjacencies(label_vol, max_dilation=0, include_zero=False, return_dilated=False, disable_quantization=False):
     """
     Compute the size of the borders between label segments in a label volume.
@@ -718,3 +746,140 @@ def line_nd(start, stop, *, endpoint=False, integer=True):
             dimcoords = _round_safe(dimcoords).astype(int)
         coords.append(dimcoords)
     return tuple(coords)
+
+
+def normalize_image_range(img, dtype):
+    """
+    Change the range of the given image to be in
+    the range 0.0-1.0 for float dtypes, or 0-(MAX-1)
+    for integer dtypes.
+    """
+    img[:] -= img.min()
+    img[:] /= img.max()
+    assert img.min() == 0.0
+    assert img.max() == 1.0
+
+    if np.issubdtype(dtype, np.integer):
+        # Scale up to max-1, leaving 1 value as an 'infinity',
+        # in case caller wants to place "no-go" areas in the image.
+        img[:] *= np.iinfo(dtype).max-1
+
+    img = img.astype(dtype)
+    return img
+
+
+def distance_transform(mask, background=False, smoothing=3.0, negate=True):
+    """
+    Compute the distance transform of voxels inside (or outside) the given mask,
+    with smoothing and negation post-processing options as a convenience.
+    """
+    mask = mask.astype(bool, copy=False)
+    mask = vigra.taggedView(mask, 'zyx').astype(np.uint32)
+    dt = vigra.filters.distanceTransform(mask, background=background)
+    del mask
+
+    if smoothing > 0.0:
+        vigra.filters.gaussianSmoothing(dt, smoothing, dt, window_size=2.0)
+
+    if negate:
+        dt[:] *= -1
+
+    return dt
+
+
+def distance_transform_watershed(mask, smoothing=0.0, seeds=None, distance='nonmask'):
+    """
+    Compute the watershed over the negated distance transform of the region within
+    given mask, seeded from the local minima of the inverted distance transform,
+    i.e. seeded from the "most interior" points in the volume.
+
+    Or you can provide your own seeds if you think you know what you're doing.
+
+    Args:
+        mask:
+            Only the masked area will be processed
+        smoothing:
+            If non-zero, run gaussian smoothing on the distance transform with the
+            given sigma before defining seed points or running the watershed.
+        seeds:
+            Normally it's best to let this function choose seed points at the maxima
+            of the distance transform.  But if you want to provide your own seeds, you can.
+        distance:
+            Don't use this.  Leave it alone.
+
+    Returns:
+        dt, seeds, ws, max_id
+
+    Notes:
+        This function provides a subset of the options that can be found in other
+        libraries, such as:
+            - https://github.com/ilastik/wsdt/blob/3709b27/wsdt/wsDtSegmentation.py#L26
+            - https://github.com/constantinpape/elf/blob/34f5e76/elf/segmentation/watershed.py#L69
+
+        This uses vigra's efficient true euclidean distance transform, which is superior to
+        distance transform approximations, e.g. as found in https://imagej.net/Distance_Transform_Watershed
+
+        The imglib2 distance transform uses the same algorithm as vigra:
+        https://github.com/imglib/imglib2-algorithm/tree/master/src/main/java/net/imglib2/algorithm/morphology/distance
+        http://www.theoryofcomputing.org/articles/v008a019/
+    """
+    mask = mask.astype(bool, copy=False)
+    mask = vigra.taggedView(mask, 'zyx').astype(np.uint32)
+
+    imask = np.logical_not(mask)
+    outer_edge_mask = binary_edge_mask(mask, 'outer')
+
+    assert distance in ('seeds', 'nonmask')
+    if distance == 'seeds':
+        assert seeds is not None, "Must provide seeds"
+        seeds[imask] = 1
+        seeds[outer_edge_mask] = 0
+        dt = distance_transform(seeds, True, smoothing, negate=False)
+        dt = normalize_image_range(dt, np.uint8)
+        seeds[imask] = 0
+    elif distance == 'nonmask':
+        # Negate the distance transform result,
+        # since watershed must start at minima, not maxima.
+        # Convert to uint8 to benefit from 'turbo' watershed mode
+        # (uses a bucket queue).
+        dt = distance_transform(mask, False, smoothing, negate=True)
+
+        if seeds is None:
+            # requires float32 input for some reason
+            if dt.ndim == 2:
+                minima = vigra.analysis.localMinima(dt, marker=np.nan, neighborhood=8, allowAtBorder=True, allowPlateaus=True)
+            else:
+                # In theory, we should use allowPlateus=True here,
+                # but it's quite expensive and plateus are rare in real 3D images.
+                minima = vigra.analysis.localMinima3D(dt, marker=np.nan, neighborhood=26, allowAtBorder=True, allowPlateaus=False)
+            seeds = np.isnan(minima)
+            del minima
+
+        dt = normalize_image_range(dt, np.uint8)
+    else:
+        raise AssertionError("Invalid distance mode")
+
+    seeds = vigra.taggedView(seeds, 'zyx')
+    if seeds.dtype == bool:
+        seeds = vigra.analysis.labelMultiArrayWithBackground(seeds.view('uint8'))
+
+    seeds = seeds.astype(np.uint32, copy=False)
+
+    # Fill the non-masked area with one big seed,
+    # except for a thin border around the mask.
+    # This saves time in the watershed step,
+    # since these voxels now don't need to be consumed.
+    seeds[outer_edge_mask] = 0
+    seeds[imask] = seeds.max()+1
+    seeds[outer_edge_mask] = 0
+
+    # Set dt outside mask to 0, just for visualization.
+    # This region will be excluded from the watershed anyway,
+    # so it no effect on the results.
+    dt[imask] = 0
+    dt[outer_edge_mask] = 255
+
+    ws, max_id = vigra.analysis.watershedsNew(dt, seeds=seeds, method='Turbo')
+    ws[imask] = 0
+    seeds[imask] = 0
+    return dt, seeds, ws, max_id-1
