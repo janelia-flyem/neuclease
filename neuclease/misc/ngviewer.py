@@ -40,3 +40,15 @@ def update_layers(viewer, clear=False, axes='zyx', units='nm', scales=[8,8,8], v
         for name, vol in volumes.items():
             cspace = CoordinateSpace(names=[*axes], units='nm', scales=scales)
             s.layers[name] = ManagedLayer(name, LocalVolume(vol, cspace, volume_type, voxel_offset))
+
+
+def update_seg_layer(v, name, vol, scale, box, res0=8):
+    scales = (2**scale)*np.array([res0,res0,res0])
+    layers = {name: vol}
+    update_layers(v, False, 'zyx', 'nm', scales, 'segmentation', box[0], **layers)
+
+
+def update_img_layer(v, name, vol, scale, box, res0=8):
+    scales = (2**scale)*np.array([res0,res0,res0])
+    layers = {name: vol}
+    update_layers(v, False, 'zyx', 'nm', scales, 'image', box[0], **layers)
