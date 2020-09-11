@@ -1,3 +1,5 @@
+from math import exp
+from build.lib.neuclease.util.view_as_blocks import view_as_blocks
 import logging
 from collections import OrderedDict
 
@@ -618,7 +620,16 @@ def _fill_hull(points, mask):
     Compute the convex hull of the given points
     set and write it into the given mask.
     """
-    hull = scipy.spatial.ConvexHull(points)
+    try:
+        hull = scipy.spatial.ConvexHull(points)
+    except scipy.spatial.qhull.QhullError:
+        # If there aren't enough points, or the points are coplanar,
+        # we might see an error like this:
+        #   QhullError: QH6214 qhull input error: not enough points(1) to construct initial simplex (need 4)
+        # In that case, just write the points themselves into the result.
+        mask[tuple(points.transpose())] = True
+        return
+
     deln = scipy.spatial.Delaunay(points[hull.vertices])
 
     # Instead of allocating a giant array for all indices in the volume,
@@ -638,6 +649,11 @@ def _fill_hull(points, mask):
 
 
 def fill_hull_for_segment(label_img, segment_id=1):
+    """
+    Compute the hull for the given segment and generate a mask.
+    Faster than bare fill_hull() because it filters out non-boundary
+    points from the mask first.
+    """
     all_edges = edge_mask(label_img, 'both', True)
     seg_edges = np.where(label_img == segment_id, all_edges, False)
     return fill_hull(seg_edges)
@@ -647,6 +663,104 @@ def approximate_hull_for_segment(label_img, segment_id, downsample_factor=2):
     mask = downsample_mask(label_img == segment_id, downsample_factor)
     hull = fill_hull_for_segment(mask)
     return upsample(hull, downsample_factor)
+
+
+def approximate_hulls_for_segments(label_img, downsample_factor=1, as_masks=False, overlap_rule='erase'):
+    """
+    Compute the hulls for all of the non-zero segments in the label image.
+    Return them either as a set of masks, or as a single label image.
+
+    Two output formats are supported.  See description of ``as_masks``.
+
+    Args:
+        label_img:
+            A volume with integer labels.  All non-zero segments will be processed.
+
+        downsample_factor:
+            For speed, if an approximate hull will suffice, the image can be downsampled
+            before the hull is computed. The result is upsampled to the original resolution.
+
+        as_masks:
+            Specifies the return format. See return info
+
+        overlap_rule:
+            How to resolve conflicts between overlapping hulls when as_masks=False,
+            as described above.  Currently 'erase' is the only valid option.
+
+    Returns:
+        If as_masks=False, all hulls are written to a single label image.
+        Since hulls can overlap with each other, the overlap_rule specifies how to resolve conflicts.
+        Currently, the only available overlap_rule is 'erase', meaning any voxels within
+        intersecting hulls are given a label of 0.  In the future, other overlap_rules will be implemented,
+        such as 'keep-largest' or 'keep-max', etc.
+        The hull label image and the bounding box of each hull within it are returned.
+        (The bounding box refers to the hull's original size, before applying the overlap_rule.)
+        The bounding boxes are returned as a pd.Series, where each value is a box.
+        Returns (hull_label_img, segment_boxes)
+
+        If as_masks=True, then a mask for each hull is generated, and all masks are returned.
+        The returned mask volumes are only large enough to contain each hull's bounding box.
+        The bounding box that each mask corresponds to is also returned.
+        The output is a dictionary: {label: (box, mask)}
+    """
+    assert overlap_rule in ['erase']
+
+    # Drop interior points for efficiency's sake
+    all_edges = edge_mask(label_img, 'both', True)
+    label_img = np.where(all_edges, label_img, 0)
+
+    if downsample_factor > 1:
+        d = downsample_factor
+        downsampled = view_as_blocks(label_img, (d,d,d)).max(axis=(3,4,5))
+    else:
+        downsampled = label_img
+
+    boxes = region_features(downsampled, None, ['Box'])['Box']
+    boxes = boxes.drop(0, errors='ignore')
+    segment_ids = boxes.index.values
+
+    def _hull_mask(s):
+        """
+        Compute the hull mask and its box
+        within the downsampled volume.
+        """
+        box = boxes.loc[s]
+        vol = extract_subvol(downsampled, box)
+        mask = (vol == s)
+        points = np.argwhere(mask)
+        _fill_hull(points, mask)
+        return box, mask
+
+    if as_masks:
+        hull_masks = {}
+        for s in segment_ids:
+            box, mask = _hull_mask(s)
+            mask = upsample(mask, downsample_factor)
+            box *= downsample_factor
+            hull_masks[s] = (box, mask)
+        return hull_masks
+    else:
+        hull_label_img = label_img.copy()
+        OVERLAP_MARKER = max(segment_ids) + 1
+        for s in segment_ids:
+            box, hull_mask = _hull_mask(s)
+            hull_mask = upsample(hull_mask, downsample_factor)
+            box *= downsample_factor
+            out_view = extract_subvol(hull_label_img, box)
+
+            if overlap_rule == 'erase':
+                # Mark voxels which overlap more than one hull,
+                # so they can be deleted below.
+                overlap_mask = hull_mask & (out_view != 0) & (out_view != s)
+                out_view[:] = np.where(hull_mask, s, out_view)
+                out_view[:] = np.where(overlap_mask, OVERLAP_MARKER, out_view)
+            else:
+                raise AssertionError("Invalid overlap rule")
+
+        if overlap_rule == 'erase':
+            hull_label_img[hull_label_img == OVERLAP_MARKER] = 0
+
+        return hull_label_img, boxes
 
 
 def fill_triangle(image, verts):
