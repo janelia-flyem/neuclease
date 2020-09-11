@@ -883,3 +883,190 @@ def distance_transform_watershed(mask, smoothing=0.0, seeds=None, distance='nonm
     ws[imask] = 0
     seeds[imask] = 0
     return dt, seeds, ws, max_id-1
+
+
+SEGMENTATION_FEATURE_NAMES = [
+    'Box', # This is a special add-on to the vigra names, equivalent to [Coord<Min>, 1+Coord<Max>]
+    'Box0', # This is a special add-on to the vigra names, equivalent to Coord<Min>
+    'Box1', # This is a special add-on to the vigra names, equivalent to 1+Coord<Max>
+    'Count', # size
+    'Coord<Maximum>',
+    'Coord<Minimum>',
+    'Coord<DivideByCount<Principal<PowerSum<2>>>>',
+    'Coord<PowerSum<1>>',
+    'Coord<Principal<Kurtosis>>',
+    'Coord<Principal<PowerSum<2>>>',
+    'Coord<Principal<PowerSum<3>>>',
+    'Coord<Principal<PowerSum<4>>>',
+    'Coord<Principal<Skewness>>',
+    'RegionAxes',
+    'RegionCenter',
+    'RegionRadii',
+]
+
+# These features require both a segmentation image and a paired grayscale image
+GRAYSCALE_FEATURE_NAMES = [
+    'Central<PowerSum<2>>',
+    'Central<PowerSum<3>>',
+    'Central<PowerSum<4>>',
+    'Coord<ArgMaxWeight>',
+    'Coord<ArgMinWeight>',
+    'Global<Maximum>',
+    'Global<Minimum>',
+    'Histogram',
+    'Kurtosis',
+    'Maximum',
+    'Mean',
+    'Minimum',
+    'Quantiles',
+    'Skewness',
+    'Sum',
+    'Variance',
+    'Weighted<Coord<DivideByCount<Principal<PowerSum<2>>>>>',
+    'Weighted<Coord<PowerSum<1>>>',
+    'Weighted<Coord<Principal<Kurtosis>>>',
+    'Weighted<Coord<Principal<PowerSum<2>>>>',
+    'Weighted<Coord<Principal<PowerSum<3>>>>',
+    'Weighted<Coord<Principal<PowerSum<4>>>>',
+    'Weighted<Coord<Principal<Skewness>>>',
+    'Weighted<PowerSum<0>>',
+    'Weighted<RegionAxes>',
+    'Weighted<RegionCenter>',
+    'Weighted<RegionRadii>'
+]
+
+
+def region_features(label_img, grayscale_img=None, features=['Box', 'Count'], ignore_label=None):
+    """
+    Wrapper around vigra.analysis.extractRegionFeatures() that supports uint64 and
+    returns each feature as a pandas Series or DataFrame, indexed by object ID.
+
+    For simple features such as 'Box' and 'Count', most of the time is spent remapping the
+    input array from uint64 to uint32, which is the only label image type supported by vigra.
+
+    See vigra docs regarding the supported features:
+        - http://ukoethe.github.io/vigra/doc-release/vigranumpy/index.html#vigra.analysis.extractRegionFeatures
+        - http://ukoethe.github.io/vigra/doc-release/vigra/group__FeatureAccumulators.html
+
+    Args:
+        label_img:
+            An integer-valued label image, containing no negative values
+
+        grayscle_img:
+            Optional.  If provided, then weighted features are available.
+            See GRAYSCALE_FEATURE_NAMES, above.
+
+        features:
+            List of strings.  If no grayscale image was provided, you can only
+            ask for the features in ``SEGMENTATION_FEATURE_NAMES``, above.
+
+        ignore_label:
+            A background label to ignore. If you don't want to ignore any thing, pass ``None``.
+
+    Returns:
+        dict {name: feature}, where each feature value is indexed by label ID.
+        For keys where the feature is scalar-valued for each label, the returned value is a Series.
+        For keys where the feature is a 1D array for each label, a DataFrame is returned, with columns 'zyx'.
+        For keys where the feature is a 2D array (e.g. Box, RegionAxes, etc.), a Series is returned whose
+        dtype=object, and each item in the series is a 2D array.
+        TODO: This might be a good place to use Xarray
+    """
+    assert label_img.ndim in (2,3)
+    axes = 'zyx'[-label_img.ndim:]
+
+    vfeatures = {*features}
+
+    valid_names = {*SEGMENTATION_FEATURE_NAMES, *GRAYSCALE_FEATURE_NAMES}
+    invalid_names = vfeatures - valid_names
+    assert not invalid_names, \
+        f"Invalid feature names: {invalid_names}"
+
+    if 'Box' in features:
+        vfeatures -= {'Box'}
+        vfeatures |= {'Coord<Minimum>', 'Coord<Maximum>'}
+
+    if 'Box0' in features:
+        vfeatures -= {'Box0'}
+        vfeatures |= {'Coord<Minimum>'}
+
+    if 'Box1' in features:
+        vfeatures -= {'Box1'}
+        vfeatures |= {'Coord<Maximum>'}
+
+    assert np.issubdtype(label_img.dtype, np.integer)
+
+    label_ids = None
+    if label_img.dtype == np.uint32:
+        label_img32 = label_img
+    elif label_img.dtype == np.int32:
+        label_img32 = label_img.view(np.uint32)
+    elif label_img.dtype in (np.int64, np.uint64):
+        label_img = label_img.view(np.uint64)
+        label_ids = np.sort(pd.unique(label_img.ravel()))
+
+        # Map from uint64 -> uint32
+        label_ids_32 = np.arange(len(label_ids), dtype=np.uint32)
+        mapper = LabelMapper(label_ids, label_ids_32)
+        label_img32 = mapper.apply(label_img)
+        if ignore_label is not None:
+            ignore_label = mapper.apply(np.array([ignore_label], np.uint64))[0]
+    else:
+        label_img32 = label_img.astype(np.uint32)
+
+    assert label_img32.dtype == np.uint32
+
+    if grayscale_img is None:
+        invalid_names = vfeatures - {*SEGMENTATION_FEATURE_NAMES}
+        assert not invalid_names, \
+            f"Invalid segmentation feature names: {invalid_names}"
+        grayscale_img = label_img32.view(np.float32)
+    else:
+        assert grayscale_img.dtype == np.float32, \
+            "Grayscale image must be float32"
+
+    grayscale_img = vigra.taggedView(grayscale_img, axes)
+    label_img32 = vigra.taggedView(label_img32, axes)
+
+    # TODO: provide histogramRange options
+    acc = vigra.analysis.extractRegionFeatures(grayscale_img, label_img32, [*vfeatures], ignoreLabel=ignore_label)
+
+    results = {}
+    if 'Box0' in features:
+        v = acc['Coord<Minimum >'].astype(np.int32)
+        results['Box0'] = pd.DataFrame(v, columns=[*axes])
+    if 'Box1' in features:
+        v = 1+acc['Coord<Maximum >'].astype(np.int32)
+        results['Box1'] = pd.DataFrame(v, columns=[*axes])
+    if 'Box' in features:
+        box0 = acc['Coord<Minimum >'].astype(np.int32)
+        box1 = (1+acc['Coord<Maximum >']).astype(np.int32)
+        boxes = np.stack((box0, box1), axis=1)
+        obj_boxes = np.zeros(len(boxes), object)
+        obj_boxes[:] = list(boxes)
+        results['Box'] = pd.Series(obj_boxes, name='Box')
+
+    for k, v in acc.items():
+        k = k.replace(' ', '')
+
+        # Only return the features the user explicitly requested.
+        if k not in features:
+            continue
+
+        if v.ndim == 1:
+            results[k] = pd.Series(v, name=k)
+        elif v.ndim == 2:
+            results[k] = pd.DataFrame(v, columns=[*axes])
+        else:
+            # If the data doesn't neatly fit into a 1-d Series
+            # or a 2-d DataFrame, then construct a Series with dtype=object
+            # and make each row a separate ndarray object.
+            obj_v = np.zeros(len(v), dtype=object)
+            obj_v[:] = list(v)
+            results[k] = pd.Series(obj_v, name=k)
+
+    # Set index to the original uint64 values
+    if label_img.dtype == np.uint64:
+        for v in results.values():
+            v.index = label_ids
+
+    return results
