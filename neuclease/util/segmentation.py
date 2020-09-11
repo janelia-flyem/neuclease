@@ -768,7 +768,7 @@ def normalize_image_range(img, dtype):
     return img
 
 
-def distance_transform(mask, background=False, smoothing=3.0, negate=True):
+def distance_transform(mask, background=False, smoothing=0.0, negate=False):
     """
     Compute the distance transform of voxels inside (or outside) the given mask,
     with smoothing and negation post-processing options as a convenience.
