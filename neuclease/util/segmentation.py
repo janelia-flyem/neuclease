@@ -1,5 +1,4 @@
 from math import exp
-from build.lib.neuclease.util.view_as_blocks import view_as_blocks
 import logging
 from collections import OrderedDict
 
@@ -8,6 +7,7 @@ import vigra
 import numpy as np
 import pandas as pd
 from numba import njit
+from skimage.util import view_as_blocks
 
 from dvidutils import LabelMapper
 
