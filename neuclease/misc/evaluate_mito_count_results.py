@@ -12,7 +12,6 @@ from functools import partial
 
 import numpy as np
 import pandas as pd
-from tqdm import tqdm
 from skimage.measure import label
 
 from neuprint import Client, fetch_neurons
@@ -293,6 +292,8 @@ def mitos_in_neighborhood(mito_roi_source, neighborhood_origin_xyz, neighborhood
 
 
 if __name__ == "__main__":
+    from neuclease import configure_default_logging
+    configure_default_logging()
     #import os
     #os.chdir('/Users/bergs/Documents/FlyEM/mito-project/proofreading/mito-count')
     #sys.argv.append('mito-count-results.pkl')
