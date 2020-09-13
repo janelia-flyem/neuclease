@@ -524,11 +524,20 @@ def write_assignment_file(seg_dst, points, path, config):
     if not server.startswith('http'):
         server = f'https://{server}'
 
+    src_server = config["input"]["server"]
+    if not src_server.startswith('http'):
+        src_server = f"http://{src_server}"
+
+    seg_src = (src_server,
+               config["input"]["uuid"],
+               config["input"]["instance"])
+
     assignment = {
         "file version": 1,
         "grayscale source": config["grayscale-source"],
         "mito ROI source": f"dvid://{server}/{uuid}/neighborhood-masks",
         "DVID source": f"{server}/#/repo/{uuid}",
+        "neuron segmentation": "dvid://{}/{}/{}".format(*seg_src),
         "task list": []
     }
 
@@ -542,6 +551,10 @@ def write_assignment_file(seg_dst, points, path, config):
             "neighborhood origin": [row.x, row.y, row.z],
             "neighborhood top": [row.tx, row.ty, row.tz],
             "neighborhood centroid": [row.cx, row.cy, row.cz],
+
+            # Oops, the radius was omitted from the hemibrain mito tasks.
+            # Next time it will be there.
+            "neighborhood radius": config["radius"],
         }
         assignment["task list"].append(task)
 
