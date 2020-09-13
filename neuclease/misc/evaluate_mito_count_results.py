@@ -105,7 +105,7 @@ ANALYSIS_SCALE = 1
 def main():
     RESULTS_PKL_PATH = sys.argv[1]
     if len(sys.argv) == 3:
-        PROCESSES = sys.arvc[2]
+        PROCESSES = int(sys.argv[2])
     else:
         PROCESSES = 4
 
