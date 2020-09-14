@@ -315,6 +315,19 @@ def load_elements_as_dataframe(elements):
 
 
 @dvid_api_wrapper
+def fetch_all_elements(server, uuid, instance, format='json', *, session=None):
+    """
+    Returns all point annotations in the entire data instance, which could exceed data
+    response sizes (set by server) if too many elements are present.  This should be
+    equivalent to the /blocks endpoint but without the need to determine extents.
+
+    The returned stream of data is the same as /blocks endpoint.
+    """
+    url = f'{server}/api/node/{uuid}/{instance}/all-elements'
+    return fetch_generic_json(url, session=session)
+
+
+@dvid_api_wrapper
 def post_elements(server, uuid, instance, elements, kafkalog=True, *, session=None):
     """
     Adds or modifies point annotations.
