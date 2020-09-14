@@ -1,11 +1,12 @@
 import logging
+from functools import partial
 from collections.abc import Mapping
 
 import ujson
 import numpy as np
 import pandas as pd
 
-from ..util import tqdm_proxy, extract_labels_from_volume, box_shape, extract_subvol, box_intersection
+from ..util import tqdm_proxy, extract_labels_from_volume, box_shape, extract_subvol, box_intersection, compute_parallel
 from . import dvid_api_wrapper, fetch_generic_json
 from .rle import runlength_decode_from_ranges, runlength_decode_from_ranges_to_mask, runlength_encode_mask_to_ranges
 
@@ -135,6 +136,29 @@ def post_roi_from_mask(server, uuid, instance, mask, mask_box=None, *, session):
     """
     ranges = runlength_encode_mask_to_ranges(mask, mask_box)
     post_roi(server, uuid, instance, ranges, session=session)
+
+
+@dvid_api_wrapper
+def fetch_roi_size(server, uuid, rois, *, processes=4, session=None):
+    """
+    Return the size (at scale-5) of the given roi or rois.
+    If a single name is passed as a string, the ROI size is returned.
+    If a list of strings is passed, all of the sizes are returned as a pd.Series
+    """
+    if isinstance(rois, str):
+        return _fetch_roi_size(server, uuid, rois, session=session)[1]
+
+    _fn = partial(_fetch_roi_size, server, uuid)
+    roi_sizes = compute_parallel(_fn, rois, ordered=False, processes=processes)
+    roi_sizes = pd.DataFrame(roi_sizes, columns=['roi', 'size'])
+    roi_sizes = roi_sizes.set_index('roi')['size']
+    return roi_sizes.loc[rois]
+
+
+def _fetch_roi_size(server, uuid, roi, session=None):
+    ranges = fetch_roi(server, uuid, roi, 'ranges', session=session)
+    z, y, x0, x1 = ranges.transpose()
+    return roi, (x1 + 1 - x0).sum()
 
 
 @dvid_api_wrapper
@@ -347,7 +371,11 @@ def determine_point_rois(server, uuid, rois, points_df, combined_vol=None, combi
             Must be provided if combined_vol is provided.
     
     Returns:
-        Nothing.  points_df is modified in-place.
+        Nothing.  points_df is modified in-place.4
+        Note:
+            The 'roi' column will have a pandas.Categorical dtype.
+            This is convenient for some uses and inconvenient for others.
+            To convert it back to an ordinary dtype, use df['roi'] = df['roi].astype(str)
     """
     assert set(points_df.columns).issuperset(['x', 'y', 'z'])
 
