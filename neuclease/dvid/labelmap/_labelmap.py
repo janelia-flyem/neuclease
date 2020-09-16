@@ -1582,7 +1582,7 @@ def fetch_labelmap_specificblocks(server, uuid, instance, corners_zyx, scale=0, 
         for vol in block_vols:
             mapper.apply_inplace(vol)
 
-    def inflate_blocks():
+    def inflate_blocks(threads=threads):
         if threads == 0:
             inflated_blocks = [*starmap(_inflate_block, blocks.items())]
         else:
