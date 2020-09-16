@@ -1478,7 +1478,8 @@ def fetch_labelmap_specificblocks(server, uuid, instance, corners_zyx, scale=0, 
             dvid instance name, e.g. 'segmentation'
 
         corners_zyx:
-            List of blocks to fetch, specified via their starting corners at the
+            List of blocks to fetch, specified via their starting corners,
+            in units corresponding to the given scale.
 
         scale:
             Which downsampling scale to fetch from
@@ -1501,6 +1502,9 @@ def fetch_labelmap_specificblocks(server, uuid, instance, corners_zyx, scale=0, 
             If 'raw-blocks', return a dict {corner: compressed_block}, in which each compressed
             block has not been inflated. Each block can be inflated with
             ``libdvid.DVIDNodeService.inflate_labelarray_blocks3D_from_raw(buf, (64,64,64), corner)``
+            If 'callable-blocks`, return a dict {corner: callable}, where the callable returns the
+            inflated block when called.  (This is the same as 'raw-blocks', but spares you some typing
+            when you want to inflate the block.)
 
         map_on_client:
             If True, request supervoxels from dvid, then fetch the mapping for those supervoxels
@@ -1523,13 +1527,15 @@ def fetch_labelmap_specificblocks(server, uuid, instance, corners_zyx, scale=0, 
     Returns:
         See ``format`` argument.
     """
-    assert format in ('array', 'lazy-array', 'raw-response', 'blocks', 'lazy-blocks', 'raw-blocks')
+    assert format in ('array', 'lazy-array', 'raw-response', 'blocks', 'lazy-blocks', 'raw-blocks', 'callable-blocks')
     corners_zyx = np.asarray(corners_zyx)
     assert corners_zyx.ndim == 2
     assert corners_zyx.shape[1] == 3
     assert not map_on_client or not supervoxels, \
         "If you're fetching supervoxels, there's no mapping "\
         "necessary, on the client or otherwise."
+    assert not map_on_client or (format not in ('raw-blocks', 'callable-blocks')), \
+        "The map_on_client feature is not supported for the raw-blocks and callable-blocks formats."
 
     assert not (corners_zyx % 64).any(), "corners_zyx must be block-aligned!"
 
@@ -1616,6 +1622,12 @@ def fetch_labelmap_specificblocks(server, uuid, instance, corners_zyx, scale=0, 
         return inflate_blocks()
     elif format == 'lazy-array':
         return inflate_blocks
+    elif format == 'callable-blocks':
+        # Wrap each buffer in a callable that will inflate it
+        for coord, buf in [*blocks.items()]:
+            f = DVIDNodeService.inflate_labelarray_blocks3D_from_raw
+            blocks[coord] = partial(f, buf, (64,64,64), coord)
+        return blocks
 
 
 def _inflate_block(corner, buf):
