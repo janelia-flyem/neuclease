@@ -310,7 +310,7 @@ fetch_body_size = fetch_size
 
 
 @dvid_api_wrapper
-def fetch_sizes(server, uuid, instance, label_ids, supervoxels=False, *, session=None, batch_size=None, threads=0, processes=0):
+def fetch_sizes(server, uuid, instance, label_ids, supervoxels=False, *, session=None, batch_size=1000, threads=0, processes=0):
     """
     Wrapper for DVID's /sizes endpoint.
     Returns the size (voxel count) of the given bodies (or supervoxels),
@@ -338,32 +338,35 @@ def fetch_sizes(server, uuid, instance, label_ids, supervoxels=False, *, session
         pd.Series, of the size results, in the same order as the labels passed in.
         Indexed by label ID.
     """
-    label_ids = np.asarray(label_ids, np.uint64)
+    orig_label_ids = np.asarray(label_ids, np.uint64)
+    if batch_size is None and (threads == 0 and processes == 0):
+        return _fetch_sizes(server, uuid, instance, orig_label_ids, supervoxels, session)
 
-    if batch_size is None or (threads == 0 and processes == 0):
-        return _fetch_sizes(server, uuid, instance, label_ids, supervoxels, session)
+    if batch_size is None:
+        batch_size = 1000
 
+    label_ids = pd.unique(orig_label_ids)
     batches = iter_batches(label_ids, batch_size)
 
     if (threads == 0 and processes == 0):
-        sizes = []
+        unordered_sizes = []
         for batch in tqdm_proxy(batches):
             s = _fetch_sizes(server, uuid, instance, batch, supervoxels, session)
-            sizes.append(s)
-        sizes = pd.concat(sizes)
+            unordered_sizes.append(s)
+        unordered_sizes = pd.concat(unordered_sizes)
     else:
         fn = partial(_fetch_sizes, server, uuid, instance, supervoxels=supervoxels)
         unordered_sizes = compute_parallel(fn, batches, threads=threads, processes=processes, ordered=False)
         unordered_sizes = pd.concat(unordered_sizes)
-        sizes = unordered_sizes.reindex(label_ids)
 
+    sizes = unordered_sizes.reindex(orig_label_ids)
     if supervoxels:
         sizes.index.name = 'sv'
     else:
         sizes.index.name = 'body'
 
+    assert len(sizes) == len(orig_label_ids)
     return sizes
-
 
 def _fetch_sizes(server, uuid, instance, label_ids, supervoxels, session=None):
     sv_param = str(bool(supervoxels)).lower()
