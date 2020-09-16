@@ -139,7 +139,7 @@ def post_roi_from_mask(server, uuid, instance, mask, mask_box=None, *, session):
 
 
 @dvid_api_wrapper
-def fetch_roi_size(server, uuid, rois, *, processes=4, session=None):
+def fetch_roi_size(server, uuid, rois, *, processes=1, session=None):
     """
     Return the size (at scale-5) of the given roi or rois.
     If a single name is passed as a string, the ROI size is returned.
