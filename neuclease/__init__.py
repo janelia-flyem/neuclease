@@ -1,7 +1,11 @@
 import sys
-import faulthandler
-if not faulthandler.is_enabled():
-    faulthandler.enable()
+
+try:
+    import faulthandler
+    if not faulthandler.is_enabled():
+        faulthandler.enable()
+except Exception:
+    print("Failed to enable faulthandlder module", file=sys.stderr)
 
 import logging
 logging.getLogger('pykafka').setLevel(logging.WARNING)
