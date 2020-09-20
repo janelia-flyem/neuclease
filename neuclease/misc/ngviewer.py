@@ -1,6 +1,9 @@
 import sys
+import copy
 import logging
+from textwrap import dedent
 
+import numpy as np
 import neuroglancer
 from neuroglancer import Viewer, LocalVolume, CoordinateSpace, ManagedLayer, PointAnnotation
 
@@ -52,3 +55,28 @@ def update_img_layer(v, name, vol, scale, box, res0=8):
     scales = (2**scale)*np.array([res0,res0,res0])
     layers = {name: vol}
     update_layers(v, False, 'zyx', 'nm', scales, 'image', box[0], **layers)
+
+
+def update_mask_layer(v, name, vol, scale, box, res0=8):
+    """
+    Add an image layer for the given binary volume,
+    with the following appearance:
+    - transparent where vol == 1
+    - dark everywhere else
+    """
+    vol = vol.astype(bool).view(np.uint8)
+    update_img_layer(v, name, vol, scale, box, res0)
+    s = copy.deepcopy(v.state)
+    s.layers[name].opacity = 0.5
+    s.layers[name].shader = dedent("""\
+        void main() {
+        uint8_t v = getDataValue();
+            if (float(v.value) != 0.0) {
+            emitTransparent();
+            }
+        else {
+            emitGrayscale(toNormalized(v));
+        }
+        }
+    """)
+    v.set_state(s)
