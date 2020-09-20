@@ -1,4 +1,3 @@
-from math import exp
 import logging
 from collections import OrderedDict
 
@@ -11,7 +10,7 @@ from skimage.util import view_as_blocks
 
 from dvidutils import LabelMapper
 
-from . import Timer, Grid, boxes_from_grid, box_intersection, box_to_slicing, extract_subvol, downsample_mask, upsample
+from . import Timer, Grid, boxes_from_grid, box_intersection, box_to_slicing, extract_subvol, downsample_mask, upsample, tqdm_proxy
 
 logger = logging.getLogger(__name__)
 
@@ -665,7 +664,7 @@ def approximate_hull_for_segment(label_img, segment_id, downsample_factor=2):
     return upsample(hull, downsample_factor)
 
 
-def approximate_hulls_for_segments(label_img, downsample_factor=1, as_masks=False, overlap_rule='erase'):
+def approximate_hulls_for_segments(label_img, downsample_factor=1, as_masks=False, overlap_rule='erase', progress=False):
     """
     Compute the hulls for all of the non-zero segments in the label image.
     Return them either as a set of masks, or as a single label image.
@@ -681,7 +680,7 @@ def approximate_hulls_for_segments(label_img, downsample_factor=1, as_masks=Fals
             before the hull is computed. The result is upsampled to the original resolution.
 
         as_masks:
-            Specifies the return format. See return info
+            Specifies the return format. See return info.
 
         overlap_rule:
             How to resolve conflicts between overlapping hulls when as_masks=False,
@@ -709,6 +708,8 @@ def approximate_hulls_for_segments(label_img, downsample_factor=1, as_masks=Fals
     all_edges = edge_mask(label_img, 'both', True)
     label_img = np.where(all_edges, label_img, 0)
 
+    assert downsample_factor > 0, \
+        "downsample_factor should be a factor >= 1, not a scale >= 0."
     if downsample_factor > 1:
         d = downsample_factor
         downsampled = view_as_blocks(label_img, (d,d,d)).max(axis=(3,4,5))
@@ -733,7 +734,7 @@ def approximate_hulls_for_segments(label_img, downsample_factor=1, as_masks=Fals
 
     if as_masks:
         hull_masks = {}
-        for s in segment_ids:
+        for s in tqdm_proxy(segment_ids, disable=not progress):
             box, mask = _hull_mask(s)
             mask = upsample(mask, downsample_factor)
             box *= downsample_factor
@@ -742,7 +743,7 @@ def approximate_hulls_for_segments(label_img, downsample_factor=1, as_masks=Fals
     else:
         hull_label_img = label_img.copy()
         OVERLAP_MARKER = max(segment_ids) + 1
-        for s in segment_ids:
+        for s in tqdm_proxy(segment_ids, disable=not progress):
             box, hull_mask = _hull_mask(s)
             hull_mask = upsample(hull_mask, downsample_factor)
             box *= downsample_factor
