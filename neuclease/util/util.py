@@ -1126,7 +1126,7 @@ def tqdm_proxy(iterable=None, *, logger=None, level=logging.INFO, **kwargs):
     and configures tqdm accordingly.
     
     - If your code is running from an interactive console, this acts like plain ``tqdm``.
-    - If your code is running from an ipython notebook, this acts like ``tqdm_notebook``.
+    - If your code is running from an ipython notebook, this acts like ``tqdm.notebook.tqdm``.
     - If your code is running from a batch script (i.e. printing to a log file, not the console),
       this code uses the supplied logger periodically output a textual progress bar.
       If no logger is supplied, a logger is automatically created using the name of
@@ -1156,7 +1156,7 @@ def tqdm_proxy(iterable=None, *, logger=None, level=logging.INFO, **kwargs):
     
     try:
         import ipykernel.iostream
-        from tqdm import tqdm_notebook
+        from tqdm.notebook import tqdm as tqdm_notebook
         if isinstance(sys.stdout, ipykernel.iostream.OutStream):
             return tqdm_notebook(iterable, **kwargs)
     except ImportError:
