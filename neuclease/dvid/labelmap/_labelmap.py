@@ -21,7 +21,7 @@ from ...util import (Timer, round_box, extract_subvol, DEFAULT_TIMESTAMP, tqdm_p
                      overwrite_subvol, iter_batches, extract_labels_from_volume, box_intersection, downsample_mask)
 
 from .. import dvid_api_wrapper, fetch_generic_json, fetch_repo_info
-from ..repo import create_voxel_instance, fetch_repo_dag, resolve_ref
+from ..repo import create_voxel_instance, fetch_repo_dag, resolve_ref, expand_uuid
 from ..kafka import read_kafka_messages, kafka_msgs_to_df
 from ..rle import parse_rle_response, runlength_decode_from_ranges_to_mask
 
@@ -71,6 +71,9 @@ def fetch_maxlabel(server, uuid, instance, *, session=None, dag=None):
     except HTTPError as ex:
         if ex.response is None or 'No maximum label' not in ex.response.content.decode('utf-8'):
             raise
+
+        uuid = resolve_ref(server, uuid)
+        uuid = expand_uuid(server, uuid)
 
         # Oops, Issue 284
         # Search upwards in the DAG for a uuid with a valid max label
