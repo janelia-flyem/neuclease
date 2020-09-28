@@ -72,8 +72,10 @@ def edges_to_assignment(df, gray_source, seg_source, sv_as_body=False, output_pa
         print("Shuffling task order")
         df = df.sample(frac=1)
 
+    df = df.astype({col: int for col in ['sv_a', 'sv_b', 'xa', 'ya', 'za', 'xb', 'yb', 'zb', 'x_nearby', 'y_nearby', 'z_nearby']})
+
     tasks = []
-    for row in df.itertuples():
+    for row in df.fillna(0.0).itertuples():
 
         body_a, body_b = row.body_a, row.body_b
         box_a = [[row.body_box_x0_a, row.body_box_y0_a, row.body_box_z0_a],
