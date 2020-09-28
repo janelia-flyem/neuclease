@@ -506,8 +506,7 @@ def contingency_table(left_vol, right_vol):
     """
     assert left_vol.shape == right_vol.shape
     df = pd.DataFrame( {"left": left_vol.reshape(-1),
-                        "right": right_vol.reshape(-1)},
-                       dtype=left_vol.dtype )
+                        "right": right_vol.reshape(-1)})
     sizes = df.groupby(['left', 'right'], sort=False).size()
     sizes.name = 'voxel_count'
     return sizes
