@@ -617,6 +617,7 @@ def fetch_labels_batched(server, uuid, instance, coordinates_zyx, supervoxels=Fa
     See also: ``fetch_label()``, ``fectch_labels()``
     """
     assert not threads or not processes, "Choose either threads or processes (not both)"
+    coordinates_zyx = np.asarray(coordinates_zyx)
     coords_df = pd.DataFrame(coordinates_zyx, columns=['z', 'y', 'x'], dtype=np.int32)
     coords_df['label'] = np.uint64(0)
 
