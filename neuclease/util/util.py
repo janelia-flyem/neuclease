@@ -1311,4 +1311,23 @@ def sphere_mask(radius):
     r = radius
     cz, cy, cx = np.ogrid[-r:r+1, -r:r+1, -r:r+1]
     distances_sq = cz**2 + cy**2 + cx**2
-    return (distances_sq <= r**2)
+    mask = (distances_sq <= r**2)
+
+    # The result will be cached, so don't let the caller overwrite it!
+    mask.flags['WRITEABLE'] = False
+    return mask
+
+
+@lru_cache(maxsize=1)
+def ellipsoid_mask(rz, ry, rx):
+    """
+    Return the binary mask of an axis-aligned ellipsoid.
+    Resulting array has dimensions (2*rz+1, 2*ry+1, 2*rx+1)
+    """
+    cz, cy, cx = np.ogrid[-rz:rz+1, -ry:ry+1, -rx:rx+1]
+    k = (cz/rz)**2 + (cy/ry)**2 + (cx/rx)**2
+    mask = (k <= 1)
+
+    # The result will be cached, so don't let the caller overwrite it!
+    mask.flags['WRITEABLE'] = False
+    return mask
