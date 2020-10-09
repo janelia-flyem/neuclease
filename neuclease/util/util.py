@@ -748,12 +748,18 @@ def closest_approach_between_masks(mask_a, mask_b):
     """
     # Wrapper function just for visibility to profilers
     def vectorDistanceTransform(mask):
+        mask = mask.astype(np.uint32)
         mask = vigra.taggedView(mask, 'zyx'[-mask.ndim:])
-        return vigra.filters.vectorDistanceTransform(mask.astype(np.uint32))
+
+        # vigra always returns the vectors (in the channel dimension)
+        # in 'xyz' order, but we want zyx order!
+        vdt = vigra.filters.vectorDistanceTransform(mask)
+        vdt = vdt[..., ::-1]
+        return vdt
 
     # For all voxels, find the shortest vector toward id_b
     to_b_vectors = vectorDistanceTransform(mask_b)
-    
+
     # Magnitude of those vectors == distance to id_b
     to_b_distances = np.linalg.norm(to_b_vectors, axis=-1)
 
