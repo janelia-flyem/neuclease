@@ -781,6 +781,9 @@ def approximate_closest_approach(vol, id_a, id_b, scale=1):
     mask_a = (vol == id_a)
     mask_b = (vol == id_b)
 
+    if not mask_a.any() or not mask_b.any():
+        return np.inf
+
     scaled_mask_a, _ = downsample_binary_3d_suppress_zero(mask_a, (2**scale))
     scaled_mask_b, _ = downsample_binary_3d_suppress_zero(mask_b, (2**scale))
 
