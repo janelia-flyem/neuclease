@@ -108,7 +108,7 @@ def fetch_focused_decisions(server, uuid, instance='segmentation_merged',
                             subset_pairs=None,
                             drop_invalid=True,
                             update_with_instance='segmentation',
-                            is_hemibrain=True):
+                            is_hemibrain=False):
     """
     Load focused decisions from a given keyvalue instance
     (e.g. 'segmentation_merged') and return them as a DataFrame,
