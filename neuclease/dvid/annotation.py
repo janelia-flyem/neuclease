@@ -323,8 +323,13 @@ def fetch_all_elements(server, uuid, instance, format='json', *, session=None):
 
     The returned stream of data is the same as /blocks endpoint.
     """
+    assert format in ('pandas', 'json')
     url = f'{server}/api/node/{uuid}/{instance}/all-elements'
-    return fetch_generic_json(url, session=session)
+    json_data = fetch_generic_json(url, session=session)
+    if format == 'json':
+        return json_data
+    else:
+        return load_elements_as_dataframe([*chain(*json_data.values())])
 
 
 @dvid_api_wrapper
