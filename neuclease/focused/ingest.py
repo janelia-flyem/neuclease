@@ -229,7 +229,16 @@ def fetch_focused_decisions(server, uuid, instance='segmentation_merged',
 
     # Convert time to proper timestamp
     if 'time' in df:
-        df['time'] = pd.to_datetime(df['time'])
+        times = pd.to_datetime(df['time'])
+        df['time'] = times
+
+        if 'time zone' not in df:
+            # If no time zone is present, assume the times are UTC and we can convert to Eastern
+            # If a time zone is present, we'd have to do something else here.
+            eastern_times = pd.Series(1, index=times).tz_convert('US/Eastern').index
+            eastern_dates = pd.to_datetime(eastern_times.date)
+            df['time_eastern'] = eastern_times
+            df['date_eastern'] = eastern_dates
 
     if drop_invalid:
         if 'sv_a' not in df.columns:
