@@ -10,7 +10,7 @@ def create_precomputed_roi_vol(roi_vol, bucket_name, bucket_path, max_scale=3):
         - This doesn't upload metadata for the ROI segment names.
         - This doesn't upload meshes.
     """
-    import tensorstore as tss
+    import tensorstore as ts
     for scale in tqdm([0,1,2,3]):
         store = ts.open({
             'driver': 'neuroglancer_precomputed',
