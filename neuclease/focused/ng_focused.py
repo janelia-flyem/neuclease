@@ -72,7 +72,10 @@ def edges_to_assignment(df, gray_source, seg_source, sv_as_body=False, output_pa
         print("Shuffling task order")
         df = df.sample(frac=1)
 
-    df = df.astype({col: int for col in ['sv_a', 'sv_b', 'xa', 'ya', 'za', 'xb', 'yb', 'zb', 'x_nearby', 'y_nearby', 'z_nearby']})
+    df = df.copy()
+    for col in ['sv_a', 'sv_b', 'xa', 'ya', 'za', 'xb', 'yb', 'zb', 'x_nearby', 'y_nearby', 'z_nearby']:
+        if col in df:
+            df[col] = df[col].astype(int)
 
     tasks = []
     for row in df.fillna(0.0).itertuples():
@@ -118,6 +121,8 @@ def edges_to_assignment(df, gray_source, seg_source, sv_as_body=False, output_pa
 
             "default body ID 1": body_a,
             "default body ID 2": body_b,
+
+            "description": description,
 
             "edge_info": edge_info
         }
@@ -235,18 +240,50 @@ if __name__ == "__main__":
     # sv_output_path = '/tmp/vnc-sv-focused-assignments/focused.json'
     # _ = edges_to_assignments(df, VNC_GRAY, VNC_BASE, sv_as_body=True, output_path=sv_output_path)
 
-    np.random.seed(0)
-    p = '/tmp/excluded-1M-1M-edges-from-rsg8.csv'
-    description = "excluded-1M-1M-from-rsg8-sv-ids"
-    _ = edges_to_assignments(p, VNC_GRAY, VNC_BASE, sv_as_body=True,
-                             output_path=f'/tmp/{description}/tasks.json',
-                             shuffle=True,
-                             description=description)
+    # np.random.seed(0)
+    # p = '/tmp/excluded-1M-1M-edges-from-rsg8.csv'
+    # description = "excluded-1M-1M-from-rsg8-sv-ids"
+    # _ = edges_to_assignments(p, VNC_GRAY, VNC_BASE, sv_as_body=True,
+    #                          output_path=f'/tmp/{description}/tasks.json',
+    #                          shuffle=True,
+    #                          description=description)
+
+    # np.random.seed(0)
+    # p = '/tmp/excluded-1M-1M-edges-from-rsg8.csv'
+    # description = "excluded-1M-1M-from-rsg8-AGGLO-ids"
+    # _ = edges_to_assignments(p, VNC_GRAY, VNC_AGGLO, sv_as_body=False,
+    #                          output_path=f'/tmp/{description}/tasks.json',
+    #                          shuffle=True,
+    #                          description=description)
+
+    # np.random.seed(0)
+    # p = '/Users/bergs/workspace/vnc-focused-queries/tables/16nm-would-be-violations.csv'
+    # description = "would-be-10M-10M-violations-from-rsg16"
+    # _ = edges_to_assignments(p, VNC_GRAY, VNC_BASE, sv_as_body=True,
+    #                          output_path=f'/tmp/{description}/tasks.json',
+    #                          shuffle=True,
+    #                          description=description)
+
+    # np.random.seed(0)
+    # p = '/Users/bergs/workspace/vnc-focused-queries/tables/synth-big-sv-direct.csv'
+    # description = "synth32_max1000-big-sv-direct"
+    # _ = edges_to_assignments(p, VNC_GRAY, VNC_BASE, sv_as_body=True,
+    #                          output_path=f'/tmp/{description}/tasks.json',
+    #                          shuffle=True,
+    #                          description=description)
+
+    # np.random.seed(0)
+    # p = '/Users/bergs/workspace/vnc-focused-queries/tables/synth-big-body-direct.csv'
+    # description = "synth32_max1000-big-body-direct"
+    # _ = edges_to_assignments(p, VNC_GRAY, VNC_BASE, sv_as_body=True,
+    #                          output_path=f'/tmp/{description}/tasks.json',
+    #                          shuffle=True,
+    #                          description=description)
 
     np.random.seed(0)
-    p = '/tmp/excluded-1M-1M-edges-from-rsg8.csv'
-    description = "excluded-1M-1M-from-rsg8-AGGLO-ids"
-    _ = edges_to_assignments(p, VNC_GRAY, VNC_AGGLO, sv_as_body=False,
+    p = '/Users/bergs/workspace/vnc-focused-queries/tables/synth-score-5-10-direct.csv'
+    description = "synth32_max1000-score-5-10-direct"
+    _ = edges_to_assignments(p, VNC_GRAY, VNC_BASE, sv_as_body=True,
                              output_path=f'/tmp/{description}/tasks.json',
                              shuffle=True,
                              description=description)
