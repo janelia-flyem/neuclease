@@ -1,4 +1,5 @@
 import os
+import copy
 import json
 import logging
 from functools import partial
@@ -9,7 +10,7 @@ import pandas as pd
 
 from dvidutils import LabelMapper
 
-from ..util import read_csv_header, Timer, swap_df_cols, compute_parallel
+from ..util import read_csv_header, Timer, swap_df_cols, compute_parallel, dump_json
 from ..util.csv import read_csv_col
 from ..merge_table import load_all_supervoxel_sizes, compute_body_sizes
 from ..dvid import (fetch_keys, post_keyvalues, fetch_complete_mappings, fetch_keyvalues,
@@ -308,6 +309,59 @@ def fetch_focused_decisions(server, uuid, instance='segmentation_merged',
         return df.sort_values('time').reset_index(drop=True)
     else:
         return df.reset_index(drop=True)
+
+
+def reexport_tasks_to_assignment(decisions, rows=None, description=None, delete_previous_results=True, path=None):
+    """
+    Re-export a selection of tasks as an assignment JSON.
+
+    Since neurohub copies all task information directly into the task results,
+    it's easy to create a new assignment file by simply copying the entire
+    result json into a new assignment file.
+
+    Returns the assignment json data (as a dict).
+    Also exports it as json to the given path.
+    """
+    if rows is None:
+        tasks = decisions
+    else:
+        tasks = decisions.loc[rows]
+
+    for src in ['grayscale', 'segmentation']:
+        assert (tasks[f'{src} source'].iloc[0] == tasks[f'{src} source']).all(), \
+            f"All tasks must use the same sources! Found mismatch for {src}"
+
+    gray_src = tasks['grayscale source'].iloc[0]
+    seg_src = tasks['segmentation source'].iloc[0]
+    tasks = copy.deepcopy(tasks['json'].tolist())
+
+    if delete_previous_results:
+        # I assume it would be a bad idea to include the previous result in each task?
+        # Delete all the keys that neurohub inserts...
+        for task in tasks:
+            result_keys = ['grayscale source', 'segmentation source', 'DVID source',
+                           'time', 'user', 'time to complete (ms)', 'client',
+                           'assignment', 'index', 'result']
+            for k in result_keys:
+                if k in task:
+                    del task[k]
+
+    assignment = {
+        "file type": "Neu3 task list",
+        "file version": 1,
+        "grayscale source": gray_src,
+        "segmentation source": seg_src,
+        "task list": tasks
+    }
+
+    if description:
+        assignment["task set description"] = description
+
+    if path:
+        with open(path, 'w') as f:
+            dump_json(assignment, f, indent=2, convert_nans=True, unsplit_int_lists=True)
+
+    return assignment
 
 
 def drop_previously_reviewed(df, previous_focused_decisions_df):
