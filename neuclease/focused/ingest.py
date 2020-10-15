@@ -217,6 +217,8 @@ def fetch_focused_decisions(server, uuid, instance='segmentation_merged',
     df.rename(inplace=True, columns={'body ID 1': 'body_a', 'body ID 2': 'body_b',
                                      'supervoxel ID 1': 'sv_a', 'supervoxel ID 2': 'sv_b' })
 
+    df['json'] = task_values
+
     # Converting to category saves some RAM
     if 'status' in df:
         df['status'] = pd.Series(df['status'], dtype='category')
