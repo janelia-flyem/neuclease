@@ -355,7 +355,7 @@ def fetch_sizes(server, uuid, instance, label_ids, supervoxels=False, *, session
         unordered_sizes = pd.Series([], name='size')
     elif (threads == 0 and processes == 0):
         unordered_sizes = []
-        for batch in tqdm_proxy(batches):
+        for batch in tqdm_proxy(batches, disable=len(batches) > 1):
             s = _fetch_sizes(server, uuid, instance, batch, supervoxels, session)
             unordered_sizes.append(s)
         unordered_sizes = pd.concat(unordered_sizes)
