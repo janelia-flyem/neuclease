@@ -109,7 +109,8 @@ def fetch_focused_decisions(server, uuid, instance='segmentation_merged',
                             subset_pairs=None,
                             drop_invalid=True,
                             update_with_instance='segmentation',
-                            is_hemibrain=False):
+                            is_hemibrain=False,
+                            backup_json_to_path=None):
     """
     Load focused decisions from a given keyvalue instance
     (e.g. 'segmentation_merged') and return them as a DataFrame,
@@ -155,7 +156,7 @@ def fetch_focused_decisions(server, uuid, instance='segmentation_merged',
             If these focused decisions are from the hemibrain dataset,
             special logic is required when applying update_from_instance.
             See the source code comments for details.
-        
+
     Returns:
         DataFrame with columns:
         ['body_a', 'body_b', 'result', 'sv_a', 'sv_b',
@@ -163,7 +164,7 @@ def fetch_focused_decisions(server, uuid, instance='segmentation_merged',
         'xa', 'xb', 'ya', 'yb', 'za', 'zb', ...]
     """
     assert normalize_pairs in (None, 'sv', 'body')
-    
+
     if subset_pairs is None:
         with Timer(f"Fetching keys from '{instance}'", logger):
             keys = fetch_keys(server, uuid, instance)
@@ -176,12 +177,12 @@ def fetch_focused_decisions(server, uuid, instance='segmentation_merged',
     else:
         subset_pairs = list(subset_pairs)
         if isinstance(subset_pairs[0], str):
-            subset_keys = subset_pairs
+            keys = subset_pairs
         else:
             subset_keys1 = [f'{a}+{b}' for a,b in subset_pairs]
             subset_keys2 = [f'{b}+{a}' for a,b in subset_pairs]
             subset_keys = {*subset_keys1, *subset_keys2}
-            
+
             if len(subset_pairs) < 100_000:
                 keys = [*subset_keys]
             else:
@@ -194,10 +195,15 @@ def fetch_focused_decisions(server, uuid, instance='segmentation_merged',
 
     with Timer(f"Fetching values from '{instance}'"):
         task_values = fetch_keyvalues(server, uuid, instance, keys, as_json=True, batch_size=100_000).values()
-        
+
         # fetch_keyvalues() returns None for values that don't exist.
         # Drop those ones.
         task_values = [*filter(None, task_values)]
+
+        if backup_json_to_path:
+            timer = Timer(f"Backing up json to {backup_json_to_path}", logger)
+            with timer, open(backup_json_to_path, 'w') as f:
+                json.dump(task_values, f)
 
     # Flatten coords before loading into dataframe
     for value in task_values:
@@ -208,7 +214,7 @@ def fetch_focused_decisions(server, uuid, instance='segmentation_merged',
             del value['supervoxel point 2']
         else:
             p1 = p2 = [0,0,0]
-            
+
         for name, coord in zip(['xa', 'ya', 'za'], p1):
             value[name] = coord
         for name, coord in zip(['xb', 'yb', 'zb'], p2):
@@ -289,10 +295,10 @@ def fetch_focused_decisions(server, uuid, instance='segmentation_merged',
 
             new_svs_a[ignore_update_a] = old_svs_a[ignore_update_a]
             new_svs_b[ignore_update_b] = old_svs_b[ignore_update_b]
-        
+
         bodies_a = fetch_mapping(*update_with_instance, new_svs_a)
         bodies_b = fetch_mapping(*update_with_instance, new_svs_b)
-        
+
         df['sv_a'] = new_svs_a
         df['sv_b'] = new_svs_b
         df['body_a'] = bodies_a
