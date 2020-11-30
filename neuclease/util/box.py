@@ -71,9 +71,9 @@ def round_coord(coord, grid_spacing, how):
 def round_box(box, grid_spacing, how='out'):
     # FIXME: Better name would be align_box()
     """
-    Expand/shrink the given box out/in to align it to a grid.
+    Expand/shrink the given box (or boxes) out/in to align it to a grid.
 
-    box: (start, stop)
+    box: ND array with shape (..., 2, D)
     grid_spacing: int or shape
     how: One of ['out', 'in', 'down', 'up', 'closest'].
          Determines which direction the box corners are moved.
@@ -86,8 +86,10 @@ def round_box(box, grid_spacing, how='out'):
 
     box = np.asarray(box)
     assert how in directions.keys()
-    return np.array( [ round_coord(box[0], grid_spacing, directions[how][0]),
-                       round_coord(box[1], grid_spacing, directions[how][1]) ] )
+
+    box0 = round_coord(box[..., 0, :], grid_spacing, directions[how][0])[..., None, :]
+    box1 = round_coord(box[..., 1, :], grid_spacing, directions[how][1])[..., None, :]
+    return np.concatenate( (box0, box1), axis=-2 )
 
 
 def choose_pyramid_depth(bounding_box, top_level_max_dim=512):
