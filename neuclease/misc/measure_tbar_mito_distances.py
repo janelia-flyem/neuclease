@@ -37,6 +37,7 @@ def measure_tbar_mito_distances(seg_src,
                                 body,
                                 search_configs=DEFAULT_SEARCH_CONFIGS,
                                 mito_min_size_s0=10_000,
+                                closing_radius_s0=8,
                                 mito_scale_offset=1,
                                 npclient=None,
                                 tbars=None):
@@ -48,9 +49,8 @@ def measure_tbar_mito_distances(seg_src,
         - Distinguish between "download scale" and "analysis scale".
           The data can be downloaded at a higher scale and then downscaled
           using continuity-preserving downsampling before analysis.
-
-        - Try morphological closing (or simply dilating) the body before
-          running the path search, to close small gaps between segments.
+          (For now, we simply download the low-res and then use morphological
+          closing, which might be good enough.)
 
         - Right now, disconnected components result in an early stop,
           marking a tbar as 'done' without trying more aggressive
@@ -124,7 +124,7 @@ def measure_tbar_mito_distances(seg_src,
                 continue
 
             for radius_s0, scale in search_configs:
-                num_done = _measure_tbar_mito_distances(seg_src, mito_src, body, tbars, row.Index, radius_s0, scale, mito_min_size_s0, mito_scale_offset)
+                num_done = _measure_tbar_mito_distances(seg_src, mito_src, body, tbars, row.Index, radius_s0, scale, closing_radius_s0, mito_min_size_s0, mito_scale_offset)
                 progress.update(num_done)
                 done = (tbars['done'].loc[row.Index])
                 if done:
@@ -143,7 +143,7 @@ def measure_tbar_mito_distances(seg_src,
 
 
 def _measure_tbar_mito_distances(seg_src, mito_src, body, tbar_points_s0, primary_point_index,
-                                 radius_s0, scale, mito_min_size_s0, mito_scale_offset):
+                                 radius_s0, scale, closing_radius_s0, mito_min_size_s0, mito_scale_offset):
     """
     Download the segmentation for a single body around one tbar point as a mask,
     and also the corresponding mitochondria mask for those voxels.
@@ -214,7 +214,7 @@ def _measure_tbar_mito_distances(seg_src, mito_src, body, tbar_points_s0, primar
     radius = radius_s0 // (2**scale)
     batch_tbars[[*'zyx']] //= (2**scale)
 
-    body_mask, mask_box, body_block_corners = _fetch_body_mask(seg_src, primary_point, radius, scale, body, batch_tbars[[*'zyx']].values)
+    body_mask, mask_box, body_block_corners = _fetch_body_mask(seg_src, primary_point, radius, scale, body, closing_radius_s0, batch_tbars[[*'zyx']].values)
     mito_mask = _fetch_mito_mask(mito_src, body_mask, mask_box, body_block_corners, scale, mito_min_size, mito_scale_offset)
 
     if EXPORT_DEBUG_VOLUMES:
@@ -289,7 +289,7 @@ def _measure_tbar_mito_distances(seg_src, mito_src, body, tbar_points_s0, primar
     return len(batch_tbars)
 
 
-def _fetch_body_mask(seg_src, p, radius, scale, body, tbar_points):
+def _fetch_body_mask(seg_src, p, radius, scale, body, closing_radius_s0, tbar_points):
     """
     Fetch a mask for the given body around the given point, with the given radius.
     Only the connected component that covers the given point will be returned.
@@ -324,13 +324,19 @@ def _fetch_body_mask(seg_src, p, radius, scale, body, tbar_points):
     local_tbar_points = tbar_points - seg_box[0]
     seg[(*local_tbar_points.transpose(),)] = body
 
-    # Compute mito CC within body mask
+    # Extract mask
     body_mask = (seg == body).view(np.uint8)
+    body_mask = vigra.taggedView(body_mask, 'zyx')
     del seg
+
+    # Perform morphological closing on the mask to fix gaps in the
+    # segmentation due to hot knife seams, downsampling, etc.
+    if closing_radius_s0 > 0:
+        closing_radius = max(1, closing_radius_s0 // (2**scale))
+        body_mask = vigra.filters.multiBinaryClosing(body_mask, closing_radius)
 
     # Find the connected component that contains our point of interest
     # amd limit our analysis to those voxels.
-    body_mask = vigra.taggedView(body_mask, 'zyx')
     body_cc = labelMultiArrayWithBackground(body_mask)
 
     # Update mask. Limit to extents of the main cc, but align box to nearest 64px
