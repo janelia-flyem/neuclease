@@ -280,10 +280,76 @@ if __name__ == "__main__":
     #                          shuffle=True,
     #                          description=description)
 
-    np.random.seed(0)
-    p = '/Users/bergs/workspace/vnc-focused-queries/tables/synth-score-5-10-direct.csv'
-    description = "synth32_max1000-score-5-10-direct"
-    _ = edges_to_assignments(p, VNC_GRAY, VNC_BASE, sv_as_body=True,
-                             output_path=f'/tmp/{description}/tasks.json',
-                             shuffle=True,
-                             description=description)
+    # np.random.seed(0)
+    # p = '/Users/bergs/workspace/vnc-focused-queries/tables/synth-score-5-10-direct.csv'
+    # description = "synth32_max1000-score-5-10-direct"
+    # _ = edges_to_assignments(p, VNC_GRAY, VNC_BASE, sv_as_body=True,
+    #                          output_path=f'/tmp/{description}/tasks.json',
+    #                          shuffle=True,
+    #                          description=description)
+
+    # np.random.seed(0)
+    # p = '/Users/bergs/workspace/vnc-focused-queries/tables/synth-1-to-2-tbar-direct.csv'
+    # description = "synth-1-to-2-tbar-direct"
+    # _ = edges_to_assignments(p, VNC_GRAY, VNC_BASE, sv_as_body=True,
+    #                          output_path=f'/Users/bergs/workspace/vnc-focused-queries/tables/{description}/tasks.json',
+    #                          shuffle=True,
+    #                          description=description)
+
+    # np.random.seed(0)
+    # p = '/Users/bergs/workspace/vnc-focused-queries/tables/remaining-rsg-favorite-2tbar-direct.csv'
+    # description = "remaining-rsg-favorite-2tbar-direct"
+    # _ = edges_to_assignments(p, VNC_GRAY, VNC_BASE, sv_as_body=True,
+    #                          output_path=f'/Users/bergs/workspace/vnc-focused-queries/tables/{description}/tasks.json',
+    #                          shuffle=True,
+    #                          description=description)
+
+    # np.random.seed(0)
+    # p = '/Users/bergs/workspace/vnc-focused-queries/tables/remaining-rsg-favorite-tiny-boi-direct.csv'
+    # description = "remaining-rsg-favorite-tiny-boi-direct"
+    # _ = edges_to_assignments(p, VNC_GRAY, VNC_BASE, sv_as_body=True,
+    #                          output_path=f'/Users/bergs/workspace/vnc-focused-queries/tables/{description}/tasks.json',
+    #                          shuffle=True,
+    #                          description=description)
+
+    # np.random.seed(0)
+    # p = '/Users/bergs/workspace/vnc-focused-queries/tables/lowscore-0.03-rsg-favorite-boi-direct.csv'
+    # description = "lowscore-0.03-rsg-favorite-boi-direct"
+    # _ = edges_to_assignments(p, VNC_GRAY, VNC_BASE, sv_as_body=True,
+    #                          output_path=f'/Users/bergs/workspace/vnc-focused-queries/tables/{description}/tasks.json',
+    #                          shuffle=True,
+    #                          description=description)
+
+    # np.random.seed(0)
+    # p = '/Users/bergs/workspace/vnc-focused-queries/tables/lowscore-0.02-rsg-favorite-boi-direct.csv'
+    # description = "lowscore-0.02-rsg-favorite-boi-direct"
+    # _ = edges_to_assignments(p, VNC_GRAY, VNC_BASE, sv_as_body=True,
+    #                          output_path=f'/Users/bergs/workspace/vnc-focused-queries/tables/{description}/tasks.json',
+    #                          shuffle=True,
+    #                          description=description)
+
+    # np.random.seed(0)
+    # p = '/Users/bergs/workspace/vnc-focused-queries/tables/lowscore-0.01-rsg-favorite-boi-direct.csv'
+    # description = "lowscore-0.01-rsg-favorite-boi-direct"
+    # _ = edges_to_assignments(p, VNC_GRAY, VNC_BASE, sv_as_body=True,
+    #                          output_path=f'/Users/bergs/workspace/vnc-focused-queries/tables/{description}/tasks.json',
+    #                          shuffle=True,
+    #                          description=description)
+
+    # np.random.seed(0)
+    # p = '/Users/bergs/workspace/vnc-focused-queries/tables/lowscore-0.005-rsg-favorite-boi-direct.csv'
+    # description = "lowscore-0.005-rsg-favorite-boi-direct"
+    # _ = edges_to_assignments(p, VNC_GRAY, VNC_BASE, sv_as_body=True,
+    #                          output_path=f'/Users/bergs/workspace/vnc-focused-queries/tables/{description}/tasks.json',
+    #                          shuffle=True,
+    #                          description=description)
+
+    for score in np.arange(0.001, 0.005, 0.001):
+        print(f"Processing tasks for score {score:.3f}")
+        np.random.seed(0)
+        p = f'/Users/bergs/workspace/vnc-focused-queries/tables/lowscore-{score:.3f}-rsg-favorite-boi-direct.csv'
+        description = f"lowscore-{score:.3f}-rsg-favorite-boi-direct"
+        _ = edges_to_assignments(p, VNC_GRAY, VNC_BASE, sv_as_body=True,
+                                 output_path=f'/Users/bergs/workspace/vnc-focused-queries/tables/{description}/tasks.json',
+                                 shuffle=True,
+                                 description=description)
