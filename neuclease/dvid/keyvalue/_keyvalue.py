@@ -329,7 +329,7 @@ def post_keyvalues(server, uuid, instance, keyvalues, batch_size=None, *, sessio
             if isinstance(value, str):
                 value = value.encode('utf-8')
     
-            kvs.append( KeyValue(key=key, value=value) )
+            kvs.append( KeyValue(key=str(key), value=value) )
     
         proto_keyvalues = KeyValues()
         proto_keyvalues.kvs.extend(kvs)
