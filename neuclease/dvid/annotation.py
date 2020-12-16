@@ -1746,7 +1746,7 @@ def add_synapses(point_df, partner_df, new_psd_partners_df):
     return point_df, partner_df
 
 
-def delete_psds(point_df, partner_df, obsolete_partner_df):
+def delete_psds_from_dfs(point_df, partner_df, obsolete_partner_df):
     """
     Delete the PSDs listed in the given obsolete_partner_df.
     If any tbars are left with no partners, delete those tbars, too.
@@ -1767,7 +1767,7 @@ def delete_psds(point_df, partner_df, obsolete_partner_df):
     return point_df.copy(), partner_df.copy(), dropped_tbar_ids
 
 
-def delete_tbars(point_df, partner_df, obsolete_tbar_ids):
+def delete_tbars_from_dfs(point_df, partner_df, obsolete_tbar_ids):
     """
     Delete the given tbars and all of their associated PSDs.
     """
@@ -1806,3 +1806,70 @@ def select_redundant_psds(partner_df):
     return dupe_partner_df.copy()
 
 
+def example_purge_bad_psds(server, uuid, syn_instance):
+    """
+    Example code to delete all autapses and "redundant psds"
+    from a synapses instance in DVID.
+
+    This code takes a long time to run, and it's usually better
+    to run it in pieces, in a notebook you can monitor.
+    But here's the procedure.
+
+    See also: check_synapse_consistency(), above.
+    """
+    from neuclease.dvid import fetch_labels_batched
+
+    syn = (server, uuid, syn_instance)
+    syn_info = fetch_instance_info(*syn)
+    seg_instance = syn_info["Base"]["Syncs"][0]
+    seg = (server, uuid, seg_instance)
+
+    point_df, partner_df = fetch_synapses_in_batches(*syn, processes=16)
+    point_df['body'] = fetch_labels_batched(*seg, point_df[[*'zyx']].values, processes=64)
+
+    assert 'body_pre' not in partner_df
+    assert 'body_post' not in partner_df
+    partner_df = partner_df.merge(point_df, 'left', left_on='pre_id', right_index=True)
+    partner_df = partner_df.merge(point_df, 'left', left_on='post_id', right_index=True, suffixes=['_pre', '_post'])
+
+    autapses_df = select_autapses(partner_df)
+    redundant_df = select_redundant_psds(partner_df)
+
+    partners_to_drop_df = pd.concat((autapses_df, redundant_df))
+
+    # identify tbars to drop
+    _filtered_points_df, _filtered_partner_df, dropped_tbar_ids = delete_psds_from_dfs(point_df, partner_df, partners_to_drop_df)
+
+    assert not (set(dropped_tbar_ids) - set(autapses_df['pre_id'])), \
+        "Redundant PSDs should leave behind at least one PSD, so the tbar shouldn't be dropped!"
+
+    obsolete_psd_df = partners_to_drop_df.drop_duplicates()
+    obsolete_tbar_df = partner_df.query('pre_id in @dropped_tbar_ids')
+
+    # These loops run at about 20 it/sec.
+    # It's not safe to parallelize these loops.
+    # If you have a TON of stuff to delete, consider just starting over,
+    # i.e. delete_all_synapses() followed by post_tbar_jsons() and post_psd_jsons().
+    # That will take a while, too, but it might be faster than deleting millions of elements individually.
+    for zyx in tqdm_proxy(obsolete_psd_df[['z_post', 'y_post', 'x_post']].values):
+        delete_element(*syn, zyx)
+
+    for zyx in tqdm_proxy(obsolete_tbar_df.drop_duplicates(['pre_id'])[['z_pre', 'y_pre', 'x_pre']].values):
+        delete_element(*syn, zyx)
+
+    # Afterwards, consider doing a complete consistency check from scratch
+    if False:
+        point_df, pre_partner_df, post_partner_df = fetch_synapses_in_batches(*v12_syn, processes=16, return_both_partner_tables=True)
+        partner_df = pd.concat((pre_partner_df, post_partner_df), ignore_index=True)
+        partner_df.drop_duplicates(inplace=True)
+
+        assert 'body_pre' not in partner_df
+        assert 'body_post' not in partner_df
+        partner_df = partner_df.merge(point_df, 'left', left_on='pre_id', right_index=True)
+        partner_df = partner_df.merge(point_df, 'left', left_on='post_id', right_index=True, suffixes=['_pre', '_post'])
+
+        autapses_df = select_autapses(partner_df)
+        assert len(autapses_df) == 0
+
+        redundant_df = select_redundant_psds(partner_df)
+        assert len(redundant_df) == 0
