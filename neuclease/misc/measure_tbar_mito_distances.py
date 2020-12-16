@@ -1,7 +1,6 @@
+import os
 import logging
 from collections import namedtuple
-from collections.abc import Mapping
-from typing import Sequence
 
 import numpy as np
 import pandas as pd
@@ -12,7 +11,7 @@ import vigra
 from vigra.analysis import labelMultiArrayWithBackground
 
 from neuprint import SynapseCriteria as SC, fetch_synapses
-from neuclease.util import tqdm_proxy, Timer, box_to_slicing, box_intersection, round_box
+from neuclease.util import tqdm_proxy, Timer, box_to_slicing, box_intersection, round_box, apply_mask_for_labels
 from neuclease.dvid.labelmap import fetch_labelmap_specificblocks, fetch_seg_around_point
 
 try:
@@ -36,7 +35,7 @@ def measure_tbar_mito_distances(seg_src,
                                 mito_src,
                                 body,
                                 search_configs=DEFAULT_SEARCH_CONFIGS,
-                                mito_min_size_s0=10_000,
+                                closing_radius_s0=8,
                                 mito_scale_offset=1,
                                 npclient=None,
                                 tbars=None):
@@ -48,9 +47,8 @@ def measure_tbar_mito_distances(seg_src,
         - Distinguish between "download scale" and "analysis scale".
           The data can be downloaded at a higher scale and then downscaled
           using continuity-preserving downsampling before analysis.
-
-        - Try morphological closing (or simply dilating) the body before
-          running the path search, to close small gaps between segments.
+          (For now, we simply download the low-res and then use morphological
+          closing, which might be good enough.)
 
         - Right now, disconnected components result in an early stop,
           marking a tbar as 'done' without trying more aggressive
@@ -64,8 +62,8 @@ def measure_tbar_mito_distances(seg_src,
             Labelmap instance for the neuron segmentation.
         mito_src:
             (server, uuid, instance) OR a flyemflows VolumeService
-            Labelmap instance for the mitochondria "mask"
-            (actually a segmentation with a few classes.)
+            Labelmap instance for the mitochondria "supervoxel"
+            segmentation -- not just the "masks".
         body:
             The body ID of interest, on which the tbars reside.
         search_configs:
@@ -117,6 +115,7 @@ def measure_tbar_mito_distances(seg_src,
     tbars['mito-x'] = 0
     tbars['mito-y'] = 0
     tbars['mito-z'] = 0
+    tbars['mito-id'] = np.uint64(0)
 
     with tqdm_proxy(total=len(tbars)) as progress:
         for row in tbars.itertuples():
@@ -124,7 +123,9 @@ def measure_tbar_mito_distances(seg_src,
                 continue
 
             for radius_s0, scale in search_configs:
-                num_done = _measure_tbar_mito_distances(seg_src, mito_src, body, tbars, row.Index, radius_s0, scale, mito_min_size_s0, mito_scale_offset)
+                num_done = _measure_tbar_mito_distances(
+                    seg_src, mito_src, body, tbars, row.Index,
+                    radius_s0, scale, closing_radius_s0, mito_scale_offset)
                 progress.update(num_done)
                 done = (tbars['done'].loc[row.Index])
                 if done:
@@ -143,7 +144,7 @@ def measure_tbar_mito_distances(seg_src,
 
 
 def _measure_tbar_mito_distances(seg_src, mito_src, body, tbar_points_s0, primary_point_index,
-                                 radius_s0, scale, mito_min_size_s0, mito_scale_offset):
+                                 radius_s0, scale, closing_radius_s0, mito_scale_offset):
     """
     Download the segmentation for a single body around one tbar point as a mask,
     and also the corresponding mitochondria mask for those voxels.
@@ -165,8 +166,8 @@ def _measure_tbar_mito_distances(seg_src, mito_src, body, tbar_points_s0, primar
             Labelmap instance for the neuron segmentation.
         mito_src:
             (server, uuid, instance) OR a flyemflows VolumeService
-            Labelmap instance for the mitochondria "mask"
-            (actually a segmentation with a few classes.)
+            Labelmap instance for the mitochondria "supervoxel"
+            segmentation -- not just the "masks".
         body:
             The body ID on which the tbars reside.
         tbar_points_s0:
@@ -210,33 +211,43 @@ def _measure_tbar_mito_distances(seg_src, mito_src, body, tbar_points_s0, primar
 
     # Adjust for scale
     primary_point = np.asarray(primary_point_s0) // (2**scale)
-    mito_min_size = mito_min_size_s0 // ((2**scale)**3)
     radius = radius_s0 // (2**scale)
     batch_tbars[[*'zyx']] //= (2**scale)
 
-    body_mask, mask_box, body_block_corners = _fetch_body_mask(seg_src, primary_point, radius, scale, body, batch_tbars[[*'zyx']].values)
-    mito_mask = _fetch_mito_mask(mito_src, body_mask, mask_box, body_block_corners, scale, mito_min_size, mito_scale_offset)
+    body_mask, mask_box, body_block_corners = _fetch_body_mask(seg_src, primary_point, radius, scale, body, closing_radius_s0, batch_tbars[[*'zyx']].values)
+    mito_seg = _fetch_body_mito_seg(mito_src, body_mask, mask_box, body_block_corners, scale, mito_scale_offset)
 
     if EXPORT_DEBUG_VOLUMES:
         print(f"Primary point in the local volume is: {(primary_point - mask_box[0])[::-1]}")
-        np.save('/tmp/body_mask.npy', 1*body_mask.astype(np.uint64))
-        np.save('/tmp/mito_mask.npy', 2*mito_mask.astype(np.uint64))
+        p = ' '.join(str(x) for x in primary_point_s0[::-1])
+        d = f'/tmp/{p}'
+        os.makedirs(d, exist_ok=True)
+        np.save(f'{d}/body_mask.npy', body_mask.astype(np.uint64))
+        np.save(f'{d}/mito_seg.npy', mito_seg)
 
-    if (body_mask & mito_mask).sum() == 0:
+    # Body mask should be binary for the rest of this function.
+    body_mask = body_mask.astype(bool)
+
+    if not mito_seg.any():
         # The body mask contains no mitochondria at all.
-        if ( body_mask[0, :, :].any() or body_mask[-1, :, :].any() or
-             body_mask[:, 0, :].any() or body_mask[:, -1, :].any() or
-             body_mask[:, :, 0].any() or body_mask[:, :, -1].any() ):
-            # The body mask touches the edge of the volume,
+        # Does the body mask come near enough to the volume edge that it
+        # could, conceivably, be joined to another part of the body mask
+        # outside this block after morphological closing is performed?
+
+        cr = max(1, closing_radius_s0 // (2**scale))
+        if ( body_mask[0:cr+1, :, :].any() or body_mask[-cr-1:, :, :].any() or
+             body_mask[:, 0:cr+1, :].any() or body_mask[:, -cr-1:, :].any() or
+             body_mask[:, :, 0:cr+1].any() or body_mask[:, :, -cr-1:].any() ):
+            # The body mask approaches the edge of the volume,
             # so we should expand our radius and keep trying.
             return 0
         else:
-            # Doesn't touch volume edges.
-            # We're done with it, even though we can't find a mito.
+            # The mask doesn't even come close to the volume edges.
+            # We'll give up, even though we can't find a mito.
             tbar_points_s0.loc[primary_point_index, 'done'] = True
             return 1
 
-    # Find the set of all points that fall within the mask.
+    # Find the set of all points that fall within the body mask.
     # That's that batch of tbars we'll find mito distances for.
     batch_tbars = batch_tbars.query('not done')
 
@@ -250,9 +261,10 @@ def _measure_tbar_mito_distances(seg_src, mito_src, body, tbar_points_s0, primar
 
     with Timer(f"Calculating distances for batch of {len(batch_tbars)} points", logger):
         tbars_local = batch_tbars[[*'zyx']] - mask_box[0]
-        distances, mito_points_local = _calc_distances(body_mask, mito_mask, tbars_local.values)
+        mito_ids, distances, mito_points_local = _calc_distances(body_mask, mito_seg, tbars_local.values)
 
     mito_points = mito_points_local + mask_box[0]
+    batch_tbars['mito-id'] = mito_ids
     batch_tbars['mito-distance'] = distances
     batch_tbars.loc[:, ['mito-z', 'mito-y', 'mito-x']] = mito_points
 
@@ -269,9 +281,17 @@ def _measure_tbar_mito_distances(seg_src, mito_src, body, tbar_points_s0, primar
 
         # Define a box (cube) around the point,
         # whose radius is the mito distance.
+        #
+        # TODO: This could be done more precisely using true cable distance,
+        #       by adding a fake mito border around the volume edge,
+        #       and using it alongside the real mitos in the distance computation.
+        #       If a tbar is matched to the fake mito, then we know we have to
+        #       expand the search.
+        #
         p = batch_tbars[[*'zyx']].loc[i].values
         d = batch_tbars['mito-distance'].loc[i]
         p_cube = [p - d, p + d + 1]
+        p_cube = np.asarray(p_cube, np.int32)
 
         # If the cube around our point doesn't exceed the box that was
         # searched for this batch, we can believe this mito distance.
@@ -282,6 +302,7 @@ def _measure_tbar_mito_distances(seg_src, mito_src, body, tbar_points_s0, primar
     batch_tbars = batch_tbars.loc[valid_rows]
 
     # Update the input DataFrame (and rescale)
+    tbar_points_s0.loc[batch_tbars.index, 'mito-id'] = batch_tbars['mito-id']
     tbar_points_s0.loc[batch_tbars.index, 'mito-distance'] = (2**scale)*batch_tbars['mito-distance']
     tbar_points_s0.loc[batch_tbars.index, ['mito-z', 'mito-y', 'mito-x']] = (2**scale)*batch_tbars[['mito-z', 'mito-y', 'mito-x']]
     tbar_points_s0.loc[batch_tbars.index, 'done'] = True
@@ -289,12 +310,23 @@ def _measure_tbar_mito_distances(seg_src, mito_src, body, tbar_points_s0, primar
     return len(batch_tbars)
 
 
-def _fetch_body_mask(seg_src, p, radius, scale, body, tbar_points):
+def _fetch_body_mask(seg_src, p, radius, scale, body, closing_radius_s0, tbar_points):
     """
     Fetch a mask for the given body around the given point, with the given radius.
-    Only the connected component that covers the given point will be returned.
-    If the component doesn't extend out to the given radius in all dimensions,
-    then the returned subvolume may be smaller than the requested radius would seem to imply.
+
+    The mask will be post-processed in two ways:
+        - Morphological closing is performed to close gaps
+        - Only the connected component that covers the given point will be returned.
+          If the component doesn't extend out to the given radius in all dimensions,
+          then the returned subvolume may be smaller than the requested radius would
+          otherwise have required.
+
+    The returned mask is NOT a binary (boolean) volume. Instead, a uint8 volume is returned,
+    with labels 1 and 2, indicating which portion of the mask belongs to the body (2) and
+    which portion was added due to morphological closing (1).
+
+    Later, when this mask is used to filter the mito segmentation, only label 1 will be used.
+    When it's used to calculate path distances, both labels will be used.
     """
     with Timer("Fetching body segmentation", logger):
         if _have_flyemflows and isinstance(seg_src, VolumeService):
@@ -324,17 +356,32 @@ def _fetch_body_mask(seg_src, p, radius, scale, body, tbar_points):
     local_tbar_points = tbar_points - seg_box[0]
     seg[(*local_tbar_points.transpose(),)] = body
 
-    # Compute mito CC within body mask
-    body_mask = (seg == body).view(np.uint8)
+    # Extract mask
+    raw_mask = (seg == body).view(np.uint8)
+    raw_mask = vigra.taggedView(raw_mask, 'zyx')
     del seg
+
+    # Perform morphological closing on the mask to fix gaps in the
+    # segmentation due to hot knife seams, downsampling, etc.
+    if closing_radius_s0 == 0:
+        closed_mask = raw_mask
+    else:
+        closing_radius = max(1, closing_radius_s0 // (2**scale))
+        closed_mask = vigra.filters.multiBinaryClosing(raw_mask, closing_radius)
 
     # Find the connected component that contains our point of interest
     # amd limit our analysis to those voxels.
-    body_mask = vigra.taggedView(body_mask, 'zyx')
-    body_cc = labelMultiArrayWithBackground(body_mask)
+    body_cc = labelMultiArrayWithBackground(closed_mask)
 
-    # Update mask. Limit to extents of the main cc, but align box to nearest 64px
-    body_mask = (body_cc == body_cc[(*p_local,)])
+    # Keep only the main CC.
+    cc_mask = (body_cc == body_cc[(*p_local,)]).view(np.uint8)
+
+    # Label the voxels:
+    # 1: closed mask (main CC only)
+    # 2: closed mask (main CC only) AND raw
+    body_mask = np.where(cc_mask, raw_mask + cc_mask, 0)
+
+    # Shrink the volume size to fit the data, but align box to nearest 64px
     body_block_mask = view_as_blocks(body_mask, (64,64,64)).any(axis=(3,4,5))
     body_block_corners = seg_box[0] + (64 * np.argwhere(body_block_mask))
     mask_box = (body_block_corners.min(axis=0),
@@ -347,7 +394,17 @@ def _fetch_body_mask(seg_src, p, radius, scale, body, tbar_points):
     return body_mask, mask_box, body_block_corners
 
 
-def _fetch_mito_mask(mito_src, body_mask, mask_box, body_block_corners, scale, mito_min_size, mito_scale_offset):
+def _fetch_body_mito_seg(mito_src, body_mask, mask_box, body_block_corners, scale, mito_scale_offset):
+    """
+    Return the mito segmentation for only those mitos which
+    overlap with the given body mask (not elsewhere).
+
+    Args:
+        mito_src:
+            VolumeService to obtain mito segmentation
+        body_mask:
+            Volume with labels 1+2 as described in _fetch_body_mask()
+    """
     assert scale - mito_scale_offset >= 0, \
         "FIXME: need to upsample the mito seg if using scale 0.  Not implemented yet."
 
@@ -358,30 +415,42 @@ def _fetch_mito_mask(mito_src, body_mask, mask_box, body_block_corners, scale, m
             assert len(mito_src) == 3 and all(isinstance(s, str) for s in mito_src)
             mito_seg = fetch_labelmap_specificblocks(*mito_src, body_block_corners, scale - mito_scale_offset, supervoxels=True, threads=4)
 
-    # mito classes 1,2,3 are valid;
-    # mito mask class 4 means "empty", as does 0.
-    mito_mask = np.array([0,1,1,1,0], np.uint8)[mito_seg]
+    core_body_mask = (body_mask == 2)
+    body_mito_seg = np.where(core_body_mask, mito_seg, 0)
 
-    body_mito_mask = np.where(body_mask, mito_mask, 0)
-    body_mito_mask = vigra.taggedView(body_mito_mask, 'zyx')
-    body_mito_cc = labelMultiArrayWithBackground(body_mito_mask)
+    # Due to downsampling discrepancies between the mito seg and neuron seg,
+    # mito from neighboring neurons may slightly overlap this neuron.
+    # We can detect those mito by seeing which ones disappear after the body
+    # mask is slightly eroded.
+    eroded_body_mask = vigra.filters.multiBinaryErosion(core_body_mask, 1)
+    core_mito_seg = np.where(eroded_body_mask, mito_seg, 0)
+    core_mitos = pd.unique(core_mito_seg.ravel())
 
-    # Erase small mitos from body_mito_mask
-    mito_sizes = np.bincount(body_mito_cc.reshape(-1))
-    mito_sizes[0] = 0
-    body_mito_mask = (mito_sizes > mito_min_size)[body_mito_cc]
-    return body_mito_mask
+    # Keep only the mitos that didn't get eroded away.
+    body_mito_seg = apply_mask_for_labels(mito_seg, core_mitos, inplace=True)
+    return body_mito_seg
 
 
-def _calc_distances(body_mask, mito_mask, local_points_zyx):
+def _calc_distances(body_mask, mito_seg, local_points_zyx):
     """
-    Calculate the distances from a set of mito points to a set of tbar points,
-    restricting paths to the given body mask.
+    Calculate the distances from a set of mito segments to a set of
+    input points (tbars), restricting paths to the given body mask.
 
     Uses skimage.graph.MCP_Geometric to perform the graph search.
+
+    Returns:
+        (mito_ids, distances, mito_point_zyx)
+        Three arrays, each ordered corresponding to the input points.
+
+        Where:
+            - mito_ids indicates the closest mito to each input point,
+            - distances indicates the path distance from each point to
+              its closest mito segments
+            - mito_point_zyx indicates the "starting point" on the mito segment
+              that yielded the closest distance to the target tbar point.
     """
-    if mito_mask.sum() == 0:
-        return np.inf, (0,0,0)
+    if mito_seg.sum() == 0:
+        return 0, np.inf, (0,0,0)
 
     # MCP uses float64, so we may as well use that now and avoid copies
     body_costs = np.where(body_mask, 1.0, np.inf)
@@ -390,11 +459,11 @@ def _calc_distances(body_mask, mito_mask, local_points_zyx):
     # so let's pass in fortran order to start with.
     # That shaves ~10-20% from the initialization time.
     body_costs = body_costs.transpose()
-    mito_mask = mito_mask.transpose()
+    mito_seg = mito_seg.transpose()
     local_points_xyz = np.asarray(local_points_zyx)[:, ::-1]
 
     mcp = MCP_Geometric(body_costs)
-    distance_vol, _ = mcp.find_costs(np.argwhere(mito_mask), local_points_xyz)
+    distance_vol, _ = mcp.find_costs(np.argwhere(mito_seg), local_points_xyz)
     point_distances = distance_vol[(*local_points_xyz.transpose(),)]
 
     # The necessary path traceback data is retained
@@ -405,9 +474,12 @@ def _calc_distances(body_mask, mito_mask, local_points_zyx):
         if d != np.inf:
             p_mito_xyz[i] = mcp.traceback(p_xyz)[0]
 
+    mito_ids = mito_seg[tuple(p_mito_xyz.transpose())]
+    mito_ids[np.isinf(point_distances)] = 0
+
     # Transpose back to C-order
     p_mito_zyx = p_mito_xyz[:, ::-1]
-    return point_distances, p_mito_zyx
+    return mito_ids, point_distances, p_mito_zyx
 
 
 if __name__ == "__main__":
@@ -419,13 +491,9 @@ if __name__ == "__main__":
     body = 519046655
     tbars = fetch_synapses(body, SC(rois='FB', type='pre', primary_only=True))
 
-    #v11_seg = ('emdata4:8900', '20631f94c3f446d7864bc55bf515706e', 'segmentation')
-    #mito_mask = ('emdata4.int.janelia.org:8900', 'fbd7db9ebde6426e9f8474af10fe4386', 'mito_20190717.46637005.combined')
-    #mito_scale_offset = 1
-
     seg_cfg = {
         "zarr": {
-            "path": "/Users/bergs/data/hemibrain-v1.1.zarr",
+            "path": "/Users/bergs/data/hemibrain-v1.2.zarr",
             "dataset": "s3",
             "store-type": "NestedDirectoryStore",
             "out-of-bounds-access": "permit-empty"
@@ -434,12 +502,9 @@ if __name__ == "__main__":
             "rescale-level": -3
         }
     }
-
-    seg_svc = VolumeService.create_from_config(seg_cfg)
-
     mito_cfg = {
         "zarr": {
-            "path": "/Users/bergs/data/hemibrain-mito-mask.zarr",
+            "path": "/Users/bergs/data/hemibrain-v1.2-filtered-mito-cc.zarr",
             "dataset": "s3",
             "store-type": "NestedDirectoryStore",
             "out-of-bounds-access": "permit-empty"
@@ -448,6 +513,7 @@ if __name__ == "__main__":
             "rescale-level": -3
         }
     }
+    seg_svc = VolumeService.create_from_config(seg_cfg)
     mito_svc = VolumeService.create_from_config(mito_cfg)
     mito_scale_offset = 0
 
