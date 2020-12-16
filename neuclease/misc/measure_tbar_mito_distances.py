@@ -1,7 +1,6 @@
+import os
 import logging
 from collections import namedtuple
-from collections.abc import Mapping
-from typing import Sequence
 
 import numpy as np
 import pandas as pd
@@ -12,7 +11,7 @@ import vigra
 from vigra.analysis import labelMultiArrayWithBackground
 
 from neuprint import SynapseCriteria as SC, fetch_synapses
-from neuclease.util import tqdm_proxy, Timer, box_to_slicing, box_intersection, round_box
+from neuclease.util import tqdm_proxy, Timer, box_to_slicing, box_intersection, round_box, apply_mask_for_labels
 from neuclease.dvid.labelmap import fetch_labelmap_specificblocks, fetch_seg_around_point
 
 try:
@@ -220,8 +219,14 @@ def _measure_tbar_mito_distances(seg_src, mito_src, body, tbar_points_s0, primar
 
     if EXPORT_DEBUG_VOLUMES:
         print(f"Primary point in the local volume is: {(primary_point - mask_box[0])[::-1]}")
-        np.save('/tmp/body_mask.npy', 1*body_mask.astype(np.uint64))
-        np.save('/tmp/mito_seg.npy', mito_seg)
+        p = ' '.join(str(x) for x in primary_point_s0[::-1])
+        d = f'/tmp/{p}'
+        os.makedirs(d, exist_ok=True)
+        np.save(f'{d}/body_mask.npy', body_mask.astype(np.uint64))
+        np.save(f'{d}/mito_seg.npy', mito_seg)
+
+    # Body mask should be binary for the rest of this function.
+    body_mask = body_mask.astype(bool)
 
     if not mito_seg.any():
         # The body mask contains no mitochondria at all.
@@ -308,9 +313,20 @@ def _measure_tbar_mito_distances(seg_src, mito_src, body, tbar_points_s0, primar
 def _fetch_body_mask(seg_src, p, radius, scale, body, closing_radius_s0, tbar_points):
     """
     Fetch a mask for the given body around the given point, with the given radius.
-    Only the connected component that covers the given point will be returned.
-    If the component doesn't extend out to the given radius in all dimensions,
-    then the returned subvolume may be smaller than the requested radius would seem to imply.
+
+    The mask will be post-processed in two ways:
+        - Morphological closing is performed to close gaps
+        - Only the connected component that covers the given point will be returned.
+          If the component doesn't extend out to the given radius in all dimensions,
+          then the returned subvolume may be smaller than the requested radius would
+          otherwise have required.
+
+    The returned mask is NOT a binary (boolean) volume. Instead, a uint8 volume is returned,
+    with labels 1 and 2, indicating which portion of the mask belongs to the body (2) and
+    which portion was added due to morphological closing (1).
+
+    Later, when this mask is used to filter the mito segmentation, only label 1 will be used.
+    When it's used to calculate path distances, both labels will be used.
     """
     with Timer("Fetching body segmentation", logger):
         if _have_flyemflows and isinstance(seg_src, VolumeService):
@@ -341,22 +357,31 @@ def _fetch_body_mask(seg_src, p, radius, scale, body, closing_radius_s0, tbar_po
     seg[(*local_tbar_points.transpose(),)] = body
 
     # Extract mask
-    body_mask = (seg == body).view(np.uint8)
-    body_mask = vigra.taggedView(body_mask, 'zyx')
+    raw_mask = (seg == body).view(np.uint8)
+    raw_mask = vigra.taggedView(raw_mask, 'zyx')
     del seg
 
     # Perform morphological closing on the mask to fix gaps in the
     # segmentation due to hot knife seams, downsampling, etc.
-    if closing_radius_s0 > 0:
+    if closing_radius_s0 == 0:
+        closed_mask = raw_mask
+    else:
         closing_radius = max(1, closing_radius_s0 // (2**scale))
-        body_mask = vigra.filters.multiBinaryClosing(body_mask, closing_radius)
+        closed_mask = vigra.filters.multiBinaryClosing(raw_mask, closing_radius)
 
     # Find the connected component that contains our point of interest
     # amd limit our analysis to those voxels.
-    body_cc = labelMultiArrayWithBackground(body_mask)
+    body_cc = labelMultiArrayWithBackground(closed_mask)
 
-    # Update mask. Limit to extents of the main cc, but align box to nearest 64px
-    body_mask = (body_cc == body_cc[(*p_local,)])
+    # Keep only the main CC.
+    cc_mask = (body_cc == body_cc[(*p_local,)]).view(np.uint8)
+
+    # Label the voxels:
+    # 1: closed mask (main CC only)
+    # 2: closed mask (main CC only) AND raw
+    body_mask = np.where(cc_mask, raw_mask + cc_mask, 0)
+
+    # Shrink the volume size to fit the data, but align box to nearest 64px
     body_block_mask = view_as_blocks(body_mask, (64,64,64)).any(axis=(3,4,5))
     body_block_corners = seg_box[0] + (64 * np.argwhere(body_block_mask))
     mask_box = (body_block_corners.min(axis=0),
@@ -373,6 +398,12 @@ def _fetch_body_mito_seg(mito_src, body_mask, mask_box, body_block_corners, scal
     """
     Return the mito segmentation for only those mitos which
     overlap with the given body mask (not elsewhere).
+
+    Args:
+        mito_src:
+            VolumeService to obtain mito segmentation
+        body_mask:
+            Volume with labels 1+2 as described in _fetch_body_mask()
     """
     assert scale - mito_scale_offset >= 0, \
         "FIXME: need to upsample the mito seg if using scale 0.  Not implemented yet."
@@ -384,7 +415,19 @@ def _fetch_body_mito_seg(mito_src, body_mask, mask_box, body_block_corners, scal
             assert len(mito_src) == 3 and all(isinstance(s, str) for s in mito_src)
             mito_seg = fetch_labelmap_specificblocks(*mito_src, body_block_corners, scale - mito_scale_offset, supervoxels=True, threads=4)
 
-    body_mito_seg = np.where(body_mask, mito_seg, 0)
+    core_body_mask = (body_mask == 2)
+    body_mito_seg = np.where(core_body_mask, mito_seg, 0)
+
+    # Due to downsampling discrepancies between the mito seg and neuron seg,
+    # mito from neighboring neurons may slightly overlap this neuron.
+    # We can detect those mito by seeing which ones disappear after the body
+    # mask is slightly eroded.
+    eroded_body_mask = vigra.filters.multiBinaryErosion(core_body_mask, 1)
+    core_mito_seg = np.where(eroded_body_mask, mito_seg, 0)
+    core_mitos = pd.unique(core_mito_seg.ravel())
+
+    # Keep only the mitos that didn't get eroded away.
+    body_mito_seg = apply_mask_for_labels(mito_seg, core_mitos, inplace=True)
     return body_mito_seg
 
 
@@ -448,10 +491,6 @@ if __name__ == "__main__":
     body = 519046655
     tbars = fetch_synapses(body, SC(rois='FB', type='pre', primary_only=True))
 
-    #v11_seg = ('emdata4:8900', '20631f94c3f446d7864bc55bf515706e', 'segmentation')
-    #mito_mask = ('emdata4.int.janelia.org:8900', 'fbd7db9ebde6426e9f8474af10fe4386', 'mito_20190717.46637005.combined')
-    #mito_scale_offset = 1
-
     seg_cfg = {
         "zarr": {
             "path": "/Users/bergs/data/hemibrain-v1.2.zarr",
@@ -463,20 +502,6 @@ if __name__ == "__main__":
             "rescale-level": -3
         }
     }
-
-
-    # mito_cfg = {
-    #     "zarr": {
-    #         "path": "/Users/bergs/data/hemibrain-mito-mask.zarr",
-    #         "dataset": "s3",
-    #         "store-type": "NestedDirectoryStore",
-    #         "out-of-bounds-access": "permit-empty"
-    #     },
-    #     "adapters": {
-    #         "rescale-level": -3
-    #     }
-    # }
-
     mito_cfg = {
         "zarr": {
             "path": "/Users/bergs/data/hemibrain-v1.2-filtered-mito-cc.zarr",
@@ -488,19 +513,6 @@ if __name__ == "__main__":
             "rescale-level": -3
         }
     }
-
-    # mito_cfg = {
-    #     "zarr": {
-    #         "path": "/Users/bergs/data/hemibrain-mito-mask.zarr",
-    #         "dataset": "s3",
-    #         "store-type": "NestedDirectoryStore",
-    #         "out-of-bounds-access": "permit-empty"
-    #     },
-    #     "adapters": {
-    #         "rescale-level": -3
-    #     }
-    # }
-
     seg_svc = VolumeService.create_from_config(seg_cfg)
     mito_svc = VolumeService.create_from_config(mito_cfg)
     mito_scale_offset = 0
