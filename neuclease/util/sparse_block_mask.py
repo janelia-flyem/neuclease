@@ -129,6 +129,7 @@ class SparseBlockMask:
         Without changing the mask data,
         change interpretation of the mask data's resolution and bounding box.
         """
+        new_resolution = np.asarray(new_resolution)
         if (new_resolution == self.resolution).all():
             return
 
