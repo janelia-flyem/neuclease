@@ -30,9 +30,15 @@ def create_viewer(axes='xyz', units='nm', scales=[8,8,8]):
     return viewer
 
 
-def update_layers(viewer, clear=False, axes='zyx', units='nm', scales=[8,8,8], volume_type=None, voxel_offset=(0,0,0), **volumes):
+def update_layers(viewer, clear=False, axes='zyx', units='nm', scales=[8,8,8], volume_type=None, voxel_offset=(0,0,0), segments=None, **volumes):
     """
     Args:
+        segments:
+            List of segment IDs to show as selected in the layer.
+            Should only be used with segmentation layers.
+            Will be applied to all layers, so you should only use this with
+            multiple layers if they happen to have corresponding layer IDs.
+
         volume_type:
             Either 'image' or 'segmentation'. If None, neuroglancer guesses from dtype
     """
@@ -40,15 +46,27 @@ def update_layers(viewer, clear=False, axes='zyx', units='nm', scales=[8,8,8], v
         if clear:
             s.layers.clear()
 
+        kwargs = {}
+        if segments is not None:
+            kwargs['segments'] = [*map(str, segments)]
+
         for name, vol in volumes.items():
             cspace = CoordinateSpace(names=[*axes], units='nm', scales=scales)
-            s.layers[name] = ManagedLayer(name, LocalVolume(vol, cspace, volume_type, voxel_offset))
+            s.layers[name] = ManagedLayer(name, LocalVolume(vol, cspace, volume_type, voxel_offset), **kwargs)
 
 
-def update_seg_layer(v, name, vol, scale, box, res0=8):
+def update_seg_layer(v, name, vol, scale, box, res0=8, segments=None):
+    """
+    Args:
+        segments:
+            List of segment IDs to show as selected in the layer.
+            Should only be used with segmentation layers.
+            Will be applied to all layers, so you should only use this with
+            multiple layers if they happen to have corresponding layer IDs.
+    """
     scales = (2**scale)*np.array([res0,res0,res0])
     layers = {name: vol}
-    update_layers(v, False, 'zyx', 'nm', scales, 'segmentation', box[0], **layers)
+    update_layers(v, False, 'zyx', 'nm', scales, 'segmentation', box[0], segments, **layers)
 
 
 def update_img_layer(v, name, vol, scale, box, res0=8):
