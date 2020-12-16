@@ -53,7 +53,7 @@ def main():
         os.makedirs(d, exist_ok=True)
 
     logger.info(f"Copying {len(src_paths)} files")
-    compute_parallel(copyfile, [*zip(src_paths, dest_paths)], starmap=True, ordered=False, processes=args.n)
+    compute_parallel(copyfile, [*zip(src_paths, dest_paths)], 10, starmap=True, ordered=False, processes=args.n)
 
     logger.info("DONE")
 
