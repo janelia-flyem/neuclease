@@ -85,13 +85,8 @@ def measure_tbar_mito_distances(seg_src,
                   recouped because all points that fall within the radius are
                   analyzed at once.  See _measure_tbar_mito_distances()
                   implementation for details.
-        mito_min_size_s0:
-            Mito mask voxels that fall outside the body mask will be discarded,
-            and then the mito mask is segmented via a connected components step.
-            Components below this size threshold will be discarded before
-            distances are computed.  Specify this threshold in units of scale 0
-            voxels, regardless of the scale at which the analysis is being performed.
         mito_scale_offset:
+            ONLY USED WHEN THE MITO SEG IS A DVID LABELMAP SOURCE.
             If the mito mask layer is stored at a lower resolution than the
             neuron segmentation, specify the difference between the two scales
             using this parameter. (It's assumed that the scales differ by a power of two.)
@@ -195,13 +190,8 @@ def _measure_tbar_mito_distances(seg_src, mito_src, body, tbar_points_s0, primar
         scale:
             To save time and RAM, it's faster to perform the analysis using a
             lower resolution.  Specify which scale to use.
-        mito_min_size_s0:
-            Mito mask voxels that fall outside the body mask will be discarded,
-            and then the mito mask is segmented via a connected components step.
-            Components below this size threshold will be discarded before
-            distances are computed.  Specify this threshold in units of scale 0
-            voxels, regardless of the scale at which the analysis is being performed.
         mito_scale_offset:
+            ONLY USED WHEN THE MITO SEG IS A DVID LABELMAP SOURCE.
             If the mito mask layer is stored at a lower resolution than the
             neuron segmentation, specify the difference between the two scales
             using this parameter. (It's assumed that the scales differ by a power of two.)
@@ -396,7 +386,7 @@ def _fetch_body_mito_seg(mito_src, body_mask, mask_box, body_block_corners, scal
     assert scale - mito_scale_offset >= 0, \
         "FIXME: need to upsample the mito seg if using scale 0.  Not implemented yet."
 
-    with Timer("Fetching mito mask", logger):
+    with Timer("Fetching mito segmentation", logger):
         if _have_flyemflows and isinstance(mito_src, VolumeService):
             mito_seg = mito_src.get_subvolume(mask_box, scale)
         else:
