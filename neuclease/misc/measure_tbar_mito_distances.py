@@ -31,6 +31,10 @@ DEFAULT_SEARCH_CONFIGS = [
     SearchConfig(radius_s0=1250, scale=3)  # 10 microns
 ]
 
+# Fake mito ID to mark the places where a body exits the analysis volume.
+# Must not conflict with any mito IDs
+FACE_MARKER = np.uint64(1e15-1)
+
 
 def measure_tbar_mito_distances(seg_src,
                                 mito_src,
@@ -224,6 +228,8 @@ def _measure_tbar_mito_distances(seg_src, mito_src, body, tbar_points_s0, primar
     mito_seg = _fetch_body_mito_seg(
         mito_src, body_mask, mask_box, body_block_corners, scale, mito_scale_offset, logger)
 
+    _mark_mito_seg_faces(body_mask, mito_seg, mask_box, primary_point, radius)
+
     if EXPORT_DEBUG_VOLUMES:
         print(f"Primary point in the local volume is: {(primary_point - mask_box[0])[::-1]}")
         p = ' '.join(str(x) for x in primary_point_s0[::-1])
@@ -275,38 +281,13 @@ def _measure_tbar_mito_distances(seg_src, mito_src, body, tbar_points_s0, primar
     batch_tbars['mito-distance'] = distances
     batch_tbars.loc[:, ['mito-z', 'mito-y', 'mito-x']] = mito_points
 
-    batch_cube = [primary_point - radius, primary_point + radius + 1]
-
-    valid_rows = []
-    for i in batch_tbars.index:
-        # If we found a mito for this tbar, we can only keep it if
-        # the tbar is closer to the mito than it is to the edge of
-        # the mask volume. Otherwise, we can't guarantee that this
-        # mito is the globally closest mito to the tbar.  (There
-        # could be one just outside the mask subvolume that is
-        # closer.)
-
-        # Define a box (cube) around the point,
-        # whose radius is the mito distance.
-        #
-        # TODO: This could be done more precisely using true cable distance,
-        #       by adding a fake mito border around the volume edge,
-        #       and using it alongside the real mitos in the distance computation.
-        #       If a tbar is matched to the fake mito, then we know we have to
-        #       expand the search.
-        #
-        p = batch_tbars[[*'zyx']].loc[i].values
-        d = batch_tbars['mito-distance'].loc[i]
-        p_cube = [p - d, p + d + 1]
-        p_cube = np.asarray(p_cube, np.int32)
-
-        # If the cube around our point doesn't exceed the box that was
-        # searched for this batch, we can believe this mito distance.
-        if (p_cube == box_intersection(p_cube, batch_cube)).all():
-            valid_rows.append(i)
-
-    logger.info(f"Kept {len(valid_rows)}/{len(batch_tbars)} mito distances (R={radius_s0})")
-    batch_tbars = batch_tbars.loc[valid_rows]
+    # If the closest "mito" to the tbar was actually a "fake mito", inserted
+    # onto the face of the volume (indicated by FACE_MARKER id value),
+    # then the tbar is closer to the edge of the volume than it is to
+    # the closest mito within the volume. We need to try again for those tbars.
+    valid = (batch_tbars['mito-id'] != FACE_MARKER)
+    logger.info(f"Kept {valid.sum()}/{len(batch_tbars)} mito distances (R={radius_s0})")
+    batch_tbars = batch_tbars.loc[valid]
 
     # Update the input DataFrame (and rescale)
     tbar_points_s0.loc[batch_tbars.index, 'mito-id'] = batch_tbars['mito-id']
@@ -437,6 +418,48 @@ def _fetch_body_mito_seg(mito_src, body_mask, mask_box, body_block_corners, scal
     return core_mito_seg
 
 
+def _mark_mito_seg_faces(body_mask, mito_seg, mask_box, primary_point, radius):
+    """
+    Create "fake mitos" on the edge of the mito volume,
+    where the neuron exits the analysis volume.
+
+    The analysis volume is defined by the center point and radius.
+    Our actual mask volumes are often smaller, if the body doesn't fill the analysis box.
+    But in cases where the mask volume is smaller than the analysis box,
+    we don't want to mark edge voxels.  The mask box was truncated intentionally because
+    we determined that the body doesn't actually extend beyond it.
+
+    Note:
+        We take pains here to avoid marking the edge of neurons that just barely
+        touch the edge of the mask, but do not extend outside of it.
+        That's why we care so much about the difference between the "analysis box"
+        vs. the "mask box".
+    """
+    assert tuple(mask_box[1] - mask_box[0]) == body_mask.shape == mito_seg.shape
+    p = primary_point
+    r = radius
+    mask_box = np.asarray(mask_box)
+    radius_box = np.array([p - r, p + r + 1])  # analysis box
+    mito_mask = mito_seg.astype(bool)
+
+    for axis in [0,1,2]:
+        if mask_box[0, axis] <= radius_box[0, axis]:
+            sl = list(np.s_[:, :, :])
+            sl[axis] = 0
+            sl = tuple(sl)
+            body_face = body_mask[sl].astype(bool)
+            mito_face = mito_mask[sl]
+            mito_seg[sl] = np.where(body_face & ~mito_face, FACE_MARKER, mito_seg[sl])
+
+        if mask_box[1, axis] >= radius_box[1, axis]:
+            sl = list(np.s_[:, :, :])
+            sl[axis] = -1
+            sl = tuple(sl)
+            body_face = body_mask[sl].astype(bool)
+            mito_face = mito_mask[sl]
+            mito_seg[sl] = np.where(body_face & ~mito_face, FACE_MARKER, mito_seg[sl])
+
+
 def _calc_distances(body_mask, mito_seg, local_points_zyx, logger):
     """
     Calculate the distances from a set of mito segments to a set of
@@ -494,16 +517,17 @@ if __name__ == "__main__":
     configure_default_logging()
 
     c = Client('neuprint.janelia.org', 'hemibrain:v1.1')
-    #body = 519046655
-    #tbars = fetch_synapses(body, SC(rois='FB', type='pre', primary_only=True))
-    #tbars = tbars.iloc[:10]
 
-    EXPORT_DEBUG_VOLUMES = True
-    body = 295474876
-    tbars = fetch_synapses(body, SC(type='pre', primary_only=True))
-    selections = (tbars[[*'xyz']] == (24721, 21717, 22518)).all(axis=1)
-    print(selections.sum())
-    tbars = tbars.loc[selections]
+    body = 519046655
+    tbars = fetch_synapses(body, SC(rois='FB', type='pre', primary_only=True))
+    tbars = tbars.iloc[:10]
+
+    # EXPORT_DEBUG_VOLUMES = True
+    # body = 295474876
+    # tbars = fetch_synapses(body, SC(type='pre', primary_only=True))
+    # selections = (tbars[[*'xyz']] == (24721, 21717, 22518)).all(axis=1)
+    # print(selections.sum())
+    # tbars = tbars.loc[selections]
 
     seg_cfg = {
         "zarr": {
