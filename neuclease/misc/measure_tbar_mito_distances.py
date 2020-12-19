@@ -309,9 +309,6 @@ def _fetch_body_mask(seg_src, primary_point_s0, radius_s0, download_scale, analy
     p //= (2**scale_diff)
     p_local //= (2**scale_diff)
     raw_mask = downsample_mask(raw_mask, 2**scale_diff, 'or')
-    pstr = ' '.join(str(x) for x in primary_point_s0[::-1])
-    os.makedirs(f'/tmp/{pstr}', exist_ok=True)
-    np.save(f'/tmp/{pstr}/raw_mask.npy', raw_mask)
 
     # Due to downsampling effects in the original data, it's possible
     # that the main tbar fell off its body in the downsampled image.
