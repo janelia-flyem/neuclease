@@ -229,7 +229,7 @@ def _measure_tbar_mito_distances(seg_src, mito_src, body, tbar_points_s0, primar
 
     # Find the set of all points that fall within the body mask.
     # That's that batch of tbars we'll find mito distances for.
-    batch_tbars = batch_tbars.query('not done')
+    batch_tbars = batch_tbars.query('not done').copy()
 
     batch_tbars[[*'zyx']] //= (2**analysis_scale)
     in_box = (batch_tbars[[*'zyx']] >= mask_box[0]).all(axis=1) & (batch_tbars[[*'zyx']] < mask_box[1]).all(axis=1)
