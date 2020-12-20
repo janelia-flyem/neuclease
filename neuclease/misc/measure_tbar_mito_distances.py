@@ -280,6 +280,12 @@ def _fetch_body_mask(seg_src, primary_point_s0, radius_s0, download_scale, analy
           then the returned subvolume may be smaller than the requested radius would
           otherwise have required.
 
+    TODO:
+        To join disconnected components without changing path lengths within
+        each component, we could try skeletonizing the dilated volume (and
+        then adding it to the non-dilated original).
+        How costly is skimage.morphology.seletonize_3d()?
+
     The returned mask is NOT a binary (boolean) volume. Instead, a uint8 volume is returned,
     with labels 1 and 2, indicating which portion of the mask belongs to the body (2) and
     which portion was added due to dilation (1).
