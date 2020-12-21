@@ -11,6 +11,7 @@ from skimage.graph import MCP_Geometric
 import vigra
 from vigra.analysis import labelMultiArrayWithBackground
 
+from dvidutils import LabelMapper
 from neuprint import SynapseCriteria as SC, fetch_synapses
 from neuclease.util import tqdm_proxy, Timer, box_to_slicing, round_box, apply_mask_for_labels, downsample_mask
 from neuclease.logging_setup import PrefixedLogger
@@ -43,7 +44,8 @@ def measure_tbar_mito_distances(seg_src,
                                 search_configs=DEFAULT_SEARCH_CONFIGS,
                                 dilation_radius_s0=16,
                                 npclient=None,
-                                tbars=None):
+                                tbars=None,
+                                valid_mitos=None):
     """
     Search for the closest mito to each tbar in a list of tbars
     (or any set of points, really).
@@ -82,6 +84,8 @@ def measure_tbar_mito_distances(seg_src,
             argument.
         tbars:
             A DataFrame of tbar coordinates at least with columns ``['x', 'y', 'z']``.
+        valid_mitos:
+            If provided, only the listed mito IDs will be considered valid as search targets.
     Returns:
         DataFrame of tbar coordinates, mito distances, and mito coordinates.
         Points for which no nearby mito could be found (after trying all the given search_configs)
@@ -100,6 +104,15 @@ def measure_tbar_mito_distances(seg_src,
     tbars['mito-y'] = 0
     tbars['mito-z'] = 0
     tbars['mito-id'] = np.uint64(0)
+    tbars['search-radius'] = np.int32(0)
+    tbars['download-scale'] = np.int8(0)
+    tbars['analysis-scale'] = np.int8(0)
+
+    if valid_mitos is None or len(valid_mitos) == 0:
+        valid_mito_mapper = None
+    else:
+        valid_mitos = np.asarray(valid_mitos, dtype=np.uint64)
+        valid_mito_mapper = LabelMapper(valid_mitos, valid_mitos)
 
     with tqdm_proxy(total=len(tbars)) as progress:
         for row in tbars.itertuples():
@@ -112,7 +125,7 @@ def measure_tbar_mito_distances(seg_src,
                 num_done = _measure_tbar_mito_distances(
                     seg_src, mito_src, body, tbars, row.Index,
                     radius_s0, download_scale, analysis_scale, dilation_radius_s0,
-                    loop_logger)
+                    valid_mito_mapper, loop_logger)
                 progress.update(num_done)
                 done = (tbars['done'].loc[row.Index])
                 if done:
@@ -132,7 +145,7 @@ def measure_tbar_mito_distances(seg_src,
 
 def _measure_tbar_mito_distances(seg_src, mito_src, body, tbar_points_s0, primary_point_index,
                                  radius_s0, download_scale, analysis_scale, dilation_radius_s0,
-                                 logger):
+                                 valid_mito_mapper, logger):
     """
     Download the segmentation for a single body around one tbar point as a mask,
     and also the corresponding mitochondria mask for those voxels.
@@ -188,11 +201,11 @@ def _measure_tbar_mito_distances(seg_src, mito_src, body, tbar_points_s0, primar
     primary_point_s0 = tbar_points_s0[[*'zyx']].loc[primary_point_index].values
     batch_tbars = tbar_points_s0.copy()
 
-    body_mask, mask_box, body_block_corners = _fetch_body_mask(
+    body_mask, mask_box = _fetch_body_mask(
         seg_src, primary_point_s0, radius_s0, download_scale, analysis_scale, body, dilation_radius_s0, batch_tbars[[*'zyx']].values, logger)
 
     mito_seg = _fetch_body_mito_seg(
-        mito_src, body_mask, mask_box, body_block_corners, analysis_scale, logger)
+        mito_src, body_mask, mask_box, analysis_scale, valid_mito_mapper, logger)
 
     primary_point = primary_point_s0 // (2**analysis_scale)
     _mark_mito_seg_faces(body_mask, mito_seg, mask_box, primary_point, radius_s0 // (2**analysis_scale))
@@ -261,6 +274,9 @@ def _measure_tbar_mito_distances(seg_src, mito_src, body, tbar_points_s0, primar
     tbar_points_s0.loc[batch_tbars.index, 'mito-id'] = batch_tbars['mito-id']
     tbar_points_s0.loc[batch_tbars.index, 'mito-distance'] = (2**analysis_scale)*batch_tbars['mito-distance']
     tbar_points_s0.loc[batch_tbars.index, ['mito-z', 'mito-y', 'mito-x']] = (2**analysis_scale)*batch_tbars[['mito-z', 'mito-y', 'mito-x']]
+    tbar_points_s0.loc[batch_tbars.index, 'search-radius'] = radius_s0
+    tbar_points_s0.loc[batch_tbars.index, 'download-scale'] = download_scale
+    tbar_points_s0.loc[batch_tbars.index, 'analysis-scale'] = analysis_scale
     tbar_points_s0.loc[batch_tbars.index, 'done'] = True
 
     return len(batch_tbars)
@@ -365,10 +381,10 @@ def _fetch_body_mask(seg_src, primary_point_s0, radius_s0, download_scale, analy
     body_mask = body_mask[box_to_slicing(*local_box)]
 
     assert body_mask[(*p - mask_box[0],)]
-    return body_mask, mask_box, body_block_corners
+    return body_mask, mask_box
 
 
-def _fetch_body_mito_seg(mito_src, body_mask, mask_box, body_block_corners, scale, logger):
+def _fetch_body_mito_seg(mito_src, body_mask, mask_box, scale, valid_mito_mapper, logger):
     """
     Return the mito segmentation for only those mitos which
     overlap with the given body mask (not elsewhere).
@@ -378,10 +394,15 @@ def _fetch_body_mito_seg(mito_src, body_mask, mask_box, body_block_corners, scal
             VolumeService to obtain mito segmentation
         body_mask:
             Volume with labels 1+2 as described in _fetch_body_mask()
+        valid_mito_mapper:
+            LabelMapper that keeps only valid mitos when its apply_with_default() method is called.
     """
     with Timer("Fetching mito segmentation", logger):
         assert _have_flyemflows and isinstance(mito_src, VolumeService)
         mito_seg = mito_src.get_subvolume(mask_box, scale)
+
+    if valid_mito_mapper:
+        return valid_mito_mapper.apply_with_default(mito_seg)
 
     core_body_mask = (body_mask == 2)
     body_mito_seg = np.where(core_body_mask, mito_seg, 0)
@@ -389,6 +410,13 @@ def _fetch_body_mito_seg(mito_src, body_mask, mask_box, body_block_corners, scal
     # Due to downsampling discrepancies between the mito seg and neuron seg,
     # mito from neighboring neurons may slightly overlap this neuron.
     # Keep only mitos which have more of their voxels in the body mask than not.
+    #
+    # FIXME:
+    #   This heuristic fails at the volume edge, where we might see just
+    #   part of the mito.
+    #   Need to overwrite small mitos on the volume edge with FACE_MARKER
+    #   to indicate that they can't be trusted, and if such a mito is
+    #   the "winning" mito, then we need to try a different search config.
     body_mito_sizes = pd.Series(body_mito_seg.ravel()).value_counts()
     del body_mito_seg
     mito_sizes = pd.Series(mito_seg.ravel()).value_counts()
@@ -493,10 +521,11 @@ def _calc_distances(body_mask, mito_seg, local_points_zyx, logger):
 
 if __name__ == "__main__":
     from neuprint import Client
+    from neuclease.dvid import fetch_label, fetch_supervoxels
     from neuclease import configure_default_logging
     configure_default_logging()
 
-    c = Client('neuprint.janelia.org', 'hemibrain:v1.1')
+    # c = Client('neuprint.janelia.org', 'hemibrain:v1.1')
 
     body = 519046655
     tbars = fetch_synapses(body, SC(rois='FB', type='pre', primary_only=True))
@@ -524,10 +553,12 @@ if __name__ == "__main__":
 
     DEBUG_BODY_MASK = True
     EXPORT_DEBUG_VOLUMES = True
-    body = 1005308608
-    tbars = fetch_synapses(body, SC(type='pre', primary_only=True))
-    selections = (tbars[[*'xyz']] == (25435,26339,21900)).all(axis=1)
-    tbars = tbars.loc[selections]
+    #body = 1005308608
+    body = 2178626284
+    #tbars = fetch_synapses(body, SC(type='pre', primary_only=True))
+    tbars = fetch_label('emdata4:8900', '3159', 'synapses', body, format='pandas')[[*'xyz', 'conf', 'kind']]
+    #selections = (tbars[[*'xyz']] == (25435,26339,21900)).all(axis=1)
+    #tbars = tbars.loc[selections]
 
     seg_cfg = {
         "zarr": {
@@ -553,5 +584,8 @@ if __name__ == "__main__":
     }
     seg_svc = VolumeService.create_from_config(seg_cfg)
     mito_svc = VolumeService.create_from_config(mito_cfg)
-    processed_tbars = measure_tbar_mito_distances(seg_svc, mito_svc, body, npclient=c, tbars=tbars, dilation_radius_s0=32)
+
+    valid_mitos = fetch_supervoxels('emdata4:8900', '3159', 'mito-objects', body)
+
+    processed_tbars = measure_tbar_mito_distances(seg_svc, mito_svc, body, tbars=tbars, valid_mitos=valid_mitos, dilation_radius_s0=32)
     print(processed_tbars)
