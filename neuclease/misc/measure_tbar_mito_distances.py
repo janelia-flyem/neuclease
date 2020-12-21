@@ -107,6 +107,9 @@ def measure_tbar_mito_distances(seg_src,
     tbars['search-radius'] = np.int32(0)
     tbars['download-scale'] = np.int8(0)
     tbars['analysis-scale'] = np.int8(0)
+    tbars['focal-x'] = 0
+    tbars['focal-y'] = 0
+    tbars['focal-z'] = 0
 
     if valid_mitos is None or len(valid_mitos) == 0:
         valid_mito_mapper = None
@@ -277,6 +280,7 @@ def _measure_tbar_mito_distances(seg_src, mito_src, body, tbar_points_s0, primar
     tbar_points_s0.loc[batch_tbars.index, 'search-radius'] = radius_s0
     tbar_points_s0.loc[batch_tbars.index, 'download-scale'] = download_scale
     tbar_points_s0.loc[batch_tbars.index, 'analysis-scale'] = analysis_scale
+    tbar_points_s0.loc[batch_tbars.index, ['focal-z', 'focal-y', 'focal-x']] = primary_point_s0[None, :]
     tbar_points_s0.loc[batch_tbars.index, 'done'] = True
 
     return len(batch_tbars)
@@ -525,11 +529,11 @@ if __name__ == "__main__":
     from neuclease import configure_default_logging
     configure_default_logging()
 
-    # c = Client('neuprint.janelia.org', 'hemibrain:v1.1')
+    c = Client('neuprint.janelia.org', 'hemibrain:v1.1')
 
-    body = 519046655
-    tbars = fetch_synapses(body, SC(rois='FB', type='pre', primary_only=True))
-    tbars = tbars.iloc[:10]
+    # body = 519046655
+    # tbars = fetch_synapses(body, SC(rois='FB', type='pre', primary_only=True))
+    # tbars = tbars.iloc[:10]
 
     # EXPORT_DEBUG_VOLUMES = True
     # body = 295474876
@@ -544,21 +548,21 @@ if __name__ == "__main__":
     # selections = (tbars[[*'xyz']] == (18212,12349,16592)).all(axis=1)
     # tbars = tbars.loc[selections]
 
-    # DEBUG_BODY_MASK = True
-    # EXPORT_DEBUG_VOLUMES = True
-    # body = 203253072
-    # tbars = fetch_synapses(body, SC(type='pre', primary_only=True))
-    # selections = (tbars[[*'xyz']] == (21362,23522,15106)).all(axis=1)
-    # tbars = tbars.loc[selections]
-
     DEBUG_BODY_MASK = True
     EXPORT_DEBUG_VOLUMES = True
-    #body = 1005308608
-    body = 2178626284
-    #tbars = fetch_synapses(body, SC(type='pre', primary_only=True))
-    tbars = fetch_label('emdata4:8900', '3159', 'synapses', body, format='pandas')[[*'xyz', 'conf', 'kind']]
-    #selections = (tbars[[*'xyz']] == (25435,26339,21900)).all(axis=1)
-    #tbars = tbars.loc[selections]
+    body = 203253072
+    tbars = fetch_synapses(body, SC(type='pre', primary_only=True))
+    selections = (tbars[[*'xyz']] == (21362,23522,15106)).all(axis=1)
+    tbars = tbars.loc[selections]
+
+    # DEBUG_BODY_MASK = True
+    # EXPORT_DEBUG_VOLUMES = True
+    # #body = 1005308608
+    # body = 2178626284
+    # #tbars = fetch_synapses(body, SC(type='pre', primary_only=True))
+    # tbars = fetch_label('emdata4:8900', '3159', 'synapses', body, format='pandas')[[*'xyz', 'conf', 'kind']]
+    # #selections = (tbars[[*'xyz']] == (25435,26339,21900)).all(axis=1)
+    # #tbars = tbars.loc[selections]
 
     seg_cfg = {
         "zarr": {
