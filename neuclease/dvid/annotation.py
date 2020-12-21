@@ -285,7 +285,7 @@ def fetch_elements(server, uuid, instance, box_zyx, *, format='json', session=No
 def load_elements_as_dataframe(elements):
     """
     Convert the given elements from JSON to a pandas DataFrame.
-    
+
     Note:
         For synapse annotations in particular,
         see ``load_synapses_as_dataframes()``
@@ -293,7 +293,7 @@ def load_elements_as_dataframe(elements):
     pos = np.zeros((len(elements), 3), dtype=np.int32)
     kinds = []
     tags = []
-    
+
     prop_arrays = {}
 
     for i, e in enumerate(elements):
@@ -309,9 +309,14 @@ def load_elements_as_dataframe(elements):
             if pa is None:
                 pa = prop_arrays[k] = np.empty(len(elements), dtype=object)
             pa[i] = v
-    
-    return pd.DataFrame({'z': pos[:, 2], 'y': pos[:,1], 'x': pos[:,0],
-                         'kind': kinds, 'tags': tags, **prop_arrays})
+
+    df = pd.DataFrame({'z': pos[:, 2], 'y': pos[:,1], 'x': pos[:,0],
+                       'kind': kinds, 'tags': tags, **prop_arrays})
+
+    if 'conf' in df.columns:
+        df['conf'] = df['conf'].astype(np.float32)
+
+    return df
 
 
 @dvid_api_wrapper
