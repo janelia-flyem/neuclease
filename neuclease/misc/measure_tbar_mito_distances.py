@@ -50,6 +50,8 @@ def measure_tbar_mito_distances(seg_src,
     Search for the closest mito to each tbar in a list of tbars
     (or any set of points, really).
 
+    FIXME: Rename this function.  It works for more than just tbars.
+
     Args:
         seg_src:
             (server, uuid, instance) OR a flyemflows VolumeService
@@ -94,22 +96,8 @@ def measure_tbar_mito_distances(seg_src,
     # Fetch tbars
     if tbars is None:
         tbars = fetch_synapses(body, SC(type='pre', primary_only=True), client=npclient)
-    else:
-        tbars = tbars.copy()
 
-    tbars['body'] = body
-    tbars['mito-distance'] = np.inf
-    tbars['done'] = False
-    tbars['mito-x'] = 0
-    tbars['mito-y'] = 0
-    tbars['mito-z'] = 0
-    tbars['mito-id'] = np.uint64(0)
-    tbars['search-radius'] = np.int32(0)
-    tbars['download-scale'] = np.int8(0)
-    tbars['analysis-scale'] = np.int8(0)
-    tbars['focal-x'] = 0
-    tbars['focal-y'] = 0
-    tbars['focal-z'] = 0
+    tbars = initialize_results(body, tbars)
 
     if valid_mitos is None or len(valid_mitos) == 0:
         valid_mito_mapper = None
@@ -143,6 +131,24 @@ def measure_tbar_mito_distances(seg_src,
     num_failed = (~tbars['done']).sum()
     logger.info(f"Found mitos for {num_done} tbars, failed for {num_failed} tbars")
 
+    return tbars
+
+
+def initialize_results(body, tbars):
+    tbars = tbars.copy()
+    tbars['body'] = body
+    tbars['mito-distance'] = np.inf
+    tbars['done'] = False
+    tbars['mito-x'] = 0
+    tbars['mito-y'] = 0
+    tbars['mito-z'] = 0
+    tbars['mito-id'] = np.uint64(0)
+    tbars['search-radius'] = np.int32(0)
+    tbars['download-scale'] = np.int8(0)
+    tbars['analysis-scale'] = np.int8(0)
+    tbars['focal-x'] = 0
+    tbars['focal-y'] = 0
+    tbars['focal-z'] = 0
     return tbars
 
 
