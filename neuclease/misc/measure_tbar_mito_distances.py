@@ -113,10 +113,11 @@ def measure_tbar_mito_distances(seg_src,
 
     with tqdm_proxy(total=len(tbars)) as progress:
         for row in tbars.itertuples():
-            if row.done:
+            # can't use row.done -- itertuples might be out-of-sync
+            done = (tbars['done'].loc[row.Index])
+            if done:
                 continue
 
-            done = False
             loop_logger = None
             for cfg in search_configs:
                 (radius_s0, download_scale, analysis_scale,
