@@ -225,7 +225,7 @@ def _measure_tbar_mito_distances(seg_src, mito_src, body, tbar_points_s0, primar
     """
     assert not tbar_points_s0['done'].loc[primary_point_index]
     primary_point_s0 = tbar_points_s0[[*'zyx']].loc[primary_point_index].values
-    batch_tbars = tbar_points_s0.copy()
+    batch_tbars = tbar_points_s0.query('not done').copy()
 
     body_mask, mask_box = _fetch_body_mask(
         seg_src, primary_point_s0, radius_s0, download_scale, analysis_scale, body,
@@ -270,7 +270,7 @@ def _measure_tbar_mito_distances(seg_src, mito_src, body, tbar_points_s0, primar
 
     if body_mask is None:
         # Nothing left after cropping.
-        # Giv up on this search config, but try again.
+        # Give up on this search config, but try again.
         return 0
 
     _mark_mito_seg_faces(
@@ -293,8 +293,6 @@ def _measure_tbar_mito_distances(seg_src, mito_src, body, tbar_points_s0, primar
 
     # Find the set of all points that fall within the body mask.
     # That's that batch of tbars we'll find mito distances for.
-    batch_tbars = batch_tbars.query('not done').copy()
-
     batch_tbars[[*'zyx']] //= (2**analysis_scale)
     in_box = (batch_tbars[[*'zyx']] >= mask_box[0]).all(axis=1) & (batch_tbars[[*'zyx']] < mask_box[1]).all(axis=1)
     batch_tbars = batch_tbars.loc[in_box]
@@ -302,7 +300,7 @@ def _measure_tbar_mito_distances(seg_src, mito_src, body, tbar_points_s0, primar
     tbars_local = batch_tbars[[*'zyx']] - mask_box[0]
     in_mask = body_mask[tuple(tbars_local.values.transpose())]
     batch_tbars = batch_tbars.iloc[in_mask]
-    assert len(batch_tbars) >= 1
+    assert len(batch_tbars) >= 1, f"Lost all tbars around {primary_point_s0[::-1]}"
 
     with Timer(f"Calculating distances for batch of {len(batch_tbars)} points", logger):
         tbars_local = batch_tbars[[*'zyx']] - mask_box[0]
