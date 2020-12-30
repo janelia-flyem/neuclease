@@ -246,27 +246,6 @@ def _measure_tbar_mito_distances(seg_src, mito_src, body, tbar_points_s0, primar
         np.save(f'{d}/mito_seg_unfiltered.npy', mito_seg)
         orig_mask_box = mask_box
 
-    body_mask, mito_seg, mask_box = _crop_body_mask_and_mito_seg(
-        body_mask, mito_seg, mask_box, analysis_scale, batch_tbars[[*'zyx']].values, logger)
-
-    _mark_mito_seg_faces(
-        body_mask, mito_seg, mask_box, primary_point, radius_s0 // (2**analysis_scale))
-
-    if EXPORT_DEBUG_VOLUMES:
-        export_shape = orig_mask_box[1] - orig_mask_box[0]
-        export_box = mask_box - orig_mask_box[0]
-        body_mask_filtered = np.zeros(export_shape, np.uint64)
-        body_mask_filtered[box_to_slicing(*export_box)] = body_mask
-
-        mito_seg_filtered = np.zeros(export_shape, np.uint64)
-        mito_seg_filtered[box_to_slicing(*export_box)] = mito_seg
-
-        np.save(f'{d}/body_mask_filtered.npy', body_mask_filtered)
-        np.save(f'{d}/mito_seg_filtered.npy', mito_seg_filtered)
-
-    # Body mask should be binary for the rest of this function.
-    body_mask = body_mask.astype(bool)
-
     if not mito_seg.any():
         # The body mask contains no mitochondria at all.
         # Does the body mask come near enough to the volume edge that it
@@ -285,6 +264,32 @@ def _measure_tbar_mito_distances(seg_src, mito_src, body, tbar_points_s0, primar
             # We'll give up, even though we can't find a mito.
             tbar_points_s0.loc[primary_point_index, 'done'] = True
             return 1
+
+    body_mask, mito_seg, mask_box = _crop_body_mask_and_mito_seg(
+        body_mask, mito_seg, mask_box, analysis_scale, batch_tbars[[*'zyx']].values, logger)
+
+    if body_mask is None:
+        # Nothing left after cropping.
+        # Giv up on this search config, but try again.
+        return 0
+
+    _mark_mito_seg_faces(
+        body_mask, mito_seg, mask_box, primary_point, radius_s0 // (2**analysis_scale))
+
+    if EXPORT_DEBUG_VOLUMES:
+        export_shape = orig_mask_box[1] - orig_mask_box[0]
+        export_box = mask_box - orig_mask_box[0]
+        body_mask_filtered = np.zeros(export_shape, np.uint64)
+        body_mask_filtered[box_to_slicing(*export_box)] = body_mask
+
+        mito_seg_filtered = np.zeros(export_shape, np.uint64)
+        mito_seg_filtered[box_to_slicing(*export_box)] = mito_seg
+
+        np.save(f'{d}/body_mask_filtered.npy', body_mask_filtered)
+        np.save(f'{d}/mito_seg_filtered.npy', mito_seg_filtered)
+
+    # Body mask should be binary for the rest of this function.
+    body_mask = body_mask.astype(bool)
 
     # Find the set of all points that fall within the body mask.
     # That's that batch of tbars we'll find mito distances for.
@@ -518,6 +523,9 @@ def _crop_body_mask_and_mito_seg(body_mask, mito_seg, mask_box, analysis_scale, 
     # Shrink the volume bounding box to encompass only the
     # non-zero portion of the filtered body mask.
     nz_box = compute_nonzero_box(keep_mask)
+    if not nz_box.any():
+        return None, None, nz_box
+
     body_mask = body_mask[box_to_slicing(*nz_box)]
     mito_seg = mito_seg[box_to_slicing(*nz_box)]
     mask_box = mask_box[0] + nz_box
