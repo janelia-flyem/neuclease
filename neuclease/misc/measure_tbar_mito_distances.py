@@ -161,6 +161,7 @@ def initialize_results(body, tbars):
     tbars['search-radius'] = np.int32(0)
     tbars['download-scale'] = np.int8(0)
     tbars['analysis-scale'] = np.int8(0)
+    tbars['crossed-gap'] = False
     tbars['focal-x'] = 0
     tbars['focal-y'] = 0
     tbars['focal-z'] = 0
@@ -300,12 +301,13 @@ def _measure_tbar_mito_distances(seg_src, mito_src, body, tbar_points_s0, primar
 
     with Timer(f"Calculating distances for batch of {len(batch_tbars)} points", logger):
         tbars_local = batch_tbars[[*'zyx']] - mask_box[0]
-        mito_ids, distances, mito_points_local = _calc_distances(body_mask, mito_seg, tbars_local.values, logger)
+        mito_ids, distances, mito_points_local, crossed_gaps = _calc_distances(body_mask, mito_seg, tbars_local.values, logger)
 
     mito_points = mito_points_local + mask_box[0]
     batch_tbars['mito-id'] = mito_ids
     batch_tbars['mito-distance'] = distances
     batch_tbars.loc[:, ['mito-z', 'mito-y', 'mito-x']] = mito_points
+    batch_tbars['crossed-gap'] = crossed_gaps
 
     # If the closest "mito" to the tbar was actually a "fake mito", inserted
     # onto the face of the volume (indicated by FACE_MARKER id value),
@@ -322,6 +324,7 @@ def _measure_tbar_mito_distances(seg_src, mito_src, body, tbar_points_s0, primar
     tbar_points_s0.loc[batch_tbars.index, 'search-radius'] = radius_s0
     tbar_points_s0.loc[batch_tbars.index, 'download-scale'] = download_scale
     tbar_points_s0.loc[batch_tbars.index, 'analysis-scale'] = analysis_scale
+    tbar_points_s0.loc[batch_tbars.index, 'crossed-gap'] = batch_tbars['crossed-gap']
     tbar_points_s0.loc[batch_tbars.index, ['focal-z', 'focal-y', 'focal-x']] = primary_point_s0[None, :]
     tbar_points_s0.loc[batch_tbars.index, 'done'] = True
 
@@ -590,6 +593,7 @@ def _calc_distances(body_mask, mito_seg, local_points_zyx, logger):
     # Insanely, MCP source code copies to fortran order internally,
     # so let's pass in fortran order to start with.
     # That shaves ~10-20% from the initialization time.
+    body_mask = body_mask.transpose()
     body_costs = body_costs.transpose()
     mito_seg = mito_seg.transpose()
     local_points_xyz = np.asarray(local_points_zyx)[:, ::-1]
@@ -602,16 +606,23 @@ def _calc_distances(body_mask, mito_seg, local_points_zyx, logger):
     # in MCP internally after find_costs() above.
     p_mito_xyz = np.zeros((len(local_points_xyz), 3), np.int16)
 
+    crossed_gaps = np.zeros(len(local_points_xyz), bool)
     for i, (p_xyz, d) in enumerate(zip(local_points_xyz, point_distances)):
         if d != np.inf:
-            p_mito_xyz[i] = mcp.traceback(p_xyz)[0]
+            tb = np.asarray(mcp.traceback(p_xyz))
+            p_mito_xyz[i] = tb[0]
+
+            # If the traceback had to use a gap-crossing, note it.
+            # See the meaning of body_mask label 1 vs. label 2, above.
+            # (label 1 means it's a filled gap voxel)
+            crossed_gaps[i] = (body_mask[tuple(tb.transpose())] == 1).any()
 
     mito_ids = mito_seg[tuple(p_mito_xyz.transpose())]
     mito_ids[np.isinf(point_distances)] = 0
 
     # Transpose back to C-order
     p_mito_zyx = p_mito_xyz[:, ::-1]
-    return mito_ids, point_distances, p_mito_zyx
+    return mito_ids, point_distances, p_mito_zyx, crossed_gaps
 
 
 if __name__ == "__main__":
@@ -688,3 +699,4 @@ if __name__ == "__main__":
     processed_tbars = measure_tbar_mito_distances(seg_svc, mito_svc, body, tbars=tbars, valid_mitos=valid_mitos)
     cols = ['bodyId', 'type', *'xyz', 'mito-distance', 'done', 'mito-id', 'mito-x', 'mito-y', 'mito-z', 'search-radius', 'download-scale', 'analysis-scale']
     print(processed_tbars[cols])
+    processed_tbars.to_csv('/tmp/tbar-test-results.csv')
