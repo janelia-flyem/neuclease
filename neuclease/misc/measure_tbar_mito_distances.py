@@ -13,7 +13,7 @@ from vigra.analysis import labelMultiArrayWithBackground
 
 from dvidutils import LabelMapper
 from neuprint import SynapseCriteria as SC, fetch_synapses
-from neuclease.util import tqdm_proxy, Timer, box_to_slicing, round_box, apply_mask_for_labels, downsample_mask
+from neuclease.util import tqdm_proxy, Timer, box_to_slicing, round_box, apply_mask_for_labels, downsample_mask, compute_nonzero_box, mask_for_labels
 from neuclease.logging_setup import PrefixedLogger
 
 try:
@@ -216,6 +216,8 @@ def _measure_tbar_mito_distances(seg_src, mito_src, body, tbar_points_s0, primar
     mito_seg = _fetch_body_mito_seg(
         mito_src, body_mask, mask_box, analysis_scale, valid_mito_mapper, logger)
 
+    body_mask, mito_seg, mask_box = _crop_body_mask_and_mito_seg(body_mask, mito_seg, mask_box, analysis_scale, batch_tbars[[*'zyx']].values)
+
     primary_point = primary_point_s0 // (2**analysis_scale)
     _mark_mito_seg_faces(body_mask, mito_seg, mask_box, primary_point, radius_s0 // (2**analysis_scale))
 
@@ -366,28 +368,14 @@ def _fetch_body_mask(seg_src, primary_point_s0, radius_s0, download_scale, analy
         dilation_radius = max(1, dilation_radius_s0 // (2**analysis_scale))
         dilated_mask = vigra.filters.multiBinaryDilation(raw_mask, dilation_radius)
 
-    if DEBUG_BODY_MASK:
-        cc_mask = dilated_mask
-    else:
-        # Find the connected component that contains our point of interest
-        # amd limit our analysis to those voxels.
-        body_cc = labelMultiArrayWithBackground(dilated_mask)
-
-        # Keep only the main CC.
-        cc_mask = (body_cc == body_cc[(*p_local,)]).view(np.uint8)
-
     # Label the voxels:
     # 1: dilated mask (main CC only)
     # 2: dilated mask (main CC only) AND raw
-    body_mask = np.where(cc_mask, raw_mask + cc_mask, 0)
+    body_mask = np.where(dilated_mask, raw_mask + dilated_mask, 0)
 
-    # Shrink the volume size to fit the data, but align box to nearest 64px
-    body_block_mask = view_as_blocks(body_mask, (64,64,64)).any(axis=(3,4,5))
-    body_block_corners = seg_box[0] + (64 * np.argwhere(body_block_mask))
-    mask_box = (body_block_corners.min(axis=0),
-                body_block_corners.max(axis=0) + 64)
-
-    local_box = mask_box - seg_box[0]
+    # Shrink to fit the data.
+    local_box = compute_nonzero_box(body_mask)
+    mask_box = local_box + seg_box[0]
     body_mask = body_mask[box_to_slicing(*local_box)]
 
     assert body_mask[(*p - mask_box[0],)]
@@ -434,6 +422,34 @@ def _fetch_body_mito_seg(mito_src, body_mask, mask_box, scale, valid_mito_mapper
     core_mitos = {*mito_sizes[(body_mito_sizes > mito_sizes / 2)].index} - {0}
     core_mito_seg = apply_mask_for_labels(mito_seg, core_mitos, inplace=True)
     return core_mito_seg
+
+
+def _crop_body_mask_and_mito_seg(body_mask, mito_seg, mask_box, analysis_scale, tbar_points_s0):
+    """
+    To reduce the size of the analysis volumes during distance computation
+    (the most expensive step), we pre-filter out components of the body mask
+    don't actually contain both points of interest and mito.
+    """
+    body_cc = labelMultiArrayWithBackground((body_mask != 0).view(np.uint8))
+
+    # Keep only components which contain both mito and points
+    tbar_points = tbar_points_s0 // (2**analysis_scale)
+    in_box = (tbar_points >= mask_box[0]).all(axis=1) & (tbar_points < mask_box[1]).all(axis=1)
+    tbar_points = tbar_points[in_box]
+    pts_local = tbar_points - mask_box[0]
+    point_ccs = pd.unique(body_cc[tuple(np.transpose(pts_local))])
+    mito_ccs = pd.unique(body_cc[mito_seg != 0])
+    keep_ccs = set(point_ccs) & set(mito_ccs)
+    keep_mask = mask_for_labels(body_cc, keep_ccs)
+
+    # Shrink the volume bounding box to encompass only the
+    # non-zero portion of the filtered body mask.
+    nz_box = compute_nonzero_box(keep_mask)
+    body_mask = body_mask[box_to_slicing(*nz_box)]
+    mito_seg = mito_seg[box_to_slicing(*nz_box)]
+    mask_box = mask_box[0] + nz_box
+    return body_mask, mito_seg, mask_box
+
 
 
 def _mark_mito_seg_faces(body_mask, mito_seg, mask_box, primary_point, radius):
@@ -535,7 +551,7 @@ if __name__ == "__main__":
     from neuclease import configure_default_logging
     configure_default_logging()
 
-    c = Client('neuprint.janelia.org', 'hemibrain:v1.1')
+    c = Client('neuprint.janelia.org', 'hemibrain:v1.2')
 
     # body = 519046655
     # tbars = fetch_synapses(body, SC(rois='FB', type='pre', primary_only=True))
@@ -554,12 +570,18 @@ if __name__ == "__main__":
     # selections = (tbars[[*'xyz']] == (18212,12349,16592)).all(axis=1)
     # tbars = tbars.loc[selections]
 
+    # DEBUG_BODY_MASK = True
+    # EXPORT_DEBUG_VOLUMES = True
+    # body = 203253072
+    # tbars = fetch_synapses(body, SC(type='pre', primary_only=True))
+    # selections = (tbars[[*'xyz']] == (21362,23522,15106)).all(axis=1)
+    # tbars = tbars.loc[selections]
+
     DEBUG_BODY_MASK = True
     EXPORT_DEBUG_VOLUMES = True
-    body = 203253072
+    body = 5813105172  # DPM neuron -- very dense
     tbars = fetch_synapses(body, SC(type='pre', primary_only=True))
-    selections = (tbars[[*'xyz']] == (21362,23522,15106)).all(axis=1)
-    tbars = tbars.loc[selections]
+    tbars = tbars.iloc[:10]
 
     # DEBUG_BODY_MASK = True
     # EXPORT_DEBUG_VOLUMES = True
@@ -598,4 +620,5 @@ if __name__ == "__main__":
     valid_mitos = fetch_supervoxels('emdata4:8900', '3159', 'mito-objects', body)
 
     processed_tbars = measure_tbar_mito_distances(seg_svc, mito_svc, body, tbars=tbars, valid_mitos=valid_mitos, dilation_radius_s0=32)
-    print(processed_tbars)
+    cols = ['bodyId', 'type', *'xyz', 'mito-distance', 'done', 'mito-id', 'mito-x', 'mito-y', 'mito-z', 'search-radius', 'download-scale', 'analysis-scale']
+    print(processed_tbars[cols])
