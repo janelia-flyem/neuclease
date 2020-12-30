@@ -30,7 +30,7 @@ SearchConfig = namedtuple('SearchConfig', 'radius_s0 download_scale analysis_sca
 DEFAULT_SEARCH_CONFIGS = [
     SearchConfig(radius_s0=250,  download_scale=2, analysis_scale=3),  #  2 microns (empirically, this captures ~90% of FB tbars)
     SearchConfig(radius_s0=625,  download_scale=2, analysis_scale=3),  #  5 microns
-    SearchConfig(radius_s0=1250, download_scale=2, analysis_scale=4)   # 10 microns
+    SearchConfig(radius_s0=1250, download_scale=2, analysis_scale=3)   # 10 microns
 ]
 
 # Fake mito ID to mark the places where a body exits the analysis volume.
