@@ -26,8 +26,9 @@ EXPORT_DEBUG_VOLUMES = False
 SearchConfig = namedtuple('SearchConfig', 'radius_s0 download_scale analysis_scale dilation_radius_s0 dilation_exclusion_buffer_s0')
 
 DEFAULT_SEARCH_CONFIGS = [
-    SearchConfig(radius_s0=250,  download_scale=1, analysis_scale=3, dilation_radius_s0=0, dilation_exclusion_buffer_s0=0),    #  2 microns (empirically, this captures ~90% of FB tbars)
-    SearchConfig(radius_s0=625,  download_scale=1, analysis_scale=3, dilation_radius_s0=0, dilation_exclusion_buffer_s0=0),    #  5 microns
+    # Note to self: Be careful -- not all of the hemibrain zarr exports include scales 0-1!
+    SearchConfig(radius_s0=250,  download_scale=2, analysis_scale=3, dilation_radius_s0=0,  dilation_exclusion_buffer_s0=0),   #  2 microns (empirically, this captures ~90% of FB tbars)
+    SearchConfig(radius_s0=625,  download_scale=2, analysis_scale=3, dilation_radius_s0=0,  dilation_exclusion_buffer_s0=0),   #  5 microns
     SearchConfig(radius_s0=1250, download_scale=2, analysis_scale=3, dilation_radius_s0=16, dilation_exclusion_buffer_s0=625)  # 10 microns
 ]
 
@@ -114,7 +115,7 @@ def measure_tbar_mito_distances(seg_src,
     with tqdm_proxy(total=len(tbars)) as progress:
         for row in tbars.itertuples():
             # can't use row.done -- itertuples might be out-of-sync
-            done = (tbars['done'].loc[row.Index])
+            done = tbars['done'].loc[row.Index]
             if done:
                 continue
 
@@ -133,7 +134,7 @@ def measure_tbar_mito_distances(seg_src,
                     valid_mito_mapper, loop_logger)
 
                 progress.update(num_done)
-                done = (tbars['done'].loc[row.Index])
+                done = tbars['done'].loc[row.Index]
                 if done:
                     break
                 loop_logger.info("Search failed for primary tbar. Trying next search config!")
@@ -238,7 +239,7 @@ def _measure_tbar_mito_distances(seg_src, mito_src, body, tbar_points_s0, primar
 
     p = d = orig_mask_box = None
     if EXPORT_DEBUG_VOLUMES:
-        print(f"Primary point in the local volume is: {(primary_point - mask_box[0])[::-1]}")
+        print(f"Local volume starts at {mask_box[0][::-1]}. Primary point in the local volume is: {(primary_point - mask_box[0])[::-1]}")
         p = '-'.join(str(x) for x in primary_point_s0[::-1])
         d = f'/tmp/{p}'
         os.makedirs(d, exist_ok=True)
@@ -659,10 +660,23 @@ if __name__ == "__main__":
     # selections = (tbars[[*'xyz']] == (21362,23522,15106)).all(axis=1)
     # tbars = tbars.loc[selections]
 
+    # EXPORT_DEBUG_VOLUMES = True
+    # body = 5813105172  # DPM neuron -- very dense
+    # tbars = fetch_synapses(body, SC(type='pre', primary_only=True))
+    # tbars = tbars.iloc[:10]
+
+    # EXPORT_DEBUG_VOLUMES = True
+    # body = 2346398733
+    # tbars = fetch_synapses(body, SC(primary_only=True)).sort_values([*'xyz']).reset_index(drop=True)
+    # selections = (tbars[[*'xyz']] == (2304,24634,32979)).all(axis=1)
+    # tbars = tbars.loc[selections]
+
     EXPORT_DEBUG_VOLUMES = True
-    body = 5813105172  # DPM neuron -- very dense
-    tbars = fetch_synapses(body, SC(type='pre', primary_only=True))
-    tbars = tbars.iloc[:10]
+    body = 1107146865
+    tbars = fetch_synapses(body, SC(primary_only=True)).sort_values([*'xyz']).reset_index(drop=True)
+    #selections = (tbars[[*'xyz']] == (12773, 26869, 15604)).all(axis=1)
+    selections = (tbars[[*'xyz']] == (9117, 20980, 27398)).all(axis=1)
+    tbars = tbars.loc[selections]
 
     # EXPORT_DEBUG_VOLUMES = True
     # #body = 1005308608
