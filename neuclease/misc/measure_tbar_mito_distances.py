@@ -288,9 +288,6 @@ def _measure_tbar_mito_distances(seg_src, mito_src, body, tbar_points_s0, primar
         np.save(f'{d}/body_mask_filtered.npy', body_mask_filtered)
         np.save(f'{d}/mito_seg_filtered.npy', mito_seg_filtered)
 
-    # Body mask should be binary for the rest of this function.
-    body_mask = body_mask.astype(bool)
-
     # Find the set of all points that fall within the body mask.
     # That's that batch of tbars we'll find mito distances for.
     batch_tbars[[*'zyx']] //= (2**analysis_scale)
@@ -298,7 +295,7 @@ def _measure_tbar_mito_distances(seg_src, mito_src, body, tbar_points_s0, primar
     batch_tbars = batch_tbars.loc[in_box]
 
     tbars_local = batch_tbars[[*'zyx']] - mask_box[0]
-    in_mask = body_mask[tuple(tbars_local.values.transpose())]
+    in_mask = body_mask[tuple(tbars_local.values.transpose())].astype(bool)
     batch_tbars = batch_tbars.iloc[in_mask]
     assert len(batch_tbars) >= 1, f"Lost all tbars around {primary_point_s0[::-1]}"
 
@@ -594,7 +591,7 @@ def _calc_distances(body_mask, mito_seg, local_points_zyx, logger):
         return 0, np.inf, (0,0,0)
 
     # MCP uses float64, so we may as well use that now and avoid copies
-    body_costs = np.where(body_mask, 1.0, np.inf)
+    body_costs = np.where(body_mask.astype(bool), 1.0, np.inf)
 
     # Insanely, MCP source code copies to fortran order internally,
     # so let's pass in fortran order to start with.
@@ -703,6 +700,6 @@ if __name__ == "__main__":
     valid_mitos = fetch_supervoxels('emdata4:8900', '3159', 'mito-objects', body)
 
     processed_tbars = measure_tbar_mito_distances(seg_svc, mito_svc, body, tbars=tbars, valid_mitos=valid_mitos)
-    cols = ['bodyId', 'type', *'xyz', 'mito-distance', 'done', 'mito-id', 'mito-x', 'mito-y', 'mito-z', 'search-radius', 'download-scale', 'analysis-scale']
+    cols = ['bodyId', 'type', *'xyz', 'mito-distance', 'crossed-gap', 'mito-id', 'mito-x', 'mito-y', 'mito-z', 'search-radius', 'download-scale', 'analysis-scale', 'focal-x']
     print(processed_tbars[cols])
     processed_tbars.to_csv('/tmp/tbar-test-results.csv')
