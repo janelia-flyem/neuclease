@@ -23,13 +23,13 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 EXPORT_DEBUG_VOLUMES = False
-SearchConfig = namedtuple('SearchConfig', 'radius_s0 download_scale analysis_scale dilation_radius_s0 dilation_exclusion_buffer_s0')
+SearchConfig = namedtuple('SearchConfig', 'radius_s0 download_scale analysis_scale dilation_radius_s0 dilation_exclusion_buffer_s0 is_final')
 
 DEFAULT_SEARCH_CONFIGS = [
     # Note to self: Be careful -- not all of the hemibrain zarr exports include scales 0-1!
-    SearchConfig(radius_s0=250,  download_scale=2, analysis_scale=3, dilation_radius_s0=0,  dilation_exclusion_buffer_s0=0),   #  2 microns (empirically, this captures ~90% of FB tbars)
-    SearchConfig(radius_s0=625,  download_scale=2, analysis_scale=3, dilation_radius_s0=0,  dilation_exclusion_buffer_s0=0),   #  5 microns
-    SearchConfig(radius_s0=1250, download_scale=2, analysis_scale=3, dilation_radius_s0=16, dilation_exclusion_buffer_s0=625)  # 10 microns
+    SearchConfig(radius_s0=250,  download_scale=2, analysis_scale=3, dilation_radius_s0=0,  dilation_exclusion_buffer_s0=0, is_final=False),   #  2 microns (empirically, this captures ~90% of FB tbars)
+    SearchConfig(radius_s0=625,  download_scale=2, analysis_scale=3, dilation_radius_s0=0,  dilation_exclusion_buffer_s0=0, is_final=False),   #  5 microns
+    SearchConfig(radius_s0=1250, download_scale=2, analysis_scale=3, dilation_radius_s0=16, dilation_exclusion_buffer_s0=625, is_final=True)  # 10 microns
 ]
 
 # Fake mito ID to mark the places where a body exits the analysis volume.
@@ -100,6 +100,10 @@ def measure_tbar_mito_distances(seg_src,
         Points for which no nearby mito could be found (after trying all the given search_configs)
         will be marked with `done=False` in the results.
     """
+    assert search_configs[-1].is_final, "Last search config should be marked is_final"
+    assert all([not cfg.is_final for cfg in search_configs[:-1]]), \
+        "Only the last search config should be marked is_final (no others)."
+
     # Fetch tbars
     if tbars is None:
         tbars = fetch_synapses(body, SC(type='pre', primary_only=True), client=npclient)
@@ -121,31 +125,30 @@ def measure_tbar_mito_distances(seg_src,
 
             loop_logger = None
             for cfg in search_configs:
-                (radius_s0, download_scale, analysis_scale,
-                    dilation_radius_s0, dilation_exclusion_buffer_s0) = cfg
-
-                prefix = f"({row.x}, {row.y}, {row.z}) [ds={download_scale} as={analysis_scale} r={radius_s0:4} dil={dilation_radius_s0:2}] "
+                prefix = (f"({row.x}, {row.y}, {row.z}) [ds={cfg.download_scale} "
+                          f"as={cfg.analysis_scale} r={cfg.radius_s0:4} dil={cfg.dilation_radius_s0:2}] ")
                 loop_logger = PrefixedLogger(logger, prefix)
 
-                num_done = _measure_tbar_mito_distances(
-                    seg_src, mito_src, body, tbars, row.Index,
-                    radius_s0, download_scale, analysis_scale,
-                    dilation_radius_s0, dilation_exclusion_buffer_s0,
-                    valid_mito_mapper, loop_logger)
+                prev_num_done = tbars['done'].sum()
+                _measure_tbar_mito_distances(
+                    seg_src, mito_src, body, tbars, row.Index, cfg, valid_mito_mapper, loop_logger)
+                num_done = tbars['done'].sum()
 
-                progress.update(num_done)
+                progress.update(num_done - prev_num_done)
                 done = tbars['done'].loc[row.Index]
                 if done:
                     break
-                loop_logger.info("Search failed for primary tbar. Trying next search config!")
+
+                if not cfg.is_final:
+                    loop_logger.info("Search failed for primary tbar. Trying next search config!")
 
             if not done:
-                loop_logger.warn(f"Failed to find a nearby mito for tbar at point {(row.x, row.y, row.z)}")
+                loop_logger.warning(f"Failed to find a nearby mito for tbar at point {(row.x, row.y, row.z)}")
                 progress.update(1)
 
-    num_done = tbars['done'].sum()
-    num_failed = (~tbars['done']).sum()
-    logger.info(f"Found mitos for {num_done} tbars, failed for {num_failed} tbars")
+    failed = np.isinf(tbars['mito-distance'])
+    succeeded = ~failed
+    logger.info(f"Found mitos for {succeeded.sum()} tbars, failed for {failed.sum()} tbars")
 
     return tbars
 
@@ -170,9 +173,7 @@ def initialize_results(body, tbars):
 
 
 def _measure_tbar_mito_distances(seg_src, mito_src, body, tbar_points_s0, primary_point_index,
-                                 radius_s0, download_scale, analysis_scale,
-                                 dilation_radius_s0, dilation_exclusion_buffer_s0,
-                                 valid_mito_mapper, logger):
+                                 search_cfg, valid_mito_mapper, logger):
     """
     Download the segmentation for a single body around one tbar point as a mask,
     and also the corresponding mitochondria mask for those voxels.
@@ -228,9 +229,11 @@ def _measure_tbar_mito_distances(seg_src, mito_src, body, tbar_points_s0, primar
     primary_point_s0 = tbar_points_s0[[*'zyx']].loc[primary_point_index].values
     batch_tbars = tbar_points_s0.query('not done').copy()
 
+    (radius_s0, _download_scale, analysis_scale,
+        _dilation_radius_s0, _dilation_exclusion_buffer_s0, _is_final) = search_cfg
+
     body_mask, mask_box = _fetch_body_mask(
-        seg_src, primary_point_s0, radius_s0, download_scale, analysis_scale, body,
-        dilation_radius_s0, dilation_exclusion_buffer_s0, batch_tbars[[*'zyx']].values, logger)
+        seg_src, primary_point_s0, body, search_cfg, batch_tbars[[*'zyx']].values, logger)
 
     mito_seg = _fetch_body_mito_seg(
         mito_src, body_mask, mask_box, analysis_scale, valid_mito_mapper, logger)
@@ -247,27 +250,16 @@ def _measure_tbar_mito_distances(seg_src, mito_src, body, tbar_points_s0, primar
         np.save(f'{d}/mito_seg_unfiltered.npy', mito_seg)
         orig_mask_box = mask_box
 
-    if not mito_seg.any():
-        # The body mask contains no mitochondria at all.
-        # Does the body mask come near enough to the volume edge that it
-        # could, conceivably, be joined to another part of the body mask
-        # outside this block after dilation is performed?
+    body_mask, mito_seg, mask_box, hopeless_indexes = _crop_body_mask_and_mito_seg(
+        body_mask, mito_seg, mask_box, search_cfg, batch_tbars, primary_point, logger)
 
-        cr = max(1, dilation_radius_s0 // (2**analysis_scale))
-        if ( body_mask[0:cr+1, :, :].any() or body_mask[-cr-1:, :, :].any() or  # noqa
-             body_mask[:, 0:cr+1, :].any() or body_mask[:, -cr-1:, :].any() or  # noqa
-             body_mask[:, :, 0:cr+1].any() or body_mask[:, :, -cr-1:].any() ):
-            # The body mask approaches the edge of the volume,
-            # so we should expand our radius and keep trying.
-            return 0
-        else:
-            # The mask doesn't even come close to the volume edges.
-            # We'll give up, even though we can't find a mito.
-            tbar_points_s0.loc[primary_point_index, 'done'] = True
-            return 1
-
-    body_mask, mito_seg, mask_box = _crop_body_mask_and_mito_seg(
-        body_mask, mito_seg, mask_box, analysis_scale, batch_tbars[[*'zyx']].values, logger)
+    if len(hopeless_indexes):
+        logger.info(f"Marking {len(hopeless_indexes)} points as hopeless")
+        tbar_points_s0.loc[hopeless_indexes, 'search-radius'] = search_cfg.radius_s0
+        tbar_points_s0.loc[hopeless_indexes, 'download-scale'] = search_cfg.download_scale
+        tbar_points_s0.loc[hopeless_indexes, 'analysis-scale'] = search_cfg.analysis_scale
+        tbar_points_s0.loc[hopeless_indexes, ['focal-z', 'focal-y', 'focal-x']] = primary_point_s0[None, :]
+        tbar_points_s0.loc[hopeless_indexes, 'done'] = True
 
     if body_mask is None:
         # Nothing left after cropping.
@@ -291,7 +283,7 @@ def _measure_tbar_mito_distances(seg_src, mito_src, body, tbar_points_s0, primar
 
     # Find the set of all points that fall within the body mask.
     # That's that batch of tbars we'll find mito distances for.
-    batch_tbars[[*'zyx']] //= (2**analysis_scale)
+    batch_tbars[[*'zyx']] //= (2 ** analysis_scale)
     in_box = (batch_tbars[[*'zyx']] >= mask_box[0]).all(axis=1) & (batch_tbars[[*'zyx']] < mask_box[1]).all(axis=1)
     batch_tbars = batch_tbars.loc[in_box]
 
@@ -318,13 +310,16 @@ def _measure_tbar_mito_distances(seg_src, mito_src, body, tbar_points_s0, primar
     logger.info(f"Kept {valid.sum()}/{len(batch_tbars)} mito distances (R={radius_s0})")
     batch_tbars = batch_tbars.loc[valid]
 
-    # Update the input DataFrame (and rescale)
+    # Update the input DataFrame (and rescale to s0 as needed)
+    mito_distances_s0 = batch_tbars['mito-distance'] * (2 ** search_cfg.analysis_scale)
+    mito_zyx_s0 = batch_tbars[['mito-z', 'mito-y', 'mito-x']] * ( 2 ** search_cfg.analysis_scale)
+
     tbar_points_s0.loc[batch_tbars.index, 'mito-id'] = batch_tbars['mito-id']
-    tbar_points_s0.loc[batch_tbars.index, 'mito-distance'] = (2**analysis_scale)*batch_tbars['mito-distance']
-    tbar_points_s0.loc[batch_tbars.index, ['mito-z', 'mito-y', 'mito-x']] = (2**analysis_scale)*batch_tbars[['mito-z', 'mito-y', 'mito-x']]
-    tbar_points_s0.loc[batch_tbars.index, 'search-radius'] = radius_s0
-    tbar_points_s0.loc[batch_tbars.index, 'download-scale'] = download_scale
-    tbar_points_s0.loc[batch_tbars.index, 'analysis-scale'] = analysis_scale
+    tbar_points_s0.loc[batch_tbars.index, 'mito-distance'] = mito_distances_s0
+    tbar_points_s0.loc[batch_tbars.index, ['mito-z', 'mito-y', 'mito-x']] = mito_zyx_s0
+    tbar_points_s0.loc[batch_tbars.index, 'search-radius'] = search_cfg.radius_s0
+    tbar_points_s0.loc[batch_tbars.index, 'download-scale'] = search_cfg.download_scale
+    tbar_points_s0.loc[batch_tbars.index, 'analysis-scale'] = search_cfg.analysis_scale
     tbar_points_s0.loc[batch_tbars.index, 'crossed-gap'] = batch_tbars['crossed-gap']
     tbar_points_s0.loc[batch_tbars.index, ['focal-z', 'focal-y', 'focal-x']] = primary_point_s0[None, :]
     tbar_points_s0.loc[batch_tbars.index, 'done'] = True
@@ -332,8 +327,7 @@ def _measure_tbar_mito_distances(seg_src, mito_src, body, tbar_points_s0, primar
     return len(batch_tbars)
 
 
-def _fetch_body_mask(seg_src, primary_point_s0, radius_s0, download_scale, analysis_scale, body,
-                     dilation_radius_s0, dilation_exclusion_buffer_s0, tbar_points_s0, logger):
+def _fetch_body_mask(seg_src, primary_point_s0, body, search_cfg, tbar_points_s0, logger):
     """
     Fetch a mask for the given body around the given point, with the given radius.
 
@@ -348,6 +342,9 @@ def _fetch_body_mask(seg_src, primary_point_s0, radius_s0, download_scale, analy
     restrict the voxels that are preserved when filtering mitos, if no valid_mitos
     are provided to that function.
     """
+    (radius_s0, download_scale, analysis_scale,
+        dilation_radius_s0, dilation_exclusion_buffer_s0, _is_final) = search_cfg
+
     scale_diff = analysis_scale - download_scale
     with Timer("Fetching body segmentation", logger):
         assert _have_flyemflows and isinstance(seg_src, VolumeService)
@@ -494,38 +491,76 @@ def _fetch_body_mito_seg(mito_src, body_mask, mask_box, scale, valid_mito_mapper
     return core_mito_seg
 
 
-def _crop_body_mask_and_mito_seg(body_mask, mito_seg, mask_box, analysis_scale, tbar_points_s0, logger):
+def _crop_body_mask_and_mito_seg(body_mask, mito_seg, mask_box, search_cfg, batch_tbars, primary_point, logger):
     """
     To reduce the size of the analysis volumes during distance computation
     (the most expensive step), we pre-filter out components of the body mask
     don't actually contain both points of interest and mito.
+
+    If those segments don't even touch the volume edges,
+    then any points on those segments can be safely marked 'done'
+    if this is the final search config.
     """
-    body_cc = labelMultiArrayWithBackground((body_mask != 0).view(np.uint8))
+    with Timer("Filtering components and cropping", logger):
+        body_cc = labelMultiArrayWithBackground((body_mask != 0).view(np.uint8))
 
-    # Keep only components which contain both mito and points
-    tbar_points = tbar_points_s0 // (2**analysis_scale)
-    in_box = (tbar_points >= mask_box[0]).all(axis=1) & (tbar_points < mask_box[1]).all(axis=1)
-    tbar_points = tbar_points[in_box]
-    pts_local = tbar_points - mask_box[0]
-    point_ccs = pd.unique(body_cc[tuple(np.transpose(pts_local))])
-    mito_ccs = pd.unique(body_cc[mito_seg != 0])
-    keep_ccs = set(point_ccs) & set(mito_ccs)
-    keep_mask = mask_for_labels(body_cc, keep_ccs)
+        # Keep only components which contain both mito and points
+        tbar_points = batch_tbars[[*'zyx']].values // (2 ** search_cfg.analysis_scale)
+        is_in_box = (tbar_points >= mask_box[0]).all(axis=1) & (tbar_points < mask_box[1]).all(axis=1)
+        tbar_points = tbar_points[is_in_box]
+        pts_local = tbar_points - mask_box[0]
 
-    body_mask = np.where(keep_mask, body_mask, 0)
-    mito_seg = np.where(keep_mask, mito_seg, 0)
-    logger.info(f"Dropped {body_cc.max() - len(keep_ccs)} components, kept {len(keep_ccs)}")
+        point_cc_df = batch_tbars.iloc[is_in_box][[*'zyx']].copy()
+        point_cc_df['cc'] = body_cc[tuple(np.transpose(pts_local))]
 
-    # Shrink the volume bounding box to encompass only the
-    # non-zero portion of the filtered body mask.
-    nz_box = compute_nonzero_box(keep_mask)
-    if not nz_box.any():
-        return None, None, nz_box
+        point_ccs = set(point_cc_df['cc'])
+        mito_ccs = set(pd.unique(body_cc[mito_seg != 0]))
+        keep_ccs = point_ccs & mito_ccs
+        keep_mask = mask_for_labels(body_cc, keep_ccs)
 
-    body_mask = body_mask[box_to_slicing(*nz_box)]
-    mito_seg = mito_seg[box_to_slicing(*nz_box)]
-    mask_box = mask_box[0] + nz_box
-    return body_mask, mito_seg, mask_box
+        body_mask = np.where(keep_mask, body_mask, 0)
+        mito_seg = np.where(keep_mask, mito_seg, 0)
+        logger.info(f"Dropped {body_cc.max() - len(keep_ccs)} components, kept {len(keep_ccs)}")
+
+        # Also determine the set of points which should be marked as hopeless,
+        # due to a lack of mitos on their components.
+        # Hopeless points are those which reside on hopeless components.
+        # Hopeless components are any components that fall within the dilation
+        # region and still ended up without mitos.
+        hopeless_point_ids = []
+        if search_cfg.is_final and (point_ccs - mito_ccs):
+            with Timer("Identifying hopeless points", logger):
+                # Calculate the region that is subject to repairs (dilation),
+                # in local coordinates.
+                dr = search_cfg.dilation_radius_s0 // (2 ** search_cfg.analysis_scale)
+                buf = search_cfg.dilation_exclusion_buffer_s0 // (2 ** search_cfg.analysis_scale)
+                buf += max(1, dr)
+                R = search_cfg.radius_s0 // (2 ** search_cfg.analysis_scale)
+                orig_box = np.array([primary_point - R, primary_point + R + 1])
+                inner_box = orig_box + np.array([buf, -buf])[:, None]
+                inner_box = box_intersection(mask_box, inner_box)
+                inner_box = inner_box - mask_box[0]
+                inner_vol = body_cc[box_to_slicing(*inner_box)]
+                inner_ccs = set(pd.unique(inner_vol.ravel())) - {0}
+
+                # Overwrite body_cc, we don't need it for anything else after this.
+                body_cc[box_to_slicing(*inner_box)] = 0
+
+                outer_ccs = set(body_cc.ravel())
+                hopeless_ccs = (inner_ccs - outer_ccs) - mito_ccs  # noqa
+                hopeless_point_ids = point_cc_df.query('cc in @hopeless_ccs').index
+
+        # Shrink the volume bounding box to encompass only the
+        # non-zero portion of the filtered body mask.
+        nz_box = compute_nonzero_box(keep_mask)
+        if not nz_box.any():
+            return None, None, nz_box, hopeless_point_ids
+
+        body_mask = body_mask[box_to_slicing(*nz_box)]
+        mito_seg = mito_seg[box_to_slicing(*nz_box)]
+        mask_box = mask_box[0] + nz_box
+
+        return body_mask, mito_seg, mask_box, hopeless_point_ids
 
 
 def _mark_mito_seg_faces(body_mask, mito_seg, mask_box, primary_point, radius):
@@ -671,12 +706,12 @@ if __name__ == "__main__":
     # selections = (tbars[[*'xyz']] == (2304,24634,32979)).all(axis=1)
     # tbars = tbars.loc[selections]
 
-    EXPORT_DEBUG_VOLUMES = True
-    body = 1107146865
-    tbars = fetch_synapses(body, SC(primary_only=True)).sort_values([*'xyz']).reset_index(drop=True)
-    #selections = (tbars[[*'xyz']] == (12773, 26869, 15604)).all(axis=1)
-    selections = (tbars[[*'xyz']] == (9117, 20980, 27398)).all(axis=1)
-    tbars = tbars.loc[selections]
+    # EXPORT_DEBUG_VOLUMES = True
+    # body = 1107146865
+    # tbars = fetch_synapses(body, SC(primary_only=True)).sort_values([*'xyz']).reset_index(drop=True)
+    # #selections = (tbars[[*'xyz']] == (12773, 26869, 15604)).all(axis=1)
+    # selections = (tbars[[*'xyz']] == (9117, 20980, 27398)).all(axis=1)
+    # tbars = tbars.loc[selections]
 
     # EXPORT_DEBUG_VOLUMES = True
     # #body = 1005308608
@@ -685,6 +720,35 @@ if __name__ == "__main__":
     # tbars = fetch_label('emdata4:8900', '3159', 'synapses', body, format='pandas')[[*'xyz', 'conf', 'kind']]
     # #selections = (tbars[[*'xyz']] == (25435,26339,21900)).all(axis=1)
     # #tbars = tbars.loc[selections]
+
+    EXPORT_DEBUG_VOLUMES = True
+    body = 300972942
+    tbars = fetch_synapses(body, SC(primary_only=True)).sort_values([*'xyz']).reset_index(drop=True)
+    # Many of these fall on the same hopeless segment(s).
+    # They should mostly be skipped.
+    selections = [
+        (13333, 21208, 9755),
+        (17800, 28214, 4821),
+        (17817, 28222, 4629),
+        (17821, 28225, 4640),
+        (17823, 28225, 4646),
+        (17832, 28212, 4659),
+        (17832, 28213, 4676),
+        (17905, 28250, 6020),
+        (17910, 28253, 6004),
+        (17919, 28251, 6003),
+        (17921, 28258, 6000),
+        (17923, 28255, 6000),
+        (18390, 28922, 5779),
+        (18391, 28735, 5738),
+        (18419, 28816, 5755),
+        (18419, 28820, 5755),
+        (18422, 28813, 5747),
+        (18423, 28919, 5738),
+        (18429, 28932, 5726)
+    ]
+    selections = pd.DataFrame(selections, columns=[*'xyz'])
+    tbars = tbars.merge(selections, 'inner', on=[*'xyz'])
 
     seg_cfg = {
         "zarr": {
