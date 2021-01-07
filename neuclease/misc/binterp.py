@@ -163,7 +163,7 @@ def signed_distance_interpolation(labeled_slices, z_min=None, z_max=None):
 def write_slices(vol, out_dir, z_min=0):
     """
     Write the given volume to disk as a sequence of PNG files.
-    The slices will be numbering will start with z_min.
+    The slice file numbering will start with z_min.
     """
     z_max = z_min + len(vol)
     os.makedirs(out_dir)
