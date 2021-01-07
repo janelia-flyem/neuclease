@@ -2,7 +2,8 @@ import pytest
 import numpy as np
 from neuclease.cleave import cleave, CleaveResults
 
-@pytest.fixture(params=('seeded-mst', 'seeded-watershed', 'agglomerative-clustering'))
+
+@pytest.fixture(params=('seeded-mst', 'agglomerative-clustering')) # skipping 'seeded-watershed',
 def cleave_method(request):
     yield request.param
     
