@@ -1,6 +1,7 @@
 import os
 import logging
 import threading
+from socket import getfqdn
 from collections import defaultdict
 from contextlib import contextmanager
 
@@ -8,7 +9,7 @@ import numpy as np
 import pandas as pd
 
 from .util import Timer
-from .dvid import fetch_repo_info, fetch_supervoxels, fetch_labels, fetch_complete_mappings, fetch_mutation_id, fetch_supervoxel_splits, fetch_supervoxel_splits_from_kafka
+from .dvid import fetch_repo_info, find_repo_root, fetch_supervoxels, fetch_labels, fetch_complete_mappings, fetch_mutation_id, fetch_supervoxel_splits, fetch_supervoxel_splits_from_kafka
 from .merge_table import MERGE_TABLE_DTYPE, load_mapping, load_merge_table, normalize_merge_table, apply_mapping_to_mergetable
 from .focused.ingest import fetch_focused_decisions
 from .adjacency import find_missing_adjacencies
@@ -263,8 +264,17 @@ class LabelmapMergeGraph:
         if logger is None:
             logger = _logger
 
+        domain = server.split('://')[-1]
+        server = server[:-len(domain)] + getfqdn(domain)
+        repo_uuid = find_repo_root(server, uuid)
+
+        # Mutation IDs are unique, even across UUIDs,
+        # so we can warm the cache for bodies in ancestor nodes,
+        # even if users are viewing descendent nodes.
+        # If the body hasn't changed in the descendent, the cached version is valid.
         mutid = fetch_mutation_id(server, uuid, instance, body_id)
-        key = (server, uuid, instance, body_id)
+
+        key = (server, repo_uuid, instance, body_id, mutid)
         key_lock = self.get_key_lock(*key)
 
         # Use a lock to avoid requesting the supervoxels from DVID in-parallel,
@@ -272,10 +282,9 @@ class LabelmapMergeGraph:
         # which can happen if they click faster than dvid can respond.
         with key_lock:
             if key in self._edge_cache:
-                cached_mutid, supervoxels, edges, scores = self._edge_cache[key]
-                if cached_mutid == mutid:
-                    logger.info("Returning cached edges")
-                    return (mutid, supervoxels, edges, scores)
+                supervoxels, edges, scores = self._edge_cache[key]
+                logger.info("Returning cached edges")
+                return (mutid, supervoxels, edges, scores)
 
             logger.info("Edges not found in cache.  Extracting from merge graph.")
             dvid_supervoxels = fetch_supervoxels(server, uuid, instance, body_id, session=session)
@@ -326,8 +335,8 @@ class LabelmapMergeGraph:
                 if len(self._edge_cache) == self.max_cache_len:
                     first_key = next(iter(self._edge_cache.keys()))
                     del self._edge_cache[first_key]
-                self._edge_cache[key] = (mutid, dvid_supervoxels, edges, scores)
-        
+                self._edge_cache[key] = (dvid_supervoxels, edges, scores)
+
         return (mutid, dvid_supervoxels, edges, scores)
 
 
@@ -335,7 +344,7 @@ class LabelmapMergeGraph:
         body_positions_orig = (self.merge_table_df['body'] == body_id).values.nonzero()[0]
         subset_df = self.merge_table_df.iloc[body_positions_orig]
         return subset_df.copy()
-    
+
 
     def extract_rows_by_sv(self, supervoxels):
         _sv_set = set(supervoxels)
@@ -343,13 +352,13 @@ class LabelmapMergeGraph:
         return subset_df.copy()
 
 
-    def get_key_lock(self, dvid_server, uuid, instance, body_id):
+    def get_key_lock(self, dvid_server, repo_uuid, instance, body_id, mutid):
         """
         Rather than using a single Lock to protect all bodies at once,
         we permit fine-grained locking for individual cached bodies.
         Each body's unique lock is produced by this function.
         """
-        key = (dvid_server, uuid, instance, body_id)
+        key = (dvid_server, repo_uuid, instance, body_id, mutid)
         with self._edge_cache_main_lock:
             key_lock = self._edge_cache_key_locks[key]
         return key_lock

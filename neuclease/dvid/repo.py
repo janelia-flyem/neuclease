@@ -1,9 +1,10 @@
 from collections.abc import Iterable
+from functools import lru_cache
 
 import pandas as pd
 import networkx as nx
 
-from ..util import uuids_match, round_coord
+from ..util import uuids_match, round_coord, find_root
 from . import dvid_api_wrapper, fetch_generic_json
 from .common import post_tags
 
@@ -546,7 +547,7 @@ def find_parent(server, uuids, dag=None):
             Optional. If not provided, it will be fetched from the server.
 
     Returns:
-        If a uuids was given as a list, a pd.Series is returned.
+        If list of uuids was given, a pd.Series is returned.
         If a single uuid was given as a string, a string is returned.
     """
     if isinstance(uuids, str):
@@ -566,6 +567,29 @@ def find_parent(server, uuids, dag=None):
     s.name = 'parent'
     s.index.name = 'child'
     return s
+
+
+@lru_cache()
+def find_repo_root(server, uuid):
+    """
+    Return the repo root uuid for the given dvid node.
+    The result of this function is memoized.
+
+    Args:
+        server:
+            dvid server
+        uuid:
+            dvid uuid or branch name.
+    Returns:
+        (str) the repo uuid
+    """
+    try:
+        repo_info = fetch_repo_info(server, uuid)
+    except Exception:
+        uuid = resolve_ref(server, uuid)
+        repo_info = fetch_repo_info(server, uuid)
+
+    return repo_info['Root']
 
 
 def resolve_ref(server, ref):

@@ -76,7 +76,10 @@ def cleave_server_setup(labelmap_setup):
     yield dvid_server, dvid_port, dvid_repo, cleave_server_port
         
     server_proc.send_signal(signal.SIGTERM)
-    server_proc.wait(2.0)
+    try:
+        server_proc.wait(2.0)
+    except subprocess.TimeoutExpired:
+        raise RuntimeError("Timed out while waiting for cleave server to shut down!")
 
 
 @show_request_exceptions
