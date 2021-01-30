@@ -415,6 +415,63 @@ def fetch_supervoxel_sizes_for_body(server, uuid, instance, body_id, *, session=
 
 
 @dvid_api_wrapper
+def fetch_listlabels(server, uuid, instance, start=None, number=1_000_000, sizes=False, *, session=None):
+    """
+    Fetch the set of all labels in the entire labelmap instance.
+    (DVID obtains this list by scanning the label index keys.)
+
+    Since list is too long for a single request, you must paginate.
+    Use the start and count arguments to request the list in parts.
+
+    Args:
+        server:
+            dvid server, e.g. 'emdata3:8900'
+
+        uuid:
+            dvid uuid, e.g. 'abc9'
+
+        instance:
+            dvid labelmap instance name, e.g. 'segmentation'
+
+        start:
+            The start of the range query.
+            Not required to be a label that actually exists in the database.
+            By default, DVID uses 0.
+
+        number:
+            How many labels to fetch, starting with the given ``start``
+            value (or the first valid label above that value).
+
+        sizes:
+            If True, also fetch the sizes of the labels.
+            (In that case a Series is returned.)
+
+    Returns:
+        If sizes=True, returns pd.Series, indexed by body ID.
+        Otherwise, returns np.ndarray of body IDs.
+    """
+    params = {}
+    if start is not None:
+        params['start'] = int(start)
+    if number:
+        params['number'] = int(number)
+    if sizes:
+        params['sizes'] = 'true'
+
+    r = session.get(f"{server}/api/node/{uuid}/{instance}/listlabels", params=params)
+    r.raise_for_status()
+
+    if sizes:
+        labels_sizes = np.frombuffer(r.content, np.uint64).reshape(-1, 2)
+        sizes = pd.Series(labels_sizes[:, 1], index=labels_sizes[:, 0], name='size')
+        sizes.index.name = 'body'
+        return sizes
+    else:
+        labels = np.frombuffer(r.content, np.uint64)
+        return labels
+
+
+@dvid_api_wrapper
 def compute_roi_distributions(server, uuid, labelmap_instance, label_ids, rois, *, session=None, batch_size=None, processes=1):
     """
     For a list of bodies and a list of ROIs, determine the voxel
