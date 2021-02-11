@@ -163,9 +163,10 @@ def post_load(server, uuid, instance, tar, *, session=None):
             dvid tarsupervoxels instance name, e.g. 'segmentation_sv_meshes'
         
         tar:
-            Tarfile contents.  For convenience the following types are supported:
-              - A (binary) file object (such as BytesIO)
+            Tarfile contents.  For convenience, the following types are supported:
               - A path to a .tar file
+              - A (binary) file object (such as BytesIO) containing the bytes of a .tar file
+              - A dictionary of {name: bytes} with which to construct a tarfile
               - A dictionary of {name: (binary) file object} with which to construct a tarfile
               - A dictionary of {name: path strings} with which to construct a tarfile
 
