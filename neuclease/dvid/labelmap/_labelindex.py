@@ -1,6 +1,6 @@
 from functools import partial
 from collections import namedtuple
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 
 import numpy as np
 import pandas as pd
@@ -70,29 +70,40 @@ def fetch_labelindices(server, uuid, instance, labels, *, format='protobuf', ses
     Args:
         labels:
             A list of label IDs to fetch indices for.
-    
+
     Returns:
-        If format='protobuf', a LabelIndices (protobuf) object containing all the
-        requested LabelIndex (protobuf) objects.
-        If format='list-of-protobuf', a list of LabelIndex (protobuf) objects.
-        If format='pandas', a list of PandasLabelIndex (tuple) objects,
-        which each contain a DataFrame representation of the labelindex.
-        If format='single-dataframe', all of the label indexes will be converted
-        to pandas dataframes and concatenated into a single dataframe, with an
-        extra column for 'label'.
+        Depends on the 'format' argument:
+            'raw':
+                The raw bytes from DVID.  Useful if you're just planning to
+                copy them to another dvid server.
+            'protobuf':
+                A LabelIndices (protobuf) object containing all the
+                requested LabelIndex (protobuf) objects.
+            'list-of-protobuf':
+                A list of LabelIndex (protobuf) objects.
+            'pandas':
+                A list of PandasLabelIndex (tuple) objects,
+                which each contain a DataFrame representation of the labelindex.
+            'single-dataframe':
+                All of the label indexes will be converted to pandas dataframes and
+                concatenated into a single dataframe, with an extra column for 'label'.
     """
-    assert format in ('protobuf', 'list-of-protobuf', 'pandas', 'single-dataframe')
-    if isinstance(labels, np.ndarray):
+    assert format in ('raw', 'protobuf', 'list-of-protobuf', 'pandas', 'single-dataframe')
+    if isinstance(labels, (np.ndarray, pd.Series)):
         labels = labels.tolist()
     elif not isinstance(labels, list):
         labels = list(labels)
-    
+
     endpoint = f'{server}/api/node/{uuid}/{instance}/indices'
     r = session.get(endpoint, json=labels)
     r.raise_for_status()
 
+    if format == 'raw':
+        return r.content
+
     labelindices = LabelIndices()
     labelindices.ParseFromString(r.content)
+
     if format == 'protobuf':
         return labelindices
     if format == 'list-of-protobuf':
@@ -113,37 +124,61 @@ def post_labelindex(server, uuid, instance, label, proto_index, *, session=None)
     """
     Post a protobuf LabelIndex object for the given
     label to the specified DVID labelmap instance.
+
+    Args:
+        label:
+            The label ID corresponding to this index.
+            Must match the internal label field within the proto_index structure.
+        proto_index:
+            A protobuf labelops_pb2.LabelIndex
+            Optionally, you may pre-serialize it and provide it as bytes instead.
     """
-    assert isinstance(proto_index, LabelIndex)
-    assert proto_index.label == label
-    
-    payload = proto_index.SerializeToString()
+    payload = None
+    assert isinstance(proto_index, (bytes, LabelIndex))
+    if isinstance(proto_index, LabelIndex):
+        assert proto_index.label == label
+        payload = proto_index.SerializeToString()
+    elif isinstance(proto_index, bytes):
+        payload = proto_index
+
     r = session.post(f'{server}/api/node/{uuid}/{instance}/index/{label}', data=payload)
     r.raise_for_status()
-    
+
 
 @dvid_api_wrapper
 def post_labelindices(server, uuid, instance, indices, *, session=None):
     """
     Send a batch (list) of LabelIndex objects to dvid.
-    
+
     Args:
         indices:
-            A list of LabelIndex (protobuf) objects,
-            or a pre-loaded LabelIndices protobuf object.
+            One of the following:
+              - A list of LabelIndex (protobuf) objects
+              - A pre-loaded LabelIndices protobuf object
+              - A list of pre-serialized LabelIndex objects (as bytes)
+              - A single pre-serializsed LabelIndices object (as bytes)
     """
-    if isinstance(indices, LabelIndices):
-        label_indices = indices
-    else:
-        label_indices = LabelIndices()
-        label_indices.indices.extend(indices)
-
-    if len(label_indices.indices) == 0:
+    if isinstance(indices, Sequence) and len(indices) == 0:
         # This can happen when tombstone_mode == 'only'
         # and a label contained only one supervoxel.
         return
 
-    payload = label_indices.SerializeToString()
+    payload = None
+    if isinstance(indices, bytes):
+        payload = indices
+    elif isinstance(indices, Sequence) and isinstance(indices[0], bytes):
+        payload = b''.join(indices)
+    elif isinstance(indices, Sequence) and isinstance(indices[0], LabelIndex):
+        label_indices = LabelIndices()
+        label_indices.indices.extend(indices)
+        payload = label_indices.SerializeToString()
+    elif isinstance(indices, LabelIndices):
+        if len(indices.indices) == 0:
+            # This can happen when tombstone_mode == 'only'
+            # and a label contained only one supervoxel.
+            return
+        payload = indices.SerializeToString()
+
     endpoint = f'{server}/api/node/{uuid}/{instance}/indices'
     r = session.post(endpoint, data=payload)
     r.raise_for_status()
