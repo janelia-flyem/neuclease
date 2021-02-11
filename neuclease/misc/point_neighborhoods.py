@@ -504,6 +504,7 @@ def prune_close_pairs(points, radius, rng=None):
     # that are too close to each other.
     kd = scipy.spatial.cKDTree(points[[*'zyx']].values)
     edges = kd.query_pairs(radius, output_type='ndarray')
+
     g = nx.Graph()
     g.add_nodes_from(range(len(points)))
     g.add_edges_from(edges)
@@ -725,8 +726,8 @@ def main():
             if args.skeleton:
                 output_path += '-skeleton'
 
-        assignment_path = output_path + '.json'
-        csv_path = output_path + '.csv'
+    assignment_path = output_path + '.json'
+    csv_path = output_path + '.csv'
 
     kd = scipy.spatial.cKDTree(points[[*'zyx']].values)
     if len(kd.query_pairs(2*radius)) > 0:
