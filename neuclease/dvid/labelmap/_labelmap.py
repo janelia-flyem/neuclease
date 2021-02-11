@@ -472,6 +472,54 @@ def fetch_listlabels(server, uuid, instance, start=None, number=1_000_000, sizes
 
 
 @dvid_api_wrapper
+def fetch_listlabels_all(server, uuid, instance, sizes=False, *, batch_size=100_000, session=None):
+    """
+    Convenience function for calling fetch_listlabels() repeatedly
+    to obtain the complete list of all labels in the instance.
+
+    Args:
+        server:
+            dvid server, e.g. 'emdata3:8900'
+
+        uuid:
+            dvid uuid, e.g. 'abc9'
+
+        instance:
+            dvid labelmap instance name, e.g. 'segmentation'
+
+        sizes:
+            If True, also fetch the sizes of the labels.
+            (In that case a Series is returned.)
+
+        batch_size:
+            The labels will be fetched via multiple requests.
+            This specifies the size of each request.
+
+    Returns:
+        If sizes=True, returns pd.Series, indexed by body ID.
+        Otherwise, returns np.ndarray of body IDs.
+    """
+    all_bodies = []
+    start = 0
+
+    progress = tqdm_proxy()
+    progress.update(0)
+
+    while True:
+        b = fetch_listlabels(server, uuid, instance, start, batch_size, sizes, session=session)
+        if len(b) == 0:
+            break
+        all_bodies.append(b)
+        progress.update(len(b))
+        start = b[-1] + 1
+
+    if sizes:
+        return pd.concat(all_bodies)
+    else:
+        return np.concatenate(all_bodies)
+
+
+@dvid_api_wrapper
 def compute_roi_distributions(server, uuid, labelmap_instance, label_ids, rois, *, session=None, batch_size=None, processes=1):
     """
     For a list of bodies and a list of ROIs, determine the voxel
