@@ -108,23 +108,27 @@ def fetch_tarfile(server, uuid, instance, body_id, output=None, *, check_head=Fa
         return fetch_file(url, output, session=session)
 
 
-def tar_to_dict(tar_bytes, exts=None):
+def tar_to_dict(tar_bytes, exts=None, exclude_empty=False):
     """
     Utility function.
     Convert a tarfile (given as bytes) into a dict of {name: bytes}
     Avoids a common mis-use of Python's tarfile API that could lead
     to O(N**2) behavior when reading tarfiles with many files.
-    
+
     Args:
         tar_bytes:
             bytes which encode a tar file.
             The tar must have completely 'flat' structure,
             i.e. it does not contain any directories.
+
         exts:
             Optional. Extensions of the files of interest.
             Only files with the given extensions will be read;
             others will be ignored.
             If not provided, all files are read.
+
+        exclude_empty:
+            If True, drop 0-byte files
     Returns:
       dict of {filename: bytes}
     """
@@ -132,12 +136,12 @@ def tar_to_dict(tar_bytes, exts=None):
     members = sorted(tf.getmembers(), key=lambda m: m.name)
 
     if exts is not None:
-        exts = [ext[1:] if ext.startswith('.') else ext for ext in exts]
+        exts = [ext if ext.startswith('.') else f'.{ext}' for ext in exts]
 
     data = {}
     for member in members:
-        ext = member.name[-4:]
-        if (not exts or ext in exts) and member.size > 0:
+        ext = os.path.splitext(member.name)[1]
+        if (exts is None or ext in exts) and (member.size > 0 or not exclude_empty):
             data[member.name] = tf.extractfile(member).read()
     return data
 
