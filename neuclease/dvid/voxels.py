@@ -186,7 +186,7 @@ def fetch_subvol(server, uuid, instance, box_zyx, *, session=None, progress=True
     """
     Call fetch_subvolblocks() repeatedly to fetch an entire volume.
     In theory, this shouldn't be necessary since /subvolblocks is supposed to return multiple blocks at once.
-    But at the moment, it /subvolblocks can only handle one block at a time.
+    But at the moment, it appears /subvolblocks can only handle one block at a time.
     """
     box_zyx = np.asarray(box_zyx)
     assert np.issubdtype(box_zyx.dtype, np.integer), \
