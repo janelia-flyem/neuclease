@@ -57,22 +57,32 @@ def fetch_roi(server, uuid, instance, format='ranges', *, mask_box=None, session
                 Return a binary mask of the ROI, where each voxel represents one ROI block (scale 5).
                 The mask will be cropped to the bounding box of the ROI,
                 and the bounding box is also returned.
+
+            If 'raw':
+                Just return the raw response from the server.
+                convenient for copying ROIs from one server to another.
     """
-    assert format in ('coords', 'ranges', 'mask')
+    assert format in ('coords', 'ranges', 'mask', 'raw')
     if mask_box is not None:
         mask_box =  np.asarray(mask_box)
-    
-    rle_ranges = fetch_generic_json(f'{server}/api/node/{uuid}/{instance}/roi', session=session)
+
+    endpoint = f'{server}/api/node/{uuid}/{instance}/roi'
+    if format == 'raw':
+        r = session.get(endpoint)
+        r.raise_for_status()
+        return r.content
+
+    rle_ranges = fetch_generic_json(endpoint, session=session)
     rle_ranges = np.asarray(rle_ranges, np.int32, order='C')
 
     # Special cases for empty ROI
     if len(rle_ranges) == 0:
         if format == 'ranges':
             return np.ndarray( (0,4), np.int32 )
-    
+
         if format == 'coords':
             return np.ndarray( (0,3), np.int32 )
-        
+
         if format == 'mask':
             if mask_box is None:
                 mask_box = np.array([[0,0,0], [0,0,0]], np.int32)
@@ -80,8 +90,8 @@ def fetch_roi(server, uuid, instance, format='ranges', *, mask_box=None, session
             return mask, mask_box
 
         assert False, "Shouldn't get here"
-            
-    assert rle_ranges.shape[1] == 4    
+
+    assert rle_ranges.shape[1] == 4
     if format == 'ranges':
         return rle_ranges
 
@@ -103,27 +113,36 @@ def post_roi(server, uuid, instance, roi_ranges, *, session=None):
     """
     Post a set of RLE ranges to DVID as an ROI.
     The ranges must be provided in SCALE-5 coordinates.
-    
+
     For generating RLE ranges from a list of coordinates, see:
         neuclease.dvid.rle.runlength_encode_to_ranges()
 
     Args:
         server:
             dvid server, e.g. 'emdata3:8900'
-        
+
         uuid:
             dvid uuid, e.g. 'abc9'
-        
+
         instance:
             dvid ROI instance name, e.g. 'antenna-lobe'
-            
+
         ranges:
             list or ndarray of ranges, specified in SCALE-5 coordinates:
             [[Z,Y,X0,X1], [Z,Y,X0,X1], ...]
+
+            Alternatively, you can pass the ranges as pre-encoded JSON bytes,
+            which is convenient when copying ROIs from one server to another.
+            See fetch_roi(..., format='raw').
     """
-    if isinstance(roi_ranges, np.ndarray):
-        roi_ranges = roi_ranges.tolist()
-    encoded_ranges = ujson.dumps(roi_ranges)
+    if isinstance(roi_ranges, bytes):
+        # The caller is providing pre-encoded bytes
+        encoded_ranges = roi_ranges
+    else:
+        if isinstance(roi_ranges, np.ndarray):
+            roi_ranges = roi_ranges.tolist()
+        encoded_ranges = ujson.dumps(roi_ranges)
+
     r = session.post(f'{server}/api/node/{uuid}/{instance}/roi', data=encoded_ranges)
     r.raise_for_status()
 
