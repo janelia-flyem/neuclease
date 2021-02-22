@@ -341,38 +341,41 @@ def fetch_all_elements(server, uuid, instance, format='json', *, session=None):
 def post_elements(server, uuid, instance, elements, kafkalog=True, *, session=None):
     """
     Adds or modifies point annotations.
-    
+
     Args:
         server:
             dvid server, e.g. 'emdata3:8900'
-        
+
         uuid:
             dvid uuid, e.g. 'abc9'
-        
+
         instance:
             dvid annotations instance name, e.g. 'synapses'
-        
+
         elements:
             Elements as JSON data (a python list-of-dicts).
             This is the same format as returned by fetch_elements().
-            It is NOT the format returned by fetch_blocks().
-            If your data came from fetch_blocks(), you must extract and concatenate the values of that dict.
-        
+
+            Note:
+                This is NOT the format returned by fetch_blocks() or fetch_all_elements().
+                If your data came from one of those functions, you must extract
+                and concatenate the values of that dict before posting it.
+
         kafkalog:
             If True, log kafka events for each posted element.
-        
+
         Example:
-        
+
             from itertools import chain
             blocks = fetch_blocks(server, uuid, instance_1, box)
             elements = list(chain(*blocks.values()))
             post_elements(server, uuid, instance_2, elements)
-        
+
     """
     params = {}
     if not kafkalog or kafkalog == 'off':
         params['kafkalog'] = 'off'
-    
+
     r = session.post(f'{server}/api/node/{uuid}/{instance}/elements', json=elements, params=params)
     r.raise_for_status()
 
