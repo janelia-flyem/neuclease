@@ -132,7 +132,7 @@ def fetch_note(server, uuid, *, session=None):
     """
     Fetch the node "note" stored in DVID for the given uuid.
     """
-    r = session.get(f"{server}/api/node/{uuid}/log")
+    r = session.get(f"{server}/api/node/{uuid}/note")
     r.raise_for_status()
     return r.json()["note"]
 
