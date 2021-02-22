@@ -1117,7 +1117,7 @@ def post_mappings(server, uuid, instance, mappings, mutid, *, batch_size=None, s
         if (batch_size is not None) and (batch_ops_so_far >= batch_size):
             _post_mapping_ops(ops_list)
             progress_bar.update(batch_ops_so_far)
-            ops_list = [] # reset
+            ops_list = []  # reset
             batch_ops_so_far = 0
 
     # send last chunk, if there are leftovers
@@ -1400,6 +1400,24 @@ def fetch_sparsevol(server, uuid, instance, label, supervoxels=False, scale=0,
         rle_ranges = parse_rle_response( rles, format='ranges' )
         mask, mask_box = runlength_decode_from_ranges_to_mask(rle_ranges, mask_box)
         return mask, mask_box
+
+
+@dvid_api_wrapper
+def fetch_sparsevol_head(server, uuid, instance, label, supervoxels=False, *, session=None):
+    """
+    Returns True if the given label exists at all on the DVID server,
+    False otherwise.
+    """
+    supervoxels = str(bool(supervoxels)).lower()  # to lowercase string
+    url = f'{server}/api/node/{uuid}/{instance}/sparsevol/{label}?supervoxels={supervoxels}'
+    r = session.head(url)
+
+    if r.status_code == 200:
+        return True
+    if r.status_code == 204:
+        return False
+
+    r.raise_for_status()
 
 
 def compute_changed_bodies(instance_info_a, instance_info_b, *, session=None):
