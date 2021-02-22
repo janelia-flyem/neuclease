@@ -3,6 +3,7 @@ import copy
 import json
 import logging
 from functools import partial
+from collections import defaultdict
 
 import h5py
 import numpy as np
@@ -10,7 +11,7 @@ import pandas as pd
 
 from dvidutils import LabelMapper
 
-from ..util import read_csv_header, Timer, swap_df_cols, compute_parallel, dump_json
+from ..util import read_csv_header, Timer, swap_df_cols, compute_parallel, dump_json, tqdm_proxy
 from ..util.csv import read_csv_col
 from ..merge_table import load_all_supervoxel_sizes, compute_body_sizes
 from ..dvid import (fetch_keys, post_keyvalues, fetch_complete_mappings, fetch_keyvalues,
@@ -1276,3 +1277,56 @@ def compute_focused_bodies(server, uuid, instance, synapse_samples, min_tbars, m
         focus_table.index.name = 'body'
 
     return focus_table
+
+
+def plan_merges(merge_pairs, body_sizes, size_threshold=1e7):
+    """
+    Make a plan to apply many pairwise merges.
+    It's not desirable to merge large bodies together,
+    so we keep track of how big each body would be after each pairwise merge,
+    and simply drop the pairwise merges that involve two big bodies.
+
+    For each pairwise merge, the smaller body is merged into the larger body.
+    The final merges are returned as sets of bodies that belong together,
+    which can be used to send the minimal number of merge commands to dvid.
+    """
+    assert isinstance(merge_pairs, np.ndarray)
+    assert isinstance(body_sizes, pd.Series)
+    assert body_sizes.index.name == 'body'
+    assert body_sizes.name == 'size'
+    simulated_sizes = body_sizes.to_dict()
+
+    merge_pairs.sort(axis=1)
+    merge_pairs = pd.DataFrame(merge_pairs, columns=['body1', 'body2'])
+    merge_pairs = merge_pairs.drop_duplicates(['body1', 'body2']).copy()
+
+    merges = defaultdict(lambda: [])
+    remaps = {}
+    merge_indexes = []
+
+    for i, b1, b2 in tqdm_proxy(merge_pairs[['body1', 'body2']].itertuples(), total=len(merge_pairs)):
+        b1 = remaps.get(b1, b1)
+        b2 = remaps.get(b2, b2)
+        if b1 == b2:
+            continue
+        s1, s2 = simulated_sizes[b1], simulated_sizes[b2]
+        if s1 < size_threshold or s2 < size_threshold:
+            merge_indexes.append(i)
+            if s1 > s2:
+                # Merge body2 into body 1
+                remaps[b2] = b1
+                for b in merges[b2]:
+                    remaps[b] = b1
+                merges[b1].extend([b2, *merges[b2]])
+                del merges[b2]
+                simulated_sizes[b1] += s2
+            else:
+                # Merge body1 into body2
+                remaps[b1] = b2
+                for b in merges[b1]:
+                    remaps[b] = b2
+                merges[b2].extend([b1, *merges[b1]])
+                del merges[b1]
+                simulated_sizes[b2] += s1
+
+    return merge_indexes, merges, remaps, merge_pairs, simulated_sizes
