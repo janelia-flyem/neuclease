@@ -1130,30 +1130,30 @@ def tqdm_proxy(iterable=None, *, logger=None, level=logging.INFO, **kwargs):
     """
     Useful as an (almost) drop-in replacement for ``tqdm`` which can be used
     in EITHER an interactive console OR a script that logs to file.
-    
+
     Automatically detects whether or not sys.stdout is a file or a console,
     and configures tqdm accordingly.
-    
+
     - If your code is running from an interactive console, this acts like plain ``tqdm``.
     - If your code is running from an ipython notebook, this acts like ``tqdm.notebook.tqdm``.
     - If your code is running from a batch script (i.e. printing to a log file, not the console),
-      this code uses the supplied logger periodically output a textual progress bar.
+      this code uses the supplied logger to periodically output a textual progress bar.
       If no logger is supplied, a logger is automatically created using the name of
-      the calling module. 
-    
+      the calling module.
+
     Example:
 
         for i in tqdm_proxy(range(1000)):
             # do some stuff
 
     Note for JupyterLab users:
-    
+
         If you get errors in this function, you need to run the following commands:
-        
+
             conda install -c conda-forge ipywidgets
             jupyter nbextension enable --py widgetsnbextension
             jupyter labextension install @jupyter-widgets/jupyterlab-manager
-        
+
         ...and then reload your jupyterlab session, and restart your kernel.
     """
     assert 'file' not in kwargs, \
@@ -1162,7 +1162,7 @@ def tqdm_proxy(iterable=None, *, logger=None, level=logging.INFO, **kwargs):
     # Special case for tqdm_proxy(range(...))
     if iterable is not None and isinstance(iterable, range) and 'total' not in kwargs:
         kwargs['total'] = (iterable.stop - iterable.start) // iterable.step
-    
+
     try:
         import ipykernel.iostream
         from tqdm.notebook import tqdm as tqdm_notebook
@@ -1170,11 +1170,11 @@ def tqdm_proxy(iterable=None, *, logger=None, level=logging.INFO, **kwargs):
             return tqdm_notebook(iterable, **kwargs)
     except ImportError:
         pass
-    
+
     _tqdm = tqdm
     _file = None
     disable_monitor = False
-    
+
     if not _file and os.isatty(sys.stdout.fileno()):
         _file = sys.stdout
     else:
@@ -1193,14 +1193,14 @@ def tqdm_proxy(iterable=None, *, logger=None, level=logging.INFO, **kwargs):
 
         if 'ncols' not in kwargs:
             kwargs['ncols'] = 100
-        
+
         if 'miniters' not in kwargs:
             # Aim for 5% updates
             if 'total' in kwargs:
                 kwargs['miniters'] = kwargs['total'] // 20
             elif hasattr(iterable, '__len__'):
                 kwargs['miniters'] = len(iterable) // 20
-                
+
 
     kwargs['file'] = _file
     bar = _tqdm(iterable, **kwargs)
