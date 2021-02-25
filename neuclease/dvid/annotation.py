@@ -1676,7 +1676,13 @@ def compute_psd_jsons(partner_df):
 
 def load_gary_psds(pkl_path):
     """
-    Load a pickle file as given by Gary's code and return a 'partner table'.
+    Load a pickle file as given by Gary's code and return a 'partner table'
+    with columns:
+        ['pre_id',  'z_pre',  'y_pre',  'x_pre',  'kind_pre',  'conf_pre',  'user_pre',
+         'post_id', 'z_post', 'y_post', 'x_post', 'kind_post', 'conf_post', 'user_post']
+
+    See also:
+
     """
     import pickle
     data = pickle.load(open(pkl_path, 'rb'))
@@ -1696,10 +1702,34 @@ def load_gary_psds(pkl_path):
     df['user_pre'] = df['user_post'] = '$fpl'
     df['kind_pre'] = 'PreSyn'
     df['kind_post'] = 'PostSyn'
-    
+
     df = df[['pre_id', 'z_pre', 'y_pre', 'x_pre', 'kind_pre', 'conf_pre', 'user_pre',
              'post_id', 'z_post', 'y_post', 'x_post', 'kind_post', 'conf_post', 'user_post']]
     return df
+
+
+def partner_table_to_synapse_table(partner_df):
+    """
+    If you have a 'partner table' but you would prefer a synapse point table
+    similar to the one returned by fetch_synapses_in_batches(),
+    this function does the conversion.
+
+    Useful for loading Gary's pickle-based format.
+    See load_gary_psds()
+    """
+    # Extract
+    pre_df = partner_df.drop_duplicates('pre_id')[['pre_id', 'z_pre', 'y_pre', 'x_pre', 'conf_pre']]
+    pre_df = pre_df.rename(columns={col: col[:-len('_pre')] for col in pre_df.columns[1:]})
+    pre_df = pre_df.set_index('pre_id').rename_axis('point_id')
+    pre_df['kind'] = 'PreSyn'
+
+    post_df = partner_df[['post_id', 'z_post', 'y_post', 'x_post', 'conf_post']]
+    post_df = post_df.rename(columns={col: col[:-len('_post')] for col in post_df.columns[1:]})
+    post_df = post_df.set_index('post_id').rename_axis('point_id')
+    post_df['kind'] = 'PostSyn'
+
+    point_df = pd.concat((pre_df, post_df))
+    return point_df
 
 
 def add_synapses(point_df, partner_df, new_psd_partners_df):
