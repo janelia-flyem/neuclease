@@ -3,8 +3,9 @@ from functools import lru_cache
 
 import pandas as pd
 import networkx as nx
+from asciitree import LeftAligned
 
-from ..util import uuids_match, round_coord, find_root
+from ..util import uuids_match, round_coord, find_root, tree_to_dict
 from . import dvid_api_wrapper, fetch_generic_json
 from .common import post_tags
 
@@ -448,11 +449,123 @@ def fetch_repo_dag(server, uuid=None, repo_info=None, *, session=None):
     return g
 
 
-def find_branch_nodes(server, repo_uuid=None, branch="", *, full_info=False, session=None):
+def fetch_branches(server, repo_uuid=None, format='list', *, session=None):
+    """
+    Fetch the list of branches on the server. Various output formats are available.
+
+    Args:
+        server:
+            dvid server, e.g. 'emdata3:8900'
+
+        repo_uuid:
+            Any node UUID within the repo of interest.
+            (DVID will return the entire repo info regardless of
+            which node uuid is provided here.)
+            If the server has only one repo, this argument can be omitted.
+
+        format:
+            Either 'list', 'nx', 'pandas', 'dict', or 'text'
+            Try the 'text' format, which prints a human-friendly
+            diagram of the branch relationships and their UUIDs.
+
+    Returns:
+        Depends on the requested ``format``:
+
+            - 'list': (The default) Returns a list of branch names,
+              in topologically sorted order.
+            - 'nx': Returns a networkx.DiGraph which has branch names
+              as the node values and the dvid node info of each branch's
+              FIRST NODE ONLY in the node's value.
+            - 'pandas': Returns a DataFrame of the node infos,
+              but includes only the FIRST NODE of each branch.
+            - 'dict': Returns a nested dictionary of branch names,
+              indicating the branching structure.
+            - 'text': Returns a printable human-readable tree indicating
+              the branching structure, showing branch names and the
+              FIRST UUID of each branch.
+
+    Example:
+
+        .. code-block:: python
+
+            >>> text = fetch_branches('emdata3.int.janelia.org:8900', format='dict')
+            >>> print(text)
+            <master> (28841)
+            +-- 2020-02-18_cleave_training_setup (67ade)
+            |   +-- 2020-02-18_cleave_training_setup_knechtc (9c1fd)
+            |       +-- 2020-11-17_cleave-fly1 (633f6)
+            |       +-- 2020-11-17_cleave-fly2 (cf6a5)
+            |       +-- 2020-11-17_cleave-fly3 (afd8b)
+            |       +-- 2020-12-07_cleave-cat1 (154a8)
+            |       +-- 2020-12-07_cleave-cat2 (92c82)
+            |       +-- 2020-12-07_cleave-cat3 (db7ea)
+            |       +-- 2020-12-07_cleave-cat4 (a5e93)
+            +-- 2020_orphan_link_qc_setup (86fab)
+            |   +-- 2020-02-04_orphan_link_qc_shirley (b5e5c)
+            +-- lou test (cd070)
+            +-- mito-v1.1 (62f63)
+            |   +-- test-point-neighborhoods (42197)
+            |   +-- test-point-neighborhoods-2 (00f13)
+            +-- test-mito-cc (da4dd)
+            +-- test-mito-cc-2 (021d2)
+
+    """
+    assert format in ('list', 'nx', 'pandas', 'text', 'dict')
+    dag = fetch_repo_dag(server, repo_uuid, session=session)
+
+    branch_dag = nx.DiGraph()
+
+    for uuid in nx.topological_sort(dag):
+        branch = dag.nodes[uuid]['Branch']
+        if branch not in branch_dag:
+            branch_dag.add_node(branch, **dag.nodes[uuid])
+
+    for parent, child in list(dag.edges()):
+        parent_branch = dag.nodes[parent]['Branch']
+        child_branch = dag.nodes[child]['Branch']
+        if parent_branch != child_branch:
+            branch_dag.add_edge(parent_branch, child_branch)
+
+    if format == 'nx':
+        return branch_dag
+
+    if format == 'list':
+        return sorted([*branch_dag.nodes()], key=lambda n: branch_dag.nodes[n]['VersionID'])
+
+    if format == 'pandas':
+        df = node_info_dataframe(branch_dag.nodes.values())
+        return df.sort_values('VersionID')
+
+    if format == 'dict':
+        return nx.convert.to_dict_of_dicts(branch_dag)
+
+    # TODO: Maybe show both the start and stop uuid (abc123..fed456)
+    if format == 'text':
+        def display(branch):
+            uuid = branch_dag.nodes[branch]['UUID']
+            if branch == "":
+                branch = "<master>"
+            return f'{branch} ({uuid[:5]})'
+
+        d = tree_to_dict(branch_dag, find_root(branch_dag), display)
+        return LeftAligned()(d)
+
+
+def find_branch_nodes(server, repo_uuid=None, branch="", include_ancestors=False, *, full_info=False, session=None):
     """
     Find all nodes in the repo which belong to the given branch.
-    Note: By convention, the master branch is indicated by an empty branch name.
-    
+
+    Note:
+        By convention, the master branch is indicated by an empty branch name.
+
+    Note:
+        Unlike git, each node in dvid belongs to only one branch.
+        That is, when a branch is first created from a parent node,
+        that parent node is not considered part of the new branch,
+        nor are any of the other ancestors of the branch nodes.
+        If you're interested in the all nodes that contributed to
+        the history of a branch, see the ``include_ancestors`` argument.
+
     Args:
         server:
             dvid server, e.g. 'emdata3:8900'
@@ -466,50 +579,67 @@ def find_branch_nodes(server, repo_uuid=None, branch="", *, full_info=False, ses
         branch:
             Branch name to filter for.
             By default, filters for the master branch (i.e. an empty branch name).
-        
+
         full_info:
             If True, return a DataFrame with columns for node attributes
+
+        include_ancestors:
+            If True, then return all nodes in the history of the branch,
+            tracing all the way back to the root node.  (See note above
+            regarding DVID branch conventions.)
 
     Returns:
         list of UUIDs, sorted chronologically from first to last,
         unless full_info=True, in which case a DataFrame is returned.
-    
-    
+
+
     Examples:
 
         >>> master_branch_uuids = find_branch_nodes('emdata3:8900', 'a77')
         >>> current_master_uuid = master_branch_uuids[-1]
-        
+
         >>> master_branch_info_df = find_branch_nodes('emdata4:8900', full_info=True)
         >>> print(master_branch_info_df.columns.tolist())
         ['Branch', 'Note', 'Log', 'UUID', 'VersionID', 'Locked', 'Parents', 'Children', 'Created', 'Updated']
-        
+
     """
     assert branch != "master", \
         ("Don't supply 'master' as the branch name.\n"
          "In DVID, the 'master' branch is identified via an empty string ('').")
+
     repo_info = fetch_repo_info(server, repo_uuid, session=session)
     dag = fetch_repo_dag(server, repo_uuid, repo_info=repo_info, session=session)
     branch_uuids = nx.topological_sort(dag)
     nodes = list(filter(lambda uuid: dag.nodes()[uuid]['Branch'] == branch, branch_uuids))
 
+    if include_ancestors:
+        leaf_node = max(nodes, key=lambda u: dag.nodes[u]['VersionID'])
+        nodes = nx.ancestors(dag, leaf_node) | {leaf_node}
+        nodes = sorted(nodes, key=lambda u: dag.nodes[u]['VersionID'])
+
     if not full_info:
         return nodes
-    else:
-        node_infos = [repo_info['DAG']['Nodes'][node] for node in nodes]
-        nodes_df = pd.DataFrame(node_infos)
 
-        created = pd.to_datetime(nodes_df['Created'])
-        updated = pd.to_datetime(nodes_df['Updated'])
-        del nodes_df['Created']
-        del nodes_df['Updated']
-        nodes_df['Created'] = created
-        nodes_df['Updated'] = updated
-        
-        nodes_df = nodes_df.set_index(nodes_df['UUID'].rename('uuid'))
-        return nodes_df
+    node_infos = [repo_info['DAG']['Nodes'][node] for node in nodes]
+    return node_info_dataframe(node_infos)
 
-fetch_branch_nodes = find_branch_nodes # Alternate name
+
+def node_info_dataframe(node_infos):
+    nodes_df = pd.DataFrame(node_infos)
+
+    created = pd.to_datetime(nodes_df['Created'])
+    updated = pd.to_datetime(nodes_df['Updated'])
+    del nodes_df['Created']
+    del nodes_df['Updated']
+    nodes_df['Created'] = created
+    nodes_df['Updated'] = updated
+
+    nodes_df = nodes_df.set_index(nodes_df['UUID'].rename('uuid'))
+    return nodes_df
+
+
+fetch_branch_nodes = find_branch_nodes  # Alternate name
+
 
 def find_master(server, repo_uuid=None, locked_only=False):
     """

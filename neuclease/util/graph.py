@@ -12,16 +12,42 @@ import pandas as pd
 import networkx as nx
 from dvidutils import LabelMapper
 
-def find_root(g, start):
+
+def find_root(g, start=None):
     """
     Find the root node in a tree, given as a nx.DiGraph,
     tracing up the tree starting with the given start node.
     """
+    if start is None:
+        start = next(iter(g.nodes()))
     parents = [start]
     while parents:
         root = parents[0]
         parents = list(g.predecessors(parents[0]))
     return root
+
+
+def tree_to_dict(tree, root, display_fn=str, *, _d=None):
+    """
+    Convert the given tree (nx.DiGraph) into a dict,
+    suitable for display via the asciitree module.
+
+    Args:
+        tree:
+            nx.DiGraph
+        root:
+            Where to start in the tree (ancestors of this node will be ignored)
+        display_fn:
+            Callback used to convert node values into strings, which are used as the dict keys.
+        _d:
+            Internal use only.
+    """
+    if _d is None:
+        _d = {}
+    d_desc = _d[display_fn(root)] = {}
+    for n in tree.successors(root):
+        tree_to_dict(tree, n, display_fn, _d=d_desc)
+    return _d
 
 
 _graph_tool_available = None

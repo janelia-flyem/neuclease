@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import networkx as nx
 
-from ...util import Timer, find_root
+from ...util import Timer, find_root, tree_to_dict
 from .. import dvid_api_wrapper
 from ..kafka import read_kafka_messages
 
@@ -280,29 +280,6 @@ def extract_split_tree(events, sv_id):
     return tree
 
 
-def tree_to_dict(tree, root, display_fn=str, _d=None):
-    """
-    Convert the given tree (nx.DiGraph) into a dict,
-    suitable for display via the asciitree module.
-    
-    Args:
-        tree:
-            nx.DiGraph
-        root:
-            Where to start in the tree (ancestors of this node will be ignored)
-        display_fn:
-            Callback used to convert node values into strings, which are used as the dict keys.
-        _d:
-            Internal use only.
-    """
-    if _d is None:
-        _d = {}
-    d_desc = _d[display_fn(root)] = {}
-    for n in sorted(tree.successors(root)):
-        tree_to_dict(tree, n, display_fn, _d=d_desc)
-    return _d
-
-
 def render_split_tree(tree, root=None, uuid_len=4):
     """
     Render the given split tree as ascii text.
@@ -334,16 +311,16 @@ def render_split_tree(tree, root=None, uuid_len=4):
     """
     root = root or find_root(tree, next(iter(tree.nodes())))
 
-    def display_fn(n):
+    def abbreviate_uuid(n):
         uuid = tree.node[n]['uuid']
         if uuid != '<unknown>':
             uuid = uuid[:uuid_len]
         return f"{n} ({uuid})"
 
     if uuid_len == 0:
-        display_fn = str
-
-    d = tree_to_dict(tree, root, display_fn)
+        d = tree_to_dict(tree, root)
+    else:
+        d = tree_to_dict(tree, root, abbreviate_uuid)
 
     from asciitree import LeftAligned
     return LeftAligned()(d)
