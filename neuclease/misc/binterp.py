@@ -33,21 +33,18 @@ import skimage.io
 
 def main():
     args = parse_args()
+
     labeled_slices = read_labeled_slices(args.slice_directory)
-
-    if args.minz is None:
-        args.minz = min(labeled_slices.keys())
-    if args.maxz is None:
-        args.maxz = max(labeled_slices.keys())
-
-    print(f"Interpolating {args.minz}..{args.maxz}")
     distance_vol = signed_distance_interpolation(labeled_slices, args.minz, args.maxz)
+
     mask_vol = (distance_vol < 0).astype(np.uint8)
     mask_vol[:] *= args.out_label
-
     write_slices(mask_vol, args.output_directory, args.minz)
+
     if args.export_distance_visualization:
         d = args.output_directory + '_distance_viz'
+        if args.minz is None:
+            args.minz = min(labeled_slices.keys())
         export_distance_visualization(distance_vol, d, args.minz)
 
     print("Done.")
@@ -141,6 +138,7 @@ def signed_distance_interpolation(labeled_slices, z_min=None, z_max=None):
         z_max = max(labeled_slices.keys())
 
     assert z_min < z_max, f"Invalid output slice index range: {z_min}..{z_max}"
+    print(f"Interpolating {z_min}..{z_max}")
 
     # Compute signed distance transform slices
     distances = {}
