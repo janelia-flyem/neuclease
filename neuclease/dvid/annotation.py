@@ -16,7 +16,8 @@ from . import dvid_api_wrapper, fetch_generic_json
 from .common import post_tags
 from .node import fetch_instance_info
 from .voxels import fetch_volume_box
-from ..util import Timer, Grid, boxes_from_grid, round_box, tqdm_proxy, compute_parallel, gen_json_objects, encode_coords_to_uint64, decode_coords_from_uint64
+from ..util import (Timer, Grid, boxes_from_grid, round_box, tqdm_proxy, compute_parallel,
+                    gen_json_objects, encode_coords_to_uint64, decode_coords_from_uint64)
 
 logger = logging.getLogger(__name__)
 
@@ -421,7 +422,7 @@ def fetch_blocks(server, uuid, instance, box_zyx, *, session=None):
 
 
 @dvid_api_wrapper
-def post_blocks(server, uuid, instance, blocks_json, kafkalog=False, *, session=None):
+def post_blocks(server, uuid, instance, blocks_json, kafkalog=False, *, merge_existing=False, session=None):
     """
     Unlike the POST /elements endpoint, the /blocks endpoint is the fastest way to store
     all point annotations and assumes the caller has (1) properly partitioned the elements
@@ -440,11 +441,45 @@ def post_blocks(server, uuid, instance, blocks_json, kafkalog=False, *, session=
         "11,381,28": [ array of point annotation elements ],
         ...
     }
+
+    Args:
+        server:
+            dvid server, e.g. 'emdata3:8900'
+
+        uuid:
+            dvid uuid, e.g. 'abc9'
+
+        instance:
+            dvid annotations instance name, e.g. 'bookmarks_todo'
+
+        kafkalog:
+            If True, log this post event in kafka
+
+        merge_existing:
+            If True, first download ALL previously existing elements,
+            and append the new elements to the previous set before posting
+            the new blocks.
+            If any of the new elements occupy the same coordinate position as a
+            previous element, the previous element is removed.
+
+            Note:
+                This is not suitable for massive annotation sets (e.g. synapses).
+                It downloads all previously existing elements first!
     """
     params = {}
     if not kafkalog:
         params['kafkalog'] = 'off'
-    
+
+    if merge_existing:
+        logger.info("Fetching all elements from '{instance}'")
+        prev_elements = fetch_all_elements(server, uuid, instance)
+        for key, elements in blocks_json.items():
+            if key in prev_elements:
+                new_elements = {tuple(d['Pos']): d for d in prev_elements[key]}
+                new_elements.update({tuple(d['Pos']): d for d in elements})
+                elements.clear()
+                elements.extend(new_elements.values())
+
     url = f'{server}/api/node/{uuid}/{instance}/blocks'
     data = ujson.dumps(blocks_json).encode('utf-8')
     r = session.post(url, data=data, params=params)
