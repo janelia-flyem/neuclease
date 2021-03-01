@@ -1340,3 +1340,22 @@ def ellipsoid_mask(rz, ry, rx):
     # The result will be cached, so don't let the caller overwrite it!
     mask.flags['WRITEABLE'] = False
     return mask
+
+
+def perform_bigquery(q, client=None, project='janelia-flyem'):
+    """
+    Send the given SQL query to BigQuery
+    and return the results as a DataFrame.
+    """
+    from google.cloud import bigquery
+    assert 'GOOGLE_APPLICATION_CREDENTIALS' in os.environ
+
+    if client is None:
+        assert project in os.environ['GOOGLE_APPLICATION_CREDENTIALS'], \
+            "Usually the credentials file name mentions the project name.  It looks like you have the wrong credentials loaded."
+        client = bigquery.Client(project)
+
+    # In theory, there are faster ways to download table data using parquet,
+    # but bigquery keeps giving me errors when I try that.
+    r = client.query(q).result()
+    return r.to_dataframe()
