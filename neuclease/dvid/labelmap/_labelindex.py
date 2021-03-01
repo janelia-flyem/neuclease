@@ -163,6 +163,10 @@ def post_labelindices(server, uuid, instance, indices, *, session=None):
         # and a label contained only one supervoxel.
         return
 
+    if not isinstance(indices, (LabelIndices, Sequence)):
+        assert isinstance(indices, Iterable)
+        indices = list(indices)
+
     payload = None
     if isinstance(indices, bytes):
         payload = indices
@@ -178,6 +182,9 @@ def post_labelindices(server, uuid, instance, indices, *, session=None):
             # and a label contained only one supervoxel.
             return
         payload = indices.SerializeToString()
+    else:
+        msg = f"Unhandled input type for posting label indices: {type(indices)}"
+        raise AssertionError(msg)
 
     endpoint = f'{server}/api/node/{uuid}/{instance}/indices'
     r = session.post(endpoint, data=payload)
