@@ -471,7 +471,7 @@ def post_blocks(server, uuid, instance, blocks_json, kafkalog=False, *, merge_ex
         params['kafkalog'] = 'off'
 
     if merge_existing:
-        logger.info("Fetching all elements from '{instance}'")
+        logger.info(f"Fetching all elements from '{instance}'")
         prev_elements = fetch_all_elements(server, uuid, instance)
         for key, elements in blocks_json.items():
             if key in prev_elements:
