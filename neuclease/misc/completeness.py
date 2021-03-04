@@ -139,12 +139,12 @@ def completeness_forecast(labeled_point_df, partner_df, syn_counts_df=None, conf
     conn_df['traced_tbar_frac'] = conn_df['cumulative_traced_tbars'] / syn_counts_df['PreSyn'].sum()
     conn_df['traced_psd_frac'] = conn_df['cumulative_traced_psds'] / syn_counts_df['PostSyn'].sum()
 
-    # The cumuatively fully-traced connection count (i.e. connections for which both input
+    # The cumulatively fully-traced connection count (i.e. connections for which both input
     # and output are in traced bodies) is simply the row number, due to the careful sorting
     # of the connection table as explained above.
     # Note: When visualizing, we'll usually want to put this in the Y-axis, not the X-axis.
     conn_df['traced_conn_count'] = 1 + conn_df.index
-    conn_df['traced_conn_frac'] = conn_df['conn_count'] / len(conn_df)
+    conn_df['traced_conn_frac'] = conn_df['traced_conn_count'] / len(conn_df)
 
     return conn_df
 
