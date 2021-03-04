@@ -1,8 +1,11 @@
+import logging
+
 import numpy as np
 import pandas as pd
 
 from neuclease.dvid.annotation import body_synapse_counts
 
+logger = logging.getLogger(__name__)
 
 def completeness_forecast(labeled_point_df, partner_df, syn_counts_df=None, conf_threshold=0.0):
     """
@@ -54,6 +57,7 @@ def completeness_forecast(labeled_point_df, partner_df, syn_counts_df=None, conf
     assert point_df.index.name == 'point_id'
 
     if conf_threshold:
+        logger.info(f"Filtering synapses for threshold {conf_threshold}")
         # Filter points
         point_df = point_df.query('conf >= @conf_threshold')
 
@@ -62,28 +66,33 @@ def completeness_forecast(labeled_point_df, partner_df, syn_counts_df=None, conf
         partner_df = partner_df.merge(point_df[[]], 'inner', left_on='post_id', right_index=True)
 
     # Append columns ['body_pre', 'body_post']
+    logger.info("Appending body columns")
     conn_df = partner_df[['pre_id', 'post_id']]
     conn_df = conn_df.merge(point_df['body'], 'left', left_on='pre_id', right_index=True)
     conn_df = conn_df.merge(point_df['body'], 'left', left_on='post_id', right_index=True, suffixes=['_pre', '_post'])
 
     if syn_counts_df is None:
+        logger.info("Computing per-body synapse table")
         syn_counts_df = body_synapse_counts(point_df)
 
     if 'SynWeight' not in syn_counts_df.columns:
         # The user didn't provide a preferred body weighting,
         # so calculate each body's SynWeight as its total inputs and outputs.
         # Each PSD counts as 1, each tbar counts as the number of partners it has.
+        logger.info("Computing SynWeight column")
         output_counts = conn_df.groupby('body_pre')['pre_id'].size().rename('OutputPartners').rename_axis('body')
         syn_counts_df = syn_counts_df.merge(output_counts, 'left', left_index=True, right_index=True)
         syn_counts_df['OutputPartners'] = syn_counts_df['OutputPartners'].fillna(0.0).astype(int)
         syn_counts_df['SynWeight'] = syn_counts_df.eval('OutputPartners + PostSyn')
 
     # Rank the bodies from large to small
+    logger.info("Ranking bodies")
     syn_counts_df = syn_counts_df.sort_values(['SynWeight'], ascending=False)
     syn_counts_df['rank'] = np.arange(1, 1+len(syn_counts_df), dtype=int)
 
     # Append columns for the rank of both bodies in each pair,
     # named ['body_pre_rank', 'body_post_rank']
+    logger.info("Appending rank columns")
     conn_df = conn_df.merge(syn_counts_df['rank'].rename('body_pre_rank'), 'left', left_on='body_pre', right_index=True)
     conn_df = conn_df.merge(syn_counts_df['rank'].rename('body_post_rank'), 'left', left_on='body_post', right_index=True)
 
@@ -103,7 +112,10 @@ def completeness_forecast(labeled_point_df, partner_df, syn_counts_df=None, conf
     # the preceding rows contain only lesser-ranked bodies (larger bodies) in both the
     # _pre and _post columns.  So, by the time we add a given max_rank body to our "traced set",
     # all of the preceding rows in the connection table have already been traced.
+    logger.info("Sorting connections by body rank")
     conn_df = conn_df.sort_values(['max_rank', 'min_rank']).reset_index(drop=True)
+
+    logger.info("Calculating cumulative columns (tbars/psds/connections)")
 
     # Moving down the list of connection pairs,
     # calculate the number of unique tbars we've seen so far.
