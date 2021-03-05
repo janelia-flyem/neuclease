@@ -7,6 +7,7 @@ from neuclease.dvid.annotation import body_synapse_counts
 
 logger = logging.getLogger(__name__)
 
+
 def completeness_forecast(labeled_point_df, partner_df, syn_counts_df=None, conf_threshold=0.0):
     """
     Produces a DataFrame listing all pairwise synapse connections,
@@ -46,12 +47,17 @@ def completeness_forecast(labeled_point_df, partner_df, syn_counts_df=None, conf
             Optional.  If given, synapses will be pre-filtered to satisfy the given minimum confidence score.
 
     Returns:
-        DataFrame. Output columns and descriptions:
+        Two DataFrames:
+            sorted_connection_df, sorted_bodies_df
+
+        sorted_connection_df has output columns:
             'max_rank': 'body size ranking',
             'traced_tbar_frac': 'tbars on traced bodies',
             'minimally_connected_tbar_frac': 'traced tbars with a traced output',
             'traced_psd_frac': 'psds on traced bodies',
             'traced_conn_frac': 'fully traced connections'
+
+        sorted_bodies_df is indexed by body ID, sorted by the body 'SynWeight'
     """
     point_df = labeled_point_df[['kind', 'conf', 'body']]
     assert point_df.index.name == 'point_id'
@@ -158,7 +164,7 @@ def completeness_forecast(labeled_point_df, partner_df, syn_counts_df=None, conf
     conn_df['traced_conn_count'] = 1 + conn_df.index
     conn_df['traced_conn_frac'] = conn_df['traced_conn_count'] / len(conn_df)
 
-    return conn_df
+    return conn_df, syn_counts_df
 
 
 def plot_connectivity_forecast(conn_df, max_rank=None, plotted_points=20_000):
