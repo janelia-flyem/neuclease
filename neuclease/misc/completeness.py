@@ -197,15 +197,15 @@ def plot_connectivity_forecast(conn_df, max_rank=None, plotted_points=20_000):
     if max_rank:
         _df = _df.query('max_rank <= @max_rank')
 
-    _df = _df.rename(columns={
-        'max_rank': 'body size ranking',
-        'traced_tbar_frac': 'tbars on traced bodies',
-        # 'minimally_connected_tbar_frac': 'traced tbars with a traced output',
-        'traced_psd_frac': 'psds on traced bodies',
-        'traced_conn_frac': 'fully traced connections'
-    })
-
     _df = _df.drop_duplicates('max_rank', keep='last')
+
+    _df = _df.rename(columns={
+        'max_rank': 'body priority ranking',
+        'traced_tbar_frac': 'tbars captured',
+        # 'minimally_connected_tbar_frac': 'traced tbars with a traced output',
+        'traced_psd_frac': 'psds captured',
+        'traced_conn_frac': 'pairwise connections'
+    })
 
     # Avoid plotting too many points
     step = len(_df) // plotted_points
