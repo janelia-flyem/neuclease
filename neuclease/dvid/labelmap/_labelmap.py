@@ -175,6 +175,47 @@ def post_nextlabel(server, uuid, instance, num_labels, *, session=None):
 
 
 @dvid_api_wrapper
+def fetch_lastmod(server, uuid, instance, body, *, session=None):
+    """
+	Returns last modification metadata for a label in JSON.
+
+	Time is returned in RFC3339 string format. Returns a status code 404 (Not Found)
+    if label does not exist.
+
+    Args:
+        server:
+            dvid server, e.g. 'emdata3:8900'
+
+        uuid:
+            dvid uuid, e.g. 'abc9'
+
+        instance:
+            dvid instance name, e.g. 'segmentation'
+        
+        body:
+            Body ID
+    
+    Returns:
+        dict
+
+    Example response:
+
+    .. code-block:: json
+
+        {
+            "mutation id": 2314,
+            "last mod user": "johndoe",
+            "last mod time": "2000-02-01 12:13:14 +0000 UTC", "last mod app": "Neu3"
+        }
+	
+    """
+    url = f'{server}/api/node/{uuid}/{instance}/lastmod/{body}'
+    r = session.get(url)
+    r.raise_for_status()
+    return r.json()
+
+
+@dvid_api_wrapper
 def fetch_supervoxels(server, uuid, instance, body_id, user=None, *, session=None):
     """
     Fetch the list of supervoxel IDs that are associated with the given body.
