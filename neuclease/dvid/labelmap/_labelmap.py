@@ -316,6 +316,21 @@ def _fetch_supervoxels_for_body(server, uuid, instance, body):
         raise
 
 
+def fetch_supervoxel_counts(server, uuid, instance, bodies, *, processes=0):
+    fn = partial(_fetch_svcount, server, uuid, instance)
+    if not processes:
+        counts = [*map(fn, tqdm_proxy(bodies))]
+    else:
+        counts = compute_parallel(fn, bodies, ordered=False, processes=32)
+    counts = pd.DataFrame(counts, columns=['body', 'svcount'])
+    counts = counts.set_index('body')['svcount']
+    return counts.reindex(bodies)
+
+
+def _fetch_svcount(server, uuid, instance, body):
+    return (body, len(fetch_supervoxels(server, uuid, instance, body)))
+
+
 @dvid_api_wrapper
 def fetch_size(server, uuid, instance, label_id, supervoxels=False, *, session=None):
     """
