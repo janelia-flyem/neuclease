@@ -85,7 +85,7 @@ def fetch_keyrange(server, uuid, instance, key1, key2, *, session=None):
     
 
 @dvid_api_wrapper
-def fetch_key(server, uuid, instance, key, as_json=False, *, session=None):
+def fetch_key(server, uuid, instance, key, as_json=False, *, check_head=False, session=None):
     """
     Fetch a single value from a DVID keyvalue instance.
     
@@ -108,11 +108,20 @@ def fetch_key(server, uuid, instance, key, as_json=False, *, session=None):
     Returns:
         Bytes or parsed json data (see ``as_json``)
     """
-    r = session.get(f'{server}/api/node/{uuid}/{instance}/key/{key}')
-    r.raise_for_status()
-    if as_json:
-        return r.json()
-    return r.content
+    url = f'{server}/api/node/{uuid}/{instance}/key/{key}'
+    if check_head:
+        r = session.head(url)
+        if r.status_code == 200:
+            return True
+        if r.status_code == 404:
+            return False
+        r.raise_for_status()
+    else:
+        r = session.get(url)
+        r.raise_for_status()
+        if as_json:
+            return r.json()
+        return r.content
 
 
 @dvid_api_wrapper
