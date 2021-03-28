@@ -15,7 +15,7 @@ def create_labelsz_instance(server, uuid, instance, *, ROI=None, session=None):
     
         .. code-block:: python
         
-            create_instance(server, uuid, instance, type_specific_settings={'ROI': ROI}
+            create_instance(server, uuid, instance, type_specific_settings={'ROI': ROI})
     """
     settings = {}
     if ROI:
