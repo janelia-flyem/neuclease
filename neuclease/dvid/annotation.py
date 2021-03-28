@@ -801,7 +801,14 @@ def fetch_synapses_in_batches(server, uuid, synapses_instance, bounding_box_zyx=
         # Determine name of the segmentation instance that's
         # associated with the given synapses instance.
         syn_info = fetch_instance_info(server, uuid, synapses_instance)
-        seg_instance = syn_info["Base"]["Syncs"][0]
+        try:
+            seg_instance = syn_info["Base"]["Syncs"][0]
+        except Exception:
+            msg = ("You provided no bounding-box, so I tried to determine it automatically\n"
+                   "by looking for a sync'd labelmap instance.  But I couldn't find one!\n"
+                   "Therefore, please supply an explicit bounding box when calling this function.")
+            raise RuntimeError(msg)
+
         if isinstance(bounding_box_zyx, str):
             assert bounding_box_zyx == seg_instance, \
                 ("The segmentation instance name you provided doesn't match the name of the sync'd instance.\n"
