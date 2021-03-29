@@ -2936,3 +2936,28 @@ def compute_affected_bodies(kafka_msgs):
     new_supervoxels = np.fromiter(new_supervoxels, np.uint64)
 
     return new_bodies, changed_bodies, removed_bodies, new_supervoxels
+
+
+def compute_merge_hierarchies(msgs):
+    """
+    Using messages from the mutation log, construct an
+    nx.DiGraph that encodes the forest of body merge trees,
+    i.e. a hierarchy indicating which bodies absorbed which other bodies.
+    The root node in each tree is the body that still exists in DVID.
+    Conversely, all nodes with parents no longer exist (they've been
+    merged into something else).
+
+    Note:
+        This result does not make any effort to account for cleaves.
+
+    Returns:
+        nx.DiGraph
+    """
+    g = nx.DiGraph()
+    for msg in msgs:
+        if msg['Action'] != 'merge':
+            continue
+        target = msg['Target']
+        edges = [(target, label) for label in msg['Labels']]
+        g.add_edges_from(edges)
+    return g
