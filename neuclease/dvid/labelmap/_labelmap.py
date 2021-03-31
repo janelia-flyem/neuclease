@@ -1218,6 +1218,21 @@ def fetch_mutation_id(server, uuid, instance, body_id, *, session=None):
 
 
 @dvid_api_wrapper
+def fetch_mutation_ids(server, uuid, instance, bodies, *, session=None, processes=0):
+    bodies = np.asarray(bodies, np.uint64)
+    if processes == 0:
+        mutids = []
+        for body in bodies:
+            m = fetch_mutation_id(server, uuid, instance, body, session=session)
+            mutids.append(m)
+    else:
+        fn = partial(fetch_mutation_id, server, uuid, instance)
+        mutids = compute_parallel(fn, bodies, processes=processes)
+
+    return pd.Series(mutids, index=bodies, name='mutid').rename_axis('body')
+
+
+@dvid_api_wrapper
 def _fetch_sparsevol_coarse_impl(server, uuid, instance, label_id, supervoxels=False, *,
                                  format='coords', mask_box=None, session=None, cache=False):
     """
