@@ -23,9 +23,9 @@ conda install -c flyem-forge -c conda-forge neuclease
 ```python
 In [1]: from neuclease.dvid import *
 
-In [2]: server = 'http://hemibrain-dvid.janelia.org:8000'
+In [2]: server = 'http://hemibrain-dvid.janelia.org'
 
-In [3]: find_master('http://hemibrain-dvid.janelia.org:8000')
+In [3]: find_master('http://hemibrain-dvid.janelia.org')
 Out[3]: '20631f94c3f446d7864bc55bf515706e'
 
 In [4]: x, y, z = 17019, 21341, 20789
