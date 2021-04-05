@@ -288,7 +288,7 @@ class NumpyConvertingEncoder(json.JSONEncoder):
         return super().default(o)
 
 
-def dump_json(obj, f=None, indent=2, convert_nans=False, unsplit_int_lists=False):
+def dump_json(obj, f=None, indent=2, convert_nans=False, unsplit_int_lists=False, nullval="NaN"):
     """
     Pretty-print the given object to json, either to a file or to a returned string.
 
@@ -301,7 +301,7 @@ def dump_json(obj, f=None, indent=2, convert_nans=False, unsplit_int_lists=False
         or None, in which case the json is returned as a string.
 
     convert_nans:
-        If True, replace NaN values with a string "NaN".
+        If True, replace NaN values with the provided nullval ("NaN" by default).
         Otherwise, the default python behavior is to write the word NaN
         (without quotes) into the json file, which is not compliant with
         the json standard.
@@ -313,11 +313,14 @@ def dump_json(obj, f=None, indent=2, convert_nans=False, unsplit_int_lists=False
          This is implemented as a post-processing step using text matching.
          Might not be fast for huge files.
 
+    nullval:
+        If convert_nans is True, then ``nullval`` is used to replace nan values.
+
     Returns:
         Nothing if f was provided, otherwise returns a string.
     """
     if convert_nans:
-        obj = _convert_nans(obj)
+        obj = _convert_nans(obj, nullval)
 
     kwargs = dict(indent=indent,
                   allow_nan=not convert_nans,
@@ -344,7 +347,7 @@ def dump_json(obj, f=None, indent=2, convert_nans=False, unsplit_int_lists=False
             return json.dumps(obj, **kwargs)
 
 
-def convert_nans(o, _c=None):
+def convert_nans(o, nullval="NaN", _c=None):
     """
     Traverse the given collection-of-collections and
     replace all NaN values with the string "NaN".
@@ -354,10 +357,10 @@ def convert_nans(o, _c=None):
     _c = _c or {}
 
     if isinstance(o, float) and math.isnan(o):
-        return "NaN"
+        return nullval
     elif isinstance(o, np.number):
         if np.isnan(o):
-            return "NaN"
+            return nullval
         return o.tolist()
     elif isinstance(o, (str, bytes)) or not isinstance(o, (Sequence, Mapping)):
         return o
@@ -372,15 +375,15 @@ def convert_nans(o, _c=None):
     if isinstance(o, np.ndarray):
         ret = []
         _c[id(o)] = ret
-        ret.extend([convert_nans(x, _c) for x in o.tolist()])
+        ret.extend([convert_nans(x, nullval, _c) for x in o.tolist()])
     elif isinstance(o, Sequence):
         ret = []
         _c[id(o)] = ret
-        ret.extend([convert_nans(x, _c) for x in o])
+        ret.extend([convert_nans(x, nullval, _c) for x in o])
     elif isinstance(o, Mapping):
         ret = {}
         _c[id(o)] = ret
-        ret.update({k: convert_nans(v, _c) for k,v in o.items()})
+        ret.update({k: convert_nans(v, nullval, _c) for k,v in o.items()})
     else:
         raise RuntimeError(f"Can't handle {type(o)} object: {o}")
 
