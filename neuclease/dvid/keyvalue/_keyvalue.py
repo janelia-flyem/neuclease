@@ -303,8 +303,11 @@ def _fetch_keyvalues_jsontar_via_jsontar(server, uuid, instance, keys, as_json=F
 def post_keyvalues(server, uuid, instance, keyvalues, batch_size=None, *, session=None, show_progress=True):
     """
     Post a batch of key-value pairs to a keyvalue instance.
+
+    TODO:
+        - This can fail if a batch ends up larger than 2GB.
+          Would be nice to automatically split batches if necessary.
     
-    Args:
         server:
             dvid server, e.g. 'emdata3:8900'
         
