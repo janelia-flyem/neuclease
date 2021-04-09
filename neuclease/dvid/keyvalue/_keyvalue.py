@@ -416,15 +416,40 @@ def fetch_body_annotations(server, uuid, instance='segmentation_annotations', bo
 
     If a list of bodies is provided, fetches annotation info for those bodies only.
     Otherwise, fetches ALL values from the instance.
-    
+
     Loads the results into a DataFrame, indexed by body.
-    
+
     Note: Any missing annotation entries are silently ignored.
           You should check the results to see if every body annotation
           you requested was returned. (Otherwise, it was missing from dvid.)
-    
-    >>> annotations_df = fetch_body_annotations('emdata4:8900', '0b0b')
-    >>> traced_bodies = annotations_df.query('status == "Traced"').index
+
+    Exmaple:
+
+        .. code-block: python
+
+            annotations_df = fetch_body_annotations('emdata4:8900', '0b0b')
+            traced_bodies = annotations_df.query('status == "Traced"').index
+
+    Args:
+        server:
+            dvid server
+        uuid:
+            dvid uuid
+        instance:
+            The keyvalue instance names where body annotations are stored.
+            NeuTu expects this to be named with a formula, after name of
+            the labelmap instance it corresponds to, i.e. f"{seg_instance}_annotations"
+            For example: segmentation_annotations
+
+        bodies:
+            If provided, fetch only the annotations for the listed body IDs
+
+    Returns:
+        DataFrame, indexed by body.
+        The DataFrame is constructed by treating each annotation JSON object
+        as a 'record' from which the row should be created.
+        Also, the raw json object from which the row was constructed
+        is provided in a column named 'json'.
     """
     if bodies is not None:
         keys = [str(b) for b in bodies]
@@ -439,10 +464,11 @@ def fetch_body_annotations(server, uuid, instance='segmentation_annotations', bo
     values = list(filter(lambda v: v is not None and 'body ID' in v, kvs.values()))
     if len(values) == 0:
         empty_index = pd.Series([], dtype=int, name='body')
-        return pd.DataFrame({'status': []}, dtype=object, index=empty_index)
+        return pd.DataFrame({'status': [], 'json': []}, dtype=object, index=empty_index)
 
     df = pd.DataFrame(values)
     if 'body ID' in df:
         df['body'] = df['body ID']
         df = df.set_index('body')
+    df['json'] = values
     return df
