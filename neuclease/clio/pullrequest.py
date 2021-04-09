@@ -5,9 +5,10 @@ from itertools import chain
 import numpy as np
 import pandas as pd
 import networkx as nx
+from requests.exceptions import HTTPError
 
 from ..util import find_root, tqdm_proxy as tqdm
-from ..dvid import fetch_body_annotations, fetch_sizes, fetch_mutations, post_key, compute_merge_hierarchies
+from ..dvid import default_dvid_session, fetch_body_annotations, fetch_sizes, fetch_mutations, post_key, compute_merge_hierarchies, post_merge, delete_key
 
 from . import clio_api_wrapper
 
@@ -58,22 +59,85 @@ def fetch_pull_requests(user_email='all', *, base=None, session=None):
 
 def assess_merges(dvid_server, uuid, instance, merges, mutations=None):
     """
-    TODO:
-    - The merges from clio are not "normalized" for us.
-      A body ID can appear as both a "target" and a "fragment"
-      in different entries within the same PR.
-      In order to properly assess the combined result,
-      it may be necessary to combine such merge sets initially.
-      The tricky thing is that we would ideally prefer to return
-      exactly N results for N input merges, to make it easy for the
-      UI to align our results with the user's merge table.
+    Given a set of merges from clio, given as a dict:
 
-    MORE TODO:
+        {target: [fragment, fragment, fragment, ...]}
+
+    Produce a preliminary assessment of whether or not each merge could be applied.
+    If some bodies are mentioned in multiple input entries, those entries will
+    be combined and considered as a single 'mergeset', if possible.
+
+    It's also assumed that these merges were proposed using an outdated version of the segmentation,
+    so the current mutation log is fetched to determine the current "owner" of every body in the set.
+    For bodies which haven't been merged into anything yet, the "owner" is simply the same as the body ID.
+    But for bodies which no longer exist, the "owner" indicates which current body that object now belongs to.
+
+    Each body will be given an "assessment" indicating the role of that body in the merges.
+
+    The possible assessments are:
+
+        target:
+            The body is the target body in a merge set
+        old_target:
+            The target body was merged into something else,
+            so the target's "owner" is considerd the updated target.
+        mergeable:
+            The merge fragment still exists and can be merged into
+            its target (or updated target).
+        already_merged:
+            The merge fragment doesn't exist any more, but it already
+            belongs to the caller's intended target body (or updated target body).
+        merged_elsewhere:
+            The merge fragment doesn't exist any more, and it has
+            already been merged to a DIFFERENT body than the caller's
+            intended target body.  That's bad because it means the caller
+            disagrees with the merge decisions that have been made in the head segmentation.
+        my_target_merged_elsewhere:
+            This is used for fragments who can't be merged because their target body
+            was ALSO a fragment body (in a different row of the input),
+            and the target no longer exists, and it has been merged to something different
+            than the caller expected.
+        unknown:
+            The target body doesn't exist and its owner can't be determined.
+            This indicates some major problem in the input or the dvid mutations log.
+        unassessed:
+            Fragments whose targets are "unknown" are not evaluated for mergeability.
+
+    Note:
+        In these results, we don't apply rules related to body status.
+        To apply rules about body statuses (e.g. never merge Anchor into non-Anchor),
+        see extract_and_coerce_mergeable_groups()
+
+    TODO:
     - Use Ting's complete list of status priorities, rather than only hard-coding the anchor case.
     - Also check for double somas
     - Also consult a list of "forbidden merges"
       e.g. for the VNC neck break segment, or for glia, or known frankenbodies, etc.
 
+    Example Results:
+
+                      size  status  exists  assessment  mergeset   owner
+        body
+        1                0           False     unknown        -1       0
+        153127   266944916            True      target    153127  153127
+        14017   1232564287  Anchor    True      target     14017   14017
+        24149    360173009  Anchor    True      target     24149   24149
+        11572   2314660793  Anchor    True      target     11572   11572
+        10543   4777722674  Anchor    True      target     10543   10543
+        12185   1915392615  Anchor    True      target     12185   12185
+        69490     12112776            True      target     69490   69490
+        28209    223922833            True      target     28209   28209
+        39524     70728503            True      target     39524   39524
+        41828     70490770            True      target     41828   41828
+        16750    778461531  Anchor    True      target     16750   16750
+        58207     19452724            True      target     58207   58207
+        33653    124497939            True      target     33653   33653
+        17500   1131998612  Anchor    True      target        -1   17500
+        12254            0           False  old_target     11294   11294
+        10614   5593812884  Anchor    True      target        -1   10614
+        10683            0           False  old_target     10131   10131
+        14021   1237311465  Anchor    True      target     14021   14021
+        12269   1880149920  Anchor    True      target     12269   12269
     """
     assert all(np.issubdtype(type(k), np.integer) for k in merges.keys()), \
         ("merges should be a dict of the form:\n"
@@ -81,83 +145,248 @@ def assess_merges(dvid_server, uuid, instance, merges, mutations=None):
          " main_body: [body, body, ...],\n"
          " ...}")
 
+    all_bodies = pd.unique([*merges.keys(), *chain(*merges.values())])
+
     logger.info("Fetching body annotations")
-    ann_df = fetch_body_annotations(dvid_server, uuid, f'{instance}_annotations')
+    ann_df = fetch_body_annotations(dvid_server, uuid, f'{instance}_annotations', all_bodies)
 
     logger.info("Fetching body sizes")
-    all_bodies = pd.unique([*merges.keys(), *chain(*merges.values())])
     body_df = fetch_sizes(dvid_server, uuid, instance, all_bodies).to_frame()
     body_df = body_df.merge(ann_df['status'], 'left', left_index=True, right_index=True)
     body_df['status'] = body_df['status'].fillna('')
+    body_df['exists'] = (body_df['size'] != 0)
 
     if mutations is None:
         logger.info("Fetching mutation log")
         mutations = fetch_mutations(dvid_server, uuid, instance, dag_filter='leaf-and-parents', format='json')
 
     logger.info("Computing merge hierarchy forest")
-    merge_forest = compute_merge_hierarchies(mutations)
+    merge_hist = compute_merge_hierarchies(mutations)
 
-    results = []
-    for target, fragments in tqdm(merges.items()):
-        # Fragments will each fall into one these categories
-        mergeable = []         # should be applied
-        already_merged = []    # should be skipped
-        unknown = []           # should trigger error
-        merged_elsewhere = []  # should trigger error
-        anchors = []           # should trigger error
-        unassessed = []        # target doesn't exist
+    g = nx.DiGraph()
+    for target, fragments in merges.items():
+        g.add_edges_from((target, f) for f in fragments)
 
-        new_target = target
-        if body_df.loc[target, 'size'] == 0:
-            try:
-                new_target = find_root(merge_forest, target)
-            except nx.NetworkXError:
-                # If this happens, something is totally wrong with the PR
-                # new_target is 0, and all fragments remain unassessed
-                results.append((target, 0, 'unknown', [], [], [], [], [], fragments))
-                continue
+    double_merged = [n for n, d in g.in_degree() if d > 1]
+    assert not double_merged, \
+        "Nonsensical input: Some fragments are listed multiple "\
+        f"times, with different merge targets: {double_merged}"
 
-        new_target_status = body_df.loc[new_target, 'status']
+    def determine_owner(b):
+        """
+        Use the merge history graph which was obtained from the mutations log (above),
+        to determine the new "owner" of a given body, if it no longer exists.
+        """
+        if body_df.loc[b, 'exists']:
+            g.nodes[b]['owner'] = b
+            return
 
-        frag_df = body_df.loc[fragments]
+        try:
+            curr = find_root(merge_hist, b)
+        except nx.NetworkXError:
+            # If this happens, something is totally wrong with the merge set.
+            g.nodes[b]['owner'] = 0
+            g.nodes[b]['assessment'] = 'unknown'
+        else:
+            g.nodes[b]['owner'] = curr
 
-        # Handle non-existent fragments
-        missing_fragments = frag_df.query("size == 0")
-        for frag in missing_fragments.index:
-            try:
-                fragment_owner = find_root(merge_forest, frag)
-            except nx.NetworkXError:
-                # If this happens, something is totally wrong with the PR
-                unknown.append(frag)
-                continue
+    for b in g.nodes():
+        determine_owner(b)
 
-            if fragment_owner == new_target:
-                already_merged.append(frag)
+    bad_merges = []
+    merge_roots = [n for n, d in g.in_degree() if d == 0]
+    for root in merge_roots:
+        root_owner = g.nodes[root]['owner']
+        if root_owner == root:
+            g.nodes[root].setdefault('assessment', 'target')
+        else:
+            g.nodes[root].setdefault('assessment', 'old_target')
+
+        for target, fragment in nx.dfs_edges(g, root):
+            frag_owner = g.nodes[fragment]['owner']
+            if root_owner == 0:
+                g.nodes[fragment]['assessment'] = 'unassessed'
+            elif frag_owner == fragment:
+                g.nodes[fragment]['assessment'] = 'mergeable'
+            elif frag_owner == root_owner:
+                g.nodes[fragment]['assessment'] = 'already_merged'
             else:
-                merged_elsewhere.append(frag)
+                # The fragment no longer exists, but its current owner
+                # is not the same as the caller's intended owner.
+                g.nodes[fragment]['assessment'] = 'merged_elsewhere'
+                bad_merges.append((target, fragment))
 
-        # Handle existent fragments
-        existing_fragments = frag_df.query("size > 0")
-        for frag, status in existing_fragments['status'].items():
-            if frag == new_target:
-                already_merged.append(frag)
-            elif status.lower() == "anchor":
-                anchors.append(frag)
-            else:
-                mergeable.append(frag)
+    # Also add a unique ID and body ID as a node attributes,
+    # since the caller may wish to renumber the nodes for display purposes.
+    display_id = 1
+    for root in merge_roots:
+        for n in nx.dfs_preorder_nodes(g, root):
+            g.nodes[n]['body'] = n
+            g.nodes[n]['display_id'] = display_id
+            display_id += 1
 
-        # Each fragment should end up in exactly one category
-        frag_lists = (mergeable, already_merged, unknown, merged_elsewhere, anchors, unassessed)
-        listed_fragments = {*chain(*frag_lists)}
-        unlisted_fragments = set(fragments) - listed_fragments
-        assert not unlisted_fragments, \
-            f"Some fragments were not assigned to a list: {unlisted_fragments}.\n"\
-            f"Listed fragments: {frag_lists}"
-        results.append((target, new_target, new_target_status, *frag_lists))
+    # Sever the bad merges
+    g.remove_edges_from(bad_merges)
 
-    cols = [
-        'target', 'new_target', 'new_target_status',
-        'mergeable', 'already_merged', 'unknown', 'merged_elsewhere', 'anchors', 'unassessed'
-    ]
-    results_df = pd.DataFrame(results, columns=cols)
-    return results_df
+    merge_roots = [n for n, d in g.in_degree() if d == 0]
+    for root in merge_roots:
+        if g.nodes[root]['assessment'] == 'unknown':
+            continue
+
+        if g.nodes[root]['assessment'] == 'merged_elsewhere':
+            fragments = [d for d in nx.descendants(g, root) if g.nodes[d]['assessment'] == 'mergeable']
+            if fragments:
+                g.nodes[root]['mergeset'] = root
+                for f in fragments:
+                    g.nodes[f]['mergeset'] = root
+                    g.nodes[f]['assessment'] = 'my_target_merged_elsewhere'
+
+        root_owner = g.nodes[root]['owner']
+        fragments = [d for d in nx.descendants(g, root) if g.nodes[d]['assessment'] == 'mergeable']
+        if fragments:
+            g.nodes[root]['mergeset'] = g.nodes[root]['owner']
+            for f in fragments:
+                g.nodes[f]['mergeset'] = g.nodes[root]['owner']
+
+    assessments = []
+    mergesets = []
+    owners = []
+    for b in body_df.index:
+        assessments.append(g.nodes[b]['assessment'])
+        mergesets.append(g.nodes[b].get('mergeset', -1))
+        owners.append(g.nodes[b]['owner'])
+
+    body_df['assessment'] = assessments
+    body_df['mergeset'] = mergesets
+    body_df['owner'] = owners
+
+    return body_df, g
+
+
+def extract_and_coerce_mergeable_groups(body_df):
+    """
+    Given the output from assess_merges(), above,
+    extract the rows which can be used as merge sets.
+    Also, apply some rules to "coerce" the merge target/fragment
+    relationships into something that obeys basic body status rules
+    (e.g. never merge Anchor into non-Anchor; force the merge to
+    happen in the other direction.)
+
+    All else being equal, the original "target" body is kept as the coerced target.
+
+    The resulting DataFrame includes a new column for 'coerced_assessment',
+    indicating (for each mergeset) which bodies should be used as the target
+    in a merge command, and which should be the corresponding fragments.
+
+    FIXME:
+        Why do these example results include bodies which no longer exist?
+
+    Example Output:
+
+                           size  status  exists  assessment  mergeset        owner coerced_assessment
+        body
+        10131        9703514060  Anchor    True   mergeable     10131        10131             target
+        10683                 0           False  old_target     10131        10131           fragment
+        10543        4777722674  Anchor    True      target     10543        10543             target
+        17187         775748073  Anchor    True   mergeable     10543        17187           fragment
+        11294        4480310861  Anchor    True   mergeable     11294        11294             target
+        12254                 0           False  old_target     11294        11294           fragment
+        11572        2314660793  Anchor    True      target     11572        11572             target
+        104505         76619473            True   mergeable     11572       104505           fragment
+        12185        1915392615  Anchor    True      target     12185        12185             target
+        42657          66182038            True   mergeable     12185        42657           fragment
+        12269        1880149920  Anchor    True      target     12269        12269             target
+        28561          46815471            True   mergeable     12269        28561           fragment
+        14017        1232564287  Anchor    True      target     14017        14017             target
+        12604        1697354396  Anchor    True   mergeable     14017        12604           fragment
+        14021        1237311465  Anchor    True      target     14021        14021             target
+        52509          27930713            True   mergeable     14021        52509           fragment
+        16750         778461531  Anchor    True      target     16750        16750             target
+        160803          7994449            True   mergeable     16750       160803           fragment
+        24149         360173009  Anchor    True      target     24149        24149             target
+        24034         364542554  Anchor    True   mergeable     24149        24034           fragment
+        25011         327288502  Anchor    True   mergeable     24149        25011           fragment
+        21815         459247723  Anchor    True   mergeable     24149        21815           fragment
+        41221541903      163353            True   mergeable     24149  41221541903           fragment
+        41221540810      653605            True   mergeable     24149  41221540810           fragment
+        40811191220     1506353            True   mergeable     24149  40811191220           fragment
+        40811387153      399685            True   mergeable     24149  40811387153           fragment
+        40807848773      294972            True   mergeable     24149  40807848773           fragment
+        54837          23920727            True   mergeable     24149        54837           fragment
+        153168         15654750            True   mergeable     24149       153168           fragment
+        45357009431       55671            True   mergeable     24149  45357009431           fragment
+        45353469610       66703            True   mergeable     24149  45353469610           fragment
+        41221540591       14168            True   mergeable     24149  41221540591           fragment
+        41221540245       18447            True   mergeable     24149  41221540245           fragment
+        40807653217      408458            True   mergeable     24149  40807653217           fragment
+        12756        1634341939  Anchor    True   mergeable     28209        12756             target
+        28209         223922833            True      target     28209        28209           fragment
+        15801         939623164  Anchor    True   mergeable     33653        15801             target
+        33653         124497939            True      target     33653        33653           fragment
+        15481         813602671  Anchor    True   mergeable     39524        15481             target
+        39524          70728503            True      target     39524        39524           fragment
+        18551         656249050  Anchor    True   mergeable     41828        18551             target
+        41828          70490770            True      target     41828        41828           fragment
+        16068         621584299  Anchor    True   mergeable     58207        16068             target
+        58207          19452724            True      target     58207        58207           fragment
+        20446         536331788  Anchor    True   mergeable     69490        20446             target
+        69490          12112776            True      target     69490        69490           fragment
+        54535          24248379            True   mergeable     69490        54535           fragment
+        17761         725936032  Anchor    True   mergeable    153127        17761             target
+        153127        266944916            True      target    153127       153127           fragment
+    """
+    asmt_categories = ['target', 'old_target', 'mergeable', 'already_merged', 'merged_elsewhere', 'my_target_merged_elsewhere', 'unknown', 'unassessed']
+    assert set(asmt_categories) >= set(body_df['assessment']), set(body_df['assessment'])
+
+    status_categories = ['Anchor', '0.5assign', '']
+    assert set(status_categories) >= set(body_df['status']), set(body_df['status'])
+
+    body_df['assessment'] = pd.Categorical(body_df['assessment'], asmt_categories, ordered=True)
+    body_df['status'] = pd.Categorical(body_df['status'], status_categories, ordered=True)
+
+    mergeable_assessments = ('target', 'old_target', 'mergeable')  # noqa
+    mergeable_df = body_df.query('mergeset != -1 and assessment in @mergeable_assessments').sort_values(['mergeset', 'status', 'assessment'])
+
+    mergeable_df['coerced_assessment'] = 'fragment'
+    target_rows = mergeable_df.groupby('mergeset').head(1).index
+    mergeable_df.loc[target_rows, 'coerced_assessment'] = 'target'
+
+    # Only one target per mergeset
+    assert not mergeable_df.query('coerced_assessment == "target"')['mergeset'].duplicated().any()
+    return mergeable_df
+
+
+def apply_merges(dvid_server, uuid, seg_instance, mergeable_df, user):
+    """
+    Given the output of extract_and_coerce_mergeable_groups(),
+    group the bodies by the 'mergeset' column and actually apply the merges to DVID.
+    Also, delete the entries from the DVID's segmentation_annotations
+    instance for all bodies which were merged into something else (and therefore no longer exist).
+
+    TODO:
+        Apply more status rules than just deleting the fragment metadata?
+        Merge metadata into the target?
+    """
+    assert mergeable_df.index.name == 'body'
+    assert 'coerced_assessment' in mergeable_df.columns
+    assert 'mergeset' in mergeable_df
+    assert {*mergeable_df['coerced_assessment']} == {'target', 'fragment'}
+
+    logger.info("Fetching body annotations")
+    ann_df = fetch_body_annotations(dvid_server, uuid, f"{seg_instance}_annotations", bodies=mergeable_df.index)
+
+    s = default_dvid_session('pull-request-merge', user)
+
+    num_mergesets = mergeable_df['mergeset'].nunique()
+    logger.info(f"Sending {num_mergesets} merge commands")
+    for mergeset, df in tqdm(mergeable_df.groupby('mergeset'), total=num_mergesets):
+        assert df['coerced_assessment'].iloc[0] == 'target'
+        assert (df['coerced_assessment'].iloc[1:] == 'fragment').all()
+        target = df.index[0]
+        fragments = df.index[1:]
+        post_merge(dvid_server, uuid, seg_instance, target, fragments, session=s)
+        for fragment in fragments:
+            if fragment in ann_df.index:
+                delete_key(dvid_server, uuid, f"{seg_instance}_annotations", str(fragment), session=s)
+
+    logger.info("Merges applied")
