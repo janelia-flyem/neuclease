@@ -279,7 +279,9 @@ def extract_and_coerce_mergeable_groups(body_df):
     in a merge command, and which should be the corresponding fragments.
 
     FIXME:
-        Why do these example results include bodies which no longer exist?
+        - Why do these example results include bodies which no longer exist?
+        - Right now, this ensures that the "best" status is kept, but this
+          function should probably just reject merges between traced bodies.
 
     Example Output:
 
@@ -338,7 +340,9 @@ def extract_and_coerce_mergeable_groups(body_df):
     asmt_categories = ['target', 'old_target', 'mergeable', 'already_merged', 'merged_elsewhere', 'my_target_merged_elsewhere', 'unknown', 'unassessed']
     assert set(asmt_categories) >= set(body_df['assessment']), set(body_df['assessment'])
 
-    status_categories = ['Anchor', '0.5assign', '']
+    # Extracted from:
+    # http://emdata5.janelia.org:8400/api/node/aefff91ab8894a5b8340e3e577e71818/neutu_config/key/body_status_v2
+    status_categories = ['Traced', 'Roughly traced', 'Prelim Roughly traced', 'Soma Anchor', 'Cervical Anchor', 'Anchor', '0.5assign', 'Orphan', '']
     assert set(status_categories) >= set(body_df['status']), set(body_df['status'])
 
     body_df['assessment'] = pd.Categorical(body_df['assessment'], asmt_categories, ordered=True)
