@@ -208,11 +208,27 @@ def plot_connectivity_forecast(conn_df, max_rank=None, plotted_points=20_000):
     })
 
     # Avoid plotting too many points
-    step = len(_df) // plotted_points
+    step = max(1, len(_df) // plotted_points)
     _df = _df.iloc[::step]
 
-    p = _df.hvplot(_df.columns[0], _df.columns[1:].tolist(), legend='bottom_right', ylabel='fraction', width=800, height=500)
+    p = _df.hvplot(
+            _df.columns[0],
+            _df.columns[1:].tolist(),
+            hover_cols=['tbars captured', 'psds captured', 'pairwise connections'],
+            legend='bottom_right',
+            ylabel='fraction',
+            width=800,
+            height=500)
 
+    p.opts(
+        title='connectivity after prioritized merging',
+        fontsize={
+            'title': 15,
+            'labels': 14,
+            'xticks': 10,
+            'yticks': 10,
+        }
+    )
     # Hide annoying legend title
     # https://discourse.holoviz.org/t/removing-legend-title/1317/2
     p.get_dimension('Variable').label = ''
