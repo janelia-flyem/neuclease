@@ -109,6 +109,7 @@ def assess_merges(dvid_server, uuid, instance, merges, mutations=None):
         see extract_and_coerce_mergeable_groups()
 
     TODO:
+    - In the case of errors, this doesn't show the attempted target.
     - Use Ting's complete list of status priorities, rather than only hard-coding the anchor case.
     - Also check for double somas
     - Also consult a list of "forbidden merges"
