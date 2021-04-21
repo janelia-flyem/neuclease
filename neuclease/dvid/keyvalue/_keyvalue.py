@@ -472,3 +472,66 @@ def fetch_body_annotations(server, uuid, instance='segmentation_annotations', bo
         df = df.set_index('body')
     df['json'] = values
     return df
+
+
+def fetch_sphere_annotations(server, uuid, instance, *, session=None):
+    """
+    Convenience function for fetching sphere annotations from a keyvalue instance.
+
+    Example keys/values which will be parsed:
+
+        {
+            'cordish25@gmail.com--10003_37134_46349-9999_36393_46292': {
+                'Kind': 'Sphere',
+                'Pos': ['10003', '37134', '46349', '9999', '36393', '46292'],
+                'Prop': {'timestamp': ''}}
+
+            'cordish25@gmail.com--10005_30224_47596-10014_29489_47504': {
+                'Kind': 'Sphere',
+                'Pos': ['10005', '30224', '47596', '10014', '29489', '47504'],
+                'Prop': {'timestamp': ''}}
+        }
+
+    Returns:
+        DataFrame
+        Columns for the user, start/end/midpoint coordinates, and radius
+
+    Example:
+
+        ..code-block:: python
+
+            fetch_sphere_annotations('emdata5.janelia.org:8400', 'b31220', 'soma-bookmarks')
+    """
+    keys = fetch_keys(server, uuid, instance, session=session)
+    kv = fetch_keyvalues(server, uuid, instance, keys, as_json=True, session=session)
+
+    users = []
+    coords = []
+    props = []
+    for k, v in kv.items():
+        if ('Kind' not in v) or (v['Kind'] != 'Sphere'):
+            continue
+        users.append(k.split('-')[0])
+        pos = [int(p) for p in v['Pos']]
+        coords.append((pos[:3], pos[3:]))
+        props.append(v['Prop'])
+
+    cols = ['user', *'xyz', 'radius', 'x0', 'y0', 'z0', 'x1', 'y1', 'z1', 'prop']
+    if len(users) == 0:
+        return pd.DataFrame([], columns=cols)
+
+    coords = np.array(coords).astype(int)
+    midpoints = coords.sum(axis=1) // 2
+
+    df = pd.DataFrame(coords.reshape((-1, 6)), columns=['x0', 'y0', 'z0', 'x1', 'y1', 'z1'])
+    df['x'] = midpoints[:, 0]
+    df['y'] = midpoints[:, 1]
+    df['z'] = midpoints[:, 2]
+
+    radii = np.linalg.norm(coords[:, 1, :] - coords[:, 0, :], axis=1)
+    df['radius'] = radii
+
+    df['user'] = users
+    df['prop'] = props
+
+    return df[cols]
