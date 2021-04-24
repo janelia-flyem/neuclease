@@ -1,5 +1,6 @@
 import logging
 from io import BytesIO
+from json import JSONDecodeError
 from tarfile import TarFile
 from collections.abc import Mapping
 
@@ -53,36 +54,131 @@ def fetch_keyrange(server, uuid, instance, key1, key2, *, session=None):
     """
     Returns all keys between 'key1' and 'key2' for
     the given data instance (not their values).
-    
+
     WARNING: This can be slow for large ranges.
-    
+
     Args:
         server:
             dvid server, e.g. 'emdata3:8900'
-        
+
         uuid:
             dvid uuid, e.g. 'abc9'
-        
+
         instance:
             keyvalue instance name, e.g. 'focused_merged'
-    
+
+        key1:
+            Minimal key in the queried range.
+
+        key2:
+            Maximal key in the queried range.
+
     Returns:
         List of keys (strings)
-        
+
     Examples:
-        
-        # Everything from 0...999999999
-        keys = fetch_keyrange('emdata3:8900', 'abc9', '0', '999999999')
+
+        # Everything from 0...999999999999999
+        keys = fetch_keyrange('emdata3:8900', 'abc9', 'segmentation_annotations', '0', '999999999999999')
 
         # This will catch everything from 'aaa...' to a single 'z', but not 'za'
-        keys = fetch_keyrange('emdata3:8900', 'abc9', 'a', 'z')
+        keys = fetch_keyrange('emdata3:8900', 'abc9', 'my-kv-instance', 'a', 'z')
 
         # This gets everything from 'aaa...' to 'zzzzz...'
-        keys = fetch_keyrange('emdata3:8900', 'abc9', 'a', chr(ord('z')+1))
+        keys = fetch_keyrange('emdata3:8900', 'abc9', 'my-kv-instance', 'a', chr(ord('z')+1))
     """
     url = f'{server}/api/node/{uuid}/{instance}/keyrange/{key1}/{key2}'
     return fetch_generic_json(url, session=session)
-    
+
+
+@dvid_api_wrapper
+def fetch_keyrangevalues(server, uuid, instance, key1, key2, as_json=False, *, check=None, serialization=None, session=None):
+    """
+    Fetch a set of keys and values from DVID via the ``/keyrangevalues`` endpoint.
+    Instead of specifying the list of keys explicitly as in fetch_keyvalues(),
+    here you specify a range of keys to query.  All keys within the range will
+    be found and returned along with their values.
+
+    WARNING: This can be slow for large ranges.
+
+    Args:
+        server:
+            dvid server, e.g. 'emdata3:8900'
+
+        uuid:
+            dvid uuid, e.g. 'abc9'
+
+        instance:
+            keyvalue instance name, e.g. 'segmentation_annotations'
+
+        key1:
+            Minimal key in the queried range.
+
+        key2:
+            Maximal key in the queried range.
+
+        as_json:
+            If True, interpret each value as a JSON object, and parse it as such.
+
+        check:
+            When using the 'json' serialization protocol, this argument
+            specifies whether or not the server should check that the returned values are valid JSON.
+            Since we also parse the data here on the client, we use a default of False,
+            to avoid duplicate work on the server.
+
+        serialization:
+            Specifies which data format this function will request from DVID internally.
+            If ``as_json=False``, then 'protobuf' is the default, since that's the fastest option for binary data.
+            If ``as_json=True``, then 'json' is the default, since that's slightly faster for JSON data.
+            The other supported option is 'tar', which is not recommended except for debugging purposes.
+
+    Returns:
+        dict ``{key: value}``, where value is bytes, unless ``as_json=True``.
+
+    Examples:
+
+        # Everything from 0...999999999999999
+        keys = fetch_keyrangevalues('emdata3:8900', 'abc9', 'segmentation_annotations', '0', '999999999999999')
+
+        # This will catch everything from 'aaa...' to a single 'z', but not 'za'
+        keys = fetch_keyrangevalues('emdata3:8900', 'abc9', 'my-kv-instance', 'a', 'z')
+
+        # This gets everything from 'aaa...' to 'zzzzz...'
+        keys = fetch_keyrangevalues('emdata3:8900', 'abc9', 'my-kv-instance', 'a', chr(ord('z')+1))
+    """
+    if serialization is None:
+        if as_json:
+            serialization = 'json'
+        else:
+            serialization = 'protobuf'
+    assert serialization in ('protobuf', 'tar', 'json')
+
+    assert as_json or serialization != 'json', \
+        "If using serialization 'json', then the results must be json.\n"\
+        "Use as_json=True or try a different serialization."
+
+    assert not check or serialization == 'json', \
+        "The 'check' parameter applies only to the 'json' serialization mechanism"
+
+    url = f'{server}/api/node/{uuid}/{instance}/keyrangevalues/{key1}/{key2}'
+    params = {serialization: 'true'}
+    if check:
+        params['check'] = 'true'
+    else:
+        params['check'] = 'false'
+
+    r = session.get(url, params=params)
+    r.raise_for_status()
+
+    if serialization == 'protobuf':
+        return _parse_protobuf_keyvalues(r.content, as_json)
+    elif serialization == 'json':
+        return r.json()
+    elif serialization == 'tar':
+        return _parse_tarfile_keyvalues(r.content, as_json)
+    else:
+        raise NotImplementedError(f"Unimplemented serialization choice: {serialization}")
+
 
 @dvid_api_wrapper
 def fetch_key(server, uuid, instance, key, as_json=False, *, check_head=False, session=None):
@@ -180,60 +276,110 @@ def delete_key(server, uuid, instance, key, *, session=None):
 
 
 @dvid_api_wrapper
-def fetch_keyvalues(server, uuid, instance, keys, as_json=False, batch_size=None, *, use_jsontar=False, session=None):
+def fetch_keyvalues(server, uuid, instance, keys, as_json=False, batch_size=None, *, check=None, serialization=None, session=None):
     """
     Fetch a list of values from a keyvalue instance in a single batch call,
     or split across multiple batches.
     The result is returned as a dict `{ key : value }`.
     If as_json is True, any keys that do not exist in the instance will
     appear in the results with a value of None.
-        
+
     Internally, this function can use either the 'jsontar' option to
     fetch the keys as a tarball, or via the default protobuf implementation (faster).
-    
+
     Args:
         server:
             dvid server, e.g. 'emdata3:8900'
-        
+
         uuid:
             dvid uuid, e.g. 'abc9'
-        
+
         instance:
             keyvalue instance name, e.g. 'focused_merged'
-        
+
         keys:
             A list of keys (strings) to fetch values for
-        
+
         as_json:
             If True, parse the returned values as JSON.
             Otherwise, return bytes.
-        
+
         batch_size:
             Optional.  Split the keys into batches to
             split the query across multiple DVID calls.
             Otherwise, the values are fetched in a single call (batch_size = len(keys)).
-        
-        use_jsontar:
-            If True, fetch the data via the 'jsontar' mechanism, rather
-            than the default protobuf implementation, which is faster.
-    
+
+        check:
+            When using the 'json' serialization protocol, this argument
+            specifies whether or not the server should check that the returned values are valid JSON.
+            Since we also parse the data here on the client, we use a default of False,
+            to avoid duplicate work on the server.
+
+        serialization:
+            Specifies which data format this function will request from DVID internally.
+            If ``as_json=False``, then 'protobuf' is the default, since that's the fastest option for binary data.
+            If ``as_json=True``, then 'json' is the default, since that's slightly faster for JSON data.
+            The other supported option is 'tar', which is not recommended except for debugging purposes.
+
     Returns:
-        dict of `{ key: value }`
+        dict of ``{ key: value }``
     """
-    batch_size = batch_size or len(keys)
+    if serialization is None:
+        if as_json:
+            serialization = 'json'
+        else:
+            serialization = 'protobuf'
+    assert serialization in ('protobuf', 'tar', 'json')
+
+    assert as_json or serialization != 'json', \
+        "If using serialization 'json', then the results must be json.\n"\
+        "Use as_json=True or try a different serialization."
+
+    assert not check or serialization == 'json', \
+        "The 'check' parameter applies only to the 'json' serialization mechanism"
 
     keyvalues = {}
+    batch_size = batch_size or len(keys)
     for start in tqdm_proxy(range(0, len(keys), batch_size), leave=False, disable=(batch_size >= len(keys))):
         batch_keys = keys[start:start+batch_size]
-        
-        if use_jsontar:
-            batch_kvs = _fetch_keyvalues_jsontar_via_jsontar(server, uuid, instance, batch_keys, as_json, session=session)
-        else:
+
+        if serialization == 'json':
+            batch_kvs = _fetch_keyvalues_via_json(server, uuid, instance, keys, check, session)
+        elif serialization == 'protobuf':
             batch_kvs = _fetch_keyvalues_via_protobuf(server, uuid, instance, batch_keys, as_json, session=session)
-        
+        elif serialization == 'jsontar':
+            batch_kvs = _fetch_keyvalues_via_jsontar(server, uuid, instance, batch_keys, as_json, session=session)
+        else:
+            raise NotImplementedError(f"Unimplemented serialization choice: {serialization}")
+
         keyvalues.update( batch_kvs )
-    
+
     return keyvalues
+
+
+def _fetch_keyvalues_via_json(server, uuid, instance, keys, check, session):
+    params = {'json': 'true'}
+    if check:
+        params['check'] = 'true'
+    else:
+        params['check'] = 'false'
+
+    assert not isinstance(keys, str), "keys should be a list (or array) of strings"
+    if isinstance(keys, np.ndarray):
+        keys = keys.tolist()
+    else:
+        keys = list(keys)
+
+    url = f'{server}/api/node/{uuid}/{instance}/keyvalues'
+    r = session.get(url, params=params, json=keys)
+    r.raise_for_status()
+
+    try:
+        return r.json()
+    except JSONDecodeError:
+        # Workaround for:
+        # https://github.com/janelia-flyem/dvid/issues/356
+        return ujson.loads(r.content + b'}')
 
 
 @dvid_api_wrapper
@@ -243,13 +389,22 @@ def _fetch_keyvalues_via_protobuf(server, uuid, instance, keys, as_json=False, *
     proto_keys = Keys()
     for key in keys:
         proto_keys.keys.append(key)
-    
+
     r = session.get(f'{server}/api/node/{uuid}/{instance}/keyvalues', data=proto_keys.SerializeToString())
     r.raise_for_status()
+    return _parse_protobuf_keyvalues(r.content, as_json)
 
+
+def _parse_protobuf_keyvalues(buf, as_json):
+    """
+    Parse the given bytes from protobuf KeyValues
+    (neuclease.dvid.keyvalue.ingest_pb2.KeyValues)
+
+    If as_json=True, also decode each value as a json object.
+    """
     proto_keyvalues = KeyValues()
-    proto_keyvalues.ParseFromString(r.content)
-    
+    proto_keyvalues.ParseFromString(buf)
+
     try:
         keyvalues = {}
         for kv in proto_keyvalues.kvs:
@@ -266,20 +421,23 @@ def _fetch_keyvalues_via_protobuf(server, uuid, instance, keys, as_json=False, *
 
 
 @dvid_api_wrapper
-def _fetch_keyvalues_jsontar_via_jsontar(server, uuid, instance, keys, as_json=False, *, session=None):
+def _fetch_keyvalues_via_jsontar(server, uuid, instance, keys, as_json, *, session=None):
     params = {'jsontar': 'true'}
-    
+
     assert not isinstance(keys, str), "keys should be a list (or array) of strings"
     if isinstance(keys, np.ndarray):
         keys = keys.tolist()
     else:
         keys = list(keys)
-    
+
     r = session.get(f'{server}/api/node/{uuid}/{instance}/keyvalues', params=params, json=keys)
     r.raise_for_status()
-    
-    tf = TarFile(f'{instance}.tar', fileobj=BytesIO(r.content))
-    
+    return _parse_tarfile_keyvalues(r.content, as_json)
+
+
+def _parse_tarfile_keyvalues(buf, as_json):
+    tf = TarFile('keyvalues.tar', fileobj=BytesIO(buf))
+
     # Note: It is important to iterate over TarInfo *members* (not string names),
     #       since calling extractfile() with a name causes an iteration over all filenames.
     #       That is, looping over names (instead of members) results in quadratic behavior.
@@ -383,7 +541,7 @@ def extend_list_value(server, uuid, instance, key, new_list, *, session=None):
 
     # Ensure the instance exists, create it if not.
     try:
-        _info = fetch_instance_info(server, uuid, instance, session=session)
+        fetch_instance_info(server, uuid, instance, session=session)
     except requests.HTTPError as ex:
         if 'invalid data instance name' in str(ex):
             create_instance(server, uuid, instance, 'keyvalue', session=session)
@@ -406,7 +564,6 @@ def extend_list_value(server, uuid, instance, key, new_list, *, session=None):
     if set(new_list) != set(old_list):
         logger.debug(f"Updating '{instance}/{key}' list from: {old_list} to: {new_list}")
         post_key(server, uuid, instance, key, json=new_list, session=session)
-
 
 
 # Copied from the following URL, but I prepended the empty status ("").
