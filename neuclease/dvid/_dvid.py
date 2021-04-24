@@ -146,9 +146,9 @@ def dvid_api_wrapper(f):
 
 
 @dvid_api_wrapper
-def fetch_generic_json(url, json=None, *, session=None):
+def fetch_generic_json(url, json=None, *, params=None, session=None):
     # TODO: change this to use ujson?
-    r = session.get(url, json=json)
+    r = session.get(url, json=json, params=params)
     r.raise_for_status()
     return r.json()
 
