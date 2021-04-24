@@ -408,8 +408,34 @@ def extend_list_value(server, uuid, instance, key, new_list, *, session=None):
         post_key(server, uuid, instance, key, json=new_list, session=session)
 
 
+
+# Copied from the following URL, but I prepended the empty status ("").
+# http://emdata5.janelia.org:8400/api/node/b31220/neutu_config/key/body_status_v2
+DEFAULT_BODY_STATUS_CATEGORIES = [
+    '',
+    'Orphan-artifact',
+    'Orphan',
+    'Orphan hotknife',
+    'Not examined',
+    '0.5assign',
+    'Leaves',
+    'Anchor',
+    'Cervical Anchor',
+    'Soma Anchor',
+    'Hard to trace',
+    'Unimportant',
+    'Partially traced',
+    'Prelim Roughly traced',
+    'Roughly traced',
+    'Traced in ROI',
+    'Traced',
+    'Finalized'
+]
+
+
 @dvid_api_wrapper
-def fetch_body_annotations(server, uuid, instance='segmentation_annotations', bodies=None, *, session=None):
+def fetch_body_annotations(server, uuid, instance='segmentation_annotations', bodies=None, *,
+                           status_categories=DEFAULT_BODY_STATUS_CATEGORIES, session=None):
     """
     Special convenience function for reading the 'segmentation_annotations' keyvalue from DVID,
     which is created and managed by NeuTu and maintains body status information.
@@ -440,7 +466,6 @@ def fetch_body_annotations(server, uuid, instance='segmentation_annotations', bo
             NeuTu expects this to be named with a formula, after name of
             the labelmap instance it corresponds to, i.e. f"{seg_instance}_annotations"
             For example: segmentation_annotations
-
         bodies:
             If provided, fetch only the annotations for the listed body IDs
 
@@ -460,7 +485,7 @@ def fetch_body_annotations(server, uuid, instance='segmentation_annotations', bo
     else:
         keys = fetch_keys(server, uuid, instance, session=session)
 
-    kvs = fetch_keyvalues(server, uuid, instance, keys, as_json=True, batch_size=100_000)
+    kvs = fetch_keyvalues(server, uuid, instance, keys, as_json=True, batch_size=100_000, session=session)
     values = list(filter(lambda v: v is not None and 'body ID' in v, kvs.values()))
     if len(values) == 0:
         empty_index = pd.Series([], dtype=int, name='body')
@@ -470,6 +495,24 @@ def fetch_body_annotations(server, uuid, instance='segmentation_annotations', bo
     if 'body ID' in df:
         df['body'] = df['body ID']
         df = df.set_index('body')
+
+    df['status'].fillna('', inplace=True)
+
+    if status_categories is not None:
+        # status categories are ordered from small to large, so they
+        # can be sorted in the same direction as size and synapses.
+        unrecognized_statuses = set(df['status']) - set(status_categories)
+        if unrecognized_statuses:
+            msg = ("Can't create categorical statuses!\n"
+                   f"Found unrecognized statuses: {unrecognized_statuses}\n"
+                   "Try providing your own status_categories,\n"
+                   "or status_categories=None to parse status as non-categorical strings.")
+            raise RuntimeError(msg)
+
+        df['status'] = pd.Categorical(df['status'], status_categories, ordered=True)
+
+    # As a convenience, also provide the original json object for each row.
+    # This is useful when you want to push changes back to dvid.
     df['json'] = values
     return df
 
