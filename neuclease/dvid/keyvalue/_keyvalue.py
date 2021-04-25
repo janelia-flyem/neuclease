@@ -84,8 +84,8 @@ def fetch_keyrange(server, uuid, instance, key1, key2, *, session=None):
         # This will catch everything from 'aaa...' to a single 'z', but not 'za'
         keys = fetch_keyrange('emdata3:8900', 'abc9', 'my-kv-instance', 'a', 'z')
 
-        # This gets everything from 'aaa...' to 'zzzzz...'
-        keys = fetch_keyrange('emdata3:8900', 'abc9', 'my-kv-instance', 'a', chr(ord('z')+1))
+        # This gets everything from '0' to 'zzzzz...'
+        keys = fetch_keyrange('emdata3:8900', 'abc9', 'my-kv-instance', '0', chr(ord('z')+1))
     """
     url = f'{server}/api/node/{uuid}/{instance}/keyrange/{key1}/{key2}'
     return fetch_generic_json(url, session=session)
@@ -138,13 +138,13 @@ def fetch_keyrangevalues(server, uuid, instance, key1, key2, as_json=False, *, c
     Examples:
 
         # Everything from 0...999999999999999
-        keys = fetch_keyrangevalues('emdata3:8900', 'abc9', 'segmentation_annotations', '0', '999999999999999')
+        kvs = fetch_keyrangevalues('emdata3:8900', 'abc9', 'segmentation_annotations', '0', '999999999999999')
 
         # This will catch everything from 'aaa...' to a single 'z', but not 'za'
-        keys = fetch_keyrangevalues('emdata3:8900', 'abc9', 'my-kv-instance', 'a', 'z')
+        kvs = fetch_keyrangevalues('emdata3:8900', 'abc9', 'my-kv-instance', 'a', 'z')
 
-        # This gets everything from 'aaa...' to 'zzzzz...'
-        keys = fetch_keyrangevalues('emdata3:8900', 'abc9', 'my-kv-instance', 'a', chr(ord('z')+1))
+        # This gets everything from '0' to 'zzzzz...'
+        kvs = fetch_keyrangevalues('emdata3:8900', 'abc9', 'my-kv-instance', '0', chr(ord('z')+1))
     """
     if serialization is None:
         if as_json:
@@ -592,7 +592,8 @@ DEFAULT_BODY_STATUS_CATEGORIES = [
 
 @dvid_api_wrapper
 def fetch_body_annotations(server, uuid, instance='segmentation_annotations', bodies=None, *,
-                           status_categories=DEFAULT_BODY_STATUS_CATEGORIES, session=None):
+                           status_categories=DEFAULT_BODY_STATUS_CATEGORIES,
+                           batch_size=None, session=None):
     """
     Special convenience function for reading the 'segmentation_annotations' keyvalue from DVID,
     which is created and managed by NeuTu and maintains body status information.
@@ -625,6 +626,18 @@ def fetch_body_annotations(server, uuid, instance='segmentation_annotations', bo
             For example: segmentation_annotations
         bodies:
             If provided, fetch only the annotations for the listed body IDs
+        status_categories:
+            The 'status' column is in the result is an ordered ``pd.Categorical``,
+            so it can be sorted from "small" to "big".
+            By default, our standard status categories are used, but if an unknown
+            status is encountered, and error is raised.
+            In that case, you have two choices:
+                - You can specify the correct list of statuses you expect to see in the instance.
+                - You can set ``status_categories=None`` to simply return strings instead of a Categorical
+        batch_size:
+            If there are a lot (100k) of body annotation values in the instance,
+            it may be convenient to split the download into batches.
+            Specify the batch size with this parameter.
 
     Returns:
         DataFrame, indexed by body.
@@ -639,10 +652,15 @@ def fetch_body_annotations(server, uuid, instance='segmentation_annotations', bo
             max(int(b) for b in keys)
         except ValueError:
             raise RuntimeError(f"Malformed body list: {bodies}")
+        batch_size = batch_size or 100_000
+        kvs = fetch_keyvalues(server, uuid, instance, keys, as_json=True, batch_size=batch_size, session=session)
+    elif batch_size is None:
+        # This gets everything from '0' to 'zzzzz...'
+        kvs = fetch_keyrangevalues(server, uuid, instance, '0', chr(ord('z')+1), as_json=True, session=session)
     else:
         keys = fetch_keys(server, uuid, instance, session=session)
+        kvs = fetch_keyvalues(server, uuid, instance, keys, as_json=True, batch_size=batch_size, session=session)
 
-    kvs = fetch_keyvalues(server, uuid, instance, keys, as_json=True, batch_size=100_000, session=session)
     values = list(filter(lambda v: v is not None and 'body ID' in v, kvs.values()))
     if len(values) == 0:
         empty_index = pd.Series([], dtype=int, name='body')
@@ -702,8 +720,8 @@ def fetch_sphere_annotations(server, uuid, instance, *, session=None):
 
             fetch_sphere_annotations('emdata5.janelia.org:8400', 'b31220', 'soma-bookmarks')
     """
-    keys = fetch_keys(server, uuid, instance, session=session)
-    kv = fetch_keyvalues(server, uuid, instance, keys, as_json=True, session=session)
+    # This gets everything from '0' to 'zzzzz...'
+    kv = fetch_keyrangevalues(server, uuid, instance, '0', chr(ord('z')+1))
 
     users = []
     coords = []
