@@ -128,9 +128,7 @@ def fetch_keyrangevalues(server, uuid, instance, key1, key2, as_json=False, *, c
 
         serialization:
             Specifies which data format this function will request from DVID internally.
-            If ``as_json=False``, then 'protobuf' is the default, since that's the fastest option for binary data.
-            If ``as_json=True``, then 'json' is the default, since that's slightly faster for JSON data.
-            The other supported option is 'tar', which is not recommended except for debugging purposes.
+            Uses 'protobuf' by default.
 
     Returns:
         dict ``{key: value}``, where value is bytes, unless ``as_json=True``.
@@ -147,10 +145,7 @@ def fetch_keyrangevalues(server, uuid, instance, key1, key2, as_json=False, *, c
         kvs = fetch_keyrangevalues('emdata3:8900', 'abc9', 'my-kv-instance', '0', chr(ord('z')+1))
     """
     if serialization is None:
-        if as_json:
-            serialization = 'json'
-        else:
-            serialization = 'protobuf'
+        serialization = 'protobuf'
     assert serialization in ('protobuf', 'tar', 'json')
 
     assert as_json or serialization != 'json', \
@@ -317,18 +312,13 @@ def fetch_keyvalues(server, uuid, instance, keys, as_json=False, batch_size=None
 
         serialization:
             Specifies which data format this function will request from DVID internally.
-            If ``as_json=False``, then 'protobuf' is the default, since that's the fastest option for binary data.
-            If ``as_json=True``, then 'json' is the default, since that's slightly faster for JSON data.
-            The other supported option is 'tar', which is not recommended except for debugging purposes.
+            Uses 'protobuf' by default.
 
     Returns:
         dict of ``{ key: value }``
     """
     if serialization is None:
-        if as_json:
-            serialization = 'json'
-        else:
-            serialization = 'protobuf'
+        serialization = 'protobuf'
     assert serialization in ('protobuf', 'tar', 'json')
 
     assert as_json or serialization != 'json', \
@@ -652,8 +642,11 @@ def fetch_body_annotations(server, uuid, instance='segmentation_annotations', bo
             max(int(b) for b in keys)
         except ValueError:
             raise RuntimeError(f"Malformed body list: {bodies}")
+
         batch_size = batch_size or 100_000
-        kvs = fetch_keyvalues(server, uuid, instance, keys, as_json=True, batch_size=batch_size, session=session)
+        # Due to https://github.com/janelia-flyem/dvid/issues/356,
+        # we can't use serialization='json' yet.
+        kvs = fetch_keyvalues(server, uuid, instance, keys, as_json=True, batch_size=batch_size, serialization='protobuf', session=session)
     elif batch_size is None:
         # This gets everything from '0' to 'zzzzz...'
         kvs = fetch_keyrangevalues(server, uuid, instance, '0', chr(ord('z')+1), as_json=True, session=session)
@@ -721,13 +714,13 @@ def fetch_sphere_annotations(server, uuid, instance, *, session=None):
             fetch_sphere_annotations('emdata5.janelia.org:8400', 'b31220', 'soma-bookmarks')
     """
     # This gets everything from '0' to 'zzzzz...'
-    kv = fetch_keyrangevalues(server, uuid, instance, '0', chr(ord('z')+1))
+    kv = fetch_keyrangevalues(server, uuid, instance, '0', chr(ord('z')+1), as_json=True)
 
     users = []
     coords = []
     props = []
     for k, v in kv.items():
-        if ('Kind' not in v) or (v['Kind'] != 'Sphere'):
+        if v.get('Kind') != 'Sphere':
             continue
         users.append(k.split('-')[0])
         pos = [int(p) for p in v['Pos']]
