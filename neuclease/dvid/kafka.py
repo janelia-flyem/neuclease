@@ -292,7 +292,7 @@ def _filter_records_for_action(records_and_values, action_filter):
     return filter(lambda r_v: r_v[1]["Action"] in action_filter, records_and_values)
 
 
-def kafka_msgs_to_df(msgs, drop_duplicates=False, default_timestamp=DEFAULT_TIMESTAMP):
+def kafka_msgs_to_df(msgs, drop_duplicates=False, default_timestamp=DEFAULT_TIMESTAMP, convert_tz="US/Eastern"):
     """
     Load the messages into a DataFrame with columns for
     timestamp, uuid, mut_id (if present), key (if present), and msg (the complete message).
@@ -314,6 +314,19 @@ def kafka_msgs_to_df(msgs, drop_duplicates=False, default_timestamp=DEFAULT_TIME
         default_timestamp:
             Any messages that lack a 'Timestamp' field will have
             their 'timestamp' column set to this in the output dataframe.
+
+        convert_tz:
+            If provided, then it is assumed that the kafka log timestamps are provided in UTC,
+            and this function will convert them to the given timezone for display.
+
+            Warning:
+                The way dateutil formats the resulting timestamps is somewhat
+                confusing if you pay attention to the sign.
+
+                In "2021-04-27 15:12:17.180000-04:00", the "-04" means
+                "this timestamp's timezone is the one that is -4 from UTC".
+                It does NOT mean "subtract four hours to get a UTC timestamp".
+                To get a UTC timestamp, you'd have to ADD 4 hours!
 
     Returns:
         DataFrame
@@ -348,6 +361,9 @@ def kafka_msgs_to_df(msgs, drop_duplicates=False, default_timestamp=DEFAULT_TIME
     msgs_df['timestamp'] = pd.to_datetime(msgs_df['timestamp'])
     msgs_df['uuid'] = [msg['UUID'] for msg in msgs_df['msg']]
     msgs_df['uuid'] = msgs_df['uuid'].astype('category')
+
+    if convert_tz:
+        msgs_df['timestamp'] = msgs_df['timestamp'].dt.tz_localize('UTC').dt.tz_convert(convert_tz)
 
     if 'MutationID' in msgs[0]:
         mutids = []
