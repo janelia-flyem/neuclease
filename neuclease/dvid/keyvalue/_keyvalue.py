@@ -685,7 +685,7 @@ def fetch_body_annotations(server, uuid, instance='segmentation_annotations', bo
     return df
 
 
-def fetch_sphere_annotations(server, uuid, instance, *, session=None):
+def fetch_sphere_annotations(server, uuid, instance, seg_instance=None, *, session=None):
     """
     Convenience function for fetching sphere annotations from a keyvalue instance.
 
@@ -702,6 +702,16 @@ def fetch_sphere_annotations(server, uuid, instance, *, session=None):
                 'Pos': ['10005', '30224', '47596', '10014', '29489', '47504'],
                 'Prop': {'timestamp': ''}}
         }
+
+    Args:
+        server:
+            dvid server
+        uuid:
+            dvid uuid
+        instance:    
+            keyvalue instance containing annotations as shown in the example above
+        seg_instance:
+            Optional.  A labelmap instance from which fetch the label under each sphere annotation midpoint.
 
     Returns:
         DataFrame
@@ -747,5 +757,9 @@ def fetch_sphere_annotations(server, uuid, instance, *, session=None):
 
     df['user'] = users
     df['prop'] = props
+
+    if seg_instance:
+        from ..labelmap import fetch_labels_batched
+        df['body'] = fetch_labels_batched(server, uuid, seg_instance, df[[*'zyx']].values, processes=4, batch_size=5_000)
 
     return df[cols]
