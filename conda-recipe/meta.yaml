@@ -30,6 +30,7 @@ requirements:
     - h5py
     - pandas <1.0
     - numba >=0.45
+    - pytz
     - vigra
     - pillow
     - libdvid-cpp >=0.3.post83

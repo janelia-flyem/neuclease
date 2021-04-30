@@ -17,6 +17,7 @@ from datetime import datetime, timedelta
 from itertools import product, starmap
 from collections.abc import Mapping, Iterable, Iterator, Sequence
 
+import pytz
 import ujson
 import requests
 from tqdm import tqdm
@@ -673,43 +674,47 @@ def apply_star(func, arg):
 
 
 DEFAULT_TIMESTAMP = datetime.strptime('2018-01-01 00:00:00', '%Y-%m-%d %H:%M:%S')
-def parse_timestamp(ts, default=DEFAULT_TIMESTAMP):
+def parse_timestamp(ts, default=DEFAULT_TIMESTAMP, default_timezone="US/Eastern"):
     """
     Parse the given timestamp as a datetime object.
     If it is already a datetime object, it will be returned as-is.
     If it is None, then the given default timestamp will be returned.
-    
-    Acceptable formats are:
+
+    If the timestamp is not yet "localized", it will be assigned a
+    timezone according to the default_timezone argument.
+    (That is, we assume the time in the string was recorded in the specified timezone.)
+    Localized timestamps include a suffix to indicate the offset from UTC.
+    See the examples below.
+
+    Note:
+        By POSIX timestamp conventions, the +/- sign of the timezone
+        offset might be reversed of what you expected unless you're
+        already familiar with this sort of thing.
+
+    Example timestamps:
 
         2018-01-01             (date only)
         2018-01-01 00:00       (date and time)
         2018-01-01 00:00:00    (date and time with seconds)
         2018-01-01 00:00:00.0  (date and time with microseconds)
-    
+
+        2018-01-01 00:00-4:00  (date and time, localized with some US timezone offset)
+
     Returns:
         datetime
-    
+
     """
     if ts is None:
         ts = copy.copy(default)
 
-    if isinstance(ts, datetime):
+    if isinstance(ts, (datetime, pd.Timestamp)):
         return ts
 
     if isinstance(ts, str):
-        if len(ts) == len('2018-01-01'):
-            ts = datetime.strptime(ts, '%Y-%m-%d')
-        elif len(ts) == len('2018-01-01 00:00'):
-            ts = datetime.strptime(ts, '%Y-%m-%d %H:%M')
-        elif len(ts) == len('2018-01-01 00:00:00'):
-            ts = datetime.strptime(ts, '%Y-%m-%d %H:%M:%S')
-        elif len(ts) >= len('2018-01-01 00:00:00.0'):
-            frac = ts.split('.')[1]
-            zero_pad = 6 - len(frac)
-            ts += '0'*zero_pad
-            ts = datetime.strptime(ts, '%Y-%m-%d %H:%M:%S.%f')
-        else:
-            raise AssertionError("Bad timestamp format")
+        ts = pd.Timestamp(ts)
+
+    if ts.tzinfo is None and default_timezone is not None:
+        ts = pd.Timestamp.tz_localize(ts, pytz.timezone(default_timezone))
 
     return ts
 
