@@ -747,7 +747,7 @@ def fetch_labels(server, uuid, instance, coordinates_zyx, scale=0, supervoxels=F
         ndarray of N labels
 
     See also:
-        ``fetch_label()``, ``fectch_labels_batched()``
+        ``fetch_label()``, ``fetch_labels_batched()``
     """
     # I changed the order of these two args, so let's verify
     # that no old code is sending them in the wrong order.
