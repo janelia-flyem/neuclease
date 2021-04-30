@@ -705,7 +705,7 @@ def fetch_sphere_annotations(server, uuid, instance, *, session=None):
 
     Returns:
         DataFrame
-        Columns for the user, start/end/midpoint coordinates, and radius
+        Columns for the user, start/end/midpoint coordinates, and diameter
 
     Example:
 
@@ -727,7 +727,10 @@ def fetch_sphere_annotations(server, uuid, instance, *, session=None):
         coords.append((pos[:3], pos[3:]))
         props.append(v['Prop'])
 
-    cols = ['user', *'xyz', 'radius', 'x0', 'y0', 'z0', 'x1', 'y1', 'z1', 'prop']
+    cols = ['user', *'xyz', 'diameter', 'x0', 'y0', 'z0', 'x1', 'y1', 'z1', 'prop']
+    if seg_instance:
+        cols = ['body'] + cols
+
     if len(users) == 0:
         return pd.DataFrame([], columns=cols)
 
@@ -740,7 +743,7 @@ def fetch_sphere_annotations(server, uuid, instance, *, session=None):
     df['z'] = midpoints[:, 2]
 
     radii = np.linalg.norm(coords[:, 1, :] - coords[:, 0, :], axis=1)
-    df['radius'] = radii
+    df['diameter'] = radii
 
     df['user'] = users
     df['prop'] = props
