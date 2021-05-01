@@ -2888,6 +2888,10 @@ def compute_affected_bodies(kafka_msgs):
     Compute the set of all bodies that are mentioned in the log as either new, changed, or removed.
     Also return the set of new supervoxels from 'supervoxel-split' actions.
 
+    Note: The set of 'changed' bodies does NOT include changes due to supervoxel-split events,
+          since DVID currently doesn't make it easy to determine which body the supervoxel
+          belonged to at the time it was split.
+
     Note: Supervoxels from 'split' actions are not included in new_supervoxels.
           If you're interested in all supervoxel splits, see fetch_supervoxel_splits().
 
