@@ -94,11 +94,15 @@ def fetch_tarfile(server, uuid, instance, body_id, output=None, *, check_head=Fa
         in which case the tarfile bytes are returned.
         Or, if check_head=True, returns True or False,
         depending on the status of the HEAD check. 
-    
+
     See also: ``tar_to_dict()``
     """
     url = f'{server}/api/node/{uuid}/{instance}/tarfile/{body_id}'
-    
+
+    # TODO:
+    #   Maybe verify that the instance is actually tarsupervoxels,
+    #   or otherwise distinguish between check failures and true errors.
+
     if check_head:
         r = session.head(url)
         if r.status_code not in (200, 400):
