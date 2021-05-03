@@ -2666,14 +2666,21 @@ def post_merge(server, uuid, instance, main_label, other_labels, *, session=None
 
 
 @dvid_api_wrapper
-def fetch_mutations(server, uuid, instance, userid=None, *, action_filter=None, dag_filter='leaf-only', format='pandas', session=None):
+def fetch_mutations(server, uuid, instance, userid=None, *, action_filter=None, dag_filter='leaf-and-parents', format='pandas', session=None):
     """
     Fetch the log of successfully completed mutations.
     The log is returned in the same format as the kafka log.
 
     For consistency with :py:func:``read_kafka_msgs()``, this function adds
     the ``dag_filter`` and ``action_filter`` options, which are not part
-    of the DVID REST API.
+    of the DVID REST API. To emulate the bare-bones /mutations results,
+    use dag_filter='leaf-only'.
+
+    Note:
+        By default, the dag_filter setting is 'leaf-and-parents'.
+        So unlike the default behavior of the /mutations endpoint in the DVID REST API,
+        this function returns all mutations for the given UUID and ALL of its ancestor UUIDs.
+        (To achieve this, it calls the /mutations multiple times -- once per ancestor UUID.)
 
     Args:
         server, uuid, instance:
