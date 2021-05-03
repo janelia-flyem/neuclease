@@ -1031,9 +1031,10 @@ def fetch_complete_mappings(server, uuid, instance, include_retired=True, kafka_
     # Read complete kafka log; we need both split and cleave info
     if kafka_msgs is None:
         try:
-            kafka_msgs = read_kafka_messages(server, uuid, instance)
-        except Exception:
             kafka_msgs = fetch_mutations(server, uuid, instance, dag_filter='leaf-and-parents', format='json')
+        except Exception:
+            kafka_msgs = read_kafka_messages(server, uuid, instance)
+
     split_events = fetch_supervoxel_splits_from_kafka(server, uuid, instance, kafka_msgs=kafka_msgs, session=session)
     split_tables = list(map(lambda t: np.asarray([row[:-1] for row in t], np.uint64), split_events.values()))
     if split_tables:
