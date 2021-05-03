@@ -420,7 +420,7 @@ def _fetch_sizes_via_labelindex(server, uuid, instance, labels, supervoxels=Fals
         indices = fetch_labelindices(server, uuid, instance, bodies, format='pandas')
         df = pd.concat([index.blocks for index in indices])
 
-        _supervoxel_set = set(labels)
+        _supervoxel_set = set(labels)  # noqa
         df = df.query('sv in @_supervoxel_set')
         sizes = df.groupby('sv')['count'].sum().astype(np.uint32)
         sizes.name = 'size'
