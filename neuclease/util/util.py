@@ -286,7 +286,7 @@ class NumpyConvertingEncoder(json.JSONEncoder):
         '{"a": [0, 1, 2]}'
     """
     def default(self, o):
-        if isinstance(o, (np.ndarray, np.number)):
+        if isinstance(o, (np.ndarray, np.number, np.bool_)):
             return o.tolist()
         return super().default(o)
 
