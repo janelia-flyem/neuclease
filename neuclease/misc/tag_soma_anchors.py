@@ -72,6 +72,8 @@ def tag_soma_anchors(server, uuid, soma_instance, seg_instance="segmentation", a
         post_keyvalues(server, uuid, ann_instance, new_data)
     logger.info("DONE")
 
+    upgrade_df[['body', 'status', *'xyz']].to_csv('upgraded-soma-bodies.csv', header=True, index=False)
+    return upgrade_df
 
 if __name__ == "__main__":
     import argparse
