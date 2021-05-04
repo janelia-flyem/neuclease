@@ -1,7 +1,20 @@
+import os
+import json
+import subprocess
+
+import numpy as np
+
+from neuclease.util import tqdm_proxy as tqdm, dump_json
+
+
 def create_precomputed_roi_vol(roi_vol, bucket_name, bucket_path, max_scale=3):
     """
     Upload the given ROI volume (which must be a scale-5 volume, i.e. 256nm resolution)
     as a neuroglancer precomputed volume.
+
+    An example of such a volume can be found here:
+
+        gs://flyem-vnc-roi-d5f392696f7a48e27f49fa1a9db5ee3b/roi
 
     Requires tensorstore.
 
@@ -11,7 +24,11 @@ def create_precomputed_roi_vol(roi_vol, bucket_name, bucket_path, max_scale=3):
         - This doesn't upload meshes.
     """
     import tensorstore as ts
-    for scale in tqdm([0,1,2,3]):
+
+    if bucket_name.startswith('gs://'):
+        bucket_name = bucket_name[len('gs://'):]
+
+    for scale in tqdm(range(max_scale)):
         store = ts.open({
             'driver': 'neuroglancer_precomputed',
             'kvstore': {
