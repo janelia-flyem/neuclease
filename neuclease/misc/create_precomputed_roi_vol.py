@@ -1,10 +1,13 @@
 import os
 import json
+import logging
 import subprocess
 
 import numpy as np
 
 from neuclease.util import tqdm_proxy as tqdm, dump_json
+
+logger = logging.getLogger()
 
 
 def create_precomputed_roi_vol(roi_vol, bucket_name, bucket_path, max_scale=3):
@@ -54,3 +57,81 @@ def create_precomputed_roi_vol(roi_vol, bucket_name, bucket_path, max_scale=3):
             store[:] = roi_vol.transpose()[..., None]
         else:
             store[:] = roi_vol.transpose()[:-2**scale+1:2**scale, :-2**scale+1:2**scale, :-2**scale+1:2**scale, None]
+
+
+def create_precomputed_ngmeshes(vol, vol_fullres_box, names, bucket_name, bucket_path, localdir=None):
+    from vol2mesh import Mesh
+    if not bucket_name.startswith('gs://'):
+        bucket_name = 'gs://' + bucket_name
+
+    if localdir is None:
+        localdir = bucket_path.split('/')[-1]
+
+    os.makedirs(f"{localdir}/mesh", exist_ok=True)
+    dump_json({"@type": "neuroglancer_legacy_mesh"}, f"{localdir}/mesh/info")
+
+    logger.info("Generating meshes")
+    meshes = Mesh.from_label_volume(vol, vol_fullres_box, smoothing_rounds=2)
+
+    logger.info("Simplifying meshes")
+    for mesh in meshes.values():
+        mesh.simplify(0.05)
+
+    logger.info("Serializing meshes")
+    for label, mesh in meshes.items():
+        name = names.get(label, str(label))
+        mesh.serialize(f"{localdir}/mesh/{name}.ngmesh")
+        dump_json({"fragments": [f"{name}.ngmesh"]}, f"{localdir}/mesh/{label}:0")
+
+    subprocess.run(f"gsutil cp {bucket_name}/{bucket_path}/info {localdir}/info", shell=True)
+    with open(f"{localdir}/info", 'r') as f:
+        info = json.load(f)
+
+    info["mesh"] = "mesh"
+    dump_json(info, f"{localdir}/info", unsplit_int_lists=True)
+
+    logger.info("Uploading")
+    subprocess.run(f"gsutil cp {localdir}/info {bucket_name}/{bucket_path}/info", shell=True)
+    subprocess.run(f"gsutil cp -R {localdir}/mesh {bucket_name}/{bucket_path}/mesh", shell=True)
+
+
+def create_precomputed_segment_properties(names, bucket_name, bucket_path, localdir=None):
+    if not bucket_name.startswith('gs://'):
+        bucket_name = 'gs://' + bucket_name
+
+    if localdir is None:
+        localdir = bucket_path.split('/')[-1]
+
+    os.makedirs(f"{localdir}/segment_properties", exist_ok=True)
+
+    props = {
+        "@type": "neuroglancer_segment_properties",
+        "inline": {
+            "ids": [],
+            "properties": [
+                {
+                    "id": "source",
+                    "type": "label",
+                    "values": []
+                }
+            ]
+        }
+    }
+
+    for label, name in names.items():
+        props["inline"]["ids"].append(str(label))
+        props["inline"]["properties"][0]["values"].append(name)
+
+    dump_json(props, f"{localdir}/segment_properties/info", unsplit_int_lists=True)
+
+    subprocess.run(f"gsutil cp {bucket_name}/{bucket_path}/info {localdir}/info", shell=True)
+    with open(f"{localdir}/info", 'r') as f:
+        info = json.load(f)
+
+    info["segment_properties"] = "segment_properties"
+    dump_json(info, f"{localdir}/info", unsplit_int_lists=True)
+
+    subprocess.run(f"gsutil cp {localdir}/info {bucket_name}/{bucket_path}/info", shell=True)
+    subprocess.run(f"gsutil cp -R {localdir}/segment_properties {bucket_name}/{bucket_path}/segment_properties", shell=True)
+
+
