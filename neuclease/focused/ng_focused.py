@@ -81,20 +81,32 @@ def edges_to_assignment(df, gray_source, seg_source, sv_as_body=False, output_pa
     for row in df.fillna(0.0).itertuples():
 
         body_a, body_b = row.body_a, row.body_b
-        box_a = [[row.body_box_x0_a, row.body_box_y0_a, row.body_box_z0_a],
-                 [row.body_box_x1_a, row.body_box_y1_a, row.body_box_z1_a]]
-        box_b = [[row.body_box_x0_b, row.body_box_y0_b, row.body_box_z0_b],
-                 [row.body_box_x1_b, row.body_box_y1_b, row.body_box_z1_b]]
-        box_a = np.asarray(box_a)
-        box_b = np.asarray(box_b)
 
-        sv_box_a = [[row.sv_box_x0_a, row.sv_box_y0_a, row.sv_box_z0_a],
-                    [row.sv_box_x1_a, row.sv_box_y1_a, row.sv_box_z1_a]]
-        sv_box_b = [[row.sv_box_x0_b, row.sv_box_y0_b, row.sv_box_z0_b],
-                    [row.sv_box_x1_b, row.sv_box_y1_b, row.sv_box_z1_b]]
+        try:
+            box_a = [[row.body_box_x0_a, row.body_box_y0_a, row.body_box_z0_a],
+                     [row.body_box_x1_a, row.body_box_y1_a, row.body_box_z1_a]]
+            box_b = [[row.body_box_x0_b, row.body_box_y0_b, row.body_box_z0_b],
+                     [row.body_box_x1_b, row.body_box_y1_b, row.body_box_z1_b]]
+            box_a = np.asarray(box_a)
+            box_b = np.asarray(box_b)
+        except AttributeError:
+            box_a = np.empty((2, 3), dtype=np.float)
+            box_b = np.empty((2, 3), dtype=np.float)
+            box_a[:] = np.nan
+            box_b[:] = np.nan
 
-        sv_box_a = np.asarray(sv_box_a)
-        sv_box_b = np.asarray(sv_box_b)
+        try:
+            sv_box_a = [[row.sv_box_x0_a, row.sv_box_y0_a, row.sv_box_z0_a],
+                        [row.sv_box_x1_a, row.sv_box_y1_a, row.sv_box_z1_a]]
+            sv_box_b = [[row.sv_box_x0_b, row.sv_box_y0_b, row.sv_box_z0_b],
+                        [row.sv_box_x1_b, row.sv_box_y1_b, row.sv_box_z1_b]]
+            sv_box_a = np.asarray(sv_box_a)
+            sv_box_b = np.asarray(sv_box_b)
+        except AttributeError:
+            sv_box_a = np.empty((2, 3), dtype=np.float)
+            sv_box_b = np.empty((2, 3), dtype=np.float)
+            sv_box_a[:] = np.nan
+            sv_box_b[:] = np.nan
 
         if sv_as_body:
             # If presenting the task as if the supervoxels were the body,
@@ -105,7 +117,7 @@ def edges_to_assignment(df, gray_source, seg_source, sv_as_body=False, output_pa
         edge_info = {}
         for col in df.columns:
             if 'box' not in col:
-                edge_info[col] = getattr(row, col)
+                edge_info[col] = df.loc[row.Index, col]
 
         task = {
             "task type": "body merge",
@@ -354,10 +366,36 @@ if __name__ == "__main__":
     #                              shuffle=True,
     #                              description=description)
 
+    # np.random.seed(0)
+    # description = "lowscore-0.0005-rsg-favorite-boi-direct"
+    # p = f'/Users/bergs/workspace/vnc-focused-queries/tables/{description}.csv'
+    # _ = edges_to_assignments(p, VNC_GRAY, VNC_BASE, sv_as_body=True,
+    #                          output_path=f'/Users/bergs/workspace/vnc-focused-queries/tables/{description}/tasks.json',
+    #                          shuffle=True,
+    #                          description=description)
+
+    # np.random.seed(0)
+    # description = "lowscore-0.0001-rsg-favorite-boi-direct"
+    # p = f'/Users/bergs/workspace/vnc-focused-queries/tables/{description}.csv'
+    # _ = edges_to_assignments(p, VNC_GRAY, VNC_BASE, sv_as_body=True,
+    #                          output_path=f'/Users/bergs/workspace/vnc-focused-queries/tables/{description}/tasks.json',
+    #                          shuffle=True,
+    #                          description=description)
+
     np.random.seed(0)
-    description = "lowscore-0.0005-rsg-favorite-boi-direct"
+    description = "focused-2021-05-02"
     p = f'/Users/bergs/workspace/vnc-focused-queries/tables/{description}.csv'
-    _ = edges_to_assignments(p, VNC_GRAY, VNC_BASE, sv_as_body=True,
+    VNC_DVID_SRC = 'dvid://https://emdata5-avempartha.janelia.org/d9670ddd1681495db4c10865bf4819e4/segmentation'
+    _ = edges_to_assignments(p, VNC_GRAY, VNC_DVID_SRC, sv_as_body=True,
+                             output_path=f'/Users/bergs/workspace/vnc-focused-queries/tables/{description}/tasks.json',
+                             shuffle=True,
+                             description=description)
+
+    np.random.seed(0)
+    description = "unapplied-merges-2021-05-03"
+    p = f'/Users/bergs/workspace/vnc-focused-queries/tables/{description}.csv'
+    VNC_DVID_SRC = 'dvid://https://emdata5-avempartha.janelia.org/d9670ddd1681495db4c10865bf4819e4/segmentation'
+    _ = edges_to_assignments(p, VNC_GRAY, VNC_DVID_SRC, sv_as_body=True,
                              output_path=f'/Users/bergs/workspace/vnc-focused-queries/tables/{description}/tasks.json',
                              shuffle=True,
                              description=description)
