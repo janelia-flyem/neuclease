@@ -1,13 +1,60 @@
 import os
 import json
 import logging
+import tempfile
 import subprocess
 
 import numpy as np
 
 from neuclease.util import tqdm_proxy as tqdm, dump_json
+from neuclease.dvid import fetch_combined_roi_volume
 
 logger = logging.getLogger()
+
+
+def construct_ng_precomputed_layer_from_rois(server, uuid, rois, bucket_name, bucket_path, scale_0_res=8):
+    """
+    Given a list of ROIs, generate a neuroglancer precomputed layer for them.
+
+    The process is as follows:
+
+    1. Download the ROI data from dvid (RLE format), and load them into a single label volume.
+
+    2. Upload the label volume to a google bucket in neuroglancer precomputed format, using tensorstore.
+
+    3. Generate a mesh for each ROI in the label volume, and upload it in neuroglancer's "legacy" (single resolution) format.
+        - Upload to a directory named .../mesh
+        - Also edit json files:
+            .../info
+            .../mesh/info
+
+    4. Update the neuroglancer "segment properties" metadata file for the layer.
+        - Edit json files:
+            .../info
+            .../segment_properties/info
+    """
+    logger.info("Consructing segmentation volume from ROI RLEs")
+    roi_vol, roi_box, overlaps = fetch_combined_roi_volume(server, uuid, rois, box_zyx=[(0,0,0), None])
+    if len(overlaps):
+        raise RuntimeError("The ROIs you specified overlap:\n{overlaps}")
+
+    if sorted(rois) != rois:
+        logger.warning("Your ROIs aren't sorted")
+
+    logger.info("Uploading segmentation volume")
+    create_precomputed_roi_vol(roi_vol, bucket_name, bucket_path)
+
+    localdir = tempfile.mkdtemp()
+    roi_res = scale_0_res * (2**5)
+    roi_names = dict(enumerate(rois, start=1))
+
+    logger.info("Preparing legacy neuroglancer meshes")
+    create_precomputed_ngmeshes(roi_vol, roi_res * roi_box, roi_names, bucket_name, bucket_path, localdir)
+
+    logger.info("Adding segment properties (ROI names)")
+    create_precomputed_segment_properties(roi_names, bucket_name, bucket_path, localdir)
+
+    logger.info("Done creating layer in {bucket_name}/{bucket_path}")
 
 
 def create_precomputed_roi_vol(roi_vol, bucket_name, bucket_path, max_scale=3):
@@ -59,7 +106,11 @@ def create_precomputed_roi_vol(roi_vol, bucket_name, bucket_path, max_scale=3):
             store[:] = roi_vol.transpose()[:-2**scale+1:2**scale, :-2**scale+1:2**scale, :-2**scale+1:2**scale, None]
 
 
-def create_precomputed_ngmeshes(vol, vol_fullres_box, names, bucket_name, bucket_path, localdir=None):
+def create_precomputed_ngmeshes(vol, vol_fullres_box, names, bucket_name, bucket_path, localdir=None, decimation=0.02):
+    """
+    Create meshes for the given labelvolume and upload them to a google bucket in
+    neuroglancer legacy mesh format (i.e. what flyem calls "ngmesh" format).
+    """
     from vol2mesh import Mesh
     if not bucket_name.startswith('gs://'):
         bucket_name = 'gs://' + bucket_name
@@ -75,7 +126,7 @@ def create_precomputed_ngmeshes(vol, vol_fullres_box, names, bucket_name, bucket
 
     logger.info("Simplifying meshes")
     for mesh in meshes.values():
-        mesh.simplify(0.05)
+        mesh.simplify(decimation)
 
     logger.info("Serializing meshes")
     for label, mesh in meshes.items():
@@ -96,6 +147,10 @@ def create_precomputed_ngmeshes(vol, vol_fullres_box, names, bucket_name, bucket
 
 
 def create_precomputed_segment_properties(names, bucket_name, bucket_path, localdir=None):
+    """
+    Write the "segment properties" for a neuroglancer precomputed volume,
+    i.e. the segment names.
+    """
     if not bucket_name.startswith('gs://'):
         bucket_name = 'gs://' + bucket_name
 
@@ -133,5 +188,3 @@ def create_precomputed_segment_properties(names, bucket_name, bucket_path, local
 
     subprocess.run(f"gsutil cp {localdir}/info {bucket_name}/{bucket_path}/info", shell=True)
     subprocess.run(f"gsutil cp -R {localdir}/segment_properties {bucket_name}/{bucket_path}/segment_properties", shell=True)
-
-
