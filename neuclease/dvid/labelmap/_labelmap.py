@@ -1,3 +1,4 @@
+from neuclease.util.graph import toposorted_ancestors
 import re
 import gzip
 import logging
@@ -16,7 +17,7 @@ from libdvid import DVIDNodeService, encode_label_block
 from dvidutils import LabelMapper
 from vigra.analysis import labelMultiArrayWithBackground
 
-from ...util import (Timer, round_box, extract_subvol, DEFAULT_TIMESTAMP, tqdm_proxy,
+from ...util import (Timer, round_box, extract_subvol, DEFAULT_TIMESTAMP, tqdm_proxy, find_root,
                      ndrange, ndrange_array, box_to_slicing, compute_parallel, boxes_from_grid, box_shape,
                      overwrite_subvol, iter_batches, extract_labels_from_volume, box_intersection, downsample_mask)
 
@@ -2980,6 +2981,9 @@ def compute_merge_hierarchies(msgs):
     Returns:
         nx.DiGraph
     """
+    if isinstance(msgs, pd.DataFrame):
+        msgs = msgs['msg']
+
     g = nx.DiGraph()
     for msg in msgs:
         if msg['Action'] != 'merge':
@@ -2988,3 +2992,53 @@ def compute_merge_hierarchies(msgs):
         edges = [(target, label) for label in msg['Labels']]
         g.add_edges_from(edges)
     return g
+
+
+def determine_owners(merge_hierarchy, bodies):
+    """
+    Use the merge history graph which was obtained from the mutations
+    log via ``compute_merge_hierarchies()`` to determine the new
+    "owner" of a given body, if it no longer exists.
+
+    Any bodies not mentioned in the graph will be assumed to be "owned" by themselves.
+    """
+    owners = []
+    for body in bodies:
+        try:
+            r = find_root(merge_hierarchy, body)
+        except nx.NetworkXError:
+            owners.append(body)
+        else:
+            owners.append(r)
+
+    return pd.Series(owners, index=bodies, name='owner').rename_axis('body')
+
+
+def determine_merge_chains(merge_hierarchy, bodies):
+    """
+    Use the merge history graph which was obtained from the mutations
+    log via ``compute_merge_hierarchies()`` to determine the new
+    "owner" of a given body, if it no longer exists, along with the
+    intermediate chain of owners.
+
+    Any bodies not mentioned in the graph will be assumed to be "owned" by themselves.
+
+    The returned ``merge_chain`` column includes the starting body,
+    and ends with the owning (root) body.
+    """
+    mc = []
+    for body in bodies:
+        try:
+            a = toposorted_ancestors(merge_hierarchy, body, reversed=True)
+        except nx.NetworkXError:
+            mc.append([body])
+        else:
+            mc.append([body, *a])
+
+    owners = [c[-1] for c in mc]
+    merge_counts = [len(c)-1 for c in mc]
+    return pd.DataFrame({
+        'owner': owners,
+        'merge_count': merge_counts,
+        'merge_chain': mc},
+        index=bodies).rename_axis('body')
