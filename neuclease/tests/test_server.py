@@ -3,11 +3,15 @@ import sys
 import time
 import signal
 import logging
+import getpass
 import functools
 import subprocess
+from io import BytesIO
 
 import pytest
 import requests
+import numpy as np
+import pandas as pd
 
 import neuclease
 
@@ -131,22 +135,39 @@ def test_set_primary_uuid(cleave_server_setup):
     assert r.json()["uuid"] == "abc123"
     
 
+def fetch_body_edge_table(cleave_server, dvid_server, uuid, instance, body):
+    dvid_server, dvid_port = dvid_server.split(':')
+
+    if not cleave_server.startswith('http'):
+        cleave_server = 'http://' + cleave_server
+
+    data = { "body-id": body,
+             "port": dvid_port,
+             "server": dvid_server,
+             "uuid": uuid,
+             "segmentation-instance": instance,
+             "user": getpass.getuser() }
+
+    r = requests.post(f'{cleave_server}/body-edge-table', json=data)
+    r.raise_for_status()
+
+    df = pd.read_csv(BytesIO(r.content), header=0)
+    df = df.astype({'id_a': np.uint64, 'id_b': np.uint64, 'score': np.float32})
+    return df
+
+
 @show_request_exceptions
 def test_body_edge_table(cleave_server_setup):
     dvid_server, dvid_port, dvid_repo, port = cleave_server_setup
 
-    data = { "body-id": 1,
-             "port": dvid_port,
-             "server": dvid_server,
-             "uuid": dvid_repo,
-             "segmentation-instance": "segmentation" }
+    df = fetch_body_edge_table(f"http://127.0.0.1:{port}",
+                               f"{dvid_server}:{dvid_port}",
+                               dvid_repo,
+                               'segmentation',
+                               1)
 
-    r = requests.post(f'http://127.0.0.1:{port}/body-edge-table', json=data)
-    r.raise_for_status()
-
-    lines = r.content.decode().rstrip().split('\n')
-    assert lines[0] == 'id_a,id_b,score'
-    assert len(lines) == 5, '\n' +  '\n'.join(lines)
+    assert df.columns.tolist() == ['id_a', 'id_b', 'score']
+    assert len(df) == 4, df
 
 @show_request_exceptions
 def test_change_default_method(cleave_server_setup):
