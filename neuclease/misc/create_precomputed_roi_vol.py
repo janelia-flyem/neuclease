@@ -12,7 +12,7 @@ from neuclease.dvid import fetch_combined_roi_volume
 logger = logging.getLogger()
 
 
-def construct_ng_precomputed_layer_from_rois(server, uuid, rois, bucket_name, bucket_path, scale_0_res=8):
+def construct_ng_precomputed_layer_from_rois(server, uuid, rois, bucket_name, bucket_path, scale_0_res=8, decimation=0.01):
     """
     Given a list of ROIs, generate a neuroglancer precomputed layer for them.
 
@@ -49,7 +49,10 @@ def construct_ng_precomputed_layer_from_rois(server, uuid, rois, bucket_name, bu
     roi_names = dict(enumerate(rois, start=1))
 
     logger.info("Preparing legacy neuroglancer meshes")
-    create_precomputed_ngmeshes(roi_vol, roi_res * roi_box, roi_names, bucket_name, bucket_path, localdir)
+    # pad volume to ensure mesh faces on all sides
+    roi_vol = np.pad(roi_vol, 1)
+    roi_box += [[-1, -1, -1], [1, 1, 1]]
+    create_precomputed_ngmeshes(roi_vol, roi_res * roi_box, roi_names, bucket_name, bucket_path, localdir, decimation)
 
     logger.info("Adding segment properties (ROI names)")
     create_precomputed_segment_properties(roi_names, bucket_name, bucket_path, localdir)
@@ -106,7 +109,7 @@ def create_precomputed_roi_vol(roi_vol, bucket_name, bucket_path, max_scale=3):
             store[:] = roi_vol.transpose()[:-2**scale+1:2**scale, :-2**scale+1:2**scale, :-2**scale+1:2**scale, None]
 
 
-def create_precomputed_ngmeshes(vol, vol_fullres_box, names, bucket_name, bucket_path, localdir=None, decimation=0.02):
+def create_precomputed_ngmeshes(vol, vol_fullres_box, names, bucket_name, bucket_path, localdir=None, decimation=0.01):
     """
     Create meshes for the given labelvolume and upload them to a google bucket in
     neuroglancer legacy mesh format (i.e. what flyem calls "ngmesh" format).
