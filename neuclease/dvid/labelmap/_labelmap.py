@@ -1214,21 +1214,43 @@ def copy_mappings(src_info, dest_info, batch_size=None, *, session=None):
 
 
 @dvid_api_wrapper
-def fetch_mutation_id(server, uuid, instance, body_id, *, session=None):
-    response = fetch_generic_json(f'{server}/api/node/{uuid}/{instance}/lastmod/{body_id}', session=session)
+def fetch_mutation_id(server, uuid, instance, body_id, *, session=None, handle_404=False):
+    """
+    Fetch the mutation ID for a particular body.
+    The mutation ID is an integer that indicates when the body was most recently modified.
+    This function obtains it via the /lastmod endpoint, but only returns the mutation ID, nothing more.
+
+    If handle_404 is True, return -1 if the body doesn't exist.
+    """
+    try:
+        response = fetch_generic_json(f'{server}/api/node/{uuid}/{instance}/lastmod/{body_id}', session=session)
+    except HTTPError as ex:
+        if handle_404 and ex.response is not None and ex.response.status_code == 404:
+            return -1
+        raise
+
     return response["mutation id"]
 
 
 @dvid_api_wrapper
 def fetch_mutation_ids(server, uuid, instance, bodies, *, session=None, processes=0):
+    """
+    Fetch the mutation IDs for several bodies, via parallel calls to fetch_mutation_id.
+
+    If a body doesn't exist, its mutation ID will be returned as -1.
+    (Note that legitimate bodies CAN have a mutation ID of 0.)
+
+    Returns:
+        pd.Series, indexed by body.
+    """
     bodies = np.asarray(bodies, np.uint64)
     if processes == 0:
         mutids = []
         for body in bodies:
-            m = fetch_mutation_id(server, uuid, instance, body, session=session)
+            m = fetch_mutation_id(server, uuid, instance, body, session=session, handle_404=True)
             mutids.append(m)
     else:
-        fn = partial(fetch_mutation_id, server, uuid, instance)
+        fn = partial(fetch_mutation_id, server, uuid, instance, handle_404=True)
         mutids = compute_parallel(fn, bodies, processes=processes)
 
     return pd.Series(mutids, index=bodies, name='mutid').rename_axis('body')
