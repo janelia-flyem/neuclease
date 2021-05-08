@@ -12,7 +12,8 @@ from neuclease.dvid import fetch_combined_roi_volume
 logger = logging.getLogger()
 
 
-def construct_ng_precomputed_layer_from_rois(server, uuid, rois, bucket_name, bucket_path, scale_0_res=8, decimation=0.01):
+def construct_ng_precomputed_layer_from_rois(server, uuid, rois, bucket_name, bucket_path, scale_0_res=8, decimation=0.01,
+                                             localdir=None, steps={'voxels', 'meshes', 'properties'}):
     """
     Given a list of ROIs, generate a neuroglancer precomputed layer for them.
 
@@ -33,29 +34,37 @@ def construct_ng_precomputed_layer_from_rois(server, uuid, rois, bucket_name, bu
             .../info
             .../segment_properties/info
     """
+    invalid_steps = set(steps) - {'voxels', 'meshes', 'properties'}
+    assert not invalid_steps, "Invalid steps: {steps}"
+
+    if not localdir:
+        localdir = tempfile.mkdtemp()
+
+    if sorted(rois) != rois:
+        logger.warning("Your ROIs aren't sorted")
+    roi_names = dict(enumerate(rois, start=1))
+
     logger.info("Consructing segmentation volume from ROI RLEs")
     roi_vol, roi_box, overlaps = fetch_combined_roi_volume(server, uuid, rois, box_zyx=[(0,0,0), None])
     if len(overlaps):
         raise RuntimeError("The ROIs you specified overlap:\n{overlaps}")
 
-    if sorted(rois) != rois:
-        logger.warning("Your ROIs aren't sorted")
+    if 'voxels' in steps:
+        logger.info("Uploading segmentation volume")
+        create_precomputed_roi_vol(roi_vol, bucket_name, bucket_path)
 
-    logger.info("Uploading segmentation volume")
-    create_precomputed_roi_vol(roi_vol, bucket_name, bucket_path)
+    if 'meshes' in steps:
+        roi_res = scale_0_res * (2**5)
 
-    localdir = tempfile.mkdtemp()
-    roi_res = scale_0_res * (2**5)
-    roi_names = dict(enumerate(rois, start=1))
+        logger.info("Preparing legacy neuroglancer meshes")
+        # pad volume to ensure mesh faces on all sides
+        roi_vol = np.pad(roi_vol, 1)
+        roi_box += [[-1, -1, -1], [1, 1, 1]]
+        create_precomputed_ngmeshes(roi_vol, roi_res * roi_box, roi_names, bucket_name, bucket_path, localdir, decimation)
 
-    logger.info("Preparing legacy neuroglancer meshes")
-    # pad volume to ensure mesh faces on all sides
-    roi_vol = np.pad(roi_vol, 1)
-    roi_box += [[-1, -1, -1], [1, 1, 1]]
-    create_precomputed_ngmeshes(roi_vol, roi_res * roi_box, roi_names, bucket_name, bucket_path, localdir, decimation)
-
-    logger.info("Adding segment properties (ROI names)")
-    create_precomputed_segment_properties(roi_names, bucket_name, bucket_path, localdir)
+    if 'properties' in steps:
+        logger.info("Adding segment properties (ROI names)")
+        create_precomputed_segment_properties(roi_names, bucket_name, bucket_path, localdir)
 
     logger.info("Done creating layer in {bucket_name}/{bucket_path}")
 
