@@ -95,7 +95,7 @@ def main():
         kafka_msgs = read_kafka_messages(args.server, args.uuid, seg_instance)
         filtered_kafka_msgs = filter_kafka_msgs_by_timerange(kafka_msgs, min_timestamp=args.kafka_timestamp)
         
-        new_bodies, changed_bodies, _removed_bodies, new_supervoxels = compute_affected_bodies(filtered_kafka_msgs)
+        new_bodies, changed_bodies, _removed_bodies, new_supervoxels, _deleted_svs = compute_affected_bodies(filtered_kafka_msgs)
         sv_split_bodies = set(fetch_mapping(args.server, args.uuid, seg_instance, new_supervoxels)) - set([0])
         
         bodies = set(chain(new_bodies, changed_bodies, sv_split_bodies))

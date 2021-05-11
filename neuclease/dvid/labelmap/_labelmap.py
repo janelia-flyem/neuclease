@@ -2934,7 +2934,7 @@ def compute_affected_bodies(kafka_msgs):
         neuclease.dvid.kafka.filter_kafka_msgs_by_timerange()
 
     Args:
-        Kafka log for a labelmap instance, obtained via read_kafka_messages().
+        Kafka log for a labelmap instance, obtained via ``read_kafka_messages()`` or ``read_labelmap_kafka_df()``
 
     Returns:
         new_bodies, changed_bodies, removed_bodies, new_supervoxels
@@ -2946,16 +2946,20 @@ def compute_affected_bodies(kafka_msgs):
         >>> kafka_msgs = read_kafka_messages(server, uuid, seg_instance)
         >>> filtered_kafka_msgs = filter_kafka_msgs_by_timerange(kafka_msgs, min_timestamp="2018-11-22")
 
-        >>> new_bodies, changed_bodies, _removed_bodies, new_supervoxels = compute_affected_bodies(filtered_kafka_msgs)
-        >>> sv_split_bodies = set(fetch_mapping(server, uuid, seg_instance, new_supervoxels)) - set([0])
+        >>> new_bodies, changed_bodies, _removed_bodies, new_svs, deleted_svs = compute_affected_bodies(filtered_kafka_msgs)
+        >>> sv_split_bodies = set(fetch_mapping(server, uuid, seg_instance, new_svs)) - set([0])
 
         >>> possibly_outdated_bodies = (new_bodies | changed_bodies | sv_split_bodies)
 
     """
+    if isinstance(kafka_msgs, pd.DataFrame):
+        kafka_msgs = kafka_msgs['msg']
+
     new_bodies = set()
     changed_bodies = set()
     removed_bodies = set()
     new_supervoxels = set()
+    deleted_svs = set()
 
     for msg in kafka_msgs:
         if msg['Action'].endswith('complete'):
@@ -2979,13 +2983,15 @@ def compute_affected_bodies(kafka_msgs):
         if msg['Action'] == 'split-supervoxel':
             new_supervoxels.add(msg['SplitSupervoxel'])
             new_supervoxels.add(msg['RemainSupervoxel'])
+            deleted_svs.add(msg['Supervoxel'])
 
     new_bodies = np.fromiter(new_bodies, np.uint64)
     changed_bodies = np.fromiter(changed_bodies, np.uint64)
     removed_bodies = np.fromiter(removed_bodies, np.uint64)
     new_supervoxels = np.fromiter(new_supervoxels, np.uint64)
+    deleted_svs = np.fromiter(deleted_svs, np.uint64)
 
-    return new_bodies, changed_bodies, removed_bodies, new_supervoxels
+    return new_bodies, changed_bodies, removed_bodies, new_supervoxels, deleted_svs
 
 
 def compute_merge_hierarchies(msgs):
