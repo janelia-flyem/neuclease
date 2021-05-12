@@ -734,34 +734,34 @@ def find_repo_root(server, uuid):
     return repo_info['Root']
 
 
-def resolve_ref(server, ref):
+def resolve_ref(server, ref, expand=False):
     """
     Given a ref that is either a UUID or a branch name,
     return the UUID it refers to, i.e. return the UUID
     itself OR return the last UUID of the branch.
-    
+
     Examples:
-        
+
         >>> resolve_ref('emdata4:8900', 'abc123')
         abc123
-        
+
         >>> resolve_ref('emdata4:8900', 'master')
         abc123
     """
     try:
         # Is it a uuid?
-        # If so, fetch_repo_info() will work
-        # (even if it's not the root uuid)
-        fetch_repo_info(server, ref)
+        expanded = expand_uuid(server, ref)
     except Exception:
-        pass # See below
+        pass  # See below
     else:
+        if expand:
+            return expanded
         return ref
 
     if ref == "master":
         ref = ""
-        
-    # Not a valid UUID.  Maybe its a branch.
+
+    # Not a valid UUID.  Maybe it's a branch.
     try:
         branch_nodes = find_branch_nodes(server, branch=ref)
         if branch_nodes:

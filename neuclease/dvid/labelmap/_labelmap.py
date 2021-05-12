@@ -2745,7 +2745,7 @@ def fetch_mutations(server, uuid, instance, userid=None, *, action_filter=None, 
     # json-values is a synonym, for compatibility with read_kafka_messages
     assert format in ('pandas', 'json', 'json-values')
 
-    uuid = resolve_ref(server, uuid)
+    uuid = resolve_ref(server, uuid, expand=True)
 
     if userid:
         params = {'userid': userid}
@@ -2915,16 +2915,19 @@ def labelmap_kafka_msgs_to_df(kafka_msgs, default_timestamp=DEFAULT_TIMESTAMP, d
 
 def compute_affected_bodies(kafka_msgs):
     """
-    Given a list of json messages from a labelmap instance,
-    Compute the set of all bodies that are mentioned in the log as either new, changed, or removed.
+    Given a list of json messages from a labelmap instance (from kafka or from /mutations),
+    compute the set of all bodies that are mentioned in the log as either new, changed, or removed.
     Also return the set of new supervoxels from 'supervoxel-split' actions.
 
-    Note: The set of 'changed' bodies does NOT include changes due to supervoxel-split events,
-          since DVID currently doesn't make it easy to determine which body the supervoxel
-          belonged to at the time it was split.
+    Note:
+        The set of 'changed' bodies does NOT include changes due to supervoxel-split events,
+        since DVID currently doesn't make it easy to determine which body the supervoxel
+        belonged to at the time it was split.
 
-    Note: Supervoxels from 'split' actions are not included in new_supervoxels.
-          If you're interested in all supervoxel splits, see fetch_supervoxel_splits().
+    Note:
+        Supervoxels from the deprecated body 'split' action (as opposed to 'split-supervoxel')
+        are not included in the results.
+        If you're interested in all supervoxel splits, see fetch_supervoxel_splits().
 
     Note:
         These results do not consider any '-complete' messsages in the list.
@@ -2937,20 +2940,18 @@ def compute_affected_bodies(kafka_msgs):
         Kafka log for a labelmap instance, obtained via ``read_kafka_messages()`` or ``read_labelmap_kafka_df()``
 
     Returns:
-        new_bodies, changed_bodies, removed_bodies, new_supervoxels
+        new_bodies, changed_bodies, removed_bodies, new_svs, deleted_svs
 
     Example:
 
-        >>> # Compute the list of bodies whose meshes are possibly outdated.
+        .. code-block:: ipython
 
-        >>> kafka_msgs = read_kafka_messages(server, uuid, seg_instance)
-        >>> filtered_kafka_msgs = filter_kafka_msgs_by_timerange(kafka_msgs, min_timestamp="2018-11-22")
-
-        >>> new_bodies, changed_bodies, _removed_bodies, new_svs, deleted_svs = compute_affected_bodies(filtered_kafka_msgs)
-        >>> sv_split_bodies = set(fetch_mapping(server, uuid, seg_instance, new_svs)) - set([0])
-
-        >>> possibly_outdated_bodies = (new_bodies | changed_bodies | sv_split_bodies)
-
+            In [1]: vnc_seg = ('emdata5.janelia.org:8400', 'e98a33', 'segmentation')
+            ...:
+            ...: # This calls /mutations repeatedly for every upstream UUID
+            ...: mutations = fetch_mutations(*vnc_seg, dag_filter='leaf-and-parents')
+            ...:
+            ...: new_bodies, changed_bodies, removed_bodies, new_svs, deleted_svs = compute_affected_bodies(mutations)
     """
     if isinstance(kafka_msgs, pd.DataFrame):
         kafka_msgs = kafka_msgs['msg']
