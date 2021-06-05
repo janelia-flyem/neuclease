@@ -1412,7 +1412,7 @@ def find_files(root_dir, file_exts=None, skip_exprs=None, file_exprs=None):
         ..code-block:: ipython
 
             In [1]: root_dir = '/nrs/flyem/render/n5/Z0720_07m_BR/render/Sec32'
-               ...: find_files( root_dir, '.json', ['^s[0-9]+$', 'v1'])
+               ...: find_files( root_dir, '.json', ['s[0-9]+', 'v1'])
             Out[1]:
             ['/nrs/flyem/render/n5/Z0720_07m_BR/render/Sec32/attributes.json',
              '/nrs/flyem/render/n5/Z0720_07m_BR/render/Sec32/v2_acquire_trimmed_sp1_adaptive___20210315_093643/attributes.json',
@@ -1443,7 +1443,7 @@ def find_files(root_dir, file_exts=None, skip_exprs=None, file_exprs=None):
         file_exts = map(lambda e: e.replace('.', '\\.'), file_exts)
 
         # Convert file extensions -> file expressions (regex)
-        file_exprs = map(lambda e: f".*\\.{e}$", file_exts)
+        file_exprs = map(lambda e: f".*\\.{e}", file_exts)
 
     # Combine and compile expression lists
     file_expr = '|'.join(f"({e})" for e in file_exprs)
@@ -1464,12 +1464,12 @@ def find_files(root_dir, file_exts=None, skip_exprs=None, file_exprs=None):
 
         # Matching files
         if file_expr:
-            files = filter(lambda f: file_rgx.match(f), files)
+            files = filter(lambda f: file_rgx.fullmatch(f), files)
         files = map(lambda f: f"{parent_dir}/{f}", files)
 
         # Exclude skipped directories
         if skip_expr:
-            subdirs = filter(lambda d: not skip_rgx.match(d), subdirs)
+            subdirs = filter(lambda d: not skip_rgx.fullmatch(d), subdirs)
         subdirs = map(lambda d: f"{parent_dir}/{d}", subdirs)
 
         # Recurse
