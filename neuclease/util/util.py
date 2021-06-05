@@ -1380,18 +1380,25 @@ def find_files(root_dir, file_exts=None, skip_exprs=None, file_exprs=None):
     Args:
         root_dir:
             The root directory for the search
+
         file_exts:
             A file extension or list of extensions to search for.
             Cannot be used in conjunction with file_exprs.
+
         skip_exprs:
             A regular expression (or list of them) to specify which
             directories should be skipped entirely during the search.
+
+            Note:
+                The root_dir is always searched, even it if matches
+                something in skip_exprs.
+
         file_exprs:
             A regular expression (or list of them) to specify which file names to search for.
             Cannot be used in conjunction with file_exts.
 
     Returns:
-        list
+        list of matching file paths
 
     Note:
         Only files are searched for. Directories will not be returned,
@@ -1405,7 +1412,7 @@ def find_files(root_dir, file_exts=None, skip_exprs=None, file_exprs=None):
         ..code-block:: ipython
 
             In [1]: root_dir = '/nrs/flyem/render/n5/Z0720_07m_BR/render/Sec32'
-               ...: find_files( root_dir, '.json', ['s[0-9]+', 'v1'])
+               ...: find_files( root_dir, '.json', ['^s[0-9]+$', 'v1'])
             Out[1]:
             ['/nrs/flyem/render/n5/Z0720_07m_BR/render/Sec32/attributes.json',
              '/nrs/flyem/render/n5/Z0720_07m_BR/render/Sec32/v2_acquire_trimmed_sp1_adaptive___20210315_093643/attributes.json',
@@ -1446,6 +1453,8 @@ def find_files(root_dir, file_exts=None, skip_exprs=None, file_exprs=None):
     skip_rgx = re.compile(skip_expr)
 
     def _find_files(parent_dir):
+        logger.debug("Searching " + parent_dir)
+
         try:
             # Get only the parent directory contents (not subdir contents),
             # i.e. just one iteration of os.walk()
@@ -1454,14 +1463,19 @@ def find_files(root_dir, file_exts=None, skip_exprs=None, file_exprs=None):
             return []
 
         # Matching files
-        files = filter(lambda f: file_rgx.match(f), files)
+        if file_expr:
+            files = filter(lambda f: file_rgx.match(f), files)
         files = map(lambda f: f"{parent_dir}/{f}", files)
 
         # Exclude skipped directories
-        subdirs = filter(lambda d: not skip_rgx.match(d), subdirs)
+        if skip_expr:
+            subdirs = filter(lambda d: not skip_rgx.match(d), subdirs)
         subdirs = map(lambda d: f"{parent_dir}/{d}", subdirs)
 
+        # Recurse
         subdir_filesets = map(_find_files, subdirs)
-        return chain(files, *subdir_filesets)
+
+        # Concatenate
+        return chain(sorted(files), *subdir_filesets)
 
     return list(_find_files(root_dir))
