@@ -665,7 +665,10 @@ def fetch_body_annotations(server, uuid, instance='segmentation_annotations', bo
         df['body'] = df['body ID']
         df = df.set_index('body')
 
-    df['status'].fillna('', inplace=True)
+    if 'status' in df.columns:
+        df['status'].fillna('', inplace=True)
+    else:
+        df['status'] = ""
 
     if status_categories is not None:
         # status categories are ordered from small to large, so they
