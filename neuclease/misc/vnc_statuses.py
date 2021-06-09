@@ -1,5 +1,5 @@
 import logging
-from neuclease.dvid import fetch_body_annotations, fetch_sphere_annotations, fetch_all_elements, fetch_labels
+from neuclease.dvid import fetch_body_annotations, fetch_sphere_annotations, fetch_all_elements, fetch_labels_batched
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +55,7 @@ def fetch_vnc_statuses(server, uuid):
 
     neck_df = fetch_all_elements(server, uuid, 'neck-points', format='pandas')
     neck_df = neck_df[[*'xyz']]
-    neck_df['body'] = fetch_labels(server, uuid, 'segmentation', neck_df[[*'zyx']].values)
+    neck_df['body'] = fetch_labels_batched(server, uuid, 'segmentation', neck_df[[*'zyx']].values, processes=4, batch_size=1000)
     neck_df = neck_df.rename(columns={k: f'neck_{k}' for k in 'xyz'})
     neck_df['is_cervical'] = True
 
