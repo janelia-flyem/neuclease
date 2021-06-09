@@ -712,7 +712,7 @@ def fetch_sphere_annotations(server, uuid, instance, seg_instance=None, *, sessi
             dvid server
         uuid:
             dvid uuid
-        instance:    
+        instance:
             keyvalue instance containing annotations as shown in the example above
         seg_instance:
             Optional.  A labelmap instance from which fetch the label under each sphere annotation midpoint.
@@ -739,7 +739,7 @@ def fetch_sphere_annotations(server, uuid, instance, seg_instance=None, *, sessi
         users.append(k.split('-')[0])
         pos = [int(p) for p in v['Pos']]
         coords.append((pos[:3], pos[3:]))
-        props.append(v['Prop'])
+        props.append(v.get('Prop', None))
 
     cols = ['user', *'xyz', 'diameter', 'x0', 'y0', 'z0', 'x1', 'y1', 'z1', 'prop']
     if seg_instance:
@@ -767,6 +767,48 @@ def fetch_sphere_annotations(server, uuid, instance, seg_instance=None, *, sessi
         df['body'] = fetch_labels_batched(server, uuid, seg_instance, df[[*'zyx']].values, processes=4, batch_size=5_000)
 
     return df[cols]
+
+
+def post_sphere_annotations(server, uuid, instance, df, *, session=None):
+    """
+    Post a set of sphere annotations to a key-value instance.
+
+    Will post key-values in this format:
+
+        {
+            'cordish25@gmail.com--10003_37134_46349-9999_36393_46292': {
+                'Kind': 'Sphere',
+                'Pos': ['10003', '37134', '46349', '9999', '36393', '46292'],
+                'Prop': {'timestamp': ''}}
+
+            'cordish25@gmail.com--10005_30224_47596-10014_29489_47504': {
+                'Kind': 'Sphere',
+                'Pos': ['10005', '30224', '47596', '10014', '29489', '47504'],
+                'Prop': {'timestamp': ''}}
+        }
+
+    Args:
+        df:
+            DataFrame with columns ['user', 'x0', 'y0', 'z0', 'x1', 'y1', 'z1']
+            and optionally a 'prop' column.
+            The two coordinates represend endpoints of the sphere diameter.
+    """
+    assert {'user', 'x0', 'y0', 'z0', 'x1', 'y1', 'z1'} <= set(df.columns)
+    df = df.copy()
+
+    kvs = {}
+    for t in df.itertuples():
+        key = f"{t.user}--{t.x0}_{t.y0}_{t.z0}-{t.x1}-{t.y1}-{t.z1}"
+        value = {
+            'Kind': 'Sphere',
+            'Pos': [*map(str, [t.x0, t.y0, t.z0, t.x1, t.y1, t.z1])]
+        }
+        if 'prop' in df.columns:
+            value['Prop'] = t.properties
+
+        kvs[key] = value
+
+    post_keyvalues(server, uuid, instance, kvs, session=session)
 
 
 @dvid_api_wrapper
