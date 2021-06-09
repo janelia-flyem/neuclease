@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 import requests
 
-from ...util import tqdm_proxy, compute_parallel
+from ...util import tqdm_proxy, compute_parallel, swc_to_dataframe
 from .. import dvid_api_wrapper, fetch_generic_json
 from ..common import post_tags
 from ..node import fetch_instance_info
@@ -809,6 +809,22 @@ def post_sphere_annotations(server, uuid, instance, df, *, session=None):
         kvs[key] = value
 
     post_keyvalues(server, uuid, instance, kvs, session=session)
+
+
+@dvid_api_wrapper
+def fetch_skeleton(server, uuid, instance, body, format='pandas', *, session=None):
+    """
+    Convenience function.
+    Fetch the skeleton for a given body from a keyvalue instance.
+    Assumes the keys for skeletons are named using NeuTu conventions, e.g. "1234_swc".
+    """
+    assert format in ('pandas', 'swc')
+    swc_text = fetch_key(server, uuid, instance, f"{body}_swc", session=session).decode('utf-8')
+    if format == 'swc':
+        return swc_text
+    if format == 'pandas':
+        df = swc_to_dataframe(swc_text)
+    return df
 
 
 @dvid_api_wrapper
