@@ -396,6 +396,9 @@ def determine_point_rois(server, uuid, rois, points_df, combined_vol=None, combi
             This is convenient for some uses and inconvenient for others.
             To convert it back to an ordinary dtype, use df['roi'] = df['roi].astype(str)
     """
+    if isinstance(rois, str):
+        rois = [rois]
+
     assert set(points_df.columns).issuperset(['x', 'y', 'z'])
 
     # This is a requirement of extract_labels_from_volume
