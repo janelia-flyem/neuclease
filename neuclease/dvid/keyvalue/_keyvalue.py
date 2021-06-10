@@ -811,6 +811,23 @@ def post_sphere_annotations(server, uuid, instance, df, *, session=None):
     post_keyvalues(server, uuid, instance, kvs, session=session)
 
 
+def delete_sphere_annotations(server, uuid, instance, midpoints, user=None, *, session=None):
+    """
+    Delete a set of sphere annotations, identified via their midpoints.
+    If a user email is provided, then delete only those points which match the given user and the midpoint.
+    If no user email is provided, delete all points with matching midpoints, regardless of user.
+    """
+    assert {*'zyx'} <= set(midpoints.columns)
+    df = fetch_sphere_annotations(server, uuid, instance, session=session)
+    to_delete = df.merge(midpoints[[*'xyz']], 'inner', on=[*'xyz'])
+    for t in to_delete.itertuples():
+        if user and t.user != user:
+            continue
+        key = f"{t.user}--{t.x0}_{t.y0}_{t.z0}-{t.x1}_{t.y1}_{t.z1}"
+        delete_key(server, uuid, instance, key, session=session)
+
+    return len(to_delete)
+
 @dvid_api_wrapper
 def fetch_skeleton(server, uuid, instance, body, format='pandas', *, session=None):
     """
