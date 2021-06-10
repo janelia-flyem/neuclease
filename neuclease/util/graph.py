@@ -47,10 +47,10 @@ def toposorted_ancestors(g, n, reversed=False):
         Does not include n itself.
 
     Example:
-        In [2]: g = nx.DiGraph()
+        In [1]: g = nx.DiGraph()
            ...: g.add_edges_from([(1,2), (2,3), (3,4), (3,5), (4,6), (5,6), (2, 10), (10,11)])
            ...: toposorted_ancestors(g, 6)
-        Out[2]: [4, 5, 3, 2, 1]
+        Out[1]: [1, 2, 3, 5, 4]
     """
     nodes = [n]
     ancestors = []
@@ -60,14 +60,13 @@ def toposorted_ancestors(g, n, reversed=False):
         ancestors.extend(parents)
         nodes.extend(parents)
 
-    # Drop duplicates via dict insertion
+    # Drop duplicates via dict insertion to preserve order
     ancestors = list({a: None for a in ancestors}.keys())
 
-    # ancestors is already in toposorted order.
     if reversed:
+        # ancestors is already in reverse-toposorted order.
         return ancestors
     else:
-        # Reverse it to obtain topologically sorted order
         return ancestors[::-1]
 
 
