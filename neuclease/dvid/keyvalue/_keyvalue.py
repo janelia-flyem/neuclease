@@ -798,7 +798,7 @@ def post_sphere_annotations(server, uuid, instance, df, *, session=None):
 
     kvs = {}
     for t in df.itertuples():
-        key = f"{t.user}--{t.x0}_{t.y0}_{t.z0}-{t.x1}-{t.y1}-{t.z1}"
+        key = f"{t.user}--{t.x0}_{t.y0}_{t.z0}-{t.x1}_{t.y1}_{t.z1}"
         value = {
             'Kind': 'Sphere',
             'Pos': [*map(str, [t.x0, t.y0, t.z0, t.x1, t.y1, t.z1])]
