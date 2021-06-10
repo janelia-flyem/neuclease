@@ -37,46 +37,44 @@ CleaveResults = namedtuple("CleaveResults", "output_labels disconnected_componen
 def cleave(edges, edge_weights, seeds_dict, node_ids, node_sizes=None, method='seeded-mst'):
     """
     Cleave the graph with the given edges and edge weights.
-    
+
     Args:
-        
+
         edges:
             array, (E,2), uint32
-        
+
         edge_weights:
             array, (E,), float32
-        
+            These should be "costs", i.e. higher
+
         seeds_dict:
             dict, { seed_class : [node_id, node_id, ...] }
-        
+
         node_ids:
             The complete list of node IDs in the graph. Must contain a superset of the ids given in edges.
             Extra ids in node_ids (i.e. not mentioned in 'edges') will be included
             in the results as disconnected components.
-        
+
         method:
             One of: 'seeded-mst', 'seeded-watershed', 'agglomerative-clustering', 'echo-seeds'
 
     Returns:
-    
+
         CleaveResults, namedtuple with fields:
-        (node_ids, output_labels, disconnected_components, contains_unlabeled_components)
-        
+        (output_labels, disconnected_components, contains_unlabeled_components)
+
         Where:
-            node_ids:
-                The graph node_ids.
-                
             output_labels:
                 array (N,), uint32
                 Agglomerated node labeling, in the same order as node_ids.
-                
+
             disconnected_components:
                 A set of seeds which ended up with more than one component in the result.
-            
+
             contains_unlabeled_components:
                 True if the input contains one or more disjoint components that were not seeded
                 and thus not labeled during agglomeration. False otherwise.
-        
+
     """
     assert isinstance(node_ids, np.ndarray)
     assert node_ids.dtype in (np.uint32, np.uint64)
