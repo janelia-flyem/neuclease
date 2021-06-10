@@ -283,7 +283,7 @@ def mitos_in_neighborhood(mito_roi_source, neighborhood_origin_xyz, neighborhood
     mito_box = compute_nonzero_box(mito_mask)
     mito_mask = extract_subvol(mito_mask, mito_box)
     mito_seg = extract_subvol(mito_seg, mito_box)
-    mito_cc = label(mito_mask)
+    mito_cc = label(mito_mask, connectivity=1)
     ct = contingency_table(mito_seg, mito_cc).reset_index()
     ct = ct.rename(columns={'left': 'mito', 'right': 'cc', 'voxel_count': 'cc_size'})
     ct = ct.set_index('mito')
