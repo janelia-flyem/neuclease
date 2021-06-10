@@ -62,6 +62,15 @@ def completeness_forecast(labeled_point_df, partner_df, syn_counts_df=None, conf
     point_df = labeled_point_df[['kind', 'conf', 'body']]
     assert point_df.index.name == 'point_id'
 
+    if 0 in point_df['body']:
+        logger.info("Filtering body 0 from synapses")
+        # Filter points
+        point_df = point_df.query('body != 0')
+
+        # Filter pairs
+        partner_df = partner_df.merge(point_df[[]], 'inner', left_on='pre_id', right_index=True)
+        partner_df = partner_df.merge(point_df[[]], 'inner', left_on='post_id', right_index=True)
+
     if conf_threshold:
         logger.info(f"Filtering synapses for threshold {conf_threshold}")
         # Filter points
