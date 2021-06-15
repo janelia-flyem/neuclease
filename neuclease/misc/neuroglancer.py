@@ -23,7 +23,7 @@ def extract_annotations(link, link_index=None, user=None):
     annotation_layer = [layer for layer in link['layers'] if layer['type'] == "annotation"][0]
     data = []
     for a in annotation_layer['annotations']:
-        data.append((*a['point'], a['description']))
+        data.append((*a['point'], a.get('description', '')))
 
     df = pd.DataFrame(data, columns=[*'xyz', 'description'])
 
