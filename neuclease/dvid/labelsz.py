@@ -1,5 +1,7 @@
 import logging
 
+import pandas as pd
+
 from . import dvid_api_wrapper, fetch_generic_json
 from .repo import create_instance
 
@@ -55,7 +57,7 @@ def fetch_count(server, uuid, instance, label, index_type, *, session=None):
 
 
 @dvid_api_wrapper
-def fetch_counts(server, uuid, instance, labels, index_type, *, session=None):
+def fetch_counts(server, uuid, instance, bodies, element_type, format='pandas', *, session=None):
     """
     Returns the count of the given annotation element type for the given labels.
 
@@ -72,18 +74,25 @@ def fetch_counts(server, uuid, instance, labels, index_type, *, session=None):
         instance:
             dvid labelsz instance name
         
-        labels:
+        bodies:
             A list of body IDs
         
-        index_type:
-            The index type may be any annotation element type ("PostSyn", "PreSyn", "Gap", "Note"),
+        element_type:
+            An indexed element type supported by the labelsz instance,
+            i.e. one of: "PostSyn", "PreSyn", "Gap", "Note",
             or the catch-all for synapses "AllSyn", or the number of voxels "Voxels".
     
     Returns:
         JSON. For example: ``[{ "Label": 21847,  "PreSyn": 81 }, { "Label": 23, "PreSyn": 65 }, ...]``
     """
-    labels = [int(label) for label in labels]
-    return fetch_generic_json(f'{server}/api/node/{uuid}/{instance}/counts/{index_type}', json=labels, session=session)
+    assert format in ('json', 'pandas')
+    bodies = [int(body) for body in bodies]
+    counts = fetch_generic_json(f'{server}/api/node/{uuid}/{instance}/counts/{element_type}', json=bodies, session=session)
+    if format == 'json':
+        return counts
+    
+    counts = pd.DataFrame(counts).set_index('Label').rename_axis('body')[element_type]
+    return counts
 
 
 @dvid_api_wrapper
