@@ -1,5 +1,6 @@
 import logging
-from neuclease.dvid import fetch_body_annotations, fetch_sphere_annotations, fetch_all_elements, fetch_labels_batched
+import getpass
+from neuclease.dvid import fetch_body_annotations, fetch_sphere_annotations, fetch_all_elements, fetch_labels_batched, post_keyvalues, fetch_counts
 
 logger = logging.getLogger(__name__)
 
@@ -9,6 +10,8 @@ def fetch_vnc_statuses(server, uuid):
     Fetch all body statuses from the body annotation key-value,
     but also include all soma bodies (regardless of status)
     and bodies that were annotated in the neck.
+
+    Also fetch the number of synapses for each.
 
     Example:
 
@@ -80,7 +83,14 @@ def fetch_vnc_statuses(server, uuid):
 
     del ann_df['body ID']
 
-    return ann_df.set_index('body')
+    ann_df = ann_df.set_index('body')
+
+    bodies = ann_df.index.drop_duplicates().values
+    ann_df['tbars'] = fetch_counts(server, uuid, 'synapses_labelsz', bodies, 'PreSyn', format='pandas')
+    ann_df['psds'] = fetch_counts(server, uuid, 'synapses_labelsz', bodies, 'PostSyn', format='pandas')
+    ann_df['synapses'] = ann_df.eval('tbars + psds')
+
+    return ann_df
 
 
 def multisoma(ann):
@@ -107,3 +117,73 @@ def multicervical(ann):
     idx = cervical_df.groupby('body')['neck_x'].nunique() > 1
     multicervical_df = cervical_df.loc[idx].sort_index().drop_duplicates(['neck_x', 'neck_y', 'neck_z'])
     return multicervical_df
+
+
+def update_soma_statuses(server, uuid, dry_run=True):
+    vstats = fetch_vnc_statuses(server, uuid)
+
+    soma_statuses = {"Prelim Roughly traced", "Soma Anchor"}  # noqa
+    needs_upgrade = vstats.query('has_soma and status not in @soma_statuses').copy()
+    needs_downgrade = vstats.query('not has_soma and status == "Soma Anchor"').copy()
+
+    print("\n-------------------\n")
+
+    if (len(needs_downgrade) == 0 and len(needs_upgrade) == 0):
+        print("Found nothing to upgrade/downgrade.")
+        return
+
+    if len(needs_upgrade) > 0:
+        print(f"{len(needs_upgrade)} bodies need to be upgraded to Soma Anchor:")
+        vc = needs_upgrade['status'].value_counts()
+        print(vc[vc > 0].rename('count').rename_axis('status').to_frame())
+        print()
+        print(needs_upgrade[['status', 'has_soma', 'soma_x', 'soma_y', 'soma_z', 'is_cervical']])
+        print("\n-------------------\n")
+
+    if len(needs_downgrade) > 0:
+        print(f"{len(needs_downgrade)} bodies need to be downgraded to Anchor:")
+        vc = needs_downgrade['status'].value_counts()
+        print(vc[vc > 0].rename('count').rename_axis('status').to_frame())
+        print()
+        print(needs_downgrade[['status', 'has_soma', 'soma_x', 'soma_y', 'soma_z', 'is_cervical']])
+        print("\n-------------------\n")
+
+    if dry_run:
+        print("Dry run. Doing nothing.")
+        return
+
+    if len(needs_upgrade) > 0:
+        needs_upgrade['json'] = needs_upgrade['json'].map(lambda j: j if isinstance(j, dict) else {})
+        assert needs_upgrade['json'].map(lambda j: isinstance(j, dict)).all()
+        for body, j in needs_upgrade['json'].items():
+            if not isinstance(j, dict):
+                j = {}
+
+            j.update({
+                'body ID': int(body),
+                'status': 'Soma Anchor',
+                'user': getpass.getuser(),
+                'status user': getpass.getuser()
+            })
+
+        print(f"Upgrading {len(needs_upgrade)} statuses")
+        post_keyvalues(server, uuid, 'segmentation_annotations', dict(needs_upgrade['json'].items()))
+
+    if len(needs_downgrade) > 0:
+        needs_downgrade['json'] = needs_downgrade['json'].map(lambda j: j if isinstance(j, dict) else {})
+        assert needs_downgrade['json'].map(lambda j: isinstance(j, dict)).all()
+        for body, j in needs_downgrade['json'].items():
+            if not isinstance(j, dict):
+                j = {}
+
+            j.update({
+                'body ID': int(body),
+                'status': 'Anchor',
+                'user': getpass.getuser(),
+                'status user': getpass.getuser()
+            })
+
+        print(f"Downgrading {len(needs_downgrade)} statuses")
+        post_keyvalues(server, uuid, 'segmentation_annotations', dict(needs_downgrade['json'].items()))
+
+    print("Done")
