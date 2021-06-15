@@ -1338,7 +1338,7 @@ def sphere_mask(radius):
 
 
 @lru_cache(maxsize=1)
-def ellipsoid_mask(rz, ry, rx):
+def ellipsoid_mask_axis_aligned(rz, ry, rx):
     """
     Return the binary mask of an axis-aligned ellipsoid.
     Resulting array has dimensions (2*rz+1, 2*ry+1, 2*rx+1)
@@ -1350,6 +1350,102 @@ def ellipsoid_mask(rz, ry, rx):
     # The result will be cached, so don't let the caller overwrite it!
     mask.flags['WRITEABLE'] = False
     return mask
+
+
+def ellipsoid_mask(v0, v1, v2):
+    """
+    Return the binary mask of an ellipsoid with the given semi-axis vectors (the 3 radii),
+    which should be orthogonal to each other but not necessarily axis-aligned.
+    """
+    det = np.linalg.det
+    V = np.stack((v0, v1, v2))
+    R = np.ceil(np.abs(V).max(axis=0))
+
+    # Pad the bounding box since V is not axis-aligned.
+    R *= np.sqrt(2)
+
+    R = R.astype(int)
+    shape = 2*R + 1
+
+    # We'll be testing each coordinate for inside/outside ellipsoid
+    zyx = ndrange_array(-R, R+1)
+
+    # Re-use this array for each of the determinant calculations below.
+    m = np.zeros((len(zyx), 3, 3), np.float32)
+
+    # Parametric equation of an ellipse from its semi-axis vectors:
+    # https://en.wikipedia.org/wiki/Ellipsoid#Parametric_representation
+    #
+    #   F(X) = 0 = det([X, v1, v2])**2 + det([v0, X, v2])**2 + det([v0, v1, X])**2
+    #
+    #     where X = (x,y,z)
+    m[:, 0, :] = zyx
+    m[:, (1, 2), :] = (v1, v2)
+    d0 = det(m)
+
+    m[:, 1, :] = zyx
+    m[:, (0, 2), :] = (v0, v2)
+    d1 = det(m)
+
+    m[:, 2, :] = zyx
+    m[:, (0, 1), :] = (v0, v1)
+    d2 = det(m)
+
+    del m
+
+    F = d0**2 + d1**2 + d2**2 - det([v0, v1, v2])**2
+    return (F <= 0).reshape(shape)
+
+
+def fit_ellipsoid(mask):
+    """
+    Fit an ellipsoid to the given mask.
+    Uses PCA to obtain the major axes of the mask points,
+    then rescales the PCA vectors to obtain an ellipse
+    that has the same volume as the given mask.
+
+    Returns:
+        size, center, radii_vec
+
+            where radii_vec is given as three row vectors.
+    """
+    assert mask.ndim == 3
+    points = np.array(mask.nonzero())
+    size = points.shape[1]
+    center = points.mean(axis=1)
+    cov = np.cov(points, bias=True)
+
+    # Notes:
+    # - Eigenvalues of covariance matrix are PCA magnitudes
+    # - Eigenvectors are in columns, and are normalized
+    eigvals, eigvecs = np.linalg.eigh(cov)
+    assert np.allclose(np.linalg.norm(eigvecs, axis=0), 1.0)
+
+    # For tiny shapes or pathological cases,
+    # we get tiny eigenvalues, even negative.
+    # Set a floor of 0.25 to indicate a 0.5 radius (1-px diameter.)
+    eigvals = np.maximum(0.25, eigvals)
+
+    # The PCA radii are not scaled to be the
+    # semi-major/minor radii of the ellipsoid unless we rescale them.
+    # The volume of an ellipsoid with semi-radii a,b,c is 4πabc/3
+    # so scale the radii up until the volume of the corresponding ellipsoid
+    # matches the soma's actual volume.
+
+    pca_vol = (4/3) * np.pi * np.prod(eigvals)
+    s = size / pca_vol
+
+    # Apply that factor to the PCA magnitudes to obtain better ellipsoid radii
+    radii_mag = eigvals * np.power(s, 1/3)
+
+    # Also scale up the eigenvectors
+    radii_vec = radii_mag[None, :] * eigvecs
+
+    # Transpose to row vectors, order large-to-small
+    radii_vec = radii_vec.transpose()[::-1, :]
+
+    return size, center, radii_vec
+
 
 
 def perform_bigquery(q, client=None, project='janelia-flyem'):
