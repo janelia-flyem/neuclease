@@ -568,12 +568,16 @@ DEFAULT_BODY_STATUS_CATEGORIES = [
     '0.5assign',
     'Leaves',
     'Anchor',
+    'Sensory Anchor',
     'Cervical Anchor',
     'Soma Anchor',
+    'Primary Anchor',
     'Hard to trace',
     'Unimportant',
     'Partially traced',
+    'PRT Orphan',
     'Prelim Roughly traced',
+    'RT Orphan',
     'Roughly traced',
     'Traced in ROI',
     'Traced',
@@ -793,8 +797,17 @@ def post_sphere_annotations(server, uuid, instance, df, *, session=None):
             and optionally a 'prop' column.
             The two coordinates represend endpoints of the sphere diameter.
     """
-    assert {'user', 'x0', 'y0', 'z0', 'x1', 'y1', 'z1'} <= set(df.columns)
     df = df.copy()
+
+    # If the user supplied a dataframe with xyz only,
+    # then we assume they want a 0-radius sphere.
+    # Fill in the endpoint columns
+    if set(df.columns) & {'x0', 'y0', 'z0', 'x1', 'y1', 'z1'} == set() and set(df.columns) >= {*'xyz'}:
+        df['x0'] = df['x1'] = df['x']
+        df['y0'] = df['y1'] = df['y']
+        df['z0'] = df['z1'] = df['z']
+
+    assert {'user', 'x0', 'y0', 'z0', 'x1', 'y1', 'z1'} <= set(df.columns)
 
     kvs = {}
     for t in df.itertuples():
