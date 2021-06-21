@@ -20,12 +20,14 @@ def parse_nglink(link):
 def extract_annotations(link, link_index=None, user=None):
     if isinstance(link, str):
         link = parse_nglink(link)
-    annotation_layer = [layer for layer in link['layers'] if layer['type'] == "annotation"][0]
-    data = []
-    for a in annotation_layer['annotations']:
-        data.append((*a['point'], a.get('description', '')))
+    annotation_layers = [layer for layer in link['layers'] if layer['type'] == "annotation"]
 
-    df = pd.DataFrame(data, columns=[*'xyz', 'description'])
+    data = []
+    for layer in annotation_layers:
+        for a in layer['annotations']:
+            data.append((layer['name'], *a['point'], a.get('description', '')))
+
+    df = pd.DataFrame(data, columns=['layer', *'xyz', 'description'])
 
     cols = []
     if link_index is not None:
@@ -36,7 +38,7 @@ def extract_annotations(link, link_index=None, user=None):
         cols += ['user']
 
     df = df.astype({k: np.int64 for k in 'xyz'})
-    cols += [*'xyz', 'description']
+    cols += ['layer', *'xyz', 'description']
     return df[cols]
 
 
