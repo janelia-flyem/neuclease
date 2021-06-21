@@ -940,7 +940,7 @@ def distance_transform_watershed(mask, smoothing=0.0, seed_mask=None, seed_label
         flood_from:
 
     Returns:
-        dt, labeled_seeds, ws, max_id
+        dt, labeled_seeds, ws
 
     Notes:
         This function provides a subset of the options that can be found in other
@@ -957,6 +957,11 @@ def distance_transform_watershed(mask, smoothing=0.0, seed_mask=None, seed_label
     """
     mask = mask.astype(bool, copy=False)
     mask = vigra.taggedView(mask, 'zyx').astype(np.uint32)
+
+    # Widen seeds dtype if necessary
+    # (The 64-bit case is handled below, with a mapping.)
+    if seed_labels and seed_labels.dtype in (np.uint8, np.uint16, np.int8, np.int16, np.int32):
+        seed_labels = seed_labels.astype(np.uint32)
 
     imask = np.logical_not(mask)
     outer_edge_mask = binary_edge_mask(mask, 'outer')
