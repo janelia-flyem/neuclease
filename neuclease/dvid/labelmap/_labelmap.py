@@ -2846,7 +2846,7 @@ def labelmap_kafka_msgs_to_df(kafka_msgs, default_timestamp=DEFAULT_TIMESTAMP, d
             still be included in the output.
 
     """
-    FINAL_COLUMNS = ['timestamp', 'uuid', 'mutid', 'action', 'target_body', 'target_sv', 'user', 'msg']
+    FINAL_COLUMNS = ['timestamp', 'uuid', 'mutid', 'action', 'target_body', 'target_sv', 'user', 'merged', 'msg']
     df = kafka_msgs_to_df(kafka_msgs, drop_duplicates=False, default_timestamp=default_timestamp)
 
     if len(df) == 0:
@@ -2868,6 +2868,7 @@ def labelmap_kafka_msgs_to_df(kafka_msgs, default_timestamp=DEFAULT_TIMESTAMP, d
 
     target_bodies = []
     target_svs = []
+    merged_bodies = []
 
     # This logic is somewhat more complex than you might think is necessary,
     # but that's because the kafka logs (sadly) contain duplicate mutation IDs,
@@ -2882,16 +2883,21 @@ def labelmap_kafka_msgs_to_df(kafka_msgs, default_timestamp=DEFAULT_TIMESTAMP, d
         if not action.endswith('complete'):
             target_body = 0
             target_sv = 0
+            merges = None
 
             if action == 'cleave':
                 target_body = msg['OrigLabel']
-            elif action in ('merge', 'split'):
+            if action == 'merge':
+                target_body = msg['Target']
+                merges = msg['Labels']
+            elif action == 'split':
                 target_body = msg['Target']
             elif action == 'split-supervoxel':
                 target_sv = msg['Supervoxel']
 
             target_bodies.append(target_body)
             target_svs.append(target_sv)
+            merged_bodies.append(merges)
 
             mutation_bodies[mutid] = target_body
             mutation_svs[mutid] = target_sv
@@ -2902,9 +2908,11 @@ def labelmap_kafka_msgs_to_df(kafka_msgs, default_timestamp=DEFAULT_TIMESTAMP, d
             # based on the most recent message with a matching mutation ID.
             target_bodies.append( mutation_bodies[mutid] )
             target_svs.append( mutation_svs[mutid] )
+            merged_bodies.append(None)
 
     df['target_body'] = target_bodies
     df['target_sv'] = target_svs
+    df['merged'] = merged_bodies
 
     for col in FINAL_COLUMNS:
         if col not in df:
