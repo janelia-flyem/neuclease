@@ -1,6 +1,11 @@
 import logging
 import getpass
-from neuclease.dvid import fetch_body_annotations, fetch_sphere_annotations, fetch_all_elements, fetch_labels_batched, post_keyvalues, fetch_counts
+from functools import partial
+import pandas as pd
+
+from neuclease.util import compute_parallel
+from neuclease.dvid import (fetch_body_annotations, fetch_sphere_annotations, fetch_all_elements, fetch_labels_batched,
+                            post_keyvalues, fetch_counts, fetch_sparsevol_head, delete_key)
 
 logger = logging.getLogger(__name__)
 
@@ -187,3 +192,46 @@ def update_soma_statuses(server, uuid, dry_run=True):
         post_keyvalues(server, uuid, 'segmentation_annotations', dict(needs_downgrade['json'].items()))
 
     print("Done")
+
+
+def post_statuses(server, uuid, statuses):
+    assert isinstance(statuses, pd.Series)
+    assert statuses.index.name == 'body'
+    assert statuses.name == 'status'
+
+    ann = fetch_body_annotations(server, uuid)
+    ann = ann.merge(statuses.rename('new_status'), 'right', left_index=True, right_index=True)
+
+    to_change = ann.query('status.isnull() or status != new_status')
+    updates = {}
+    for row in to_change.itertuples():
+        j = row.json
+        if not isinstance(row.json, dict):
+            j = {}
+
+        j.update({
+            'body ID': int(row.Index),
+            'status': row.new_status,
+            'user': getpass.getuser(),
+            'status user': getpass.getuser()
+        })
+        updates[row.Index] = j
+
+    print(f"Changing {len(to_change)} statuses")
+    post_keyvalues(server, uuid, 'segmentation_annotations', updates)
+
+
+def remove_dead_annotations(server, uuid):
+    ann = fetch_body_annotations(server, uuid)
+
+    exists = compute_parallel(partial(_does_exist, server, uuid), ann.index.values, processes=16)
+    exists = pd.DataFrame(exists, columns=['body', 'exists'])
+
+    to_del = exists.query('not exists')['body']
+    print(f"deleting {len(to_del)} dead annotations: {to_del.tolist()}")
+    for body in to_del.values:
+        delete_key(server, uuid, 'segmentation_annotations', str(body))
+
+
+def _does_exist(server, uuid, body):
+    return (body, fetch_sparsevol_head(server, uuid, 'segmentation', body))
