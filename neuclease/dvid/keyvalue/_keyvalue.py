@@ -557,14 +557,15 @@ def extend_list_value(server, uuid, instance, key, new_list, *, session=None):
         post_key(server, uuid, instance, key, json=new_list, session=session)
 
 
-# Copied from the following URL, but I prepended the empty status ("").
+# Copied from the following URL, but I inserted the empty status ("").
 # http://emdata5.janelia.org:8400/api/node/b31220/neutu_config/key/body_status_v2
 DEFAULT_BODY_STATUS_CATEGORIES = [
-    '',
+    'Unimportant',
     'Orphan-artifact',
     'Orphan',
     'Orphan hotknife',
     'Not examined',
+    '',
     '0.5assign',
     'Leaves',
     'Anchor',
@@ -573,7 +574,6 @@ DEFAULT_BODY_STATUS_CATEGORIES = [
     'Soma Anchor',
     'Primary Anchor',
     'Hard to trace',
-    'Unimportant',
     'Partially traced',
     'PRT Orphan',
     'Prelim Roughly traced',
