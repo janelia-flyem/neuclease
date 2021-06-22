@@ -245,7 +245,8 @@ def _rank_syn_counts(point_df, conn_df, syn_counts_df=None, sort_by='SynWeight')
     return syn_counts_df
 
 
-def plot_connectivity_forecast(conn_df, max_rank=None, plotted_points=20_000):
+def plot_connectivity_forecast(conn_df, max_rank=None, plotted_points=20_000, hover_cols=[],
+    title='connectivity after prioritized merging', export_path=None):
     """
     Plot the curves of captured tbars, captured PSDs and captured dual-sided
     connections as bodies are traced/merged from large to small.
@@ -262,14 +263,17 @@ def plot_connectivity_forecast(conn_df, max_rank=None, plotted_points=20_000):
             You won't notice the difference at all when zoomed out, but if you zoom
             in on the plot you may notice that the X-axis is discontiguous.
     """
-    import hvplot.pandas  # noqa
+    import holoviews as hv  # noqa
+    import hvplot.pandas    # noqa
+    from bokeh.plotting import figure, output_file, save as bokeh_save, output_notebook, show  # noqa
+
+    assert export_path.endswith('.html')
 
     _df = conn_df
-    _df = _df[['max_rank',
-               'traced_tbar_frac',
+    show_cols =['traced_tbar_frac',
                # 'minimally_connected_tbar_frac',
                'traced_psd_frac',
-               'traced_conn_frac']]
+               'traced_conn_frac']
 
     # Zoom in on left-hand region
     if max_rank:
@@ -277,29 +281,30 @@ def plot_connectivity_forecast(conn_df, max_rank=None, plotted_points=20_000):
 
     _df = _df.drop_duplicates('max_rank', keep='last')
 
-    _df = _df.rename(columns={
+    renames = {
         'max_rank': 'body priority ranking',
         'traced_tbar_frac': 'tbars captured',
         # 'minimally_connected_tbar_frac': 'traced tbars with a traced output',
         'traced_psd_frac': 'psds captured',
         'traced_conn_frac': 'pairwise connections'
-    })
+    }
+    _df = _df.rename(columns=renames)
 
     # Avoid plotting too many points
     step = max(1, len(_df) // plotted_points)
     _df = _df.iloc[::step]
 
     p = _df.hvplot(
-            _df.columns[0],
-            _df.columns[1:].tolist(),
-            hover_cols=['tbars captured', 'psds captured', 'pairwise connections'],
+            'body priority ranking',
+            [renames[k] for k in show_cols],
+            hover_cols=['tbars captured', 'psds captured', 'pairwise connections', *hover_cols],
             legend='bottom_right',
             ylabel='fraction',
             width=800,
             height=500)
 
     p.opts(
-        title='connectivity after prioritized merging',
+        title=title,
         fontsize={
             'title': 15,
             'labels': 14,
@@ -310,4 +315,9 @@ def plot_connectivity_forecast(conn_df, max_rank=None, plotted_points=20_000):
     # Hide annoying legend title
     # https://discourse.holoviz.org/t/removing-legend-title/1317/2
     p.get_dimension('Variable').label = ''
+
+    # Render to bokeh so we can export html
+    output_file(filename=export_path, title=title)
+    bokeh_save(hv.render(p))
+
     return p
