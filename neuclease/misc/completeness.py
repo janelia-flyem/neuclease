@@ -8,7 +8,7 @@ from neuclease.dvid.annotation import body_synapse_counts
 logger = logging.getLogger(__name__)
 
 
-def completeness_forecast(labeled_point_df, partner_df, syn_counts_df=None, min_tbar_conf=0.0, min_psd_conf=0.0, roi=None, sort_by='SynWeight'):
+def completeness_forecast(labeled_point_df, partner_df, syn_counts_df=None, min_tbar_conf=0.0, min_psd_conf=0.0, roi=None, sort_by='SynWeight', stop_at_rank=None):
     """
     Produces a DataFrame listing all pairwise synapse connections,
     ordered according to the size of the smaller body in the pair.
@@ -54,9 +54,14 @@ def completeness_forecast(labeled_point_df, partner_df, syn_counts_df=None, min_
             If this argument is used, then point_df must contain a column named 'roi'.
 
         sort_by:
-            A column in syn_counts_df to sort by, in descending order.
+            Column(s) in syn_counts_df to sort by in descending order.
             By default, SynWeight is used (which is calculated here if needed).
             This sort order determines the ordering of the connections in the result table.
+
+        stop_at_rank:
+            If you're only interested in the first N ranked bodies, then
+            use this parameter to limit the size of the results,
+            and also speed up the computation.
 
     Returns:
         Two DataFrames:
@@ -74,28 +79,40 @@ def completeness_forecast(labeled_point_df, partner_df, syn_counts_df=None, min_
     point_df = labeled_point_df[['kind', 'conf', 'body']]
     assert point_df.index.name == 'point_id'
 
+    if isinstance(sort_by, str):
+        sort_by = [sort_by]
+    if syn_counts_df is not None:
+        assert {*sort_by} <= {*syn_counts_df.columns, 'SynWeight'}
+
     point_df, partner_df = _filter_synapses(point_df, partner_df, min_tbar_conf, min_psd_conf, roi)
 
-    conn_df = partner_df[['pre_id', 'post_id']]
-
-    # Append columns ['body_pre', 'body_post']
-    logger.info("Appending body columns")
-    conn_df = conn_df.merge(point_df['body'], 'left', left_on='pre_id', right_index=True)
-    conn_df = conn_df.merge(point_df['body'], 'left', left_on='post_id', right_index=True, suffixes=['_pre', '_post'])
+    if {'body_pre', 'body_post'} <= {*partner_df.columns}:
+        conn_df = partner_df[['pre_id', 'post_id', 'body_pre', 'body_post']]
+    else:
+        # Append columns ['body_pre', 'body_post']
+        logger.info("Appending body columns")
+        conn_df = partner_df[['pre_id', 'post_id']]
+        conn_df = conn_df.merge(point_df['body'], 'left', left_on='pre_id', right_index=True)
+        conn_df = conn_df.merge(point_df['body'], 'left', left_on='post_id', right_index=True, suffixes=['_pre', '_post'])
 
     syn_counts_df = _rank_syn_counts(point_df, conn_df, syn_counts_df, sort_by)
 
+    # Filter out bodies above our rank of interest (too small)
+    stop_at_rank = stop_at_rank or len(syn_counts_df)
+    body_rank = syn_counts_df.query('rank <= @stop_at_rank')['rank']
+
     # Append columns for the rank of both bodies in each pair,
     # named ['body_pre_rank', 'body_post_rank']
+    # Use an inner merge to simultaneously filter out high-ranking bodies (small bodies).
     logger.info("Appending rank columns")
-    conn_df = conn_df.merge(syn_counts_df['rank'].rename('body_pre_rank'), 'left', left_on='body_pre', right_index=True)
-    conn_df = conn_df.merge(syn_counts_df['rank'].rename('body_post_rank'), 'left', left_on='body_post', right_index=True)
+    conn_df = conn_df.merge(body_rank.rename('body_pre_rank'), 'inner', left_on='body_pre', right_index=True)
+    conn_df = conn_df.merge(body_rank.rename('body_post_rank'), 'inner', left_on='body_post', right_index=True)
 
     # Determine the lesser and greater ranks (corresponding to the larger and smaller body).
     # This is just body_pre_rank and body_post_rank, but swapped as needed.
-    ranks = np.sort(conn_df[['body_pre_rank', 'body_post_rank']].values, axis=1)
-    conn_df['min_rank'] = ranks[:, 0]  # min rank -> larger body
-    conn_df['max_rank'] = ranks[:, 1]  # max rank -> smaller body
+    prepost_ranks = np.sort(conn_df[['body_pre_rank', 'body_post_rank']].values, axis=1)
+    conn_df['min_rank'] = prepost_ranks[:, 0]  # min rank -> larger body
+    conn_df['max_rank'] = prepost_ranks[:, 1]  # max rank -> smaller body
 
     # Now order the connection pairs according to the SMALLER of the two bodies in the pair,
     # i.e. sort according to the body with greater rank (i.e. worse rank).
@@ -151,7 +168,19 @@ def completeness_forecast(labeled_point_df, partner_df, syn_counts_df=None, min_
     # of the connection table as explained above.
     # Note: When visualizing, we'll usually want to put this in the Y-axis, not the X-axis.
     conn_df['traced_conn_count'] = 1 + conn_df.index
-    conn_df['traced_conn_frac'] = conn_df['traced_conn_count'] / len(conn_df)
+    conn_df['traced_conn_frac'] = conn_df['traced_conn_count'] / len(partner_df)
+
+    # It's useful to provide the max body rank
+    logger.info("Adding body_max_rank and associated stats")
+    conn_df['body_max_rank'] = conn_df['body_pre']
+    post_is_max = conn_df.eval('body_post_rank > body_pre_rank')
+    conn_df.loc[post_is_max, 'body_max_rank'] = conn_df.loc[post_is_max, 'body_post']
+
+    # It's also useful to see the synapse stats of the body with max rank,
+    # since the 'max rank' body is the body that's conceptually being "appended"
+    # to the traced set.
+    body_max_syn_counts = syn_counts_df.rename(columns={k: f'{k}_max_rank' for k in syn_counts_df.columns})
+    conn_df = conn_df.merge(body_max_syn_counts, 'left', left_on='body_max_rank', right_index=True)
 
     return conn_df, syn_counts_df
 
@@ -197,7 +226,7 @@ def _rank_syn_counts(point_df, conn_df, syn_counts_df=None, sort_by='SynWeight')
         logger.info("Computing per-body synapse table")
         syn_counts_df = body_synapse_counts(point_df)
 
-    if sort_by == 'SynWeight' and 'SynWeight' not in syn_counts_df.columns:
+    if 'SynWeight' in sort_by and 'SynWeight' not in syn_counts_df.columns:
         # The user didn't provide a preferred body weighting,
         # so calculate each body's SynWeight as its total inputs and outputs.
         # Each PSD counts as 1, each tbar counts as the number of partners it has.
@@ -210,7 +239,7 @@ def _rank_syn_counts(point_df, conn_df, syn_counts_df=None, sort_by='SynWeight')
 
     # Rank the bodies from large to small
     logger.info("Ranking bodies")
-    syn_counts_df = syn_counts_df.sort_values([sort_by], ascending=False)
+    syn_counts_df = syn_counts_df.sort_values(sort_by, ascending=False)
     syn_counts_df['rank'] = np.arange(1, 1+len(syn_counts_df), dtype=int)
 
     return syn_counts_df
