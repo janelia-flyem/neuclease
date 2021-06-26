@@ -602,7 +602,7 @@ def test_fetch_mutations(labelmap_setup):
     post_merge(dvid_server, uuid2, instance, 9, [10])
     post_merge(dvid_server, uuid2, instance, 1, [5,10])
 
-    mut_df = fetch_mutations(dvid_server, uuid2, instance)
+    mut_df = fetch_mutations(dvid_server, uuid2, instance, dag_filter='leaf-only')
     assert len(mut_df) == 2
     assert (mut_df['uuid'] == uuid2).all()
     assert (mut_df['action'] == 'merge').all()
@@ -619,5 +619,5 @@ if __name__ == "__main__":
     #from neuclease import configure_default_logging
     #configure_default_logging()
     args = ['-s', '--tb=native', '--pyargs', 'neuclease.tests.test_dvid']
-    #args += ['-k', 'fetch_mutations']
+    args += ['-k', 'fetch_mutations']
     pytest.main(args)
