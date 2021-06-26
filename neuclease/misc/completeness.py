@@ -245,7 +245,7 @@ def _rank_syn_counts(point_df, conn_df, syn_counts_df=None, sort_by='SynWeight')
     return syn_counts_df
 
 
-def plot_connectivity_forecast(conn_df, max_rank=None, plotted_points=20_000, hover_cols=[],
+def plot_connectivity_forecast(conn_df, max_rank=None, plotted_points=20_000, hover_cols=[], color_by_col=None,
     title='connectivity after prioritized merging', export_path=None):
     """
     Plot the curves of captured tbars, captured PSDs and captured dual-sided
@@ -256,7 +256,7 @@ def plot_connectivity_forecast(conn_df, max_rank=None, plotted_points=20_000, ho
             connectivity completion dataframe, as returned by completeness_forecast()
         max_rank:
             Truncate the plot's X axis, stopping at the given rank.
-        potted_points:
+        plotted_points:
             The full input dataframe probably has too many points to plot at once.
             You can reduce the resolution of the plot by specifiying how many points
             you want to be shown in total, with this argument.
@@ -267,7 +267,7 @@ def plot_connectivity_forecast(conn_df, max_rank=None, plotted_points=20_000, ho
     import hvplot.pandas    # noqa
     from bokeh.plotting import figure, output_file, save as bokeh_save, output_notebook, show  # noqa
 
-    assert export_path.endswith('.html')
+    assert not export_path or export_path.endswith('.html')
 
     _df = conn_df
     show_cols =['traced_tbar_frac',
@@ -294,14 +294,30 @@ def plot_connectivity_forecast(conn_df, max_rank=None, plotted_points=20_000, ho
     step = max(1, len(_df) // plotted_points)
     _df = _df.iloc[::step]
 
-    p = _df.hvplot(
-            'body priority ranking',
-            [renames[k] for k in show_cols],
-            hover_cols=['tbars captured', 'psds captured', 'pairwise connections', *hover_cols],
-            legend='bottom_right',
-            ylabel='fraction',
-            width=800,
-            height=500)
+    if color_by_col is None:
+        p = _df.hvplot(
+                'body priority ranking',
+                [renames[k] for k in show_cols],
+                hover_cols=['tbars captured', 'psds captured', 'pairwise connections', *hover_cols],
+                legend='bottom_right',
+                ylabel='fraction',
+                width=800,
+                height=500)
+
+        # Hide annoying legend title
+        # https://discourse.holoviz.org/t/removing-legend-title/1317/2
+        p.get_dimension('Variable').label = ''
+
+    else:
+        p = _df.hvplot.scatter(
+                'body priority ranking',
+                [renames[k] for k in show_cols][0],
+                hover_cols=['tbars captured', 'psds captured', 'pairwise connections', *hover_cols],
+                legend='bottom_right',
+                ylabel='fraction',
+                by=color_by_col,
+                width=800,
+                height=500)
 
     p.opts(
         title=title,
@@ -312,12 +328,10 @@ def plot_connectivity_forecast(conn_df, max_rank=None, plotted_points=20_000, ho
             'yticks': 10,
         }
     )
-    # Hide annoying legend title
-    # https://discourse.holoviz.org/t/removing-legend-title/1317/2
-    p.get_dimension('Variable').label = ''
 
     # Render to bokeh so we can export html
-    output_file(filename=export_path, title=title)
-    bokeh_save(hv.render(p))
+    if export_path:
+        output_file(filename=export_path, title=title)
+        bokeh_save(hv.render(p))
 
     return p
