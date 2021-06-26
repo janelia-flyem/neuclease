@@ -199,7 +199,7 @@ def post_statuses(server, uuid, statuses):
     assert statuses.index.name == 'body'
     assert statuses.name == 'status'
 
-    ann = fetch_body_annotations(server, uuid)
+    ann = fetch_body_annotations(server, uuid, bodies=statuses.index)
     ann = ann.merge(statuses.rename('new_status'), 'right', left_index=True, right_index=True)
 
     to_change = ann.query('status.isnull() or status != new_status')
@@ -217,6 +217,10 @@ def post_statuses(server, uuid, statuses):
         })
         updates[row.Index] = j
 
+    if len(to_change) == 0:
+        print("Nothing to change")
+        return
+    
     print(f"Changing {len(to_change)} statuses")
     post_keyvalues(server, uuid, 'segmentation_annotations', updates)
 
