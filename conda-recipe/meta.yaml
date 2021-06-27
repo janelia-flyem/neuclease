@@ -30,7 +30,7 @@ requirements:
     - scipy
     - scikit-image
     - h5py
-    - pandas <1.0
+    - pandas
     - numba >=0.45
     - pytz
     - vigra

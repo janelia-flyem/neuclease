@@ -144,8 +144,9 @@ class LabelmapMergeGraph:
         for col, dtype in MERGE_TABLE_DTYPE:
             focused_merges[col] = focused_merges[col].astype(dtype, copy=False)
         
-        focused_merges = focused_merges.loc[:, list(self.merge_table_df.columns)]
-        self.merge_table_df = pd.concat((self.merge_table_df, focused_merges), ignore_index=True, copy=False)
+        cols = self.merge_table_df.columns.intersection(focused_merges.columns).tolist()
+        focused_merges = focused_merges[cols]
+        self.merge_table_df = pd.concat((self.merge_table_df, focused_merges), sort=True, ignore_index=True, copy=False)
         return len(focused_merges)
 
 
