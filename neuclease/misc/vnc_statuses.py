@@ -159,7 +159,7 @@ def update_soma_statuses(server, uuid, dry_run=True):
 
     if dry_run:
         print("Dry run. Doing nothing.")
-        return
+        return needs_upgrade, needs_downgrade
 
     if len(needs_upgrade) > 0:
         needs_upgrade['json'] = needs_upgrade['json'].map(lambda j: j if isinstance(j, dict) else {})
@@ -196,6 +196,7 @@ def update_soma_statuses(server, uuid, dry_run=True):
         post_keyvalues(server, uuid, 'segmentation_annotations', dict(needs_downgrade['json'].items()))
 
     print("Done")
+    return needs_upgrade, needs_downgrade
 
 
 def post_statuses(server, uuid, statuses):
