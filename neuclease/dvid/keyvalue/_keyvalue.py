@@ -690,7 +690,7 @@ def fetch_body_annotations(server, uuid, instance='segmentation_annotations', bo
     # As a convenience, also provide the original json object for each row.
     # This is useful when you want to push changes back to dvid.
     df['json'] = values
-    return df
+    return df.sort_index()
 
 
 def fetch_sphere_annotations(server, uuid, instance, seg_instance=None, *, session=None):
