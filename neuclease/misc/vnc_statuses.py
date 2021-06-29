@@ -142,7 +142,9 @@ def update_soma_statuses(server, uuid, dry_run=True):
         vc = needs_upgrade['status'].value_counts()
         print(vc[vc > 0].rename('count').rename_axis('status').to_frame())
         print()
-        print(needs_upgrade[['status', 'has_soma', 'soma_x', 'soma_y', 'soma_z', 'is_cervical']])
+        print(', '.join(map(str, needs_upgrade.index.tolist())))
+        print()
+        print(needs_upgrade[['status', 'has_soma', 'soma_x', 'soma_y', 'soma_z', 'is_cervical', 'status user']])
         print("\n-------------------\n")
 
     if len(needs_downgrade) > 0:
@@ -150,7 +152,9 @@ def update_soma_statuses(server, uuid, dry_run=True):
         vc = needs_downgrade['status'].value_counts()
         print(vc[vc > 0].rename('count').rename_axis('status').to_frame())
         print()
-        print(needs_downgrade[['status', 'has_soma', 'soma_x', 'soma_y', 'soma_z', 'is_cervical']])
+        print(', '.join(map(str, needs_downgrade.index.tolist())))
+        print()
+        print(needs_downgrade[['status', 'has_soma', 'soma_x', 'soma_y', 'soma_z', 'is_cervical', 'status user']])
         print("\n-------------------\n")
 
     if dry_run:
