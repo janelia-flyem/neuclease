@@ -144,9 +144,8 @@ class LabelmapMergeGraph:
         for col, dtype in MERGE_TABLE_DTYPE:
             focused_merges[col] = focused_merges[col].astype(dtype, copy=False)
         
-        cols = self.merge_table_df.columns.intersection(focused_merges.columns).tolist()
-        focused_merges = focused_merges[cols]
-        self.merge_table_df = pd.concat((self.merge_table_df, focused_merges), sort=True, ignore_index=True, copy=False)
+        focused_merges = focused_merges.reindex(columns=self.merge_table_df.columns)
+        self.merge_table_df = pd.concat((self.merge_table_df, focused_merges), ignore_index=True, copy=False)
         return len(focused_merges)
 
 
@@ -241,7 +240,8 @@ class LabelmapMergeGraph:
                     update_rows.append(parent_rows_df[i:i+1])
 
         update_table_df = pd.concat(update_rows, ignore_index=True)
-        assert (update_table_df.columns == self.merge_table_df.columns).all()
+        assert (update_table_df.columns == self.merge_table_df.columns).all(), \
+            f"{update_table_df.columns.tolist()} != {self.merge_table_df.columns.tolist()}"
 
         if bad_edges:
             bad_edges = pd.DataFrame(bad_edges, columns=['end', 'found_sv'] + list(update_table_df.columns))
