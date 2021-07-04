@@ -960,7 +960,7 @@ def distance_transform_watershed(mask, smoothing=0.0, seed_mask=None, seed_label
 
     # Widen seeds dtype if necessary
     # (The 64-bit case is handled below, with a mapping.)
-    if seed_labels and seed_labels.dtype in (np.uint8, np.uint16, np.int8, np.int16, np.int32):
+    if seed_labels is not None and seed_labels.dtype in (np.uint8, np.uint16, np.int8, np.int16, np.int32):
         seed_labels = seed_labels.astype(np.uint32)
 
     imask = np.logical_not(mask)
