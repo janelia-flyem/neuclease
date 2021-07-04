@@ -755,6 +755,13 @@ def closest_approach_between_masks(mask_a, mask_b):
     find the two coordinates within mask_a and mask_b, respectively,
     which mark the two objects' closest approach, i.e. where the objects
     come closest to touching, even if they don't actually touch.
+
+    FIXME:
+        This uses vigra's vectorDistanceTransform(), which uses a
+        lot of RAM and computes the distance at all points in the mask.
+        For sparse enough masks, it might be much more efficient to convert
+        the masks to lists of coordinates and then use KD-trees to find
+        the closest approach.
     """
     # Wrapper function just for visibility to profilers
     def vectorDistanceTransform(mask):
