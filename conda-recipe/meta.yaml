@@ -42,7 +42,7 @@ requirements:
     - pykafka
     - networkx >=2.1
     - asciitree
-    - protobuf 3.9.1
+    - protobuf 3.16
     - confiddler
 
     # Optional dependencies
