@@ -1070,6 +1070,13 @@ def drop_unordered_duplicates(df, subset=None, keep='first'):
     return df.loc[~dupes]
 
 
+def fix_df_names(df):
+    """
+    Rename all columns of the given dataframe with programmer-friendly alternatives,
+    i.e. lowercase and replace spaces with underscores.
+    """
+    return df.rename(columns={c: c.lower().replace(' ', '_') for c in df.columns})
+
 def swap_df_cols(df, prefixes=None, swap_rows=None, suffixes=['_a', '_b']):
     """
     Swap selected columns of a dataframe, specified as a list of prefixes and two suffixes.
