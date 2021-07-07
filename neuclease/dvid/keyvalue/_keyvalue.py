@@ -180,23 +180,27 @@ def fetch_keyrangevalues(server, uuid, instance, key1, key2, as_json=False, *, c
 def fetch_key(server, uuid, instance, key, as_json=False, *, check_head=False, session=None):
     """
     Fetch a single value from a DVID keyvalue instance.
-    
+      
     Args:
         server:
             dvid server, e.g. 'emdata3:8900'
-        
+         
         uuid:
             dvid uuid, e.g. 'abc9'
-        
+         
         instance:
             keyvalue instance name, e.g. 'focused_merged'
-        
+         
         key:
             A key (string) whose corresponding value will be fetched.
-        
+         
         as_json:
             If True, interpret the value as json and load it into a Python value
-    
+        
+        check_head:
+            If True, don't fetch the data, just perform a check using the HEAD http verb.
+            Returns True if the key exists on the server, and False otherwise.
+
     Returns:
         Bytes or parsed json data (see ``as_json``)
     """
