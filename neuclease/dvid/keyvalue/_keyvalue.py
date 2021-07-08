@@ -663,15 +663,24 @@ def fetch_body_annotations(server, uuid, instance='segmentation_annotations', bo
         keys = fetch_keys(server, uuid, instance, session=session)
         kvs = fetch_keyvalues(server, uuid, instance, keys, as_json=True, batch_size=batch_size, session=session)
 
-    values = list(filter(lambda v: v is not None and 'body ID' in v, kvs.values()))
+    values = []
+    for k,v in kvs.items():
+        if v is None:
+            continue
+        if not k.isdigit():
+            continue
+        if v.get('body ID', int(k)) != int(k):
+            raise RuntimeError(f"Json value in key {k} contains a mismatched body ID: {v['body ID']}")
+        v['body ID'] = int(k)
+        values.append(v)
+
     if len(values) == 0:
         empty_index = pd.Series([], dtype=int, name='body')
         return pd.DataFrame({'status': [], 'json': []}, dtype=object, index=empty_index)
 
     df = pd.DataFrame(values)
-    if 'body ID' in df:
-        df['body'] = df['body ID']
-        df = df.set_index('body')
+    df['body'] = df['body ID']
+    df = df.set_index('body')
 
     if 'status' in df.columns:
         df['status'].fillna('', inplace=True)
