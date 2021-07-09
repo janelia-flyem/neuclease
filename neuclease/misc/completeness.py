@@ -182,6 +182,10 @@ def completeness_forecast(labeled_point_df, partner_df, syn_counts_df=None, min_
     body_max_syn_counts = syn_counts_df.rename(columns={k: f'{k}_max_rank' for k in syn_counts_df.columns})
     conn_df = conn_df.merge(body_max_syn_counts, 'left', left_on='body_max_rank', right_index=True)
 
+    # Special handling for status: Use empty string instead of NaN
+    if 'status_max_rank' in conn_df.columns:
+        conn_df['status_max_rank'] = conn_df['status_max_rank'].astype(object).fillna('')
+
     return conn_df, syn_counts_df
 
 
