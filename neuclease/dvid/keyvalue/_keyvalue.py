@@ -679,7 +679,7 @@ def fetch_body_annotations(server, uuid, instance='segmentation_annotations', bo
         return pd.DataFrame({'status': [], 'json': []}, dtype=object, index=empty_index)
 
     df = pd.DataFrame(values)
-    df['body'] = df['body ID']
+    df['body'] = df['body ID'].astype(np.uint64)
     df = df.set_index('body')
 
     if 'status' in df.columns:
