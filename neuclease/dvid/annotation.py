@@ -1715,8 +1715,31 @@ def compute_psd_jsons(partner_df):
     return psd_jsons
 
 
+def load_gary_tbars(pkl_path):
+    """
+    Load a pickle from Gary for tbars only.
 
-def load_gary_psds(pkl_path):
+    Note:
+        When Gary provides both tbars and psds, don't use this function.
+        Use load_gary_partners(), below.
+    
+    See also:
+        post_tbar_jsons()
+    """
+    import pickle
+    data = pickle.load(open(pkl_path, 'rb'))
+
+    df = pd.DataFrame(data['locs'][:, ::-1], columns=['z_pre', 'y_pre', 'x_pre'], dtype=np.int32)
+    df['conf_pre'] = data['conf'].astype(np.float32)
+    df['pre_id'] = encode_coords_to_uint64(df[['z_pre', 'y_pre', 'x_pre']].values)
+    df['user_pre'] = df['user_post'] = '$fpl'
+    df['kind_pre'] = 'PreSyn'
+
+    df = df[['pre_id', 'z_pre', 'y_pre', 'x_pre', 'kind_pre', 'conf_pre', 'user_pre']]
+    return df
+
+
+def load_gary_partners(pkl_path):
     """
     Load a pickle file as given by Gary's code and return a 'partner table'
     with columns:
@@ -1724,6 +1747,7 @@ def load_gary_psds(pkl_path):
          'post_id', 'z_post', 'y_post', 'x_post', 'kind_post', 'conf_post', 'user_post']
 
     See also:
+        post_tbar_jsons(), post_psd_jsons()
 
     """
     import pickle
@@ -1757,7 +1781,7 @@ def partner_table_to_synapse_table(partner_df):
     this function does the conversion.
 
     Useful for loading Gary's pickle-based format.
-    See load_gary_psds()
+    See load_gary_partners()
     """
     # Extract
     pre_df = partner_df.drop_duplicates('pre_id')[['pre_id', 'z_pre', 'y_pre', 'x_pre', 'conf_pre']]
