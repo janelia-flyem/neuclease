@@ -107,7 +107,8 @@ def multisoma(ann):
     Note: We exclude body 0, even though there might be soma annotations on voxels with label 0.
     """
     soma_df = ann.query('has_soma and body != 0').copy()
-    idx = soma_df.groupby('body')['soma_x'].nunique() > 1
+    body_counts = soma_df.reset_index().drop_duplicates(['body', 'soma_x', 'soma_y', 'soma_z'])['body'].value_counts()
+    idx = body_counts[body_counts > 1].index
     multisoma_df = soma_df.loc[idx].sort_index().drop_duplicates(['soma_x', 'soma_y', 'soma_z'])
     return multisoma_df
 
@@ -118,8 +119,9 @@ def multicervical(ann):
     select only the rows for multi-cervical bodies, i.e. bodies which
     cover more than one neck point annotation.
     """
-    cervical_df = ann.query('is_cervical').copy()
-    idx = cervical_df.groupby('body')['neck_x'].nunique() > 1
+    cervical_df = ann.query('is_cervical and body != 0').copy()
+    body_counts = cervical_df.reset_index().drop_duplicates(['body', 'neck_x', 'neck_y', 'neck_z'])['body'].value_counts()
+    idx = body_counts[body_counts > 1].index
     multicervical_df = cervical_df.loc[idx].sort_index().drop_duplicates(['neck_x', 'neck_y', 'neck_z'])
     return multicervical_df
 

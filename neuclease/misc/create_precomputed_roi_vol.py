@@ -115,6 +115,7 @@ def create_precomputed_roi_vol(roi_vol, bucket_name, bucket_path, max_scale=3):
         if scale == 0:
             store[:] = roi_vol.transpose()[..., None]
         else:
+            # Subsample
             store[:] = roi_vol.transpose()[:-2**scale+1:2**scale, :-2**scale+1:2**scale, :-2**scale+1:2**scale, None]
 
 
