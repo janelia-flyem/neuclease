@@ -343,7 +343,7 @@ def extract_and_coerce_mergeable_groups(body_df):
 
     # Extracted from:
     # http://emdata5.janelia.org:8400/api/node/aefff91ab8894a5b8340e3e577e71818/neutu_config/key/body_status_v2
-    status_categories = ['Traced', 'Roughly traced', 'Prelim Roughly traced', 'Soma Anchor', 'Cervical Anchor', 'Anchor', '0.5assign', 'Orphan', '']
+    status_categories = ['Traced', 'Roughly traced', 'Prelim Roughly traced', 'PRT Orphan', 'Soma Anchor', 'Cervical Anchor', 'Anchor', '0.5assign', 'Orphan', '']
     assert set(status_categories) >= set(body_df['status']), set(body_df['status'])
 
     body_df['assessment'] = pd.Categorical(body_df['assessment'], asmt_categories, ordered=True)
