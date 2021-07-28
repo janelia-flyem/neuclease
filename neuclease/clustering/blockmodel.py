@@ -4,26 +4,27 @@ import graph_tool.all as gt
 from dvidutils import LabelMapper
 
 
-def construct_graph(strengths):
+def construct_graph(weights):
     """
-    Construct a single-layer graph from the given strengths.
+    Construct a single-layer graph from the given edge weights.
 
     The graph vertices will be numbered 0..N-1, corresponding to
-    the sorted list of bodies in the strengths.
+    the sorted list of node IDs present in the index.
 
     Arg:
-        strengths:
-            pd.Series, indexed by body *pairs*.
-            Values are the number of synapses in the pairwise connection.
+        weights:
+            pd.Series, indexed by node *pairs* (e.g. body pairs).
+            Values are edge weights, e.g. the number of
+            synapses a pairwise connection between neurons.
 
     Returns:
-        g, sorted_bodies
+        g, sorted_nodes
     """
-    assert strengths.index.nlevels == 2, \
-        "Please pass a series, indexed by [body_pre, body_post]"
-    strengths = strengths.astype(np.int32)
+    assert weights.index.nlevels == 2, \
+        "Please pass a series, indexed by e.g. [body_pre, body_post]"
+    weights = weights.astype(np.int32)
 
-    body_edges = strengths.reset_index()[['body_pre', 'body_post']].values.astype(np.uint64)
+    body_edges = weights.reset_index().iloc[:, :2].values.astype(np.uint64)
     sorted_bodies = np.sort(pd.unique(body_edges.reshape(-1)))
 
     vertexes = np.arange(len(sorted_bodies), dtype=np.uint32)
@@ -33,8 +34,8 @@ def construct_graph(strengths):
     g = gt.Graph(directed=True)
     g.add_vertex(np.uint32(len(vertexes)))
     g.add_edge_list(edges)
-    g.ep["strength"] = g.new_edge_property("int")
-    g.ep["strength"].a = strengths.values
+    g.ep["weight"] = g.new_edge_property("int")
+    g.ep["weight"].a = weights.values
 
     return g, sorted_bodies
 
