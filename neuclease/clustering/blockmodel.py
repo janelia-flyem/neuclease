@@ -58,6 +58,33 @@ def construct_layered_graph(weight_series, layer_categories=None):
     #       in the constructed graph:
     #           - 'node' refers to input node IDs
     #           - 'vertex' refers to the gt.Graph vertex IDs
+    node_to_vertex, total_vertices = _node_to_vertex_mappings(weight_series)
+    edges, layers, weights = _edges_and_properties(weight_series, node_to_vertex, layer_categories)
+
+    # Map edge tables to use vertex IDs
+    g = gt.Graph(directed=True)
+    g.add_vertex(np.uint32(total_vertices))
+    g.add_edge_list(edges)
+    g.ep["weight"] = g.new_edge_property("int")
+    g.ep["weight"].a = weights
+    g.ep["layer"] = g.new_edge_property("int")
+    g.ep["layer"].a = layers
+
+    return g, node_to_vertex
+
+
+def _node_to_vertex_mappings(weight_series):
+    """
+    Given a list of pd.Series containing edge weights between nodes,
+    Return a dict of mappings (one per node category) that can be used to
+    convert original node IDs (which could be int, str, etc.) to
+    non-overlapping vertex IDs to be used in a gt.Graph.
+
+    Also return the total number of unique nodes across all categories,
+    and return the default mapping of edge types (node ID pairs) to layer categories.
+    """
+    assert np.isinstance(weight_series[0], pd.Series), \
+        "Please provide a list of pd.Series"
 
     # Determine node categories
     nodes = {}
@@ -70,7 +97,9 @@ def construct_layered_graph(weight_series, layer_categories=None):
 
     # Determine set of unique IDs in each node category,
     # and map them to a single global ID set.
-    # Note: Each of these 'vertex maps' could have a different dtype
+    # Note:
+    #   Each of these 'node-to-vertex maps' could have a different index dtype,
+    #   but all will have int values.
     node_to_vertex = {}
     N = 0
     for node_type, values in nodes.items():
@@ -78,12 +107,46 @@ def construct_layered_graph(weight_series, layer_categories=None):
         s = pd.Series(np.arange(N, N+len(s)), index=s, name='vertex').rename_axis(node_type)
         N += len(s)
         node_to_vertex[node_type] = s
-    total_vertices = N
 
-    if layer_categories is None:
-        layer_categories = default_layer_categories
+    assert N == sum(map(len, node_to_vertex.values()))
+    return node_to_vertex, N
 
-    # Map edge tables to use vertex IDs
+
+def _edges_and_properties(weight_series, node_to_vertex, layer_categories=None):
+    """
+    Convert the given list of edge weight series into all the tables
+    needed for the edges in the final gt.Graph,
+    including vertex ID pairs, layer categorical IDs, and edge weights.
+
+    Args:
+        weight_series:
+            list of pd.Series, representing edge weights
+            Indexed by node pairs, weights in the values.
+
+        node_to_vertex:
+            A dict of pd.Series which map from original nodes to graph vertex ID.
+            Original node ID is in the index, graph vertex ID is in the value.
+
+        layer_categories:
+            dict of edge type pairs -> layer ID
+            If none are provided, then by default each unique
+            pair of node types will be assigned to a unique layer.
+            Note that in that case, edges of type ('a', 'b')
+            would be considered distinct from ('b', 'a').
+
+            Example input:
+
+                {
+                    ('body', 'body'): 0,
+                    ('body', 'lineage'): 1,
+                    ('roi', 'body'): 2,
+                    ('body', 'roi'): 2
+                }
+    Returns:
+            edges, layers, weights
+    """
+    default_layer_categories = {}
+
     edges = []
     layers = []
     for weights in weight_series:
@@ -91,7 +154,15 @@ def construct_layered_graph(weight_series, layer_categories=None):
         left_vertexes = node_to_vertex[left_type].loc[left_nodes].values
         right_vertexes = node_to_vertex[right_type].loc[right_nodes].values
 
-        cat = layer_categories[(left_type, right_type)]
+        if layer_categories:
+            cat = layer_categories[(left_type, right_type)]
+        else:
+            # If no layer categories were explicitly provided,
+            # we simply enumerate the edge types we encounter.
+            max_cat = max(default_layer_categories.values(), default=-1)
+            next_cat = max_cat + 1
+            cat = default_layer_categories.setdefault((left_type, right_type), next_cat)
+
         e = np.array((left_vertexes, right_vertexes)).transpose()
         l = np.full(len(e), cat)  # noqa
 
@@ -102,18 +173,17 @@ def construct_layered_graph(weight_series, layer_categories=None):
     layers = np.concatenate(layers)
     weights = np.concatenate([w.values for w in weight_series])
 
-    g = gt.Graph(directed=True)
-    g.add_vertex(np.uint32(total_vertices))
-    g.add_edge_list(edges)
-    g.ep["weight"] = g.new_edge_property("int")
-    g.ep["weight"].a = weights
-    g.ep["layer"] = g.new_edge_property("int")
-    g.ep["layer"].a = layers
-
-    return g, node_to_vertex
+    return edges, layers, weights
 
 
 def _node_types_and_ids(weights):
+    """
+    For the given pd.Series of edge weights,
+    parse the index names to determine the 'node type'
+    on the left side and right side, and return the complete
+    list of node values from the index columns.
+    The lists are not de-duplicated.
+    """
     assert weights.index.nlevels == 2
     weights = weights.reset_index()
     left_name, right_name = weights.columns[:2]
