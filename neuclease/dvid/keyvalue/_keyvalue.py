@@ -747,18 +747,21 @@ def fetch_sphere_annotations(server, uuid, instance, seg_instance=None, *, sessi
     # This gets everything from '0' to 'zzzzz...'
     kv = fetch_keyrangevalues(server, uuid, instance, '0', chr(ord('z')+1), as_json=True)
 
+    keys = []
     users = []
     coords = []
     props = []
     for k, v in kv.items():
         if v.get('Kind') != 'Sphere':
             continue
-        users.append(k.split('-')[0])
+
+        keys.append(k)
+        users.append(k.split('--')[0])
         pos = [int(p) for p in v['Pos']]
         coords.append((pos[:3], pos[3:]))
         props.append(v.get('Prop', None))
 
-    cols = ['user', *'xyz', 'diameter', 'x0', 'y0', 'z0', 'x1', 'y1', 'z1', 'prop']
+    cols = ['user', *'xyz', 'diameter', 'x0', 'y0', 'z0', 'x1', 'y1', 'z1', 'prop', 'key']
     if seg_instance:
         cols = ['body'] + cols
 
@@ -778,6 +781,7 @@ def fetch_sphere_annotations(server, uuid, instance, seg_instance=None, *, sessi
 
     df['user'] = users
     df['prop'] = props
+    df['key'] = keys
 
     if seg_instance:
         from ..labelmap import fetch_labels_batched
