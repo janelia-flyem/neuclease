@@ -129,7 +129,7 @@ def multicervical(ann):
 def update_soma_statuses(server, uuid, dry_run=True):
     vstats = fetch_vnc_statuses(server, uuid)
 
-    soma_statuses = {"Prelim Roughly traced", "PRT Orphan", "Soma Anchor"}  # noqa
+    soma_statuses = {"Roughly traced", "Prelim Roughly traced", "PRT Orphan", "Soma Anchor"}  # noqa
     needs_upgrade = vstats.query('has_soma and status not in @soma_statuses').copy()
     needs_downgrade = vstats.query('not has_soma and status == "Soma Anchor"').copy()
 
