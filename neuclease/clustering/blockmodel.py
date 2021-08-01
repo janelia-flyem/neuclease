@@ -1,7 +1,9 @@
+from functools import partial
 import numpy as np
 import pandas as pd
 import graph_tool.all as gt
-from dvidutils import LabelMapper
+
+from neuclease.util import Timer, compute_parallel
 
 
 def construct_graph(weights):
@@ -20,6 +22,7 @@ def construct_graph(weights):
     Returns:
         g, sorted_nodes
     """
+    from dvidutils import LabelMapper
     assert weights.index.nlevels == 2, \
         "Please pass a series, indexed by e.g. [body_pre, body_post]"
     weights = weights.astype(np.int32)
@@ -84,7 +87,7 @@ def _node_to_vertex_mappings(weight_series):
     Also return the total number of unique nodes across all categories,
     and return the default mapping of edge types (node ID pairs) to layer categories.
     """
-    assert np.isinstance(weight_series[0], pd.Series), \
+    assert isinstance(weight_series[0], pd.Series), \
         "Please provide a list of pd.Series"
 
     # Determine node categories
@@ -132,7 +135,7 @@ def _edges_and_properties(weight_series, node_to_vertex, layer_categories=None):
             dict of edge type pairs -> layer ID
             If none are provided, then by default each unique
             pair of node types will be assigned to a unique layer.
-            Note that in that case, edges of type ('a', 'b')
+            Note that in the default case, edges of type ('a', 'b')
             would be considered distinct from ('b', 'a').
 
             Example input:
@@ -196,3 +199,173 @@ def _node_types_and_ids(weights):
     right_nodes = weights[right_name]
 
     return (left_type, left_nodes), (right_type, right_nodes)
+
+
+def extract_roi_counts(point_df, bodies):
+    """
+    Determine the number of pre/post synapses each body has in each ROI.
+    Also determine the counts after "bilateralizing" the ROIs,
+    i.e. combining left/right pairs of ROIs.
+
+    Returns:
+        Four pd.Series of counts:
+        roi_pre, roi_post, biroi_pre, biroi_post
+        Those are different combinations of pre/post and roi/bilateralized-roi
+    """
+    bodies  # for linter
+    big_point_df = point_df.query('body in @bodies')
+    roi_counts = big_point_df.groupby(['body', 'roi', 'kind']).size().rename('count')
+    roi_counts = roi_counts[roi_counts > 0]
+    roi_counts = roi_counts[roi_counts.index.get_level_values(1) != "<unspecified>"]
+    roi_counts = roi_counts.reset_index().pivot(['body', 'roi'], 'kind', 'count')
+    roi_counts.columns.name = ""
+    roi_counts = roi_counts.reset_index()
+
+    roi_pre = roi_counts.rename(columns={'roi': 'roipre'})
+    roi_pre = roi_pre.set_index(['body', 'roipre'])['PreSyn'].rename('count').dropna().astype(int)
+    roi_pre = roi_pre.loc[roi_pre > 0]
+
+    roi_post = roi_counts.rename(columns={'roi': 'roipost'})
+    roi_post = roi_post.set_index(['body', 'roipost'])['PostSyn'].rename('count').dropna().astype(int)
+    roi_post = roi_post.loc[roi_post > 0]
+
+    # Bilateralize: Combine counts for '(L)' rois and '(R)' rois.
+    roi_counts['biroi'] = roi_counts['roi'].map(lambda s: s[:-3] if s[-3:] in ('(L)', '(R)') else s)
+    biroi_counts = roi_counts.reset_index().groupby(['body', 'biroi'])[['PreSyn', 'PostSyn']].sum().reset_index()
+
+    biroi_pre = biroi_counts.rename(columns={'biroi': 'biroipre'})
+    biroi_pre = biroi_pre.set_index(['body', 'biroipre'])['PreSyn'].rename('count').dropna().astype(int)
+    biroi_pre = biroi_pre.loc[biroi_pre > 0]
+
+    biroi_post = biroi_counts.rename(columns={'biroi': 'biroipost'})
+    biroi_post = biroi_post.set_index(['body', 'biroipost'])['PostSyn'].rename('count').dropna().astype(int)
+    biroi_post = biroi_post.loc[biroi_post > 0]
+
+    return roi_pre, roi_post, biroi_pre, biroi_post
+
+
+def fetch_sanitized_body_annotations(server, uuid, cached_clio_ann=None, cached_dvid_ann=None):
+    """
+    Fetch body annotations from both clio and dvid.
+    Combine them into a single table, and sanitize them to erase non-standard entries such as 'TBD', etc.
+
+    Also, construct special columns for combined neuromere-side-hemilineage (roihemi) and a bilateralized version (biroihemi).
+
+    Note: The resulting dataframe does not use the exact same values as either DVID or Clio.
+    Note: Descending neurons are assigned a "hemilineage" of "brain".  Same for their "soma_neuromere".
+    Note: Converts 'group' to a string
+    """
+    from neuclease.clio.api import fetch_json_annotations_all
+    from neuclease.misc.vnc_statuses import fetch_vnc_statuses
+
+    if cached_clio_ann is not None:
+        clio_ann = cached_clio_ann.copy()
+    else:
+        with Timer("Fetching Clio annotations"):
+            clio_ann = fetch_json_annotations_all('VNC')
+
+    clio_ann = clio_ann.rename(columns={'bodyid': 'body'})
+    clio_ann['body'] = clio_ann['body'].astype(np.uint64)
+
+    if cached_dvid_ann is not None:
+        dvid_ann = cached_dvid_ann.copy()
+    else:
+        with Timer("Fetching DVID annotations"):
+            dvid_ann = fetch_vnc_statuses(server, uuid)
+
+    dvid_ann = dvid_ann.reset_index().drop_duplicates('body')[['body', 'has_soma', 'is_cervical']]
+    clio_ann = clio_ann.merge(dvid_ann, 'outer', on='body')
+
+    clio_ann['has_soma'].fillna(False, inplace=True)
+    clio_ann['is_cervical'].fillna(False, inplace=True)
+    clio_ann['soma_neuromere'].fillna("", inplace=True)
+    clio_ann['hemilineage'].fillna("", inplace=True)
+
+    # Convert groups to strings, even though they're originally integers.
+    # This makes it easier to treat this feature like all the others for filtering purposes.
+    clio_ann['group'] = clio_ann['group'].fillna("").astype(str)
+
+    # The true set of hemilineage names has 'gaps', but that's not important here.
+    # I think the following names aren't truly valid: 2B, 4A, 5A, 7A, 10A, 14B, 15A, 16A, 17B, 18A, 20B, 21B, 22B, 23A
+    valid_hemilineages = {f'{i}{k}' for i in range(24) for k in 'AB'}  # noqa
+    clio_ann.loc[clio_ann.query('hemilineage not in @valid_hemilineages').index, 'hemilineage'] = ""
+
+    soma_neuromere = clio_ann['soma_neuromere']
+    soma_neuromere = soma_neuromere.map(lambda s: 'ANm' if isinstance(s, str) and s.lower().startswith('anm') else s)
+    soma_neuromere = soma_neuromere.map(lambda s: s if s in ('T1', 'T2', 'T3', 'ANm') else "")
+    clio_ann['soma_neuromere'] = soma_neuromere.values
+
+    clio_ann['soma_side'] = clio_ann['soma_side'].map(lambda s: s.lower() if isinstance(s, str) else s)
+    clio_ann['soma_side'] = clio_ann['soma_side'].map(lambda s: {'rhs': 'R', 'lhs': 'L', 'midline': 'M'}.get(s, ''))
+
+    descending = clio_ann.query('is_cervical and not has_soma')
+    clio_ann.loc[descending.index, 'soma_neuromere'] = 'brain'
+    clio_ann.loc[descending.index, 'hemilineage'] = 'brain'
+
+    # By default, one-sided roihemi and bilateral biroihemi are the same...
+    _idx = clio_ann.query('hemilineage != "" and soma_neuromere != ""').index
+    clio_ann.loc[_idx, "biroihemi"] = clio_ann.loc[_idx, "soma_neuromere"] + '-' + clio_ann.loc[_idx, "hemilineage"]
+    clio_ann.loc[_idx, "roihemi"] = clio_ann.loc[_idx, "soma_neuromere"] + '-' + clio_ann.loc[_idx, "hemilineage"]
+
+    # ... but we overwrite the one-sided roihemi if a soma side is available.
+    _idx = clio_ann.query('hemilineage != "" and soma_neuromere != "" and soma_side != ""').index
+    clio_ann.loc[_idx, "roihemi"] = clio_ann.loc[_idx, "soma_neuromere"] + '(' + clio_ann.loc[_idx, "soma_side"] + ')' + '-' + clio_ann.loc[_idx, "hemilineage"]
+
+    cols = ['body', 'has_soma', 'is_cervical', 'soma_side', 'soma_neuromere', 'hemilineage', 'roihemi', 'biroihemi', 'group']
+    return clio_ann[cols].set_index('body').fillna("")
+
+
+def minimize_layered_nested_blockmodel(strengths, metadata_series, strength_threshold=0, combine_metadata_layers=True):
+    """
+    Given a set of edges in 'strengths' and a set of metadata edges,
+    construct a layered graph, whose base layer is determined by the strength edges
+    and whose higher layer(s) are populated with the metadata edges.
+
+    Then run gt.minimize_nested_blockmodel_dl() to find a partitioning.
+    """
+    strong_conn = strengths[strengths > strength_threshold]
+    bodies = sorted(pd.unique(strong_conn.reset_index()[['body_pre', 'body_post']].values.reshape(-1)))
+
+    filtered_metadata = []
+    for s in metadata_series:
+        s = s.loc[s.index.get_level_values(0).isin(bodies)]
+        s = s.loc[s.index.get_level_values(1) != ""]
+        s = s.loc[s > 0]
+        filtered_metadata.append(s)
+
+    layers = {('body', 'body'): 0}
+    for i, s in enumerate(filtered_metadata, start=1):
+        assert s.index.nlevels == 2
+        assert s.index.names[0] == 'body'
+        assert '_' not in s.index.names[1], \
+            ("The graph construction function interprets underscores in a speical way.\n"
+             "Avoid using undercores in your metadata index names")
+        mtype = s.index.names[1]
+        if combine_metadata_layers:
+            layers[('body', mtype)] = 1
+        else:
+            layers[('body', mtype)] = i
+
+    with Timer(f"Inferring with strength cutoff {strength_threshold}"):
+        g, node_to_vertex = construct_layered_graph([strong_conn, *filtered_metadata], layers)
+
+        state_args = {
+            "base_type": gt.LayeredBlockState,
+            "ec": g.ep.layer,
+            "recs": [g.ep.weight],
+            "rec_types": ["discrete-geometric"],
+            "deg_corr": True,
+            "layers": True
+        }
+
+        # Use a separate process to execute the function,
+        # to make it easier to kill if we change our mind.
+        _minimize = partial(gt.minimize_nested_blockmodel_dl, state_args=state_args, multilevel_mcmc_args={"verbose": False})
+        nbs = compute_parallel(_minimize, [g], processes=1)[0]
+
+    bodies = node_to_vertex['body'].index
+    body_vertexes = node_to_vertex['body'].values
+
+    df = pd.DataFrame({'body': bodies, 'block': nbs.get_bs()[0][body_vertexes]})
+    return g, node_to_vertex, nbs, df
+
