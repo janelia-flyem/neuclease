@@ -8,7 +8,10 @@ import networkx as nx
 from requests.exceptions import HTTPError
 
 from ..util import find_root, tqdm_proxy as tqdm
-from ..dvid import default_dvid_session, fetch_body_annotations, fetch_sizes, fetch_mutations, post_key, compute_merge_hierarchies, post_merge, delete_key
+from ..dvid import (
+    default_dvid_session, fetch_body_annotations, fetch_sizes, fetch_mutations,
+    post_key, compute_merge_hierarchies, post_merge, delete_key,
+    DEFAULT_BODY_STATUS_CATEGORIES)
 
 from . import clio_api_wrapper
 
@@ -342,15 +345,16 @@ def extract_and_coerce_mergeable_groups(body_df):
     assert set(asmt_categories) >= set(body_df['assessment']), set(body_df['assessment'])
 
     # Extracted from:
-    # http://emdata5.janelia.org:8400/api/node/aefff91ab8894a5b8340e3e577e71818/neutu_config/key/body_status_v2
-    status_categories = ['Traced', 'Roughly traced', 'Prelim Roughly traced', 'PRT Orphan', 'Soma Anchor', 'Cervical Anchor', 'Anchor', '0.5assign', 'Orphan', '']
-    assert set(status_categories) >= set(body_df['status']), set(body_df['status'])
+
+    assert set(DEFAULT_BODY_STATUS_CATEGORIES) >= set(body_df['status']), \
+        "Unknown statuses: {}".format(set(body_df['status']) - set(DEFAULT_BODY_STATUS_CATEGORIES))
 
     body_df['assessment'] = pd.Categorical(body_df['assessment'], asmt_categories, ordered=True)
-    body_df['status'] = pd.Categorical(body_df['status'], status_categories, ordered=True)
+    body_df['status'] = pd.Categorical(body_df['status'], DEFAULT_BODY_STATUS_CATEGORIES, ordered=True)
 
     mergeable_assessments = ('target', 'old_target', 'mergeable')  # noqa
-    mergeable_df = body_df.query('mergeset != -1 and assessment in @mergeable_assessments').sort_values(['mergeset', 'status', 'assessment'])
+    mergeable_df = body_df.query('mergeset != -1 and assessment in @mergeable_assessments')
+    mergeable_df = mergeable_df.sort_values(['mergeset', 'status', 'assessment'], ascending=[True, False, True])
 
     mergeable_df['coerced_assessment'] = 'fragment'
     target_rows = mergeable_df.groupby('mergeset').head(1).index
