@@ -1,4 +1,5 @@
 import logging
+from itertools import chain
 
 import pandas as pd
 
@@ -14,9 +15,9 @@ def create_labelsz_instance(server, uuid, instance, *, ROI=None, session=None):
     Create a new labelsz instance.
 
     Equivalent to:
-    
+
         .. code-block:: python
-        
+
             create_instance(server, uuid, instance, type_specific_settings={'ROI': ROI})
     """
     settings = {}
@@ -32,29 +33,35 @@ def fetch_count(server, uuid, instance, body, element_type, *, session=None):
 
     For synapse indexing, the labelsz data instance must be synced with an annotations instance.
     (future) For number-of-voxels indexing, the labelsz data instance must be synced with a labelvol instance.
-    
+
     Args:
         server:
             dvid server, e.g. 'emdata4:8900'
-        
+
         uuid:
             dvid uuid, e.g. 'abc9'
-        
+
         instance:
             dvid labelsz instance name
-        
+
         body:
             The body ID of interest
-        
+
         element_type:
             An indexed element type supported by the labelsz instance,
             i.e. one of: "PostSyn", "PreSyn", "Gap", "Note",
             or the catch-all for synapses "AllSyn", or the number of voxels "Voxels".
-    
+
     Returns:
-        JSON. For example: ``{ "Label": 21847,  "PreSyn": 81 }``
+        int
     """
-    return fetch_generic_json(f'{server}/api/node/{uuid}/{instance}/count/{body}/{element_type}', session=session)
+    url = f'{server}/api/node/{uuid}/{instance}/count/{body}/{element_type}'
+    r = session.get(url)
+    r.raise_for_status()
+
+    j = r.json()
+    assert j['Label'] == body
+    return j[element_type]
 
 
 @dvid_api_wrapper
@@ -64,25 +71,25 @@ def fetch_counts(server, uuid, instance, bodies, element_type, format='pandas', 
 
     For synapse indexing, the labelsz data instance must be synced with an annotations instance.
     (future) For number-of-voxels indexing, the labelsz data instance must be synced with a labelvol instance.
-    
+
     Args:
         server:
             dvid server, e.g. 'emdata4:8900'
-        
+
         uuid:
             dvid uuid, e.g. 'abc9'
-        
+
         instance:
             dvid labelsz instance name
-        
+
         bodies:
             A list of body IDs
-        
+
         element_type:
             An indexed element type supported by the labelsz instance,
             i.e. one of: "PostSyn", "PreSyn", "Gap", "Note",
             or the catch-all for synapses "AllSyn", or the number of voxels "Voxels".
-    
+
     Returns:
         JSON. For example: ``[{ "Label": 21847,  "PreSyn": 81 }, { "Label": 23, "PreSyn": 65 }, ...]``
     """
@@ -91,47 +98,69 @@ def fetch_counts(server, uuid, instance, bodies, element_type, format='pandas', 
     counts = fetch_generic_json(f'{server}/api/node/{uuid}/{instance}/counts/{element_type}', json=bodies, session=session)
     if format == 'json':
         return counts
-    
+
     counts = pd.DataFrame(counts).set_index('Label').rename_axis('body')[element_type]
     return counts
 
 
 @dvid_api_wrapper
-def fetch_top(server, uuid, instance, n, element_type, *, session=None):
+def fetch_top(server, uuid, instance, n, element_type, format='pandas', *, session=None):
     """
     Returns a list of the top N labels with respect to number of the specified index type.
 
     Args:
         server:
             dvid server, e.g. 'emdata4:8900'
-        
+
         uuid:
             dvid uuid, e.g. 'abc9'
-        
+
         instance:
             dvid labelsz instance name
-        
+
         n:
             The number of labels to return counts for.
-        
+
         element_type:
             An indexed element type supported by the labelsz instance,
             i.e. one of: "PostSyn", "PreSyn", "Gap", "Note",
             or the catch-all for synapses "AllSyn", or the number of voxels "Voxels".
-    
+
+        format:
+            Either 'json' (raw server response) or 'pandas'
+
     Returns:
         JSON. For example: ``[{ "Label": 21847,  "PreSyn": 81 }, { "Label": 23, "PreSyn": 65 }, ...]``
     """
-    return fetch_generic_json(f'{server}/api/node/{uuid}/{instance}/top/{n}/{element_type}', session=session)
+    assert format in ('json', 'pandas')
+
+    url = f'{server}/api/node/{uuid}/{instance}/top/{n}/{element_type}'
+    r = session.get(url)
+    r.raise_for_status()
+
+    if format == 'json':
+        return r.json()
+
+    results = r.json()
+    if len(results) == 0:
+        return pd.Series([], name=element_type, dtype=int).rename_axis('body')
+
+    df = pd.DataFrame(results)
+    df = df.rename(columns={'Label': 'body', 'Size': element_type})
+    df = df.sort_values([element_type, 'body'], ascending=[False, True])
+    s = df.set_index('body')[element_type]
+    return s
 
 
 @dvid_api_wrapper
-def fetch_threshold(server, uuid, instance, threshold, element_type, offset=0, n=10_000, *, session=None):
+def fetch_threshold(server, uuid, instance, threshold, element_type, offset=0, n=None, format='pandas', *, session=None):
     """
     Returns a list of up to 10,000 labels per request that have # given element types >= T.
-    The "page" size is 10,000 labels so a call without any query string will return the 
+    The "page" size is 10,000 labels so a call without any query string will return the
     largest labels with # given element types >= T.  If there are more than 10,000 labels,
-    you can access the next 10,000 by setting ``offset=10_000``
+    you can access the next 10,000 by setting ``offset=10_000``.  Alternatively, this Python
+    function allows you to provide ``n`` greater than 10,000, in which case it will loop until
+    the desired count has been fetched.
 
     The index type may be any annotation element type ("PostSyn", "PreSyn", "Gap", "Note"),
     the catch-all for synapses "AllSyn", or the number of voxels "Voxels".
@@ -142,10 +171,10 @@ def fetch_threshold(server, uuid, instance, threshold, element_type, offset=0, n
     Args:
         server:
             dvid server, e.g. 'emdata4:8900'
-        
+
         uuid:
             dvid uuid, e.g. 'abc9'
-        
+
         instance:
             dvid labelsz instance name
 
@@ -154,25 +183,64 @@ def fetch_threshold(server, uuid, instance, threshold, element_type, offset=0, n
 
         offset:
             Which rank to start returning labels for (0 by default)
-        
+
         element_type:
             An indexed element type supported by the labelsz instance,
             i.e. one of: "PostSyn", "PreSyn", "Gap", "Note",
             or the catch-all for synapses "AllSyn", or the number of voxels "Voxels".
-    
+
         n:
             The number of labels to return counts for.
-        
+            By default, this function will loop until all results above the threshold are obtained.
+
     Returns:
-        JSON. For example: ``[{ "Label": 21847,  "PreSyn": 81 }, { "Label": 23, "PreSyn": 65 }, ...]``
+        If format == 'json', the json response is returned directly. For example:
+
+            ``[{ "Label": 21847,  "PreSyn": 81 }, { "Label": 23, "PreSyn": 65 }, ...]``
+
+        If format == 'pandas', the result is converted to a pandas series,
+        with index named 'body' and value named according to the requested element type.
     """
+    assert format in ('json', 'pandas')
+
+    if n is None:
+        n = 1e12
+    n = int(n)
+
+    # DVID allows a max request of only 10k, so we have
+    # to break it up into chunks if the user wants more.
+    results = []
+    while n > 0:
+        _n = min(n, 10_000)
+        j = _fetch_threshold(server, uuid, instance, threshold, element_type, offset, _n, session=session)
+        results.append(j)
+        offset += _n
+        n -= _n
+        if len(j) == 0:
+            break
+
+    results = [*chain(*results)]
+    if format == 'json':
+        return results
+
+    if len(results) == 0:
+        return pd.Series([], name=element_type, dtype=int).rename_axis('body')
+
+    df = pd.DataFrame(results)
+    df = df.rename(columns={'Label': 'body', 'Size': element_type})
+    df = df.sort_values([element_type, 'body'], ascending=[False, True])
+    s = df.set_index('body')[element_type]
+    return s
+
+
+def _fetch_threshold(server, uuid, instance, threshold, element_type, offset, n, *, session=None):
     params = {}
     if offset is not None:
         params['offset'] = int(offset)
 
     if n is not None:
         params['n'] = int(n)
-    
+
     r = session.get(f'{server}/api/node/{uuid}/{instance}/threshold/{threshold}/{element_type}', params=params)
     r.raise_for_status()
     return r.json()
@@ -182,23 +250,23 @@ def fetch_threshold(server, uuid, instance, threshold, element_type, offset=0, n
 def post_sync(server, uuid, instance, sync_instances, replace=False, *, session=None):
     """
     Appends to list of data instances with which the labelsz are synced.
-    
+
     See also: ``neuclease.dvid.wrapper_proxies.post_sync``
-    
+
     Args:
         server:
             dvid server, e.g. 'emdata3:8900'
-        
+
         uuid:
             dvid uuid, e.g. 'abc9'
-        
+
         instance:
             dvid labelsz instance name
-            
+
         sync_instances:
             list of dvid instances to which the labelsz instance should be synchronized,
             e.g. ['segmentation']
-        
+
         replace:
             If True, replace existing sync instances with the given sync_instances.
             Otherwise append the sync_instances.
@@ -212,23 +280,24 @@ def post_sync(server, uuid, instance, sync_instances, replace=False, *, session=
     r = session.post(f'{server}/api/node/{uuid}/{instance}/sync', json=body, params=params)
     r.raise_for_status()
 
+
 # Synonym
 post_labelsz_sync = post_sync
 
 
 @dvid_api_wrapper
-def post_reload(server, uuid, instance, *, session=None): # Note: See wrapper_proxies.post_reload()
+def post_reload(server, uuid, instance, *, session=None):  # Note: See wrapper_proxies.post_reload()
     """
-    Forces asynchornous denormalization from its synced annotations instance.  Can be 
-    used to initialize a newly added instance.
+    Forces asynchornous denormalization from its synced annotations instance.
+    Can be used to initialize a newly added instance.
 
     Args:
         server:
             dvid server, e.g. 'emdata4:8900'
-        
+
         uuid:
             dvid uuid, e.g. 'abc9'
-        
+
         instance:
             dvid labelsz instance name
     """
