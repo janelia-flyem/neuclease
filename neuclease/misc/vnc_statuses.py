@@ -86,9 +86,8 @@ def fetch_vnc_statuses(server, uuid):
     if dupes:
         logger.warning(f"There are {dupes} duplicate bodies in the results, due to multi-soma and/or multi-cervical bodies!")
 
-    del ann_df['body ID']
-
     ann_df = ann_df.set_index('body')
+    ann_df['bodyid'] = ann_df.index.values
 
     bodies = ann_df.index.drop_duplicates().values
     ann_df['tbars'] = fetch_counts(server, uuid, 'synapses_labelsz', bodies, 'PreSyn', format='pandas')
@@ -171,7 +170,7 @@ def update_soma_statuses(server, uuid, dry_run=True):
                 j = {}
 
             j.update({
-                'body ID': int(body),
+                'bodyid': int(body),
                 'status': 'Soma Anchor',
                 'user': getpass.getuser(),
                 'status user': getpass.getuser()
@@ -188,7 +187,7 @@ def update_soma_statuses(server, uuid, dry_run=True):
                 j = {}
 
             j.update({
-                'body ID': int(body),
+                'bodyid': int(body),
                 'status': 'Anchor',
                 'user': getpass.getuser(),
                 'status user': getpass.getuser()
@@ -228,7 +227,7 @@ def post_statuses(server, uuid, statuses):
             j = {}
 
         j.update({
-            'body ID': int(row.Index),
+            'bodyid': int(row.Index),
             'status': row.new_status,
             'user': getpass.getuser(),
             'status user': getpass.getuser()
