@@ -244,7 +244,7 @@ def extract_roi_counts(point_df, bodies):
     return roi_pre, roi_post, biroi_pre, biroi_post
 
 
-def fetch_sanitized_body_annotations(server, uuid, cached_clio_ann=None, cached_dvid_ann=None):
+def fetch_sanitized_body_annotations(server, uuid, cached_clio_ann=None, cached_dvid_ann=None, statuses=None):
     """
     Fetch body annotations from both clio and dvid.
     Combine them into a single table, and sanitize them to erase non-standard entries such as 'TBD', etc.
@@ -273,8 +273,11 @@ def fetch_sanitized_body_annotations(server, uuid, cached_clio_ann=None, cached_
         with Timer("Fetching DVID annotations"):
             dvid_ann = fetch_vnc_statuses(server, uuid)
 
-    dvid_ann = dvid_ann.reset_index().drop_duplicates('body')[['body', 'has_soma', 'is_cervical']]
-    clio_ann = clio_ann.merge(dvid_ann, 'outer', on='body')
+    dvid_ann = dvid_ann.reset_index().drop_duplicates('body')[['body', 'has_soma', 'is_cervical', 'status']]
+    clio_ann = clio_ann.drop(columns='status').merge(dvid_ann, 'outer', on='body')
+
+    if statuses:
+        clio_ann = clio_ann.query('status in @statuses').copy()
 
     clio_ann['has_soma'].fillna(False, inplace=True)
     clio_ann['is_cervical'].fillna(False, inplace=True)
@@ -311,11 +314,15 @@ def fetch_sanitized_body_annotations(server, uuid, cached_clio_ann=None, cached_
     _idx = clio_ann.query('hemilineage != "" and soma_neuromere != "" and soma_side != ""').index
     clio_ann.loc[_idx, "roihemi"] = clio_ann.loc[_idx, "soma_neuromere"] + '(' + clio_ann.loc[_idx, "soma_side"] + ')' + '-' + clio_ann.loc[_idx, "hemilineage"]
 
-    cols = ['body', 'has_soma', 'is_cervical', 'soma_side', 'soma_neuromere', 'hemilineage', 'roihemi', 'biroihemi', 'group']
+    cols = ['body', 'has_soma', 'is_cervical', 'soma_side', 'soma_neuromere', 'hemilineage', 'roihemi', 'biroihemi', 'group', 'status']
     return clio_ann[cols].set_index('body').fillna("")
 
 
-def minimize_layered_nested_blockmodel(strengths, metadata_series, strength_threshold=0, combine_metadata_layers=True):
+def blockmodel_clustering(strengths, metadata_series, constraint_series=[], initialization_series=[],
+                          *, min_strength=0,
+                          combine_metadata_layers=True,
+                          min_blocks=None, max_blocks=None,
+                          avoid_overfit=True):
     """
     Given a set of edges in 'strengths' and a set of metadata edges,
     construct a layered graph, whose base layer is determined by the strength edges
@@ -323,49 +330,146 @@ def minimize_layered_nested_blockmodel(strengths, metadata_series, strength_thre
 
     Then run gt.minimize_nested_blockmodel_dl() to find a partitioning.
     """
-    strong_conn = strengths[strengths > strength_threshold]
-    bodies = sorted(pd.unique(strong_conn.reset_index()[['body_pre', 'body_post']].values.reshape(-1)))
+    with Timer("Preparing inputs"):
+        g, node_to_vertex, pclabel_df, init_df, state_args, multilevel_mcmc_args = \
+            prepare_blockmodel_clustering_input(
+                strengths, metadata_series, constraint_series, initialization_series,
+                min_strength=min_strength,
+                combine_metadata_layers=combine_metadata_layers,
+                min_blocks=min_blocks, max_blocks=max_blocks,
+                avoid_overfit=avoid_overfit
+            )
 
-    filtered_metadata = []
-    for s in metadata_series:
-        s = s.loc[s.index.get_level_values(0).isin(bodies)]
-        s = s.loc[s.index.get_level_values(1) != ""]
-        s = s.loc[s > 0]
-        filtered_metadata.append(s)
-
-    layers = {('body', 'body'): 0}
-    for i, s in enumerate(filtered_metadata, start=1):
-        assert s.index.nlevels == 2
-        assert s.index.names[0] == 'body'
-        assert '_' not in s.index.names[1], \
-            ("The graph construction function interprets underscores in a speical way.\n"
-             "Avoid using undercores in your metadata index names")
-        mtype = s.index.names[1]
-        if combine_metadata_layers:
-            layers[('body', mtype)] = 1
+        if init_df is None:
+            init_bs = None
         else:
-            layers[('body', mtype)] = i
+            init_bs = [init_df['label'].values]
 
-    with Timer(f"Inferring with strength cutoff {strength_threshold}"):
-        g, node_to_vertex = construct_layered_graph([strong_conn, *filtered_metadata], layers)
-
-        state_args = {
-            "base_type": gt.LayeredBlockState,
-            "ec": g.ep.layer,
-            "recs": [g.ep.weight],
-            "rec_types": ["discrete-geometric"],
-            "deg_corr": True,
-            "layers": True
-        }
-
+    with Timer(f"Inferring with strength cutoff {min_strength}"):
         # Use a separate process to execute the function,
         # to make it easier to kill if we change our mind.
-        _minimize = partial(gt.minimize_nested_blockmodel_dl, state_args=state_args, multilevel_mcmc_args={"verbose": False})
-        nbs = compute_parallel(_minimize, [g], processes=1)[0]
+        fn = partial(
+            gt.minimize_nested_blockmodel_dl,
+            # g,
+            init_bs=init_bs,
+            state_args=state_args,
+            multilevel_mcmc_args=multilevel_mcmc_args,
+        )
+        nbs = compute_parallel(fn, [g], processes=1)[0]
 
     bodies = node_to_vertex['body'].index
     body_vertexes = node_to_vertex['body'].values
 
     df = pd.DataFrame({'body': bodies, 'block': nbs.get_bs()[0][body_vertexes]})
-    return g, node_to_vertex, nbs, df
+    return g, node_to_vertex, pclabel_df, init_df, nbs, df
 
+
+def prepare_blockmodel_clustering_input(strengths, metadata_series, constraint_series=[], initialization_series=[],
+                                        *, min_strength=0,
+                                        combine_metadata_layers=True,
+                                        min_blocks=None, max_blocks=None,
+                                        avoid_overfit=True):
+
+    # TODO:
+    # Populate bfield to forbid left-left pairings?
+
+    def filter_metadata(metadata_series, bodies):
+        filtered_metadata = []
+        for s in metadata_series:
+            assert s.index.nlevels == 2
+            s = s.loc[s.index.get_level_values(0).isin(bodies)]
+            s = s.loc[s.index.get_level_values(1) != ""]
+            s = s.loc[s > 0]
+            filtered_metadata.append(s)
+        return filtered_metadata
+
+    def filter_body_labeling(series, bodies):
+        filtered = []
+        for s in series:
+            assert s.index.nlevels == 1
+            s = s.loc[s.index.isin(bodies)]
+            filtered.append(s)
+        return filtered
+
+    def assign_layers(metadata_series):
+        layers = {('body', 'body'): 0}
+        for i, s in enumerate(metadata_series, start=1):
+            assert s.index.nlevels == 2
+            assert s.index.names[0] == 'body'
+            assert '_' not in s.index.names[1], \
+                ("The graph construction function interprets underscores in a speical way.\n"
+                 "Avoid using undercores in your metadata index names")
+            mtype = s.index.names[1]
+            if combine_metadata_layers:
+                layers[('body', mtype)] = 1
+            else:
+                layers[('body', mtype)] = i
+        return layers
+
+    with Timer("Filtering edges"):
+        strong_conn = strengths[strengths > min_strength]
+        bodies = sorted(pd.unique(strong_conn.reset_index().iloc[:, :2].values.reshape(-1)))
+        metadata_series = filter_metadata(metadata_series, bodies)
+        layers = assign_layers(metadata_series)
+
+    with Timer("Constructing graph"):
+        g, node_to_vertex = construct_layered_graph([strong_conn, *metadata_series], layers)
+
+    with Timer("Assigning labelings"):
+        constraint_series = filter_body_labeling(constraint_series, bodies)
+        pclabel_df, pclabel = set_body_partition_labels(g, node_to_vertex, constraint_series, 'pclabel')
+
+        initialization_series = filter_body_labeling(initialization_series, bodies)
+        init_df, blabel = set_body_partition_labels(g, node_to_vertex, initialization_series, 'blabel')
+
+    state_args = {
+        "base_type": gt.LayeredBlockState,
+        "ec": g.ep.layer,
+        "recs": [g.ep.weight],
+        "rec_types": ["discrete-geometric"],
+        "deg_corr": True,
+        "layers": True,
+        "pclabel": pclabel
+        # These are passed directly to minimize_nested_blockmodel_dl()
+        #"b": blabel,
+    }
+
+    multilevel_mcmc_args = {
+        "verbose": False,
+        "entropy_args": {
+            "dl": avoid_overfit,
+            "exact": True
+        },
+    }
+    if min_blocks:
+        multilevel_mcmc_args['B_min'] = min_blocks
+    if max_blocks:
+        multilevel_mcmc_args['B_max'] = max_blocks
+
+    return g, node_to_vertex, pclabel_df, init_df, state_args, multilevel_mcmc_args
+
+
+def set_body_partition_labels(g, node_to_vertex, labeled_series, property_name='label'):
+    if labeled_series is None or len(labeled_series) == 0:
+        return None, None
+
+    # Use the labeled_series to tag each body with a partition label.
+    # Each body can be listed with multiple labels (in different series),
+    # and we take the intersection of all of them.
+    # We just merge on a column for each label set,
+    # and then enumerate the unique column combinations.
+    body_df = node_to_vertex['body'].to_frame()
+    for s in labeled_series:
+        body_df = body_df.merge(s, 'left', on='body')
+    body_df = body_df.fillna("<blank>")
+    label_names = [cs.name for cs in labeled_series]
+    body_df['label'] = 1 + body_df.groupby(label_names).ngroup().astype(int)
+
+    # Don't forget about metadata nodes!
+    # They can't be clustered with bodies, but remain unconstrained within their own group.
+    # We'll give them label partition label 0
+    full_df = pd.DataFrame({'vertex': np.arange(g.num_vertices())})
+    full_df = full_df.merge(body_df[['vertex', 'label']], 'left', 'vertex').fillna(0).astype(int)
+
+    g.vp[property_name] = g.new_vertex_property("int", full_df['label'].values)
+    return full_df, g.vp[property_name]
