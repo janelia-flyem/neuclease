@@ -117,31 +117,37 @@ def dvid_api_wrapper(f):
         try:
             return f(server, *args, **kwargs, session=session)
         except requests.RequestException as ex:
+            if hasattr(ex, 'response_content_appended'):
+                # We already processed this exception (via a nested dvid_api_wrapper call)
+                raise
+
+            if (ex.response is None and ex.request is None):
+                # There's no additional info to show
+                raise
+
             # If the error response had content (and it's not super-long),
             # show that in the traceback, too.  DVID error messages are often helpful.
-            if not hasattr(ex, 'response_content_appended') and (ex.response is not None or ex.request is not None):
-                msg = ""
-                if (ex.request is not None):
-                    msg += f"Error accessing {ex.request.method} {ex.request.url}\n"
+            msg = ""
+            if (ex.request is not None):
+                msg += f"Error accessing {ex.request.method} {ex.request.url}\n"
 
-                if ex.response is not None and ex.response.content:
-                    # Decode up to 10_000 bytes of the content,
-                    MAX_ERR_DISPLAY = 10_000
-                    try:
-                        err = ex.response.content[:MAX_ERR_DISPLAY].decode('utf-8')
-                    except UnicodeDecodeError as unicode_err:
-                        # Last byte cuts off a character by chance.
-                        # Discard it.
-                        err = ex.response.content[:unicode_err.start].decode('utf-8')
+            if ex.response is not None and ex.response.content:
+                # Decode up to 10_000 bytes of the content,
+                MAX_ERR_DISPLAY = 10_000
+                try:
+                    err = ex.response.content[:MAX_ERR_DISPLAY].decode('utf-8')
+                except UnicodeDecodeError as unicode_err:
+                    # Last byte cuts off a character by chance.
+                    # Discard it.
+                    err = ex.response.content[:unicode_err.start].decode('utf-8')
 
-                    msg += str(ex.args[0]) + "\n" + err + "\n"
+                msg += str(ex.args[0]) + "\n" + err + "\n"
 
-                new_ex = copy.copy(ex)
-                new_ex.args = (msg, *ex.args[1:])
-                new_ex.response_content_appended = True
-                raise new_ex from ex
-            else:
-                raise
+            new_ex = copy.copy(ex)
+            new_ex.args = (msg, *ex.args[1:])
+            new_ex.response_content_appended = True
+            raise new_ex from ex
+
     return wrapper
 
 
