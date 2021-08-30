@@ -258,8 +258,11 @@ class LabelmapMergeGraph:
 
         return bad_edges
 
-
     def extract_edges(self, server, uuid, instance, body_id, find_missing=True, *, session=None, logger=None):
+        with Timer("Extracting edges", logger):
+            return self._extract_edges(server, uuid, instance, body_id, find_missing, session=session, logger=logger)
+
+    def _extract_edges(self, server, uuid, instance, body_id, find_missing=True, *, session=None, logger=None):
         body_id = np.uint64(body_id)
         if logger is None:
             logger = _logger
@@ -335,6 +338,8 @@ class LabelmapMergeGraph:
                 if len(self._edge_cache) == self.max_cache_len:
                     first_key = next(iter(self._edge_cache.keys()))
                     del self._edge_cache[first_key]
+                    logger.warning(f"Edge cache is full: Deleted an old entry: {first_key}")
+                logger.warning(f"Caching entry: {key}")
                 self._edge_cache[key] = (dvid_supervoxels, edges, scores)
 
         return (mutid, dvid_supervoxels, edges, scores)
