@@ -671,7 +671,9 @@ def fetch_body_annotations(server, uuid, instance='segmentation_annotations', bo
             continue
         if v.get('body ID', int(k)) != int(k):
             raise RuntimeError(f"Json value in key {k} contains a mismatched body ID: {v['body ID']}")
-        v['body ID'] = int(k)
+        if v.get('bodyid', int(k)) != int(k):
+            raise RuntimeError(f"Json value in key {k} contains a mismatched bodyid: {v['bodyid']}")
+        v['bodyid'] = int(k)
         values.append(v)
 
     if len(values) == 0:
@@ -679,7 +681,7 @@ def fetch_body_annotations(server, uuid, instance='segmentation_annotations', bo
         return pd.DataFrame({'status': [], 'json': []}, dtype=object, index=empty_index)
 
     df = pd.DataFrame(values)
-    df['body'] = df['body ID'].astype(np.uint64)
+    df['body'] = df['bodyid'].astype(np.uint64)
     df = df.set_index('body')
 
     if 'status' in df.columns:
