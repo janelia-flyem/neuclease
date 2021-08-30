@@ -17,6 +17,10 @@ def parse_nglink(link):
     return data
 
 
+def format_nglink(ng_server, link_json_settings):
+    return ng_server + '/#!' + urllib.parse.quote(json.dumps(link_json_settings))
+
+
 def extract_annotations(link, link_index=None, user=None):
     if isinstance(link, str):
         link = parse_nglink(link)
