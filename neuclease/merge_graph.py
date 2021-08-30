@@ -91,9 +91,8 @@ class LabelmapMergeGraph:
         # This dict holds a lock for each body, to avoid requesting edges for the same body in parallel,
         # (but requesting edges for different bodies in parallel is OK).
         self._edge_cache_key_locks = defaultdict(lambda: threading.Lock())
-        
-        self.max_cache_len = 1000
 
+        self.max_cache_len = 25_000
 
     def set_primary_uuid(self, primary_uuid):
         _logger.info(f"Changing primary (cached) UUID from {self.primary_uuid} to {primary_uuid}")
