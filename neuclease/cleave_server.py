@@ -385,6 +385,7 @@ def body_edge_table():
     table.to_csv(response, index=False, header=True)
     return response.getvalue()
 
+
 @app.route('/debug', methods=['POST'])
 def debug():
     """
@@ -414,6 +415,7 @@ def debug():
     debug_logger.info(f"Client debug: {debug_string}")
 
     return (debug_string, HTTPStatus.OK)
+
 
 @app.route('/set-default-params', methods=['POST'])
 def set_default_params():
