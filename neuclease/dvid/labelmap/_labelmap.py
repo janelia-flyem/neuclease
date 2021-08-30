@@ -3048,7 +3048,7 @@ def determine_owners(merge_hierarchy, bodies):
         else:
             owners.append(r)
 
-    return pd.Series(owners, index=bodies, name='owner').rename_axis('body')
+    return pd.Series(owners, index=bodies, name='current_body').rename_axis('orig_body')
 
 
 def determine_merge_chains(merge_hierarchy, bodies):
