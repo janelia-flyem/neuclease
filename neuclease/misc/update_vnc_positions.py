@@ -82,6 +82,10 @@ def determine_clio_positions(server, uuid, clio_ann=None, dvid_ann=None):
     clio_ann.loc[idx, 'position'] = clio_ann.loc[idx, 'auto_position']
     clio_ann.loc[idx, 'position_type'] = 'auto'
 
+    # Anything which still lacks a position must have a non-existent body ID.
+    idx = clio_ann.query('position.isnull()').index
+    clio_ann.loc[idx, 'position_type'] = 'dead'
+
     return clio_ann
 
 
