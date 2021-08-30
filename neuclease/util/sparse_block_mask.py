@@ -56,7 +56,7 @@ class SparseBlockMask:
     @classmethod
     def create_from_sbm_box(cls, sbm, sub_box):
         """
-        Create a SparseBlockMask by extract a portion of an existing SparseBlockMask.
+        Create a SparseBlockMask by extracting a portion of an existing SparseBlockMask.
         If sub_box isn't aligned to the given sbm resolution, it will be expanded to make it aligned.
         """
         sub_box = round_box(sub_box, sbm.resolution, 'out')
