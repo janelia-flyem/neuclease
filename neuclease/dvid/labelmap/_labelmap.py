@@ -1596,6 +1596,13 @@ def generate_sample_coordinate(server, uuid, instance, label_id, supervoxels=Fal
     return middle_block_coord + nonzero_coords[len(nonzero_coords)//2]
 
 
+def locate_bodies(server, uuid, instance, bodies, supervoxels=False, *, processes=4):
+    assert processes > 0
+    gen_coord = partial(generate_sample_coordinate, server, uuid, instance, supervoxels=supervoxels)
+    coords = compute_parallel(gen_coord, bodies, processes=processes)
+    return pd.DataFrame(coords, columns=[*'zyx'], index=bodies)
+
+
 @dvid_api_wrapper
 def fetch_labelmap_voxels(server, uuid, instance, box_zyx, scale=0, throttle=False, supervoxels=False, *, format='array', session=None):
     """
