@@ -1081,28 +1081,28 @@ def swap_df_cols(df, prefixes=None, swap_rows=None, suffixes=['_a', '_b']):
     """
     Swap selected columns of a dataframe, specified as a list of prefixes and two suffixes.
     Operates IN-PLACE, but incurs a full copy internally of the selected columns.
-    
+
     Args:
         df:
             Input dataframe, with columns to be swapped.
-        
+
         prefixes:
             columns to swap, minus their suffixes.
             If not provided, all columns with corresponding suffixes will be swapped.
-        
+
         swap_rows:
             Optional.
             Specify a subset of rows in the dataframe to apply the swap to.
             Should be a Series boolean values, or a list of index values. 
             If this is a Series, it must have the same index as the input dataframe.
             If not provided, all rows are swapped.
-        
+
         suffixes:
             Used to identify the left/right columns of each swapped pair.
-        
+
     Returns:
         None.  Operates IN-PLACE.
-    
+
     Example:
         >>> df = pd.DataFrame(np.arange(12).reshape(3,4), columns=['x_a', 'x_b', 'y_a', 'y_b'])
 
@@ -1117,8 +1117,9 @@ def swap_df_cols(df, prefixes=None, swap_rows=None, suffixes=['_a', '_b']):
         0    1    0    3    2
         1    4    5    6    7
         2    9    8   11   10
-                    
+
     """
+    suffixes = list(suffixes)
     assert len(suffixes) == 2
 
     if prefixes is None:
