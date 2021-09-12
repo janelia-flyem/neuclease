@@ -274,7 +274,7 @@ class LabelmapMergeGraph:
         # If the body hasn't changed in the descendent, the cached version is valid.
         mutid = fetch_mutation_id(server, uuid, instance, body_id)
 
-        key = (server, repo_uuid, instance, body_id, mutid)
+        key = (repo_uuid, instance, body_id, mutid)
         key_lock = self.get_key_lock(*key)
 
         # Use a lock to avoid requesting the supervoxels from DVID in-parallel,
@@ -351,13 +351,13 @@ class LabelmapMergeGraph:
         subset_df = self.merge_table_df.query('id_a in @_sv_set and id_b in @_sv_set')
         return subset_df.copy()
 
-    def get_key_lock(self, dvid_server, repo_uuid, instance, body_id, mutid):
+    def get_key_lock(self, repo_uuid, instance, body_id, mutid):
         """
         Rather than using a single Lock to protect all bodies at once,
         we permit fine-grained locking for individual cached bodies.
         Each body's unique lock is produced by this function.
         """
-        key = (dvid_server, repo_uuid, instance, body_id, mutid)
+        key = (repo_uuid, instance, body_id, mutid)
         with self._edge_cache_main_lock:
             key_lock = self._edge_cache_key_locks[key]
         return key_lock
