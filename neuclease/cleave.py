@@ -6,7 +6,7 @@ import networkx as nx
 
 from dvidutils import LabelMapper
 
-from .util import connected_components
+from neuclease.util import connected_components, graph_tool_available
 
 class InvalidCleaveMethodError(Exception):
     pass
@@ -117,10 +117,10 @@ def cleave(edges, edge_weights, seeds_dict, node_ids, node_sizes=None, method='s
     return cleave_results
 
 
-def seeded_mst(cleaned_edges, edge_weights, seed_labels, _node_sizes=None):
+def seeded_mst(cleaned_edges, edge_weights, seed_labels, _node_sizes=None, *, _lib=None):
     """
     Partition a graph using the a minimum-spanning tree.
-    To ensure that seeded nodes cannot be merged together prematurely,
+    To ensure that seeded nodes cannot be merged together,
     a virtual root node is inserted into the graph and given artificially
     strong affinity (low edge weight) to all seeded nodes.
     Thanks to their low weights, the root node's edges will always be
@@ -128,6 +128,9 @@ def seeded_mst(cleaned_edges, edge_weights, seed_labels, _node_sizes=None):
     joined via the root node. After the MST is computed, the root node is
     deleted, leaving behind a forest in which each connected component
     contains at most only one seed node.
+
+    If that wasn't clear, inspect Fig. 2 from the following paper, which illustrates the concept:
+    https://openaccess.thecvf.com/content_ECCV_2018/papers/Steffen_Wolf_The_Mutex_Watershed_ECCV_2018_paper.pdf
 
     Args:
         cleaned_edges:
@@ -155,6 +158,14 @@ def seeded_mst(cleaned_edges, edge_weights, seed_labels, _node_sizes=None):
                 True if the input contains one or more disjoint components that were not seeded
                 and thus not labeled during agglomeration. False otherwise.
     """
+    assert _lib in (None, 'gt', 'nx')
+    if (graph_tool_available() or _lib == 'gt') and _lib != 'nx':
+        return _seeded_mst_gt(cleaned_edges, edge_weights, seed_labels, _node_sizes)
+    else:
+        return _seeded_mst_nx(cleaned_edges, edge_weights, seed_labels, _node_sizes)
+
+
+def _seeded_mst_nx(cleaned_edges, edge_weights, seed_labels, _node_sizes=None):
     g = nx.Graph()
     g.add_nodes_from(np.arange(len(seed_labels)))
 
@@ -177,7 +188,7 @@ def seeded_mst(cleaned_edges, edge_weights, seed_labels, _node_sizes=None):
     output_labels = np.empty_like(seed_labels)
     contains_unlabeled_components = False
 
-    for i, cc in enumerate(nx.connected_components(mst), start=1):
+    for cc in nx.connected_components(mst):
         cc = [*cc]
         cc_seeds = set(pd.unique(seed_labels[cc])) - {0}
         assert len(cc_seeds) <= 1
@@ -188,6 +199,72 @@ def seeded_mst(cleaned_edges, edge_weights, seed_labels, _node_sizes=None):
             contains_unlabeled_components = True
 
     disconnected_components = _find_disconnected_components(cleaned_edges, output_labels)
+    return CleaveResults(output_labels, disconnected_components, contains_unlabeled_components)
+
+
+def _seeded_mst_gt(cleaned_edges, edge_weights, seed_labels, _node_sizes=None):
+    import graph_tool.all as gt
+    from graph_tool.topology import label_components, min_spanning_tree
+
+    print(f"Constructing graph with {len(seed_labels)} nodes and {len(cleaned_edges)} edges")
+    g = gt.Graph(directed=False)
+    g.add_vertex(len(seed_labels))
+    g.add_edge_list(cleaned_edges)
+
+    weight_prop = g.new_ep("float")
+    weight_prop.a = edge_weights
+
+    print("Adding root node")
+    # Add a special root node and connect it to all seed nodes.
+    root = len(seed_labels)
+    _root = g.add_vertex()
+    assert int(_root) == root
+
+    seed_ids = seed_labels.nonzero()[0]
+    root_edges = np.zeros((len(seed_ids), 2), dtype=np.uint32)
+    root_edges[:, 0] = root
+    root_edges[:, 1] = seed_ids
+
+    print(f"Adding {len(root_edges)} root edges")
+    g.add_edge_list(root_edges)
+
+    # Set the weight of root edges to be tiny, to ensure they are captured first.
+    # fixme: would -np.inf work here?
+    TINY_WEIGHT = edge_weights.min() - 1000.0
+    weight_prop.a[len(cleaned_edges):] = TINY_WEIGHT
+
+    print("Computing MST")
+    mst_prop = min_spanning_tree(g, weight_prop, None)
+    mst = gt.GraphView(g, efilt=mst_prop)
+    mst = gt.Graph(mst)
+    mst.remove_vertex(root)
+
+    print("Computing CC")
+    # Each CC is a different tree in the forest,
+    # but the CC IDs don't match the seed IDs.
+    cc_pmap, _hist = label_components(mst)
+    cc = cc_pmap.a
+    num_cc = 1 + cc.max()
+
+    print("Determining CC->seed mapping")
+    # Determine pairs of overlapping CC IDs and seed IDs
+    assert cc.shape == seed_labels.shape
+    cc_df = pd.DataFrame({'seed': seed_labels, 'cc': cc})
+    seeded_cc_df = cc_df.query('seed != 0')
+    assert (seeded_cc_df.groupby('cc')['seed'].nunique() == 1).all(), \
+        "Sanity check failed: Each CC should cover at most one seed (other than 0)."
+    contains_unlabeled_components = (seeded_cc_df['cc'].nunique() < cc_df['cc'].nunique())
+
+    # Map from CC IDs to seed IDs
+    cc_to_seeds = seeded_cc_df.drop_duplicates('cc').set_index('cc')['seed']
+    cc_ids = np.arange(num_cc, dtype=np.uint32)
+    cc_to_seeds = cc_to_seeds.reindex(cc_ids, fill_value=0)
+    output_labels = cc_to_seeds.values[cc]
+
+    print("Finding disconnected components")
+    disconnected_components = _find_disconnected_components(cleaned_edges, output_labels)
+
+    print("Returning")
     return CleaveResults(output_labels, disconnected_components, contains_unlabeled_components)
 
 
