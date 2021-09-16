@@ -17,7 +17,7 @@ from .dvid import (fetch_complete_mappings, fetch_split_supervoxel_sizes, read_k
 
 logger = logging.getLogger(__name__)
 
-
+# Note: cleave() expects scores to be "costs"
 MERGE_TABLE_DTYPE = [('id_a', '<u8'),
                      ('id_b', '<u8'),
                      ('xa', '<u4'),
