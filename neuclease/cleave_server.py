@@ -365,7 +365,7 @@ def body_edge_table():
 
     instance_info = DvidInstanceInfo(server, uuid, segmentation_instance)
 
-    body_logger.info("Recevied body-edge-table request")
+    body_logger.info("Received body-edge-table request")
 
     try:
         session = default_dvid_session(appname='cleave-server', user=user)
