@@ -1,3 +1,4 @@
+import logging
 from collections import namedtuple
 import numpy as np
 import pandas as pd
@@ -6,7 +7,9 @@ import networkx as nx
 
 from dvidutils import LabelMapper
 
-from neuclease.util import connected_components, graph_tool_available
+from neuclease.util import Timer, connected_components, graph_tool_available
+
+logger = logging.getLogger(__name__)
 
 class InvalidCleaveMethodError(Exception):
     pass
@@ -45,7 +48,7 @@ def cleave(edges, edge_weights, seeds_dict, node_ids, node_sizes=None, method='s
 
         edge_weights:
             array, (E,), float32
-            These should be "costs", i.e. higher
+            These should be "costs", i.e. higher means "less likely to merge".
 
         seeds_dict:
             dict, { seed_class : [node_id, node_id, ...] }
@@ -206,65 +209,61 @@ def _seeded_mst_gt(cleaned_edges, edge_weights, seed_labels, _node_sizes=None):
     import graph_tool.all as gt
     from graph_tool.topology import label_components, min_spanning_tree
 
-    print(f"Constructing graph with {len(seed_labels)} nodes and {len(cleaned_edges)} edges")
-    g = gt.Graph(directed=False)
-    g.add_vertex(len(seed_labels))
-    g.add_edge_list(cleaned_edges)
-
-    weight_prop = g.new_ep("float")
-    weight_prop.a = edge_weights
-
-    print("Adding root node")
-    # Add a special root node and connect it to all seed nodes.
+    # Add root node and root edges
+    # Add a special root node (N) and connect it to all seed nodes.
     root = len(seed_labels)
-    _root = g.add_vertex()
-    assert int(_root) == root
-
     seed_ids = seed_labels.nonzero()[0]
     root_edges = np.zeros((len(seed_ids), 2), dtype=np.uint32)
     root_edges[:, 0] = root
     root_edges[:, 1] = seed_ids
 
-    print(f"Adding {len(root_edges)} root edges")
-    g.add_edge_list(root_edges)
-
     # Set the weight of root edges to be tiny, to ensure they are captured first.
     # fixme: would -np.inf work here?
     TINY_WEIGHT = edge_weights.min() - 1000.0
-    weight_prop.a[len(cleaned_edges):] = TINY_WEIGHT
+    root_weights = TINY_WEIGHT * np.ones(len(root_edges), np.float32)
 
-    print("Computing MST")
-    mst_prop = min_spanning_tree(g, weight_prop, None)
-    mst = gt.GraphView(g, efilt=mst_prop)
-    mst = gt.Graph(mst)
-    mst.remove_vertex(root)
+    combined_edges = np.concatenate((cleaned_edges, root_edges))
+    combined_weights = np.concatenate((edge_weights, root_weights))
 
-    print("Computing CC")
-    # Each CC is a different tree in the forest,
-    # but the CC IDs don't match the seed IDs.
-    cc_pmap, _hist = label_components(mst)
-    cc = cc_pmap.a
-    num_cc = 1 + cc.max()
+    with Timer(f"Constructing graph with {len(seed_labels)} nodes and {len(combined_edges)} edges"):
+        g = gt.Graph(directed=False)
+        g.add_vertex(1 + len(seed_labels))
+        g.add_edge_list(combined_edges)
 
-    print("Determining CC->seed mapping")
-    # Determine pairs of overlapping CC IDs and seed IDs
-    assert cc.shape == seed_labels.shape
-    cc_df = pd.DataFrame({'seed': seed_labels, 'cc': cc})
-    seeded_cc_df = cc_df.query('seed != 0')
-    assert (seeded_cc_df.groupby('cc')['seed'].nunique() == 1).all(), \
-        "Sanity check failed: Each CC should cover at most one seed (other than 0)."
-    contains_unlabeled_components = (seeded_cc_df['cc'].nunique() < cc_df['cc'].nunique())
+        weight_prop = g.new_ep("float")
+        weight_prop.a = combined_weights
 
-    # Map from CC IDs to seed IDs
-    cc_to_seeds = seeded_cc_df.drop_duplicates('cc').set_index('cc')['seed']
-    cc_ids = np.arange(num_cc, dtype=np.uint32)
-    cc_to_seeds = cc_to_seeds.reindex(cc_ids, fill_value=0)
-    output_labels = cc_to_seeds.values[cc]
+    with Timer("Computing MST"):
+        mst_prop = min_spanning_tree(g, weight_prop, None)
+        mst = gt.GraphView(g, efilt=mst_prop)
+        mst = gt.Graph(mst)
+        mst.remove_vertex(root)
 
-    print("Finding disconnected components")
-    disconnected_components = _find_disconnected_components(cleaned_edges, output_labels)
+    with Timer("Computing CC"):
+        # Each CC is a different tree in the forest,
+        # but the CC IDs don't match the seed IDs.
+        cc_pmap, _hist = label_components(mst)
+        cc = cc_pmap.a
+        num_cc = 1 + cc.max()
 
-    print("Returning")
+    with Timer("Determining CC->seed mapping"):
+        # Determine pairs of overlapping CC IDs and seed IDs
+        assert cc.shape == seed_labels.shape
+        cc_df = pd.DataFrame({'seed': seed_labels, 'cc': cc})
+        seeded_cc_df = cc_df.query('seed != 0')
+        assert (seeded_cc_df.groupby('cc')['seed'].nunique() == 1).all(), \
+            "Sanity check failed: Each CC should cover at most one seed (other than 0)."
+        contains_unlabeled_components = (seeded_cc_df['cc'].nunique() < cc_df['cc'].nunique())
+
+        # Map from CC IDs to seed IDs
+        cc_to_seeds = seeded_cc_df.drop_duplicates('cc').set_index('cc')['seed']
+        cc_ids = np.arange(num_cc, dtype=np.uint32)
+        cc_to_seeds = cc_to_seeds.reindex(cc_ids, fill_value=0)
+        output_labels = cc_to_seeds.values[cc]
+
+    with Timer("Finding disconnected components"):
+        disconnected_components = _find_disconnected_components(cleaned_edges, output_labels)
+
     return CleaveResults(output_labels, disconnected_components, contains_unlabeled_components)
 
 
