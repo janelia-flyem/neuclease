@@ -360,7 +360,7 @@ def kafka_msgs_to_df(msgs, drop_duplicates=False, default_timestamp=DEFAULT_TIME
     msgs_df['timestamp'] = timestamps
     msgs_df['timestamp'] = pd.to_datetime(msgs_df['timestamp'])
     msgs_df['uuid'] = [msg['UUID'] for msg in msgs_df['msg']]
-    msgs_df['uuid'] = msgs_df['uuid'].astype('category')
+    msgs_df['uuid'] = pd.Categorical(msgs_df['uuid'], msgs_df['uuid'].unique(), ordered=True)
 
     if convert_tz:
         msgs_df['timestamp'] = msgs_df['timestamp'].dt.tz_localize('UTC').dt.tz_convert(convert_tz)
