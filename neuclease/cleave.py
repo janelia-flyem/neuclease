@@ -225,7 +225,7 @@ def _seeded_mst_gt(cleaned_edges, edge_weights, seed_labels, _node_sizes=None):
     combined_edges = np.concatenate((cleaned_edges, root_edges))
     combined_weights = np.concatenate((edge_weights, root_weights))
 
-    with Timer(f"Constructing graph with {len(seed_labels)} nodes and {len(combined_edges)} edges", level=logging.DEBUG):
+    with Timer(f"Constructing graph with {len(seed_labels)} nodes and {len(combined_edges)} edges", logger, logging.DEBUG):
         g = gt.Graph(directed=False)
         g.add_vertex(1 + len(seed_labels))
         g.add_edge_list(combined_edges)
@@ -233,20 +233,20 @@ def _seeded_mst_gt(cleaned_edges, edge_weights, seed_labels, _node_sizes=None):
         weight_prop = g.new_ep("float")
         weight_prop.a = combined_weights
 
-    with Timer("Computing MST", level=logging.DEBUG):
+    with Timer("Computing MST", logger, logging.DEBUG):
         mst_prop = min_spanning_tree(g, weight_prop, None)
         mst = gt.GraphView(g, efilt=mst_prop)
         mst = gt.Graph(mst)
         mst.remove_vertex(root)
 
-    with Timer("Computing CC", level=logging.DEBUG):
+    with Timer("Computing CC", logger, logging.DEBUG):
         # Each CC is a different tree in the forest,
         # but the CC IDs don't match the seed IDs.
         cc_pmap, _hist = label_components(mst)
         cc = cc_pmap.a
         num_cc = 1 + cc.max()
 
-    with Timer("Determining CC->seed mapping", level=logging.DEBUG):
+    with Timer("Determining CC->seed mapping", logger, logging.DEBUG):
         # Determine pairs of overlapping CC IDs and seed IDs
         assert cc.shape == seed_labels.shape
         cc_df = pd.DataFrame({'seed': seed_labels, 'cc': cc})
@@ -261,7 +261,7 @@ def _seeded_mst_gt(cleaned_edges, edge_weights, seed_labels, _node_sizes=None):
         cc_to_seeds = cc_to_seeds.reindex(cc_ids, fill_value=0)
         output_labels = cc_to_seeds.values[cc]
 
-    with Timer("Finding disconnected components", level=logging.DEBUG):
+    with Timer("Finding disconnected components", logger, logging.DEBUG):
         disconnected_components = _find_disconnected_components(cleaned_edges, output_labels)
 
     return CleaveResults(output_labels, disconnected_components, contains_unlabeled_components)
