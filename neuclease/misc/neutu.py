@@ -1,8 +1,12 @@
 import os
+import json
 import getpass
 import datetime
+from math import ceil, log10
 
-from neuclease.util import dump_json
+import pandas as pd
+
+from neuclease.util import dump_json, iter_batches
 
 
 def create_bookmark_file(df, output_path=None, default_text=None):
@@ -66,3 +70,35 @@ def create_bookmark_file(df, output_path=None, default_text=None):
         dump_json(contents, output_path, unsplit_int_lists=True)
 
     return contents
+
+
+def create_cleaving_assignments(bodies, output_dir, prefix='cleaving-', batch_size=20):
+    os.makedirs(output_dir)
+    digits = int(ceil(log10(len(bodies) / batch_size)))
+
+    batch_grouping = []
+    for i, batch in enumerate(iter_batches(bodies, batch_size)):
+        path = f"{output_dir}/{prefix}{{i:0{digits}d}}.json".format(i=i)
+        create_cleaving_assignment(batch, path)
+        batch_grouping.extend((body, i) for body in batch)
+
+    return pd.DataFrame(batch_grouping, columns=['body', 'assignment']).set_index('body')['assignment']
+
+
+def create_cleaving_assignment(bodies, output_path):
+    task_list = []
+    for body in bodies:
+        task = {
+            "task type": "body cleave",
+            "body ID": int(body),
+            "maximum level": 1
+        }
+        task_list.append(task)
+
+    assignment = {
+        "file type": "Neu3 task list",
+        "file version": 1,
+        "task list": task_list
+    }
+    with open(output_path, 'w') as f:
+        json.dump(assignment, f, indent=2)
