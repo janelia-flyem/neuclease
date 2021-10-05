@@ -1,0 +1,347 @@
+{
+  "title": "vnc-127395",
+  "dimensions": {
+    "x": [
+      8e-9,
+      "m"
+    ],
+    "y": [
+      8e-9,
+      "m"
+    ],
+    "z": [
+      8e-9,
+      "m"
+    ]
+  },
+  "position": [
+    20830.744140625,
+    25998.39453125,
+    35361.484375
+  ],
+  "crossSectionOrientation": [
+    0,
+    0.7071067690849304,
+    -0.7071067690849304,
+    0
+  ],
+  "crossSectionScale": 87.72737626731147,
+  "projectionOrientation": [
+    -0.06110161915421486,
+    0.5685979127883911,
+    -0.8193490505218506,
+    0.040375057607889175
+  ],
+  "projectionScale": 71933.83876611636,
+  "layers": [
+    {
+      "type": "image",
+      "source": {
+        "url": "precomputed://gs://flyem-vnc-2-26-213dba213ef26e094c16c860ae7f4be0/v3_emdata_clahe_xy/jpeg",
+        "subsources": {
+          "default": true
+        },
+        "enableDefaultSubsources": false
+      },
+      "tab": "source",
+      "name": "em"
+    },
+    {
+      "type": "segmentation",
+      "source": {
+        "url": "dvid://https://emdata5-avempartha.janelia.org/127395/segmentation?dvid-service=https://ngsupport-bmcp5imp6q-uk.a.run.app",
+        "subsources": {
+          "default": true,
+          "meshes": true
+        },
+        "enableDefaultSubsources": false
+      },
+      "tab": "segments",
+      "name": "seg"
+    },
+    {
+      "type": "segmentation",
+      "source": {
+        "url": "dvid://https://emdata5-avempartha.janelia.org/127395/segmentation?dvid-service=https://ngsupport-bmcp5imp6q-uk.a.run.app",
+        "subsources": {
+          "default": true,
+          "meshes": true
+        },
+        "enableDefaultSubsources": false
+      },
+      "tab": "segments",
+      "linkedSegmentationGroup": "seg",
+      "linkedSegmentationColorGroup": false,
+      "name": "dvid-groups",
+      "visible": false
+    },
+    {
+      "type": "segmentation",
+      "source": {
+        "url": "dvid://https://emdata5-avempartha.janelia.org/127395/segmentation?dvid-service=https://ngsupport-bmcp5imp6q-uk.a.run.app",
+        "subsources": {
+          "default": true,
+          "meshes": true
+        },
+        "enableDefaultSubsources": false
+      },
+      "tab": "segments",
+      "linkedSegmentationGroup": "seg",
+      "linkedSegmentationColorGroup": false,
+      "name": "clio-groups",
+      "visible": false
+    },
+    {
+      "type": "segmentation",
+      "source": {
+        "url": "precomputed://gs://flyem-vnc-roi-d5f392696f7a48e27f49fa1a9db5ee3b/all-vnc-roi",
+        "subsources": {
+          "default": true,
+          "properties": true,
+          "mesh": true
+        },
+        "enableDefaultSubsources": false
+      },
+      "pick": false,
+      "tab": "rendering",
+      "selectedAlpha": 0,
+      "saturation": 0,
+      "meshSilhouetteRendering": 4,
+      "segments": [
+        "1"
+      ],
+      "segmentDefaultColor": "#ffffff",
+      "segmentColors": {
+        "1": "#ffffff"
+      },
+      "name": "all-tissue",
+      "visible": false
+    },
+    {
+      "type": "segmentation",
+      "source": {
+        "url": "precomputed://gs://flyem-vnc-roi-d5f392696f7a48e27f49fa1a9db5ee3b/roi",
+        "subsources": {
+          "default": true,
+          "properties": true,
+          "mesh": true
+        },
+        "enableDefaultSubsources": false
+      },
+      "pick": false,
+      "tab": "segments",
+      "selectedAlpha": 0,
+      "saturation": 0.5,
+      "meshSilhouetteRendering": 4,
+      "segments": [
+        "10",
+        "11",
+        "12",
+        "13",
+        "14",
+        "15",
+        "16",
+        "17",
+        "18",
+        "19",
+        "20",
+        "21",
+        "22",
+        "23",
+        "24",
+        "25",
+        "26",
+        "27",
+        "4",
+        "5",
+        "6",
+        "7",
+        "8",
+        "9"
+      ],
+      "name": "neuropils",
+      "visible": false
+    },
+    {
+      "type": "segmentation",
+      "source": {
+        "url": "precomputed://gs://flyem-vnc-roi-d5f392696f7a48e27f49fa1a9db5ee3b/nerve-roi",
+        "subsources": {
+          "default": true,
+          "properties": true,
+          "mesh": true
+        },
+        "enableDefaultSubsources": false
+      },
+      "pick": false,
+      "tab": "segments",
+      "meshSilhouetteRendering": 3,
+      "segments": [
+        "1",
+        "10",
+        "11",
+        "12",
+        "13",
+        "14",
+        "15",
+        "16",
+        "17",
+        "18",
+        "19",
+        "2",
+        "20",
+        "21",
+        "22",
+        "23",
+        "24",
+        "25",
+        "26",
+        "27",
+        "28",
+        "29",
+        "3",
+        "30",
+        "31",
+        "4",
+        "5",
+        "6",
+        "7",
+        "8",
+        "9"
+      ],
+      "name": "nerves",
+      "visible": false
+    },
+    {
+      "type": "annotation",
+      "source": "dvid://https://emdata5-avempartha.janelia.org/127395/synapses",
+      "tab": "rendering",
+      "shader": "#uicontrol float radius slider(min=3, max=20, step=1, default=5)\n#uicontrol float opacity slider(min=0, max=1, step=0.1, default=1)\n#uicontrol float opacity3D slider(min=0, max=1, step=0.1, default=1)\n#uicontrol vec3 tbarColor color(default=\"#FFFF00\")\n#uicontrol vec3 psdColor color(default=\"#808080\")\n\t\nvoid main() {\n  setPointMarkerSize(radius);\n  float finalOpacity = PROJECTION_VIEW ? opacity3D : opacity;\n  setPointMarkerBorderColor(vec4(0, 0, 0, finalOpacity));\n  if (prop_rendering_attribute() == 4) {\n\tsetColor(vec4(tbarColor, finalOpacity));\n  } else if (prop_rendering_attribute() == 5) {\n\tsetColor(vec4(psdColor, finalOpacity));\n  } else {\n\tsetColor(vec4(defaultColor(), finalOpacity));\n  }\n}",
+      "linkedSegmentationLayer": {
+        "segments": "clio-groups"
+      },
+      "filterBySegmentation": [
+        "segments"
+      ],
+      "name": "synapse",
+      "visible": false
+    },
+    {
+      "type": "segmentation",
+      "source": {
+        "url": "precomputed://gs://vnc-v3-seg-3d2f1c08fd4720848061f77362dc6c17/mask",
+        "subsources": {
+          "default": true,
+          "properties": true
+        },
+        "enableDefaultSubsources": false
+      },
+      "pick": false,
+      "tab": "segments",
+      "name": "voxel-classes",
+      "archived": true
+    },
+    {
+      "type": "segmentation",
+      "source": {
+        "url": "precomputed://gs://flyem-vnc-roi-d5f392696f7a48e27f49fa1a9db5ee3b/synaptic-neuropil",
+        "subsources": {
+          "default": true,
+          "properties": true,
+          "mesh": true
+        },
+        "enableDefaultSubsources": false
+      },
+      "pick": false,
+      "tab": "rendering",
+      "selectedAlpha": 0,
+      "saturation": 0,
+      "meshSilhouetteRendering": 4,
+      "segments": [
+        "1"
+      ],
+      "segmentColors": {
+        "1": "#ffffff"
+      },
+      "name": "all-synaptic",
+      "archived": true
+    },
+    {
+      "type": "segmentation",
+      "source": {
+        "url": "precomputed://gs://vnc-v3-seg-3d2f1c08fd4720848061f77362dc6c17/rc5_wsexp",
+        "subsources": {
+          "default": true
+        },
+        "enableDefaultSubsources": false
+      },
+      "tab": "source",
+      "name": "rc5-supervoxels",
+      "archived": true
+    },
+    {
+      "type": "annotation",
+      "source": "dvid://https://emdata5-avempartha.janelia.org/127395/neck-points",
+      "tab": "annotations",
+      "annotationColor": "#ff00ff",
+      "crossSectionAnnotationSpacing": 9.792428346437237,
+      "projectionAnnotationSpacing": 6004.066072100556,
+      "shader": "#uicontrol float radius slider(min=3, max=20, step=1, default=5)\n#uicontrol float opacity slider(min=0, max=1, step=0.1, default=1)\n#uicontrol float opacity3D slider(min=0, max=1, step=0.1, default=1)\n#uicontrol vec3 tbarColor color(default=\"#FFFF00\")\n#uicontrol vec3 psdColor color(default=\"#808080\")\n\t\nvoid main() {\n  setPointMarkerSize(radius);\n  float finalOpacity = PROJECTION_VIEW ? opacity3D : opacity;\n  setPointMarkerBorderColor(vec4(0, 0, 0, finalOpacity));\n  if (prop_rendering_attribute() == 4) {\n\tsetColor(vec4(tbarColor, finalOpacity));\n  } else if (prop_rendering_attribute() == 5) {\n\tsetColor(vec4(psdColor, finalOpacity));\n  } else {\n\tsetColor(vec4(defaultColor(), finalOpacity));\n  }\n}",
+      "shaderControls": {
+        "radius": 6,
+        "tbarColor": "#ffffff"
+      },
+      "linkedSegmentationLayer": {
+        "segments": "clio-groups"
+      },
+      "filterBySegmentation": [
+        "segments"
+      ],
+      "name": "neck-points",
+      "archived": true
+    },
+    {
+      "type": "annotation",
+      "source": "dvid://https://emdata5-avempartha.janelia.org/127395/soma-points",
+      "tab": "annotations",
+      "annotationColor": "#ffffff",
+      "crossSectionAnnotationSpacing": 9.792428346437237,
+      "projectionAnnotationSpacing": 6004.066072100556,
+      "shader": "#uicontrol float radius slider(min=3, max=20, step=1, default=5)\n#uicontrol float opacity slider(min=0, max=1, step=0.1, default=1)\n#uicontrol float opacity3D slider(min=0, max=1, step=0.1, default=1)\n#uicontrol vec3 tbarColor color(default=\"#FFFF00\")\n#uicontrol vec3 psdColor color(default=\"#808080\")\n\t\nvoid main() {\n  setPointMarkerSize(radius);\n  float finalOpacity = PROJECTION_VIEW ? opacity3D : opacity;\n  setPointMarkerBorderColor(vec4(0, 0, 0, finalOpacity));\n  if (prop_rendering_attribute() == 4) {\n\tsetColor(vec4(tbarColor, finalOpacity));\n  } else if (prop_rendering_attribute() == 5) {\n\tsetColor(vec4(psdColor, finalOpacity));\n  } else {\n\tsetColor(vec4(defaultColor(), finalOpacity));\n  }\n}",
+      "shaderControls": {
+        "radius": 12,
+        "tbarColor": "#ffffff"
+      },
+      "linkedSegmentationLayer": {
+        "segments": "clio-groups"
+      },
+      "filterBySegmentation": [
+        "segments"
+      ],
+      "name": "soma-points",
+      "archived": true
+    },
+    {
+      "type": "segmentation",
+      "source": {
+        "url": "dvid://https://emdata5-avempartha.janelia.org/127395/segmentation?dvid-service=https://ngsupport-bmcp5imp6q-uk.a.run.app",
+        "subsources": {
+          "default": true,
+          "meshes": true
+        },
+        "enableDefaultSubsources": false
+      },
+      "tab": "segments",
+      "name": "seg-1273952",
+      "archived": true
+    }
+  ],
+  "showAxisLines": false,
+  "showSlices": false,
+  "prefetch": false,
+  "selectedLayer": {
+    "visible": true,
+    "layer": "seg"
+  },
+  "layout": "3d"
+}
