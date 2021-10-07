@@ -4,6 +4,7 @@ import copy
 import json
 import logging
 import datetime
+import warnings
 from itertools import chain
 
 import numpy as np
@@ -19,13 +20,13 @@ from networkx.classes.filters import show_nodes
 import hvplot.networkx as hvnx
 from neuclease.misc.neuroglancer import format_nglink
 
-from neuclease.util import fix_df_names, tqdm_proxy
+from neuclease.util import fix_df_names, tqdm_proxy, Timer
 from neuclease.dvid import find_master, fetch_body_annotations, post_keyvalues
 from neuclease.clio.api import fetch_json_annotations_all
 
 from neuclease import configure_default_logging
 
-VNC_PROD = "emdata5.janelia.org:8400"
+from .vnc_group_analysis_main import parse_args, VNC_PROD
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +46,23 @@ CLIO_TO_DVID_SOMA_SIDE = {
 }
 
 
-def vnc_group_conflict_report(dvid_ann=None, clio_ann=None, format='png', output_dir='clio-dvid-conflicts', skip_plots=False):
+def main():
+    args = parse_args()
+    configure_default_logging()
+    warnings.filterwarnings("ignore", message='.*figure.max_open_warning.*', category=RuntimeWarning)
+
+    if args.uuid is None:
+        args.uuid = find_master(VNC_PROD)
+
+    if args.commit_dvid_updates:
+        # Commit and exit
+        commit_dvid_updates(args.dvid_server, args.uuid, args.commit_dvid_updates, dry_run=False)
+        return
+
+    vnc_group_conflict_report(args.dvid_server, args.uuid, None, None, args.plot_format, args.output_dir, args.skip_plots)
+
+
+def vnc_group_conflict_report(server, uuid, dvid_ann=None, clio_ann=None, format='png', output_dir='clio-dvid-group-reports', skip_plots=False):
     """
     Download the 'group' annotations from clio and the 'instance' annotations from DVID,
     and determine which annotations conflict, i.e. some bodies seem to belong to different groups in Clio vs. DVID.
@@ -54,16 +71,13 @@ def vnc_group_conflict_report(dvid_ann=None, clio_ann=None, format='png', output
     We assess the topology of the group memberships and emit a report in HTML form,
     showing schematics of which bodies are tagged with which groups.
     """
-    configure_default_logging()
-    master = find_master(VNC_PROD)
-
     if dvid_ann is None:
-        logger.info("Fetching DVID annotations")
-        dvid_ann = fetch_sanitized_dvid_annotations(VNC_PROD, master)
+        with Timer("Fetching DVID annotations", logger):
+            dvid_ann = fetch_sanitized_dvid_annotations(VNC_PROD, uuid)
 
     if clio_ann is None:
-        logger.info("Fetching clio annotations")
-        clio_ann = fetch_sanitized_clio_group_annotations()
+        with Timer("Fetching Clio annotations", logger):
+            clio_ann = fetch_sanitized_clio_group_annotations()
 
     logger.info("Merging annotations")
     ann = merge_annotations(dvid_ann, clio_ann)
@@ -74,7 +88,17 @@ def vnc_group_conflict_report(dvid_ann=None, clio_ann=None, format='png', output
     logger.info(f"Exporting report to {output_dir}")
     conflict_df, nonconflict_ann = export_report(g, group_df, ann, output_dir, format, skip_plots)
 
+    num_conflict_bodies = conflict_df['num_bodies'].sum()
+    logger.info(f"Found {len(conflict_df)} conflict sets, encompassing {num_conflict_bodies}  bodies.")
+
     dvid_to_clio_updates, clio_to_dvid_updates = determine_nonconflict_updates(ann, nonconflict_ann)
+    logger.info(f"Non-conflicting updates that could be made from DVID -> Clio: {len(dvid_to_clio_updates)}")
+    logger.info(f"Non-conflicting updates that could be made from Clio -> DVID: {len(clio_to_dvid_updates)}")
+    logger.info("See CSV outputs.")
+
+    dvid_to_clio_updates.to_csv(f"{output_dir}/dvid-to-clio-updates.csv", index=True, header=True)
+    clio_to_dvid_updates.to_csv(f"{output_dir}/clio-to-dvid-updates.csv", index=True, header=True)
+
     return ann, conflict_df, nonconflict_ann, dvid_to_clio_updates, clio_to_dvid_updates
 
 
@@ -418,7 +442,7 @@ def export_report(g, group_df, ann, output_dir, format='hv', skip_plots=False):
             f.write(f"<head><title>Conflict Report {today}</title></head>\n")
             f.write("<body>\n")
             for idx, p in zip(tqdm_proxy(conflict_df.index), plots):
-                p.savefig(f'/{output_dir}/plots/{idx}.png')
+                p.savefig(f'{output_dir}/plots/{idx}.png')
                 f.write(f"<h1>Conflict set #{idx}</h1>")
 
                 num_bodies, num_dvid_groups, num_clio_groups = conflict_df.loc[idx, ['num_bodies', 'num_dvid_groups', 'num_clio_groups']]

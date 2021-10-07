@@ -17,6 +17,7 @@ setup( name='neuclease',
                'neuron_mito_stats = neuclease.misc.neuron_mito_stats:main',
                'copy_vnc_subvolume = neuclease.misc.copy_vnc_subvolume:main',
                'point_neighborhoods = neuclease.misc.point_neighborhoods:main',
+               'vnc_group_analysis = neuclease.misc.vnc_group_analysis_main:main',
            ]
        }
     )
