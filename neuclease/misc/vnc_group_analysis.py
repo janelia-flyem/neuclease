@@ -496,4 +496,4 @@ def _construct_links(group_df, ann):
 
 
 if __name__ == "__main__":
-    vnc_group_conflict_report()
+    main()
