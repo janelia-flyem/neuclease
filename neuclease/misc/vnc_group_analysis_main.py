@@ -32,7 +32,7 @@ VNC_PROD = "emdata5.janelia.org:8400"
 
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('--dvid-server', '-d',
+    parser.add_argument('--dvid-server', '-d', default=VNC_PROD,
                         help=f'Optional.  By default, uses {VNC_PROD}')
     parser.add_argument('--uuid', '-u',
                         help='Optional.  By default, use the master branch HEAD.')

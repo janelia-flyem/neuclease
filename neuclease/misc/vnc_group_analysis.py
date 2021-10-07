@@ -56,7 +56,8 @@ def main():
 
     if args.commit_dvid_updates:
         # Commit and exit
-        commit_dvid_updates(args.dvid_server, args.uuid, args.commit_dvid_updates, dry_run=False)
+        clio_to_dvid_updates = pd.read_csv(args.commit_dvid_updates).set_index('body')
+        commit_dvid_updates(args.dvid_server, args.uuid, clio_to_dvid_updates, dry_run=False)
         return
 
     vnc_group_conflict_report(args.dvid_server, args.uuid, None, None, args.plot_format, args.output_dir, args.skip_plots)
