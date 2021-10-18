@@ -50,7 +50,7 @@ def main():
               'As a special feature, you may include "{user}" in the string, which will '
               'be replaced with the username corresponding to the branch."'))
     parser.add_argument(
-        "--use-custom-uuids", '-u',
+        "--use-custom-uuids", '-u', action='store_true',
         help=("If True, don't let DVID choose a random UUID. "
               "Instead, force a custom UUID, which will match the branch name."))
 
@@ -59,8 +59,8 @@ def main():
     from neuclease import configure_default_logging
     configure_default_logging()
 
-    from neuclease.util import read_csv_col
-    usernames = read_csv_col(args.usernames_csv)
+    import pandas as pd
+    usernames = pd.read_csv(args.usernames_csv, header=None, names=['user'])['user']
 
     logger.info(f"Creating/configuring branches for {len(usernames)} users.")
 
