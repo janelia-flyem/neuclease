@@ -18,6 +18,7 @@ setup( name='neuclease',
                'copy_vnc_subvolume = neuclease.misc.copy_vnc_subvolume:main',
                'point_neighborhoods = neuclease.misc.point_neighborhoods:main',
                'vnc_group_analysis = neuclease.misc.vnc_group_analysis_main:main',
+               'prepare_user_branches = neuclease.misc.prepare_user_branches:main',
            ]
        }
     )
