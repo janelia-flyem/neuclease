@@ -5,11 +5,9 @@ UUID alias feature.
 
 Example usage:
 
-    NOTE='Proofreading exercises for {user}'
     prepare_user_branches \\
-        -b prtech_20211019 \\
-        -n "${NOTE}" \\
-        --use-custom-uuids \\
+        --branch-prefix prtech_20211019 \\
+        --note 'Proofreading exercises for {user}' \\
         emdata4.int.janelia.org:9300 \\
         5a7d0c59a918400181aaac6144f4ede2 \\
         prtech \\
@@ -49,10 +47,6 @@ def main():
         help=('The note that will appear in the DVID console. '
               'As a special feature, you may include "{user}" in the string, which will '
               'be replaced with the username corresponding to the branch."'))
-    parser.add_argument(
-        "--use-custom-uuids", '-u', action='store_true',
-        help=("If True, don't let DVID choose a random UUID. "
-              "Instead, force a custom UUID, which will match the branch name."))
 
     args = parser.parse_args()
 
@@ -71,13 +65,12 @@ def main():
         usernames,
         args.branch_prefix,
         args.note,
-        args.use_custom_uuids
     )
 
     logger.info("DONE")
 
 
-def prepare_user_branches(server, parent_uuid, neutu_alias_name, usernames, branch_prefix=None, uuid_note=None, use_custom_uuids=False):
+def prepare_user_branches(server, parent_uuid, neutu_alias_name, usernames, branch_prefix=None, uuid_note=None):
     """
     Create a set of branches for a list of users (one branch per user),
     and configure the special 'branches' keyvalue instance for NeuTu's
@@ -101,9 +94,6 @@ def prepare_user_branches(server, parent_uuid, neutu_alias_name, usernames, bran
             The 'note' that will appear in the DVID console.
             As a special feature, you may include "{user}" in the string, which will
             be replaced with the username corresponding to the branch.
-        use_custom_uuids:
-            If True, don't let DVID choose a random UUID.  Instead, force a custom UUID,
-            which will match the branch name.
     """
     from neuclease.dvid import post_branch, post_key, find_repo_root
 
@@ -118,12 +108,9 @@ def prepare_user_branches(server, parent_uuid, neutu_alias_name, usernames, bran
 
     for user in usernames:
         branch = f"{uuid_prefix}_{user}"
-        if use_custom_uuids:
-            custom_uuid = branch
-
-        logger.info(f"Configuring branch {branch} in uuid {custom_uuid}")
         note = uuid_note.format(user=user)
-        uuid = post_branch(server, parent_uuid, branch, note, custom_uuid=custom_uuid)
+        uuid = post_branch(server, parent_uuid, branch, note)
+        logger.info(f"Configured branch {branch} in uuid {uuid}")
         post_key(server, root_uuid, 'branches', f"{neutu_alias_name}_{user}", uuid.encode('utf-8'))
 
 
