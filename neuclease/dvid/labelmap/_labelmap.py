@@ -15,6 +15,7 @@ from requests import HTTPError
 
 from libdvid import DVIDNodeService, encode_label_block
 from dvidutils import LabelMapper
+from vigra.filters import multiBinaryErosion, distanceTransform
 from vigra.analysis import labelMultiArrayWithBackground
 
 from ...util import (Timer, round_box, extract_subvol, DEFAULT_TIMESTAMP, tqdm_proxy, find_root,
@@ -1552,7 +1553,7 @@ def compute_changed_bodies(instance_info_a, instance_info_b, *, session=None):
 
 
 @dvid_api_wrapper
-def generate_sample_coordinate(server, uuid, instance, label_id, supervoxels=False, *, session=None):
+def generate_sample_coordinate(server, uuid, instance, label_id, supervoxels=False, *, interior=False, session=None):
     """
     Return an arbitrary coordinate that lies within the given body.
     Usually faster than fetching all the RLEs.
@@ -1577,30 +1578,67 @@ def generate_sample_coordinate(server, uuid, instance, label_id, supervoxels=Fal
         supervoxels:
             If True, treat ``label_id`` as a supervoxel ID.
 
+        interior:
+            By default (``interior=False``), this function might return points that
+            fall close to the edge of the body surface, since it merely picks
+            the "middle" voxel according to the scan order, without regard
+            for any morphological attributes.
+            When ``interior=True``, this function tries to avoid points which lie
+            near the exterior of the body. It starts by eroding the low-res mask,
+            thus eliminating very thin branches, and then selects the "most interior"
+            voxel from the "middle" block of those blocks which remain, where "most interior"
+            is determined via the distance transform.
+
     Returns:
         [Z,Y,X] -- An arbitrary point within the body of interest.
     """
     SCALE = 6  # sparsevol-coarse is always scale 6
-    coarse_block_coords = fetch_sparsevol_coarse(server, uuid, instance, label_id, supervoxels, session=session)
+    if not interior:
+        coarse_block_coords = fetch_sparsevol_coarse(server, uuid, instance, label_id, supervoxels, session=session)
+    else:
+        # Fetch the SVC mask and erode by 1 (if possible)
+        mask_s6, mask_box_s6 = fetch_sparsevol_coarse(server, uuid, instance, label_id, supervoxels, format='mask', session=session)
+        eroded = multiBinaryErosion(mask_s6, 1)
+        if eroded.sum() > 0:
+            mask_s6 = eroded
+
+        coarse_block_coords = np.transpose(mask_s6.nonzero()) + mask_box_s6[0]
+
+    # Select the "middle" voxel in the SVC mask
     num_blocks = len(coarse_block_coords)
     middle_block_coord = (2**SCALE) * np.array(coarse_block_coords[num_blocks//2]) // 64 * 64
     middle_block_box = (middle_block_coord, middle_block_coord + 64)
 
-    block = fetch_labelarray_voxels(server, uuid, instance, middle_block_box, supervoxels=supervoxels, session=session)
-    nonzero_coords = np.transpose((block == label_id).nonzero())
-    if len(nonzero_coords) == 0:
+    # Fetch the dense segmentation in the middle block.
+    block = fetch_labelmap_voxels(server, uuid, instance, middle_block_box, supervoxels=supervoxels, session=session)
+    block_mask = (block == label_id)
+    if block_mask.sum() == 0:
         label_type = {False: 'body', True: 'supervoxel'}[supervoxels]
         raise RuntimeError(f"The sparsevol-coarse info for this {label_type} ({label_id}) "
                            "appears to be out-of-sync with the scale-0 segmentation.")
 
-    return middle_block_coord + nonzero_coords[len(nonzero_coords)//2]
+    if interior:
+        # Find the "most interior" voxel in the block, according to the DT
+        dt = distanceTransform(block_mask.astype(np.uint32), background=False)
+        c = np.unravel_index(np.argmax(dt), dt.shape)
+        c += middle_block_box[0]
+        return c
+    else:
+        # Find the "middle" voxel, either in raster-scan order
+        nonzero_coords = np.transpose(block_mask.nonzero())
+        return middle_block_coord + nonzero_coords[len(nonzero_coords)//2]
 
 
-def locate_bodies(server, uuid, instance, bodies, supervoxels=False, *, processes=4):
+def locate_bodies(server, uuid, instance, bodies, supervoxels=False, *, interior=False, processes=4):
+    """
+    Calls generate_sample_coordinate() in parallel for a batch of bodies.
+    See that function for argument details.
+    """
     assert processes > 0
-    gen_coord = partial(generate_sample_coordinate, server, uuid, instance, supervoxels=supervoxels)
+    gen_coord = partial(generate_sample_coordinate, server, uuid, instance, supervoxels=supervoxels, interior=interior)
     coords = compute_parallel(gen_coord, bodies, processes=processes)
-    return pd.DataFrame(coords, columns=[*'zyx'], index=bodies)
+    label_type = {False: 'body', True: 'supervoxel'}[supervoxels]
+    return pd.DataFrame(coords, columns=[*'zyx'], index=bodies).rename_axis(label_type)
 
 
 @dvid_api_wrapper
