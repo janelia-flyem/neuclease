@@ -9,6 +9,14 @@ import pandas as pd
 from neuclease.util import dump_json, iter_batches
 
 
+def create_bookmark_files(df, output_dir, prefix='bookmarks-', batch_size=100, default_text=None):
+    os.makedirs(output_dir)
+    digits = int(ceil(log10(len(df) / batch_size)))
+    for i, bdf in enumerate(iter_batches(df, batch_size)):
+        path = f"{output_dir}/{prefix}{{i:0{digits}d}}.json".format(i=i)
+        create_bookmark_file(bdf, path, default_text)
+
+
 def create_bookmark_file(df, output_path=None, default_text=None):
     """
     Create a NeuTu bookmark file from a set of points.
