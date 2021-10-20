@@ -76,7 +76,11 @@ def completeness_forecast(labeled_point_df, partner_df, syn_counts_df=None, min_
 
         sorted_bodies_df is indexed by body ID, sorted by the body 'SynWeight'
     """
-    point_df = labeled_point_df[['kind', 'conf', 'body']]
+    cols = ['kind', 'conf', 'body']
+    if roi:
+        assert 'roi' in labeled_point_df.columns
+        cols = [*cols, 'roi']
+    point_df = labeled_point_df[cols]
     assert point_df.index.name == 'point_id'
 
     if isinstance(sort_by, str):
@@ -202,7 +206,7 @@ def _filter_synapses(point_df, partner_df, min_tbar_conf=0.0, min_psd_conf=0.0, 
         if isinstance(roi, str):
             roi = [roi]
         assert 'roi' in point_df.columns
-        filters.append(f'roi in @roi')
+        filters.append('roi in @roi')
 
     if filters:
         filters = [f'({f})' for f in filters]
@@ -216,6 +220,12 @@ def _filter_synapses(point_df, partner_df, min_tbar_conf=0.0, min_psd_conf=0.0, 
         # Filter pairs
         partner_df = partner_df.merge(point_df[[]], 'inner', left_on='pre_id', right_index=True)
         partner_df = partner_df.merge(point_df[[]], 'inner', left_on='post_id', right_index=True)
+
+        # Also filter point list, to toss out points without a partner
+        valid_ids = pd.concat((partner_df['pre_id'].drop_duplicates().rename('point_id'),
+                               partner_df['post_id'].drop_duplicates().rename('point_id')),
+                              ignore_index=True)
+        point_df = point_df.query('point_id in @valid_ids')
 
     return point_df, partner_df
 
