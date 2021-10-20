@@ -228,15 +228,16 @@ def _determine_clio_to_dvid_updates(nonconflict_ann, mapping_df):
     return clio_to_dvid_updates
 
 
-def fetch_sanitized_dvid_annotations(server, uuid):
+def fetch_sanitized_dvid_annotations(server, uuid, dvid_ann=None):
     """
-    Fetch from segmentation_annotations
+    Fetch from segmentation_annotations, but only those containing an instance.
 
     - split 'instance' into group (int) and soma side (string, using "" where missing)
     - rename column: 'instance_user' -> 'user'
     - Convert 'soma_side' to clio terminology (LHS, RHS, Midline)
     """
-    dvid_ann = fetch_body_annotations(server, uuid)
+    if dvid_ann is None:
+        dvid_ann = fetch_body_annotations(server, uuid)
     dvid_ann = fix_df_names(dvid_ann)
     dvid_ann = dvid_ann.query('not instance.isnull() and instance != ""').copy()
 
@@ -257,14 +258,15 @@ def fetch_sanitized_dvid_annotations(server, uuid):
     return dvid_ann
 
 
-def fetch_sanitized_clio_group_annotations():
+def fetch_sanitized_clio_group_annotations(clio_ann=None):
     """
     Fetch clio body annotations, but only those containing
     either a 'group' or soma_side (or both).
 
     - rename 'bodyid' to 'body' and use it as the index
     """
-    clio_ann = fetch_json_annotations_all('VNC', 'neurons', 'pandas')
+    if clio_ann is None:
+        clio_ann = fetch_json_annotations_all('VNC', 'neurons', 'pandas')
 
     clio_ann = clio_ann.set_index('bodyid').rename_axis('body')
     clio_ann = clio_ann.query('(not group.isnull() and group != "") or (not soma_side.isnull() and soma_side != "")').copy()
@@ -296,13 +298,6 @@ def merge_annotations(dvid_ann, clio_ann):
     ann.loc[idx, 'group_clio_name'] = clio_names
 
     return ann
-
-
-def get_conflicts(ann):
-    # Conflicts are places where DVID disagrees and the disagreement was NOT from Greg (since his were from Clio anyway).
-    conflicts = ann.query('not group_dvid.isnull() and group_dvid != group_clio and (user_dvid == "takemuras" or user_dvid.isnull())').copy()
-    conflicts['group_dvid'] = conflicts['group_dvid'].astype(int)
-    return conflicts
 
 
 def get_soma_side_disagreements(ann):
