@@ -1535,6 +1535,12 @@ def post_tbar_jsons(server, uuid, instance, partner_df, merge_existing=True, pro
     The points will be divided into block-aligned sets, serialized as JSON,
     and sent to DVID via multiple processes.
 
+    Note:
+        If you want to post T-bars and PSDs, you have to call this function first,
+        then call post_psd_jsons(..., merge_existing=True, ...)
+        It's a little inefficient, but unfortunately I haven't implemented a combined
+        loading function yet.
+
     Args:
         server, uuid, instance:
             annotation instance info
@@ -1551,7 +1557,7 @@ def post_tbar_jsons(server, uuid, instance, partner_df, merge_existing=True, pro
                 'z_post', 'y_post', 'x_post',
 
                 # unique ID for each tbar. Appended for you if this is missing.
-                'pre_id',
+                'pre_id'
             ]
     """
     logger.info("Computing chunk/block IDs")
@@ -1669,8 +1675,8 @@ def compute_tbar_jsons(partner_df):
     If you are posting an initial set of tbar points without any PSDs,
     simply omit the '_post' columns from the table.
     """
-    block_ids = partner_df[['z_pre', 'y_pre', 'z_pre']].values // 64
-    assert not np.diff(block_ids, axis=0).any(), \
+    block_ids = partner_df[['z_pre', 'y_pre', 'x_pre']].values // 64
+    assert (block_ids == block_ids[0]).all(), \
         f"DataFrame contains multiple blocks!\n{partner_df}"
     
     tbars_only = ('x_post' not in partner_df.columns)
@@ -1700,8 +1706,9 @@ def compute_psd_jsons(partner_df):
     """
     Compute the element JSON data that corresponds to the PSDs in the given partner table
     """
-    block_ids = partner_df[['z_post', 'y_post', 'z_post']].values // 64
-    assert np.equal.reduce(block_ids, axis=0).all()
+    block_ids = partner_df[['z_post', 'y_post', 'x_post']].values // 64
+    assert (block_ids == block_ids[0]).all(), \
+        f"Expected only a single block!\n{partner_df}"
     
     psd_jsons = []
     for row in partner_df.itertuples():
