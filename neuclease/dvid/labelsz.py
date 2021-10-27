@@ -91,7 +91,12 @@ def fetch_counts(server, uuid, instance, bodies, element_type, format='pandas', 
             or the catch-all for synapses "AllSyn", or the number of voxels "Voxels".
 
     Returns:
-        JSON. For example: ``[{ "Label": 21847,  "PreSyn": 81 }, { "Label": 23, "PreSyn": 65 }, ...]``
+        JSON or pd.Series, depending on requested format.
+        JSON example:
+        
+            [{ "Label": 21847,  "PreSyn": 81 }, { "Label": 23, "PreSyn": 65 }, ...]
+        
+        If a Series is returned, it's indexed by body
     """
     assert format in ('json', 'pandas')
     bodies = [int(body) for body in bodies]
