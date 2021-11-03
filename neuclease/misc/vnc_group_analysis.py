@@ -251,8 +251,19 @@ def fetch_sanitized_dvid_annotations(server, uuid, dvid_ann=None):
     # "(1234_L)"
     pat = re.compile(r'\(?([0-9]+)_?([A-Z]+)?\)?')
 
-    dvid_ann['group'] = dvid_ann['instance'].map(lambda s: int(pat.match(s).groups()[0]))
-    dvid_ann['soma_side'] = dvid_ann['instance'].map(lambda s: pat.match(s).groups()[1])
+    matches = dvid_ann['instance'].map(pat.match)
+    if matches.isnull().any():
+        msg = "Can't parse instance for some bodies\n"
+        msg += str(dvid_ann.loc[matches.isnull(), 'instance'].to_frame().reset_index())
+        msg += "\n"
+        msg += "Ignoring those bodies."
+        logger.warn(msg)
+
+        dvid_ann = dvid_ann.loc[~matches.isnull()].copy()
+        matches = matches.loc[~matches.isnull()]
+
+    dvid_ann['group'] = matches.map(lambda m: int(m.groups()[0]))
+    dvid_ann['soma_side'] = matches.map(lambda m: m.groups()[1])
     dvid_ann['soma_side'] = dvid_ann['soma_side'].map(lambda s: DVID_TO_CLIO_SOMA_SIDE.get(s, s))
     dvid_ann = dvid_ann[['instance', 'group', 'soma_side', 'instance_user']].rename(columns={'instance_user': 'user'})
     return dvid_ann
