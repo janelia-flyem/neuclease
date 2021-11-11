@@ -308,7 +308,17 @@ def plot_connectivity_forecast(conn_df, max_rank=None, plotted_points=20_000, ho
     step = max(1, len(_df) // plotted_points)
     _df = _df.iloc[::step]
 
-    if color_by_col is None:
+    if color_by_col:
+        p = _df.hvplot.scatter(
+                'body priority ranking',
+                [renames[k] for k in show_cols][0],
+                hover_cols=['tbars captured', 'psds captured', 'pairwise connections', *hover_cols],
+                legend='bottom_right',
+                ylabel='fraction',
+                by=color_by_col,
+                width=800,
+                height=500)
+    else:
         p = _df.hvplot(
                 'body priority ranking',
                 [renames[k] for k in show_cols],
@@ -322,16 +332,6 @@ def plot_connectivity_forecast(conn_df, max_rank=None, plotted_points=20_000, ho
         # https://discourse.holoviz.org/t/removing-legend-title/1317/2
         p.get_dimension('Variable').label = ''
 
-    else:
-        p = _df.hvplot.scatter(
-                'body priority ranking',
-                [renames[k] for k in show_cols][0],
-                hover_cols=['tbars captured', 'psds captured', 'pairwise connections', *hover_cols],
-                legend='bottom_right',
-                ylabel='fraction',
-                by=color_by_col,
-                width=800,
-                height=500)
 
     p.opts(
         title=title,
