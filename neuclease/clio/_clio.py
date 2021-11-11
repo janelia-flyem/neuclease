@@ -9,6 +9,11 @@ DEFAULT_CLIO_SESSION = None
 DEFAULT_CLIO_STORE_BASE = 'https://clio-store-vwzoicitea-uk.a.run.app'
 
 
+def reset_default_clio_session():
+    global DEFAULT_CLIO_SESSION
+    DEFAULT_CLIO_SESSION = None
+    return default_clio_session()
+
 def default_clio_session():
     #
     # http GET https://clio-store-vwzoicitea-uk.a.run.app/v2/pull-request?user_email=tansygarvey@gmail.com
