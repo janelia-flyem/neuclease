@@ -641,10 +641,56 @@ def node_info_dataframe(node_infos):
 fetch_branch_nodes = find_branch_nodes  # Alternate name
 
 
+def find_branch(server, repo_uuid=None, branch="", locked_only=False):
+    """
+    Find the most recent node on a given branch.
+
+    Args:
+        server:
+            dvid server, e.g. 'emdata3:8900'
+
+        repo_uuid:
+            Any node UUID within the repo of interest.
+            (DVID will return the entire repo info regardless of
+            which node uuid is provided here.)
+            If the server has only one repo, this argument can be omitted.
+
+        branch:
+            Branch name.  By DVID convention, the master branch is indicated by the empty string.
+
+        locked_only:
+            If True, find the most recent locked UUID on the master branch.
+            That is, if the leaf node is uncommitted, return its parent instead.
+
+    Returns:
+        uuid of the most recent node on the requested branch.
+    """
+    branch_nodes = find_branch_nodes(server, repo_uuid, branch)
+    if len(branch_nodes) == 0:
+        if branch == "":
+            branch = "master"
+        else:
+            branch = f'"{branch}"'
+
+        msg = f"Could not find {branch} branch on server {server}, repo {repo_uuid}"
+        raise RuntimeError(msg)
+
+    if locked_only and not is_locked(server, branch_nodes[-1]):
+        if len(branch_nodes) == 1:
+            assert branch == "", \
+                "Only the master branch is capable of having fewer than 2 nodes."
+            raise RuntimeError(
+                "Can't find a locked master node. "
+                "There's only one node, and it's uncommitted.")
+        return branch_nodes[-2]
+    else:
+        return branch_nodes[-1]
+
+
 def find_master(server, repo_uuid=None, locked_only=False):
     """
     Find the most recent master branch node.
-    
+
     Args:
         server:
             dvid server, e.g. 'emdata3:8900'
@@ -662,19 +708,7 @@ def find_master(server, repo_uuid=None, locked_only=False):
     Returns:
         uuid of the most recent master branch node
     """
-    master_nodes = find_branch_nodes(server, repo_uuid)
-    if len(master_nodes) == 0:
-        raise RuntimeError(f"Could not find master branch on server {server}, repo {repo_uuid}")
-
-    if locked_only and not is_locked(server, master_nodes[-1]):
-        if len(master_nodes) == 1:
-            raise RuntimeError(
-                "Can't find a locked master node. "
-                "There's only one node, and it's uncommitted.")
-        return master_nodes[-2]
-    else:
-        return master_nodes[-1]
-
+    return find_branch(server, repo_uuid, "", locked_only)
 
 def find_parent(server, uuids, dag=None):
     """
