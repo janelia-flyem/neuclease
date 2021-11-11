@@ -1,13 +1,16 @@
 import os
 import json
+import logging
 import getpass
 import datetime
+import subprocess
 from math import ceil, log10
 
 import pandas as pd
 
 from neuclease.util import dump_json, iter_batches
 
+logger = logging.getLogger(__name__)
 
 def create_bookmark_files(df, output_dir, prefix='bookmarks-', batch_size=100, default_text=None):
     os.makedirs(output_dir)
@@ -88,9 +91,9 @@ def create_cleaving_assignments(bodies, output_dir, prefix='cleaving-', batch_si
     for i, batch in enumerate(iter_batches(bodies, batch_size)):
         path = f"{output_dir}/{prefix}{{i:0{digits}d}}.json".format(i=i)
         create_cleaving_assignment(batch, path)
-        batch_grouping.extend((body, i) for body in batch)
+        batch_grouping.extend((body, i, path) for body in batch)
 
-    return pd.DataFrame(batch_grouping, columns=['body', 'assignment']).set_index('body')['assignment']
+    return pd.DataFrame(batch_grouping, columns=['body', 'assignment', 'file']).set_index('body')
 
 
 def create_cleaving_assignment(bodies, output_path):
@@ -110,3 +113,35 @@ def create_cleaving_assignment(bodies, output_path):
     }
     with open(output_path, 'w') as f:
         json.dump(assignment, f, indent=2)
+
+
+def prepare_cleaving_assignment_setup(bodies, output_dir, bucket_path, sheet_path, prefix='cleaving-', batch_size=20):
+    assert bucket_path.startswith('gs://')
+    bucket_path = bucket_path[len('gs://'):]
+
+    try:
+        subprocess.run(f'gsutil ls gs://{bucket_path}', shell=True, check=True, capture_output=True)
+    except subprocess.SubprocessError as ex:
+        raise RuntimeError(f"Can't access gs://{bucket_path}") from ex
+
+    df = create_cleaving_assignments(bodies, output_dir, prefix, batch_size)
+    logger.info("Uploading assignment files")
+
+    # Explicitly *unset* content type, to trigger browsers to download the file, not display it as JSON.
+    # Also, forbid caching.
+    cmd = f"gsutil -m -h 'Cache-Control:public, no-store' -h 'Content-Type' cp -r {output_dir} gs://{bucket_path}/"
+    subprocess.run(cmd, shell=True, check=True)
+
+    df['file'] = f'https://storage.googleapis.com/{bucket_path}/' + df['file']
+
+    # Delete redundant file paths -- keep only the first row in each assignment group.
+    df['file'] = df.groupby('assignment')['file'].head(1)
+    df['file'].fillna("", inplace=True)
+
+    df['user'] = ''
+    df['date started'] = ''
+    df['date completed'] = ''
+    df['notes'] = ''
+    df.to_csv(sheet_path, index=True, header=True)
+
+    return df
