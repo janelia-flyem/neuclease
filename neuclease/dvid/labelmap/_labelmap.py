@@ -775,9 +775,50 @@ def fetch_labels(server, uuid, instance, coordinates_zyx, scale=0, supervoxels=F
 
 def fetch_labels_batched(server, uuid, instance, coordinates_zyx, supervoxels=False, scale=0, batch_size=10_000, threads=0, processes=0, presort=True):
     """
-    Like fetch_labels, but fetches in batches, optionally multithreaded or multiprocessed.
+    Like fetch_labels(), but fetches in batches, optionally multithreaded or multiprocessed.
 
     See also: ``fetch_label()``, ``fectch_labels()``
+
+    Args:
+        server:
+            dvid server, e.g. 'emdata3:8900'
+
+        uuid:
+            dvid uuid, e.g. 'abc9'
+
+        instance:
+            dvid instance name, e.g. 'segmentation'
+
+        coordinates_zyx:
+            array of shape (N,3) with coordinates to sample.
+            Rows must be ``[[z,y,x], [z,y,x], ...``
+
+        supervoxels:
+            If True, read supervoxel IDs from DVID, not body IDs.
+
+        scale:
+            Which scale of the data to read from.
+            (Your coordinates must be correspondingly scaled.)
+
+        batch_size:
+            How many points to query in each request.
+            For best performance, keep this at 10k or lower.
+
+        threads:
+            If non-zero, use a thread pool to process batches in parallel.
+
+        processes:
+            If non-zero, use a process pool to process batces in parallel.
+
+        presort:
+            If True, pre-sort the coordinates in block-sorted order
+            (i.e. binned into 64px blocks, and then sorted in ZYX order by block index).
+            That way, the requests will be better aligned to the native block ordering in
+            DVID's database, which helps throughput.
+            Does not affect the output result order, which always corresponds to the input data order.
+
+    Returns:
+        ndarray of N labels (corresponding to the order you passed in)
     """
     assert not threads or not processes, "Choose either threads or processes (not both)"
     coordinates_zyx = np.asarray(coordinates_zyx)
