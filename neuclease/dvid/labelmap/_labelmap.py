@@ -867,6 +867,105 @@ def _fetch_labels_batch(server, uuid, instance, scale, supervoxels, batch_df):
     return batch_df
 
 
+def fetch_bodies_for_many_points(server, uuid, seg_instance, point_df, mutations=None, mapping=None, batch_size=10_000, threads=0, processes=0):
+    """
+    Fetch the supervoxel and body for each point in a massive list of points.
+    The results are written onto the input DataFrame, IN-PLACE, as columns for 'sv' and 'body'.
+
+    If the input dataframe contains a 'sv' column, then this function saves time by only updating
+    the rows for which the supervoxel *could* have changed since your input data was generated.
+
+    Note:
+        For short lists of points, it's faster to just use fetch_labels() or fetch_labels_batched().
+        This function incurs significant overhead by fetching the complete in-memory mapping and
+        also the complete mutation log.
+        That takes a minute or two, but then constructing the 'body' column is comparatively fast.
+
+    Args:
+        server:
+            dvid server, e.g. 'emdata3:8900'
+
+        uuid:
+            dvid uuid, e.g. 'abc9'
+
+        seg_instance:
+            dvid labelmap instance name, e.g. 'segmentation'
+
+        point_df:
+            A DataFrame with at least columns for ['x', 'y', 'z']. See fetch_synapses_in_batches().
+            Ideally, it also contains a pre-fetched 'sv' column, in which case most points
+            can be processed quickly, without asking DVID to determine the underlying
+            supervoxel again.
+
+        mutations:
+            Optional.  A cached copy of the complete mutation log for the instance,
+            as fetched via fetch_mutations().
+            If provided, it must correspond to the mutation log of the given UUID.
+
+        mapping:
+            Optional. A cached copy of the labelmap instance's in-memory map,
+            as fetched via fetch_mappings().
+
+        batch_size:
+            Coordinates will be processed in batches.
+            This specifies the number of points in each batch.
+
+        threads:
+            If non-zero, then multiple threads will be used to fetch labels in parallel.
+            Can't be used with processes.  Pick one or the other.
+
+        processes:
+            If non-zero, then multiple processes will be used to fetch labels in parallel.
+            Can't be used with threads. Pick one or the other.
+
+    Returns:
+        None.  Results are written IN-PLACE as columns 'sv' and 'body'.
+        To speed up this function the next time you call it, cache the results
+        somewhere and use them as the input in your next call.
+    """
+    assert not threads or not processes, "Choose either threads or processes (not both)"
+    dvid_seg = (server, uuid, seg_instance)
+
+    if 'sv' not in point_df.columns:
+        # Fetch supervoxel under all coordinates
+        coords = point_df[[*'zyx']].values
+        point_df['sv'] = fetch_labels_batched(*dvid_seg, coords, supervoxels=True,
+                                              batch_size=batch_size, threads=threads, processes=processes)
+    else:
+        # Only update the supervoxel IDs for coordinates which reside on a supervoxel which
+        # was somehow involved in a split (as either parent or child).
+        # For those points, there's no guarnatee that the supervoxel in the given table
+        # is in-sync with the given UUID, so we must check.
+        if mutations is None:
+            # We fetch the  mutations for the entire DAG (even other branches).
+            # That way, we don't care at all which UUID was used to produce the
+            # cached 'sv' column of the input table.
+            mutations = fetch_mutations(*dvid_seg, dag_filter=None)
+
+        new, changed, deleted, new_svs, deleted_svs = compute_affected_bodies(mutations)
+        out_of_date = point_df.query('sv in @deleted_svs or sv in @new_svs').index
+        if len(out_of_date) > 0:
+            ood_coords = point_df.loc[out_of_date, [*'zyx']].values
+            point_df.loc[out_of_date, 'sv'] = fetch_labels_batched(*dvid_seg, ood_coords, supervoxels=True,
+                                                                   batch_size=5_000, threads=threads, processes=processes)
+    #
+    # Now map from sv -> body
+    #
+    if mapping is None:
+        mapping = fetch_mappings(server, uuid, seg_instance, as_array=True)
+    elif isinstance(mapping, pd.Series):
+        # Convert to ndarray
+        assert mapping.index.name == 'sv'
+        assert mapping.name == 'body'
+        mapping = mapping.reset_index().values
+
+    assert mapping.shape[1] == 2
+    assert mapping.dtype == np.uint64
+
+    mapper = LabelMapper(*mapping.T)
+    point_df['body'] = mapper.apply(point_df['sv'].values, True)
+
+
 @dvid_api_wrapper
 def fetch_sparsevol_rles(server, uuid, instance, label, supervoxels=False, scale=0, *, session=None):
     """
