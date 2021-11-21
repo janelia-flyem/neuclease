@@ -10,14 +10,16 @@ from itertools import chain
 import numpy as np
 import pandas as pd
 import networkx as nx
-import holoviews as hv
-import hvplot.pandas
 from bokeh.plotting import figure, output_file, save as bokeh_save, output_notebook, show
 import matplotlib.pyplot as plt
 from matplotlib.colors import hsv_to_rgb
 
+# Don't import these here -- use late imports, below.
+#import holoviews as hv
+#import hvplot.pandas
+#import hvplot.networkx as hvnx
+
 from networkx.classes.filters import show_nodes
-import hvplot.networkx as hvnx
 from neuclease.misc.neuroglancer import format_nglink
 
 from neuclease.util import fix_df_names, tqdm_proxy, Timer
@@ -373,6 +375,7 @@ def plot_union_group(g, df, idx, format='hv'):
     label_pos = {n: (x, y+OFFSET) for n, (x,y) in pos.items()}
 
     if format == 'hv':
+        import hvplot.networkx as hvnx
         pn = hvnx.draw(sg, pos=pos, node_color=colors)
         pl = hvnx.draw_networkx_labels(sg, label_pos)
         p = pn * pl
@@ -399,6 +402,10 @@ def pick_color(i):
 
 
 def export_report(g, group_df, ann, output_dir, format='hv', skip_plots=False):
+    # Late imports because these imports can conflict with bokeh server apps
+    import holoview as hv
+    import hvplot.pandas
+
     os.makedirs(output_dir, exist_ok=True)
 
     today = datetime.datetime.today().strftime("%Y-%m-%d")
