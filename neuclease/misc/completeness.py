@@ -196,7 +196,7 @@ def completeness_forecast(labeled_point_df, partner_df, syn_counts_df=None, min_
 def _filter_synapses(point_df, partner_df, min_tbar_conf=0.0, min_psd_conf=0.0, roi=None):
     filters = []
 
-    if 0 in point_df['body']:
+    if 0 in point_df['body'].values:
         filters.append('body != 0')
     if min_tbar_conf:
         filters.append(f'kind == "PostSyn" or conf > {min_tbar_conf}')
