@@ -217,16 +217,17 @@ def _filter_synapses(point_df, partner_df, min_tbar_conf=0.0, min_psd_conf=0.0, 
         # Filter points
         point_df = point_df.query(q)
 
-        # Filter pairs
-        partner_df = partner_df.merge(point_df[[]], 'inner', left_on='pre_id', right_index=True)
-        partner_df = partner_df.merge(point_df[[]], 'inner', left_on='post_id', right_index=True)
+    # Filter partner pairs (even if there were no specified filters),
+    # in case the user's point_df and partner_df aren't perfectly matched
+    # (e.g. if they did some pre-filtering of point_df.)
+    partner_df = partner_df.merge(point_df[[]], 'inner', left_on='pre_id', right_index=True)
+    partner_df = partner_df.merge(point_df[[]], 'inner', left_on='post_id', right_index=True)
 
-        # Also filter point list, to toss out points without a partner
-        valid_ids = pd.concat((partner_df['pre_id'].drop_duplicates().rename('point_id'),
-                               partner_df['post_id'].drop_duplicates().rename('point_id')),
-                              ignore_index=True)
-        point_df = point_df.query('point_id in @valid_ids')
-
+    # Also filter point list, to toss out points without a partner
+    valid_ids = pd.concat((partner_df['pre_id'].drop_duplicates().rename('point_id'),  # noqa
+                           partner_df['post_id'].drop_duplicates().rename('point_id')),
+                          ignore_index=True)
+    point_df = point_df.query('point_id in @valid_ids')
     return point_df, partner_df
 
 
