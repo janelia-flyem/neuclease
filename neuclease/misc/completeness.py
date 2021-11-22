@@ -8,7 +8,8 @@ from neuclease.dvid.annotation import body_synapse_counts
 logger = logging.getLogger(__name__)
 
 
-def completeness_forecast(labeled_point_df, partner_df, syn_counts_df=None, min_tbar_conf=0.0, min_psd_conf=0.0, roi=None, sort_by='SynWeight', stop_at_rank=None):
+def completeness_forecast(labeled_point_df, partner_df, syn_counts_df=None,
+                          min_tbar_conf=0.0, min_psd_conf=0.0, roi=None, sort_by='SynWeight', stop_at_rank=None):
     """
     Produces a DataFrame listing all pairwise synapse connections,
     ordered according to the size of the smaller body in the pair.
@@ -85,7 +86,12 @@ def completeness_forecast(labeled_point_df, partner_df, syn_counts_df=None, min_
 
     if isinstance(sort_by, str):
         sort_by = [sort_by]
-    if syn_counts_df is not None:
+    if syn_counts_df is None:
+        assert {*sort_by} <= {'PreSyn', 'PostSyn', 'SynWeight'}
+    else:
+        # We can only sort using any columns the user provided,
+        # plus SynWeight, which we can provide below.
+        assert syn_counts_df.columns >= {'PreSyn', 'PostSyn'}
         assert {*sort_by} <= {*syn_counts_df.columns, 'SynWeight'}
 
     point_df, partner_df = _filter_synapses(point_df, partner_df, min_tbar_conf, min_psd_conf, roi)
@@ -121,7 +127,7 @@ def completeness_forecast(labeled_point_df, partner_df, syn_counts_df=None, min_
     # Now order the connection pairs according to the SMALLER of the two bodies in the pair,
     # i.e. sort according to the body with greater rank (i.e. worse rank).
     # The idea is that if we were to trace all bodies in rank-order, the connection pairs
-    # will be sorted in the order in which they are completed, i.e. with a traced body on
+    # will be sorted in the order in which they are completed, i.e. with a traced body onh
     # both the input side and the output side.
     #
     # Notice that when the table is sorted this way, then for every row in the table,
@@ -151,7 +157,7 @@ def completeness_forecast(labeled_point_df, partner_df, syn_counts_df=None, min_
     # So, flatten those two columns into one giant list, in order, then merge synapse
     # counts onto the giant list, and compute cumulative sums
     # (but make sure each body only contributes once to each sum).
-    flattened_bodies = pd.Series(conn_df[['body_pre', 'body_post']].values.reshape(-1), name='body').to_frame()
+    flattened_bodies = pd.DataFrame({'body': conn_df[['body_pre', 'body_post']].values.reshape(-1)})
     flattened_bodies = flattened_bodies.merge(syn_counts_df, 'left', on='body')
     dupes = flattened_bodies['body'].duplicated()
     flattened_bodies.loc[dupes, 'PreSyn'] = 0
@@ -261,7 +267,7 @@ def _rank_syn_counts(point_df, conn_df, syn_counts_df=None, sort_by='SynWeight')
 
 
 def plot_connectivity_forecast(conn_df, max_rank=None, plotted_points=20_000, hover_cols=[], color_by_col=None,
-    title='connectivity after prioritized merging', export_path=None):
+                               title='connectivity after prioritized merging', export_path=None):
     """
     Plot the curves of captured tbars, captured PSDs and captured dual-sided
     connections as bodies are traced/merged from large to small.
@@ -285,10 +291,10 @@ def plot_connectivity_forecast(conn_df, max_rank=None, plotted_points=20_000, ho
     assert not export_path or export_path.endswith('.html')
 
     _df = conn_df
-    show_cols =['traced_tbar_frac',
-               # 'minimally_connected_tbar_frac',
-               'traced_psd_frac',
-               'traced_conn_frac']
+    show_cols = ['traced_tbar_frac',
+                 # 'minimally_connected_tbar_frac',
+                 'traced_psd_frac',
+                 'traced_conn_frac']
 
     # Zoom in on left-hand region
     if max_rank:
@@ -311,7 +317,7 @@ def plot_connectivity_forecast(conn_df, max_rank=None, plotted_points=20_000, ho
 
     if color_by_col:
         p = _df.hvplot.scatter(
-                'body priority ranking',
+                'body priority ranking',  # noqa
                 [renames[k] for k in show_cols][0],
                 hover_cols=['tbars captured', 'psds captured', 'pairwise connections', *hover_cols],
                 legend='bottom_right',
@@ -321,7 +327,7 @@ def plot_connectivity_forecast(conn_df, max_rank=None, plotted_points=20_000, ho
                 height=500)
     else:
         p = _df.hvplot(
-                'body priority ranking',
+                'body priority ranking', # noqa
                 [renames[k] for k in show_cols],
                 hover_cols=['tbars captured', 'psds captured', 'pairwise connections', *hover_cols],
                 legend='bottom_right',
@@ -332,7 +338,6 @@ def plot_connectivity_forecast(conn_df, max_rank=None, plotted_points=20_000, ho
         # Hide annoying legend title
         # https://discourse.holoviz.org/t/removing-legend-title/1317/2
         p.get_dimension('Variable').label = ''
-
 
     p.opts(
         title=title,
