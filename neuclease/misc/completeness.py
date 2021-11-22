@@ -15,13 +15,16 @@ def completeness_forecast(labeled_point_df, partner_df, syn_counts_df=None,
     ordered according to the size of the smaller body in the pair.
 
     This represents a forecast of connectivity completeness, assuming bodies
-    will be added to the traced set in order from large to small.
-    Bodies are added to the traced set by either declaring them to have traced
-    status, or by merging them into a body that already has traced status.
+    will be added to the "traced set" in some order (e.g. large to small).
 
-    The results are ordered by the body ranking of the smaller body in each pair,
-    ensuring that connections in the table appear in the order in which they will
-    become "complete" (i.e. both of their bodies are traced).
+    The results are ordered by the body ranking of the lesser (e.g. smaller) body
+    in each pair, ensuring that connections in the table appear in the order in
+    which they will become "complete" (i.e. both of their bodies are traced).
+
+    Note:
+        Conceptually, each body's synapses become part of the traced set during
+        reconstruction by either declaring the body to have some "traced" status
+        or by merging that body into another body which already has traced status.
 
     See also: plot_connectivity_forecast(), below.
 
@@ -43,6 +46,10 @@ def completeness_forecast(labeled_point_df, partner_df, syn_counts_df=None,
             'weight' (size), which is used to rank the bodies from largest to smallest.
             The 'SynWeight' column determines the order in which you plan to trace the body set.
             If you don't provide this input, it will be computed from the first two arguments.
+
+            Note:
+                It is your responsibility to ensure that this pre-computed input is consistent
+                with any filtering criteria you specified (e.g. roi, min_tbar_conf, min_psd_conf).
 
         min_tbar_conf:
             Optional. Filter out tbars that don't meet this confidence threshold.
@@ -77,35 +84,48 @@ def completeness_forecast(labeled_point_df, partner_df, syn_counts_df=None,
 
         sorted_bodies_df is indexed by body ID, sorted by the body 'SynWeight'
     """
+    if (roi or min_tbar_conf or min_psd_conf) and syn_counts_df is not None:
+        msg = (
+            "\n"
+            "  You have specified filtering criteria (e.g. roi or conf), but you also provided a pre-computed syn_counts_df.\n"
+            "  It is your responsibility to ensure that syn_counts_df was generated using the same filtering criteria.\n"
+            "  To avoid this warning, omit syn_count_df and it will be computed for you."
+        )
+        logger.warning(msg)
+
+    assert labeled_point_df.index.name == 'point_id'
     cols = ['kind', 'conf', 'body']
     if roi:
         assert 'roi' in labeled_point_df.columns
         cols = [*cols, 'roi']
-    point_df = labeled_point_df[cols]
-    assert point_df.index.name == 'point_id'
+    labeled_point_df = labeled_point_df[cols]
 
-    if isinstance(sort_by, str):
-        sort_by = [sort_by]
-    if syn_counts_df is None:
-        assert {*sort_by} <= {'PreSyn', 'PostSyn', 'SynWeight'}
-    else:
-        # We can only sort using any columns the user provided,
-        # plus SynWeight, which we can provide below.
-        assert syn_counts_df.columns >= {'PreSyn', 'PostSyn'}
-        assert {*sort_by} <= {*syn_counts_df.columns, 'SynWeight'}
-
-    point_df, partner_df = _filter_synapses(point_df, partner_df, min_tbar_conf, min_psd_conf, roi)
-
-    if {'body_pre', 'body_post'} <= {*partner_df.columns}:
-        conn_df = partner_df[['pre_id', 'post_id', 'body_pre', 'body_post']]
-    else:
-        # Append columns ['body_pre', 'body_post']
-        logger.info("Appending body columns")
-        conn_df = partner_df[['pre_id', 'post_id']]
-        conn_df = conn_df.merge(point_df['body'], 'left', left_on='pre_id', right_index=True)
-        conn_df = conn_df.merge(point_df['body'], 'left', left_on='post_id', right_index=True, suffixes=['_pre', '_post'])
-
+    point_df, partner_df = _filter_synapses(labeled_point_df, partner_df, min_tbar_conf, min_psd_conf, roi)
+    conn_df = _body_conn_df(point_df, partner_df)
     syn_counts_df = _rank_syn_counts(point_df, conn_df, syn_counts_df, sort_by)
+    conn_df = _completeness_forecast(conn_df, syn_counts_df, stop_at_rank)
+    return conn_df, syn_counts_df
+
+
+def _completeness_forecast(conn_df, syn_counts_df, stop_at_rank):
+    """
+    Main implementation of completeness_forecast()
+
+    Args:
+        conn_df:
+            Pre-filtered synpase connection table including body columns:
+            ['pre_id', 'post_id', 'body_pre', 'body_post']
+        syn_counts_df:
+            Sorted synapse counts.
+            Indexed by body, with at least columns ['PreSyn', 'PostSyn', 'rank']
+        stop_at_rank:
+            See description in completeness_forecast()
+
+    Returns:
+        Sorted conn_df, with added columns as described in completeness_forecast(),
+        and truncated according to stop_at_rank.
+    """
+    full_conn_count = len(conn_df)
 
     # Filter out bodies above our rank of interest (too small)
     stop_at_rank = stop_at_rank or len(syn_counts_df)
@@ -178,7 +198,7 @@ def completeness_forecast(labeled_point_df, partner_df, syn_counts_df=None,
     # of the connection table as explained above.
     # Note: When visualizing, we'll usually want to put this in the Y-axis, not the X-axis.
     conn_df['traced_conn_count'] = 1 + conn_df.index
-    conn_df['traced_conn_frac'] = conn_df['traced_conn_count'] / len(partner_df)
+    conn_df['traced_conn_frac'] = conn_df['traced_conn_count'] / full_conn_count
 
     # It's useful to provide the max body rank
     logger.info("Adding body_max_rank and associated stats")
@@ -196,7 +216,7 @@ def completeness_forecast(labeled_point_df, partner_df, syn_counts_df=None,
     if 'status_max_rank' in conn_df.columns:
         conn_df['status_max_rank'] = conn_df['status_max_rank'].astype(object).fillna('')
 
-    return conn_df, syn_counts_df
+    return conn_df
 
 
 def _filter_synapses(point_df, partner_df, min_tbar_conf=0.0, min_psd_conf=0.0, roi=None):
@@ -205,9 +225,9 @@ def _filter_synapses(point_df, partner_df, min_tbar_conf=0.0, min_psd_conf=0.0, 
     if 0 in point_df['body'].values:
         filters.append('body != 0')
     if min_tbar_conf:
-        filters.append(f'kind == "PostSyn" or conf > {min_tbar_conf}')
+        filters.append(f'kind != "PreSyn" or conf > {min_tbar_conf}')
     if min_psd_conf:
-        filters.append(f'kind == "PreSyn" or conf > {min_psd_conf}')
+        filters.append(f'kind != "PostSyn" or conf > {min_psd_conf}')
     if roi:
         if isinstance(roi, str):
             roi = [roi]
@@ -217,10 +237,7 @@ def _filter_synapses(point_df, partner_df, min_tbar_conf=0.0, min_psd_conf=0.0, 
     if filters:
         filters = [f'({f})' for f in filters]
         q = ' or '.join(filters)
-
-        logger.info(f"Filtering with: {q}")
-
-        # Filter points
+        logger.info(f"Filtering points with: {q}")
         point_df = point_df.query(q)
 
     # Filter partner pairs (even if there were no specified filters),
@@ -229,12 +246,26 @@ def _filter_synapses(point_df, partner_df, min_tbar_conf=0.0, min_psd_conf=0.0, 
     partner_df = partner_df.merge(point_df[[]], 'inner', left_on='pre_id', right_index=True)
     partner_df = partner_df.merge(point_df[[]], 'inner', left_on='post_id', right_index=True)
 
-    # Also filter point list, to toss out points without a partner
+    # Also filter point list again, to toss out points which had no partner
     valid_ids = pd.concat((partner_df['pre_id'].drop_duplicates().rename('point_id'),  # noqa
                            partner_df['post_id'].drop_duplicates().rename('point_id')),
                           ignore_index=True)
     point_df = point_df.query('point_id in @valid_ids')
     return point_df, partner_df
+
+
+def _body_conn_df(point_df, partner_df):
+    # Did the user already provide the body_pre, body_post columns?
+    if {'body_pre', 'body_post'} <= {*partner_df.columns}:
+        return partner_df[['pre_id', 'post_id', 'body_pre', 'body_post']]
+
+    # Append columns ['body_pre', 'body_post']
+    logger.info("Appending body columns")
+    conn_df = partner_df[['pre_id', 'post_id']]
+    conn_df = conn_df.merge(point_df['body'], 'left', left_on='pre_id', right_index=True)
+    conn_df = conn_df.merge(point_df['body'], 'left', left_on='post_id', right_index=True, suffixes=['_pre', '_post'])
+
+    return conn_df
 
 
 def _rank_syn_counts(point_df, conn_df, syn_counts_df=None, sort_by='SynWeight'):
@@ -243,6 +274,16 @@ def _rank_syn_counts(point_df, conn_df, syn_counts_df=None, sort_by='SynWeight')
     - Add a SynWeight column if necessary
     - Sort, and add a rank column
     """
+    if isinstance(sort_by, str):
+        sort_by = [sort_by]
+    if syn_counts_df is None:
+        assert {*sort_by} <= {'PreSyn', 'PostSyn', 'SynWeight'}
+    else:
+        # We can only sort using any columns the user provided,
+        # plus SynWeight, which we can provide below.
+        assert syn_counts_df.columns >= {'PreSyn', 'PostSyn'}
+        assert {*sort_by} <= {*syn_counts_df.columns, 'SynWeight'}
+
     if syn_counts_df is None:
         logger.info("Computing per-body synapse table")
         syn_counts_df = body_synapse_counts(point_df)
