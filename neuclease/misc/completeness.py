@@ -236,7 +236,7 @@ def _filter_synapses(point_df, partner_df, min_tbar_conf=0.0, min_psd_conf=0.0, 
 
     if filters:
         filters = [f'({f})' for f in filters]
-        q = ' or '.join(filters)
+        q = ' and '.join(filters)
         logger.info(f"Filtering points with: {q}")
         point_df = point_df.query(q)
 
