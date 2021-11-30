@@ -403,7 +403,7 @@ def pick_color(i):
 
 def export_report(g, group_df, ann, output_dir, format='hv', skip_plots=False):
     # Late imports because these imports can conflict with bokeh server apps
-    import holoview as hv
+    import holoviews as hv
     import hvplot.pandas
 
     os.makedirs(output_dir, exist_ok=True)
