@@ -242,6 +242,7 @@ def fetch_sanitized_dvid_annotations(server, uuid, dvid_ann=None):
         dvid_ann = fetch_body_annotations(server, uuid)
     dvid_ann = fix_df_names(dvid_ann)
     dvid_ann = dvid_ann.query('not instance.isnull() and instance != ""').copy()
+    dvid_ann['instance'] = dvid_ann['instance'].map(str)
 
     # Possible instances:
     # "1234"
