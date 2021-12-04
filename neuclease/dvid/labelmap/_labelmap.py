@@ -6,7 +6,7 @@ from io import BytesIO
 from functools import partial, lru_cache, wraps
 from itertools import starmap
 from multiprocessing.pool import ThreadPool
-from collections import defaultdict
+from collections import defaultdict, namedtuple
 
 import numpy as np
 import pandas as pd
@@ -2910,13 +2910,13 @@ def fetch_mutations(server, uuid, instance, userid=None, *, action_filter=None, 
         dag_filter:
             Specifies which UUIDs for which to fetch mutations,
             relative to the specified ``uuid``.
+            (This is not part of the DVID API.  It's implemented in this
+            python function by calling the /mutations endpoint for multiple UUIDs.)
 
             One of:
             - 'leaf-only' (only messages whose uuid matches the one provided),
             - 'leaf-and-parents' (only messages matching the given uuid or its ancestors), or
             - None (no filtering by UUID).
-            (This is not part of the DVID API.  It's implemented in this
-            python function by calling the /mutations endpoint for multiple UUIDs.)
 
         format:
             How to return the data. Either 'pandas' or 'json'.
@@ -3106,6 +3106,8 @@ def labelmap_kafka_msgs_to_df(kafka_msgs, default_timestamp=DEFAULT_TIMESTAMP, d
     return df[FINAL_COLUMNS]
 
 
+AffectedBodies = namedtuple("AffectedBodies", "new_bodies changed_bodies removed_bodies new_svs deleted_svs")
+
 def compute_affected_bodies(kafka_msgs):
     """
     Given a list of json messages from a labelmap instance (from kafka or from /mutations),
@@ -3152,7 +3154,7 @@ def compute_affected_bodies(kafka_msgs):
     new_bodies = set()
     changed_bodies = set()
     removed_bodies = set()
-    new_supervoxels = set()
+    new_svs = set()
     deleted_svs = set()
 
     for msg in kafka_msgs:
@@ -3175,17 +3177,17 @@ def compute_affected_bodies(kafka_msgs):
             new_bodies.add( msg['NewLabel'] )
 
         if msg['Action'] == 'split-supervoxel':
-            new_supervoxels.add(msg['SplitSupervoxel'])
-            new_supervoxels.add(msg['RemainSupervoxel'])
+            new_svs.add(msg['SplitSupervoxel'])
+            new_svs.add(msg['RemainSupervoxel'])
             deleted_svs.add(msg['Supervoxel'])
 
     new_bodies = np.fromiter(new_bodies, np.uint64)
     changed_bodies = np.fromiter(changed_bodies, np.uint64)
     removed_bodies = np.fromiter(removed_bodies, np.uint64)
-    new_supervoxels = np.fromiter(new_supervoxels, np.uint64)
+    new_svs = np.fromiter(new_svs, np.uint64)
     deleted_svs = np.fromiter(deleted_svs, np.uint64)
 
-    return new_bodies, changed_bodies, removed_bodies, new_supervoxels, deleted_svs
+    return AffectedBodies(new_bodies, changed_bodies, removed_bodies, new_svs, deleted_svs)
 
 
 def compute_merge_hierarchies(msgs):
