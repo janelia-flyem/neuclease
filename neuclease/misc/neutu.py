@@ -12,6 +12,7 @@ from neuclease.util import dump_json, iter_batches
 
 logger = logging.getLogger(__name__)
 
+
 def create_bookmark_files(df, output_dir, prefix='bookmarks-', batch_size=100, default_text=None):
     os.makedirs(output_dir)
     digits = int(ceil(log10(len(df) / batch_size)))
@@ -145,3 +146,25 @@ def prepare_cleaving_assignment_setup(bodies, output_dir, bucket_path, sheet_pat
     df.to_csv(sheet_path, index=True, header=True)
 
     return df
+
+
+def create_connection_validation_assignment(df, output_path):
+    assignment = {
+        "file type": "connection validation",
+        "date": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
+        "username": getpass.getuser(),
+        "software": "NeuTu",
+        "coordinate system": "dvid",
+        "file version": 1,
+        "points": df[[*'xyz']].values.tolist()
+    }
+    dump_json(assignment, output_path, unsplit_int_lists=True)
+    return assignment
+
+
+def create_connection_validation_assignments(df, output_dir, prefix='connection-validation-', batch_size=100):
+    os.makedirs(output_dir)
+    digits = int(ceil(log10(len(df) / batch_size)))
+    for i, batch_df in enumerate(iter_batches(df, batch_size)):
+        path = f"{output_dir}/{prefix}{{i:0{digits}d}}.json".format(i=i)
+        create_connection_validation_assignment(batch_df, path)
