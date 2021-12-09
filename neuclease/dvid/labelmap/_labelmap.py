@@ -2861,11 +2861,11 @@ def post_merge(server, uuid, instance, main_label, other_labels, *, session=None
         other_labels:
             List of labels to merge into the main_label
     """
+    main_label = int(main_label)
+    other_labels = list(map(int, other_labels))
     assert main_label not in other_labels, \
         (f"Can't merge {main_label} with itself.  "
         "DVID does not behave correctly if you attempt to merge a body into itself!")
-    main_label = int(main_label)
-    other_labels = list(map(int, other_labels))
 
     content = [main_label] + other_labels
 
