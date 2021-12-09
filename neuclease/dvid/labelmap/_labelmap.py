@@ -2660,7 +2660,7 @@ def post_cleave(server, uuid, instance, body_id, supervoxel_ids, *, session=None
 
 
 @dvid_api_wrapper
-def post_hierarchical_cleaves(server, uuid, instance, body_id, group_mapping, *, session=None):
+def post_hierarchical_cleaves(server, uuid, instance, body_id, group_mapping, leave_progress=True, *, session=None):
     """
     When you want to perform a lot of cleaves on a single
     body (e.g. a "frankenbody") whose labelindex is really big,
@@ -2801,7 +2801,7 @@ def post_hierarchical_cleaves(server, uuid, instance, body_id, group_mapping, *,
     orig_len = len(li_df)
     li_df = li_df.query('sv in @group_df.index')
 
-    # If we the groups don't include every supervoxel in the body,
+    # If the groups don't include every supervoxel in the body,
     # then start by cleaving the entire set out from its body, for two reasons:
     # 1. _cleave_groups() below terminates once all groups have unique body IDs,
     #   so the last group will get skipped, (unless we follow-up with a final cleave),
@@ -2824,7 +2824,7 @@ def post_hierarchical_cleaves(server, uuid, instance, body_id, group_mapping, *,
     if not need_initial_cleave:
         num_cleaves -= 1
 
-    with tqdm_proxy(total=num_cleaves, logger=logger) as progress_bar:
+    with tqdm_proxy(total=num_cleaves, leave=leave_progress, logger=logger) as progress_bar:
         progress_bar.update(0)
 
         if need_initial_cleave:
