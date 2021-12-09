@@ -397,7 +397,7 @@ def fetch_missing(server, uuid, instance, body_id, *, session=None):
     return np.array(r.json(), np.uint64)
 
 
-def fetch_missing_from_bodies(server, uuid, instance, body_ids, *, session=None):
+def fetch_missing_from_bodies(server, uuid, instance, body_ids, *, processes=4, session=None):
     """
     For the given list of bodies, fetch the list of supervoxels
     that are missing from the given tarsupervoxels instance.
@@ -408,10 +408,10 @@ def fetch_missing_from_bodies(server, uuid, instance, body_ids, *, session=None)
     Args:
         server:
             dvid server, e.g. 'emdata3:8900'
-        
+
         uuid:
             dvid uuid, e.g. 'abc9'
-        
+
         instance:
             dvid tarsupervoxels instance name, e.g. 'segmentation_sv_meshes'
 
@@ -420,26 +420,28 @@ def fetch_missing_from_bodies(server, uuid, instance, body_ids, *, session=None)
 
     Returns:
         (missing_df, retired_bodies), where
-        
+
         missing_df:
             DataFrame of missing sv files and the bodies to which they belong.
 
         retired_bodies:
             An array of the body IDs from the input list which no longer exist in
-            the sync'd segmentation instance.        
+            the sync'd segmentation instance.
     """
-    retired_bodies = []
-    missing = []
-    
-    for body in tqdm_proxy(body_ids):
-        try:
-            missing_svs = fetch_missing(server, uuid, instance, body, session=session)
-            missing.extend((sv, body) for sv in missing_svs)
-        except Exception as ex:
-            if 'has no supervoxels' in str(ex):
-                retired_bodies.append(body)
-            else:
-                raise
-    
-    missing_df = pd.DataFrame(missing, columns=['sv', 'body'], dtype=np.uint64)
-    return missing_df, np.array(retired_bodies, dtype=np.uint64)
+    fn = partial(_fetch_missing, server, uuid, instance)
+    dfs = compute_parallel(fn, body_ids, processes=processes)
+    df = pd.concat(dfs, ignore_index=True)
+    missing_df = df.query('sv != 0').copy()
+    retired_bodies = df.query('sv == 0')['body'].values
+    return missing_df, retired_bodies
+
+
+def _fetch_missing(server, uuid, instance, body):
+    try:
+        missing_svs = fetch_missing(server, uuid, instance, body)
+        return pd.DataFrame({'sv': missing_svs, 'body': body}, dtype=np.uint64)
+    except Exception as ex:
+        if 'has no supervoxels' in str(ex):
+            return pd.DataFrame({'sv': [0], 'body': [body]}, dtype=np.uint64)
+        else:
+            raise
