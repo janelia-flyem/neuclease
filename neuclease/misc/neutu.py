@@ -116,7 +116,38 @@ def create_cleaving_assignment(bodies, output_path):
         json.dump(assignment, f, indent=2)
 
 
-def prepare_cleaving_assignment_setup(bodies, output_dir, bucket_path, sheet_path, prefix='cleaving-', batch_size=20):
+def prepare_cleaving_assignment_setup(bodies, output_dir, bucket_path, csv_path, prefix='cleaving-', batch_size=20):
+    """
+    This function will help prepare a set of cleaving assignments.
+    
+    1. Generates JSON files
+    2. Uploads them to a google bucket (assuming you have permission)
+    3. Exports a CSV with the structure we like to use.  You'll have to manually import that CSV file into a Google sheet to share with the proofreaders.
+
+    Before running it, you need to enter the following terminal command, to log in to the Google Cloud system.
+    
+        gcloud auth login <your-email-here>
+
+    Args:
+        bodies:
+            List of bodies to assign
+        output_dir:
+            Name of a local directory to create for the assignments
+        bucket_path:
+            The bucket name + directory to which the assignment directory will be copied.
+            Example: gs://foobar-flyem-assignments/cns
+        csv_path:
+            A CSV file will be written to the given path.
+            That's the CSV file you'll want to import into Google Sheets
+        prefix:
+            If provided, each assignment file will be named with this prefix
+            (and followed with an assignment number, e.g. cleaving-001.json)
+        batch_size:
+            How many bodies per assignment
+
+    Returns:
+        The assignment CSV data.
+    """
     assert bucket_path.startswith('gs://')
     bucket_path = bucket_path[len('gs://'):]
 
@@ -131,7 +162,7 @@ def prepare_cleaving_assignment_setup(bodies, output_dir, bucket_path, sheet_pat
     # Explicitly *unset* content type, to trigger browsers to download the file, not display it as JSON.
     # Also, forbid caching.
     cmd = f"gsutil -m -h 'Cache-Control:public, no-store' -h 'Content-Type' cp -r {output_dir} gs://{bucket_path}/"
-    subprocess.run(cmd, shell=True, check=True)
+    r = subprocess.run(cmd, shell=True, check=True, capture_output=True)
 
     df['file'] = f'https://storage.googleapis.com/{bucket_path}/' + df['file']
 
@@ -143,7 +174,7 @@ def prepare_cleaving_assignment_setup(bodies, output_dir, bucket_path, sheet_pat
     df['date started'] = ''
     df['date completed'] = ''
     df['notes'] = ''
-    df.to_csv(sheet_path, index=True, header=True)
+    df.to_csv(csv_path, index=True, header=True)
 
     return df
 
