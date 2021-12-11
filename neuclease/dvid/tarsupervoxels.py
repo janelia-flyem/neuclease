@@ -136,6 +136,9 @@ def tar_to_dict(tar_bytes, exts=None, exclude_empty=False):
     Returns:
       dict of {filename: bytes}
     """
+    if isinstance(exts, str):
+        exts = [exts]
+
     tf = tarfile.TarFile(fileobj=BytesIO(tar_bytes))
     members = sorted(tf.getmembers(), key=lambda m: m.name)
 
