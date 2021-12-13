@@ -277,7 +277,7 @@ def convert_labelindex_to_pandas(labelindex):
     # Convert each block's data into arrays
     for coord_zyx, sv_counts in zip(coords_zyx, labelindex.blocks.values()):
         svs = np.fromiter(sv_counts.counts.keys(), np.uint64, count=len(sv_counts.counts))
-        counts = np.fromiter(sv_counts.counts.values(), np.uint32, count=len(sv_counts.counts))
+        counts = np.fromiter(sv_counts.counts.values(), np.int64, count=len(sv_counts.counts))
 
         coord_zyx = np.array(coord_zyx, np.int32)
         coords = np.repeat(coord_zyx[None], len(svs), axis=0)
@@ -422,7 +422,7 @@ def _fetch_sizes_via_labelindex(server, uuid, instance, labels, supervoxels=Fals
 
         _supervoxel_set = set(labels)  # noqa
         df = df.query('sv in @_supervoxel_set')
-        sizes = df.groupby('sv')['count'].sum().astype(np.uint32)
+        sizes = df.groupby('sv')['count'].sum()
         sizes.name = 'size'
         return sizes
     else:
@@ -437,7 +437,7 @@ def _fetch_sizes_via_labelindex(server, uuid, instance, labels, supervoxels=Fals
             sizes.append(total_sum)
         
         bodies = np.fromiter(bodies, np.uint64)
-        sizes = pd.Series(sizes, index=bodies, dtype=np.uint32, name='size')
+        sizes = pd.Series(sizes, index=bodies, name='size')
         sizes.index.name = 'body'
         return sizes
 
