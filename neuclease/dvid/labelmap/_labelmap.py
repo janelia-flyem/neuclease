@@ -967,14 +967,14 @@ def fetch_bodies_for_many_points(server, uuid, seg_instance, point_df, mutations
 
 
 @dvid_api_wrapper
-def fetch_sparsevol_rles(server, uuid, instance, label, supervoxels=False, scale=0, *, session=None):
+def fetch_sparsevol_rles(server, uuid, instance, label, scale=0, supervoxels=False, *, session=None):
     """
     Fetch the sparsevol RLE representation for a given label.
 
     See also: neuclease.dvid.rle.parse_rle_response()
     """
     supervoxels = str(bool(supervoxels)).lower() # to lowercase string
-    url = f'{server}/api/node/{uuid}/{instance}/sparsevol/{label}?supervoxels={supervoxels}&scale={scale}'
+    url = f'{server}/api/node/{uuid}/{instance}/sparsevol/{label}?scale={scale}&supervoxels={supervoxels}'
     r = session.get(url)
     r.raise_for_status()
     return r.content
@@ -1543,7 +1543,7 @@ def fetch_sparsevol_coarse_threaded(server, uuid, instance, labels, supervoxels=
 
 
 @dvid_api_wrapper
-def fetch_sparsevol(server, uuid, instance, label, supervoxels=False, scale=0,
+def fetch_sparsevol(server, uuid, instance, label, scale=0, supervoxels=False,
                     *, format='coords', dtype=np.int32, mask_box=None, session=None): #@ReservedAssignment
     """
     Return coordinates of all voxels in the given body/supervoxel at the given scale.
@@ -1630,7 +1630,7 @@ def fetch_sparsevol(server, uuid, instance, label, supervoxels=False, scale=0,
     """
     assert format in ('coords', 'rle', 'ranges', 'mask')
 
-    rles = fetch_sparsevol_rles(server, uuid, instance, label, supervoxels, scale, session=session)
+    rles = fetch_sparsevol_rles(server, uuid, instance, label, scale, supervoxels, session=session)
 
     if format in ('coords', 'rle', 'ranges'):
         return parse_rle_response(rles, dtype, format)
