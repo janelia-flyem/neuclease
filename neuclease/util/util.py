@@ -11,6 +11,7 @@ import logging
 import inspect
 import contextlib
 from itertools import chain
+from operator import itemgetter
 from functools import partial, lru_cache
 from multiprocessing.pool import Pool, ThreadPool
 from datetime import datetime, timedelta
@@ -585,13 +586,13 @@ class _iter_batches_with_len(_iter_batches):
         return int(np.ceil(len(self.base_iterator) / self.batch_size))
 
 
-def compute_parallel(func, iterable, chunksize=1, threads=None, processes=None, ordered=True,
+def compute_parallel(func, iterable, chunksize=1, threads=0, processes=0, ordered=None,
                      leave_progress=False, total=None, initial=0, starmap=False, show_progress=None,
                      **pool_kwargs):
     """
     Use the given function to process the given iterable in a ThreadPool or process Pool,
     showing progress using tqdm.
-    
+
     Args:
         func:
             The function to process each item with.
@@ -610,23 +611,27 @@ def compute_parallel(func, iterable, chunksize=1, threads=None, processes=None, 
             Note: When using a process pool, your function and iterable items must be pickleable.
 
         ordered:
+            Must be either True, False, or None.
             If True, process the items in order, and return results
             in the same order as provded in the input.
             If False, process the items as quickly as possible,
             meaning that some results will be presented out-of-order,
             depending on how long they took to complete relative to the
             other items in the pool.
-        
+            If None, then the items will be processed out-of-order,
+            but the results will be reordered to correspond to the original
+            input order before returning.
+
         total:
             Optional. Specify the total number of tasks, for progress reporting.
             Not necessary if your iterable defines __len__.
-        
+
         initial:
             Optional. Specify a starting value for the progress bar.
-        
+
         starmap:
             If True, each item should be a tuple, which will be unpacked into
-             the arguments to the given function, like ``itertools.starmap()``.
+            the arguments to the given function, like ``itertools.starmap()``.
 
         show_progress:
             If True, show a progress bar.
@@ -636,24 +641,46 @@ def compute_parallel(func, iterable, chunksize=1, threads=None, processes=None, 
             keyword arguments to pass to the underlying Pool object,
             such as ``initializer`` or ``maxtasksperchild``.
     """
-    assert bool(threads) ^ bool(processes), \
-        "Specify either threads or processes (not both)"
+    assert not bool(threads) or not bool(processes), \
+        "Specify either threads or processes, not both"
 
+    assert ordered in (True, False, None)
+    reorder = (ordered is None)
+    ordered = (ordered is True)
+
+    # Pick a pool implementation
     if threads:
         pool = ThreadPool(threads, **pool_kwargs)
     elif processes:
         pool = Pool(processes, **pool_kwargs)
+    else:
+        pool = _DummyPool()
 
     if total is None and hasattr(iterable, '__len__'):
         total = len(iterable)
 
-    if ordered:
-        f_map = pool.imap
+    # Pick a map() implementation
+    if threads == 0 and processes == 0:
+        f_map = map
+    elif ordered:
+        f_map = partial(pool.imap, chunksize=chunksize)
     else:
-        f_map = pool.imap_unordered
-    
-    if starmap:
-        func = partial(apply_star, func)
+        f_map = partial(pool.imap_unordered, chunksize=chunksize)
+
+    # If we'll need to reorder the results,
+    # then pass an index in and out of the function,
+    # which we'll use to sort the results afterwards.
+    if reorder:
+        iterable = enumerate(iterable)
+
+    # By default we call the function directly,
+    # but the 'reorder' or 'starmap' options require wrapper functions.
+    if reorder and starmap:
+        func = partial(_idx_passthrough_apply_star, func)
+    elif reorder and not starmap:
+        func = partial(_idx_passthrough, func)
+    elif not reorder and starmap:
+        func = partial(_apply_star, func)
 
     if show_progress is None:
         if hasattr(iterable, '__len__') and len(iterable) == 1:
@@ -662,18 +689,41 @@ def compute_parallel(func, iterable, chunksize=1, threads=None, processes=None, 
             show_progress = True
 
     with pool:
-        items = f_map(func, iterable, chunksize)
-        items_progress = tqdm_proxy(items, initial=initial, total=total, leave=leave_progress, disable=not show_progress)
-        items = list(items_progress)
-        items_progress.close()
-        return items
+        iter_results = f_map(func, iterable)
+        results_progress = tqdm_proxy(iter_results, initial=initial, total=total, leave=leave_progress, disable=not show_progress)
+        with results_progress:
+            # Here's where the work is actually done.
+            results = list(results_progress)
+
+    if reorder:
+        results.sort(key=itemgetter(0))
+        results = [r for (_, r) in results]
+
+    return results
 
 
-def apply_star(func, arg):
+@contextlib.contextmanager
+def _DummyPool():
+    yield
+
+
+def _apply_star(func, arg):
     return func(*arg)
 
 
+def _idx_passthrough(func, idx_arg):
+    idx, arg = idx_arg
+    return idx, func(arg)
+
+
+def _idx_passthrough_apply_star(func, idx_arg):
+    idx, arg = idx_arg
+    return idx, func(*arg)
+
+
 DEFAULT_TIMESTAMP = datetime.strptime('2018-01-01 00:00:00', '%Y-%m-%d %H:%M:%S')
+
+
 def parse_timestamp(ts, default=DEFAULT_TIMESTAMP, default_timezone="US/Eastern"):
     """
     Parse the given timestamp as a datetime object.

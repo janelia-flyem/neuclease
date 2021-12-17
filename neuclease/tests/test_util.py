@@ -1,4 +1,6 @@
 import json
+import time
+import random
 import tempfile
 import textwrap
 from tempfile import TemporaryFile
@@ -349,10 +351,21 @@ def test_ndrange_array():
 def _double(x):
     return 2*x
 
+
 def _add(x, y):
     return x + y
 
+
+def _add2_delayed(x):
+    time.sleep(random.random() / 1000)
+    return x + 2
+
+
 def test_compute_parallel():
+    items = list(range(100))
+    results = compute_parallel(_double, items)  # synchronous (0 threads, 0 processes)
+    assert results == list(range(0,200,2))
+
     items = list(range(100))
     results = compute_parallel(_double, items, threads=2)
     assert results == list(range(0,200,2))
@@ -363,6 +376,22 @@ def test_compute_parallel():
 
     items = [*zip(range(10), range(100,110))]
     results = compute_parallel(_add, items, processes=2, starmap=True)
+    assert results == [sum(item) for item in items]
+
+    items = [*range(1000)]
+    results = compute_parallel(_add2_delayed, items, processes=2, ordered=False)
+    assert results != sorted(results)
+
+    items = [*range(1000)]
+    results = compute_parallel(_add2_delayed, items, processes=2, ordered=False, reorder=True)
+    assert results == sorted(results)
+
+    items = [*zip(range(10), range(100,110))]
+    results = compute_parallel(_add, items, processes=2, starmap=True, ordered=False)
+    assert sum(results) == sum([sum(item) for item in items])
+
+    items = [*zip(range(10), range(100,110))]
+    results = compute_parallel(_add, items, processes=2, starmap=True, ordered=False, reorder=True)
     assert results == [sum(item) for item in items]
 
 
@@ -421,5 +450,5 @@ def test_is_box_coverage_complete():
 if __name__ == "__main__":
     args = ['-s', '--tb=native', '--pyargs', 'neuclease.tests.test_util']
     args += ['-x']
-    #args += ['-k', 'is_box_coverage_complete']
+    #args += ['-k', 'compute_parallel']
     pytest.main(args)
