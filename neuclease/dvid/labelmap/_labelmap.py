@@ -25,7 +25,7 @@ from ...util import (Timer, round_box, extract_subvol, DEFAULT_TIMESTAMP, tqdm_p
 from .. import dvid_api_wrapper, fetch_generic_json, fetch_repo_info
 from ..repo import create_voxel_instance, fetch_repo_dag, resolve_ref, expand_uuid
 from ..kafka import read_kafka_messages, kafka_msgs_to_df
-from ..rle import parse_rle_response, runlength_decode_from_ranges_to_mask
+from ..rle import parse_rle_response, runlength_decode_from_ranges_to_mask, rle_ranges_box
 
 from ._split import SplitEvent, fetch_supervoxel_splits_from_kafka
 from .labelops_pb2 import MappingOps, MappingOp
@@ -1628,6 +1628,8 @@ def fetch_sparsevol(server, uuid, instance, label, scale=0, supervoxels=False,
             is also returned. (If you passed in a custom ``mask_box``, it
             will be unchanged.)
     """
+    assert isinstance(supervoxels, bool)
+    assert np.issubdtype(type(scale), np.integer)
     assert format in ('coords', 'rle', 'ranges', 'mask')
 
     rles = fetch_sparsevol_rles(server, uuid, instance, label, scale, supervoxels, session=session)
@@ -1639,6 +1641,24 @@ def fetch_sparsevol(server, uuid, instance, label, scale=0, supervoxels=False,
         rle_ranges = parse_rle_response( rles, format='ranges' )
         mask, mask_box = runlength_decode_from_ranges_to_mask(rle_ranges, mask_box)
         return mask, mask_box
+
+
+def fetch_sparsevol_box(server, uuid, instance, label, scale=0, supervoxels=False, *, session=False):
+    """
+    Convenience function for obtaining the bounding box of a body at a given scale, via it's sparsevol representation.
+    """
+    rle = fetch_sparsevol(server, uuid, instance, label, scale, supervoxels, format='ranges', session=session)
+    return rle_ranges_box(rle)
+
+
+def fetch_sparsevol_boxes(server, uuid, instance, labels, scale=0, supervoxels=False, processes=4):
+    """
+    Fetch the bounding box of several bodies (or supervoxels).
+    Returns the boxes as a single array (N, 2, 3)
+    """
+    _fn = partial(fetch_sparsevol_box, server, uuid, instance, scale=scale, supervoxels=supervoxels)
+    boxes = compute_parallel(_fn, labels, processes=processes)
+    return np.array(boxes)
 
 
 @dvid_api_wrapper
