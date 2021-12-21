@@ -40,6 +40,12 @@ def construct_ng_precomputed_layer_from_rois(server, uuid, rois, bucket_name, bu
     if not localdir:
         localdir = tempfile.mkdtemp()
 
+    # First, verify that we have permission to edit the bucket.
+    with open(f"{localdir}/test-file.txt", 'w') as f:
+        f.write("Just testing my bucket access...\n")
+    subprocess.run(f"gsutil cp {localdir}/test-file.txt {bucket_name}/{bucket_path}/test-file.txt", shell=True, check=True)
+    subprocess.run(f"gsutil rm {bucket_name}/{bucket_path}/test-file.txt", shell=True, check=True)
+
     if sorted(rois) != rois:
         logger.warning("Your ROIs aren't sorted")
     roi_names = dict(enumerate(rois, start=1))
@@ -66,7 +72,7 @@ def construct_ng_precomputed_layer_from_rois(server, uuid, rois, bucket_name, bu
         logger.info("Adding segment properties (ROI names)")
         create_precomputed_segment_properties(roi_names, bucket_name, bucket_path, localdir)
 
-    logger.info("Done creating layer in {bucket_name}/{bucket_path}")
+    logger.info(f"Done creating layer in {bucket_name}/{bucket_path}")
 
 
 def create_precomputed_roi_vol(roi_vol, bucket_name, bucket_path, max_scale=3):
