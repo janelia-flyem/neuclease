@@ -934,7 +934,7 @@ def fetch_bodies_for_many_points(server, uuid, seg_instance, point_df, mutations
     else:
         # Only update the supervoxel IDs for coordinates which reside on a supervoxel which
         # was somehow involved in a split (as either parent or child).
-        # For those points, there's no guarnatee that the supervoxel in the given table
+        # For those points, there's no guarantee that the supervoxel in the given table
         # is in-sync with the given UUID, so we must check.
         if mutations is None:
             # We fetch the  mutations for the entire DAG (even other branches).
