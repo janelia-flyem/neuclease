@@ -119,13 +119,13 @@ def create_cleaving_assignment(bodies, output_path):
 def prepare_cleaving_assignment_setup(bodies, output_dir, bucket_path, csv_path, prefix='cleaving-', batch_size=20):
     """
     This function will help prepare a set of cleaving assignments.
-    
+
     1. Generates JSON files
     2. Uploads them to a google bucket (assuming you have permission)
     3. Exports a CSV with the structure we like to use.  You'll have to manually import that CSV file into a Google sheet to share with the proofreaders.
 
     Before running it, you need to enter the following terminal command, to log in to the Google Cloud system.
-    
+
         gcloud auth login <your-email-here>
 
     Args:
@@ -162,7 +162,7 @@ def prepare_cleaving_assignment_setup(bodies, output_dir, bucket_path, csv_path,
     # Explicitly *unset* content type, to trigger browsers to download the file, not display it as JSON.
     # Also, forbid caching.
     cmd = f"gsutil -m -h 'Cache-Control:public, no-store' -h 'Content-Type' cp -r {output_dir} gs://{bucket_path}/"
-    r = subprocess.run(cmd, shell=True, check=True, capture_output=True)
+    _ = subprocess.run(cmd, shell=True, check=True, capture_output=True)
 
     df['file'] = f'https://storage.googleapis.com/{bucket_path}/' + df['file']
 
@@ -180,6 +180,17 @@ def prepare_cleaving_assignment_setup(bodies, output_dir, bucket_path, csv_path,
 
 
 def create_connection_validation_assignment(df, output_path):
+    """
+    Create a single connection validation assignment.
+
+    Args:
+        df:
+            A dataframe of PSD coordinates, with columns ['x', 'y', 'z'].
+        output_path:
+            Where to store the assignment JSON file.
+    Returns:
+        The assignment json data, which was also written to the specified file.
+    """
     assignment = {
         "file type": "connection validation",
         "date": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
@@ -194,6 +205,19 @@ def create_connection_validation_assignment(df, output_path):
 
 
 def create_connection_validation_assignments(df, output_dir, prefix='connection-validation-', batch_size=100):
+    """
+    Create a directory of connection validation assignments.
+
+    Args:
+        df:
+            A dataframe of PSD coordinates, with columns ['x', 'y', 'z'].
+        output_dir:
+            A directory will be created at the given path and populated with assignment JSON files.
+        prefix:
+            Each assignment file will be named with the given prefix and an assignment number.
+        batch_size:
+            The number of tasks per assignment file.
+    """
     os.makedirs(output_dir)
     digits = int(ceil(log10(len(df) / batch_size)))
     for i, batch_df in enumerate(iter_batches(df, batch_size)):
