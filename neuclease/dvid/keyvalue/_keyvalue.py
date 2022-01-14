@@ -202,7 +202,7 @@ def fetch_key(server, uuid, instance, key, as_json=False, *, check_head=False, s
             Returns True if the key exists on the server, and False otherwise.
 
     Returns:
-        Bytes or parsed json data (see ``as_json``)
+        Bytes or parsed json data (see ``as_json``), unless check_head=True
     """
     url = f'{server}/api/node/{uuid}/{instance}/key/{key}'
     if check_head:
