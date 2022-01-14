@@ -31,15 +31,15 @@ def fetch_vnc_statuses(server, uuid):
 
             In [73]: ann.columns
             Out[73]:
-            Index(['status', 'user', 'naming user', 'instance', 'status user', 'comment',
+            Index(['status', 'user', 'naming_user', 'instance', 'status_user', 'comment',
                 'json', 'soma_x', 'soma_y', 'soma_z', 'has_soma', 'neck_x', 'neck_y',
                 'neck_z', 'is_cervical'],
                 dtype='object')
 
-            In [75]: ann.query('has_soma or is_cervical')[['status', 'status user', 'has_soma', 'is_cervical',
+            In [75]: ann.query('has_soma or is_cervical')[['status', 'status_user', 'has_soma', 'is_cervical',
                 ...:                                       'soma_x', 'soma_y', 'soma_z', 'neck_x', 'neck_y', 'neck_z']]
             Out[75]:
-                                   status  status user has_soma  is_cervical  soma_x  soma_y  soma_z  neck_x  neck_y  neck_z
+                                   status  status_user has_soma  is_cervical  soma_x  soma_y  soma_z  neck_x  neck_y  neck_z
             body
             10000   Prelim Roughly traced                 False         True       0       0       0   24481   36044   67070
             100000            Soma Anchor                  True        False   22959   20811    7254       0       0       0
@@ -79,7 +79,7 @@ def fetch_vnc_statuses(server, uuid):
         if c[-2:] in ('_x', '_y', '_z'):
             ann_df[c] = ann_df[c].fillna(0).astype(int)
 
-    for c in ('status', 'user', 'naming user', 'instance', 'status user', 'comment'):
+    for c in ('status', 'user', 'naming_user', 'instance', 'status_user', 'comment'):
         ann_df[c].fillna("", inplace=True)
 
     dupes = ann_df['body'].duplicated().sum()
@@ -145,7 +145,7 @@ def update_soma_statuses(server, uuid, dry_run=True):
         print()
         print(', '.join(map(str, needs_upgrade.index.tolist())))
         print()
-        print(needs_upgrade[['status', 'has_soma', 'soma_x', 'soma_y', 'soma_z', 'is_cervical', 'status user']])
+        print(needs_upgrade[['status', 'has_soma', 'soma_x', 'soma_y', 'soma_z', 'is_cervical', 'status_user']])
         print("\n-------------------\n")
 
     if len(needs_downgrade) > 0:
@@ -155,7 +155,7 @@ def update_soma_statuses(server, uuid, dry_run=True):
         print()
         print(', '.join(map(str, needs_downgrade.index.tolist())))
         print()
-        print(needs_downgrade[['status', 'has_soma', 'soma_x', 'soma_y', 'soma_z', 'is_cervical', 'status user']])
+        print(needs_downgrade[['status', 'has_soma', 'soma_x', 'soma_y', 'soma_z', 'is_cervical', 'status_user']])
         print("\n-------------------\n")
 
     if dry_run:
@@ -173,7 +173,7 @@ def update_soma_statuses(server, uuid, dry_run=True):
                 'bodyid': int(body),
                 'status': 'Soma Anchor',
                 'user': getpass.getuser(),
-                'status user': getpass.getuser()
+                'status_user': getpass.getuser()
             })
 
         print(f"Upgrading {len(needs_upgrade)} statuses")
@@ -190,7 +190,7 @@ def update_soma_statuses(server, uuid, dry_run=True):
                 'bodyid': int(body),
                 'status': 'Anchor',
                 'user': getpass.getuser(),
-                'status user': getpass.getuser()
+                'status_user': getpass.getuser()
             })
 
         print(f"Downgrading {len(needs_downgrade)} statuses")
@@ -230,7 +230,7 @@ def post_statuses(server, uuid, statuses):
             'bodyid': int(row.Index),
             'status': row.new_status,
             'user': getpass.getuser(),
-            'status user': getpass.getuser()
+            'status_user': getpass.getuser()
         })
         updates[row.Index] = j
 
