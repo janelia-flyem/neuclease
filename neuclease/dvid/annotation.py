@@ -815,47 +815,48 @@ def fetch_synapses_in_batches(server, uuid, synapses_instance, bounding_box_zyx=
 
     if format == 'json':
         return list(chain(*results))
-    elif format == 'pandas':
-        if return_both_partner_tables:
-            point_dfs, pre_partner_dfs, post_partner_dfs = zip(*results)
-            pre_partner_dfs = [*filter(len, pre_partner_dfs)]
-            post_partner_dfs = [*filter(len, post_partner_dfs)]
-        else:
-            point_dfs, partner_dfs = zip(*results)
-            partner_dfs = [*filter(len, partner_dfs)]
-        
-        # Any zero-length dataframes might have the wrong dtypes,
-        # which would screw up the concat step.  Remove them.
-        point_dfs = [*filter(len, point_dfs)]
 
-        if len(point_dfs) == 0:
-            # Return empty dataframe
-            return load_synapses_as_dataframes([], return_both_partner_tables)
+    assert format == 'pandas'
+    if return_both_partner_tables:
+        point_dfs, pre_partner_dfs, post_partner_dfs = zip(*results)
+        pre_partner_dfs = [*filter(len, pre_partner_dfs)]
+        post_partner_dfs = [*filter(len, post_partner_dfs)]
+    else:
+        point_dfs, partner_dfs = zip(*results)
+        partner_dfs = [*filter(len, partner_dfs)]
+    
+    # Any zero-length dataframes might have the wrong dtypes,
+    # which would screw up the concat step.  Remove them.
+    point_dfs = [*filter(len, point_dfs)]
 
-        point_df = pd.concat(point_dfs)
-        
-        # Make sure user and kind are Categorical
-        point_df['kind'] = point_df['kind'].astype("category")
-        point_df['user'] = point_df['user'].astype("category")
+    if len(point_dfs) == 0:
+        # Return empty dataframe
+        return load_synapses_as_dataframes([], return_both_partner_tables)
 
-        # If any 'fake' synapses were added due to inconsistent data,
-        # Drop duplicates among them.
-        if (point_df['kind'] == "Fake").any():
-            # All fake rows are the same.  Drop all but the first.
-            fake_df = point_df.query('kind == "Fake"').iloc[0:1]
-            point_df = pd.concat((fake_df, point_df.query('kind != "Fake"')))
+    point_df = pd.concat(point_dfs)
+    
+    # Make sure user and kind are Categorical
+    point_df['kind'] = point_df['kind'].astype("category")
+    point_df['user'] = point_df['user'].astype("category")
 
-        # Sort, mostly to ensure that the Fake point (if any) is at the top.        
-        point_df.sort_values(['z', 'y', 'x'], inplace=True)
-        
-        if return_both_partner_tables:
-            pre_partner_df = pd.concat(pre_partner_dfs, ignore_index=True)
-            post_partner_df = pd.concat(post_partner_dfs, ignore_index=True)
-            return point_df, pre_partner_df, post_partner_df
-        else:
-            partner_df = pd.concat(partner_dfs, ignore_index=True)
-            partner_df.drop_duplicates(inplace=True)
-            return point_df, partner_df
+    # If any 'fake' synapses were added due to inconsistent data,
+    # Drop duplicates among them.
+    if (point_df['kind'] == "Fake").any():
+        # All fake rows are the same.  Drop all but the first.
+        fake_df = point_df.query('kind == "Fake"').iloc[0:1]
+        point_df = pd.concat((fake_df, point_df.query('kind != "Fake"')))
+
+    # Sort, mostly to ensure that the Fake point (if any) is at the top.
+    point_df.sort_values(['z', 'y', 'x'], inplace=True)
+    
+    if return_both_partner_tables:
+        pre_partner_df = pd.concat(pre_partner_dfs, ignore_index=True)
+        post_partner_df = pd.concat(post_partner_dfs, ignore_index=True)
+        return point_df, pre_partner_df, post_partner_df
+    else:
+        partner_df = pd.concat(partner_dfs, ignore_index=True)
+        partner_df.drop_duplicates(inplace=True)
+        return point_df, partner_df
 
 
 def _fetch_synapse_batch(server, uuid, synapses_instance, batch_box, format, endpoint, # @ReservedAssignment
