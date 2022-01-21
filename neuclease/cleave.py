@@ -206,7 +206,7 @@ def _seeded_mst_nx(cleaned_edges, edge_weights, seed_labels, _node_sizes=None):
 
 
 def _seeded_mst_gt(cleaned_edges, edge_weights, seed_labels, _node_sizes=None):
-    import graph_tool.all as gt
+    import graph_tool as gt
     from graph_tool.topology import label_components, min_spanning_tree
 
     # Add root node and root edges
