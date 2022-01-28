@@ -29,6 +29,8 @@ def configure_default_logging():
     root_logger.addHandler(handler)
     root_logger.setLevel(logging.INFO)
 
+    logging.captureWarnings(True)
+
 try:
     import numexpr
 except ImportError:
