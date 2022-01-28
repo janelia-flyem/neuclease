@@ -1,3 +1,4 @@
+import warnings
 from functools import partial
 from collections import namedtuple
 from collections.abc import Iterable, Sequence
@@ -106,19 +107,22 @@ def fetch_labelindices(server, uuid, instance, labels, *, format='protobuf', ses
     labelindices = LabelIndices()
     labelindices.ParseFromString(r.content)
 
-    if format == 'protobuf':
-        return labelindices
-    if format == 'list-of-protobuf':
-        return list(labelindices.indices)
-    if format == 'pandas':
-        return list(map(convert_labelindex_to_pandas, labelindices.indices))
-    if format == 'single-dataframe':
-        dfs = []
-        for idx in labelindices.indices:
-            df = convert_labelindex_to_pandas(idx)
-            df.blocks['label'] = idx.label
-            dfs.append(df.blocks)
-        return pd.concat(dfs, ignore_index=True)
+    with warnings.catch_warnings():
+        warnings.filterwarnings("once", message=".*contains no block list.*")
+
+        if format == 'protobuf':
+            return labelindices
+        if format == 'list-of-protobuf':
+            return list(labelindices.indices)
+        if format == 'pandas':
+            return list(map(convert_labelindex_to_pandas, labelindices.indices))
+        if format == 'single-dataframe':
+            dfs = []
+            for idx in labelindices.indices:
+                df = convert_labelindex_to_pandas(idx)
+                df.blocks['label'] = idx.label
+                dfs.append(df.blocks)
+            return pd.concat(dfs, ignore_index=True)
 
 
 @dvid_api_wrapper
@@ -266,11 +270,11 @@ def _convert_labelindex_to_pandas(labelindex):
     """
     Convert a protobuf LabelIndex object into a PandasLabelIndex tuple,
     which returns supervoxel counts for all blocks in one big pd.DataFrame.
-    
+
     Args:
         labelindex:
             Instance of neuclease.dvid.labelops_pb2.LabelIndex, as returned by fetch_labelindex()
-    
+
     Returns:
         PandasLabelIndex (a namedtuple), in which the `blocks` member is a pd.DataFrame
         with the following columns: ['z', 'y', 'x', 'sv', 'count'].
@@ -283,7 +287,7 @@ def _convert_labelindex_to_pandas(labelindex):
     block_svs = []
     block_counts = []
     block_coords = []
-    
+
     # Convert each block's data into arrays
     for coord_zyx, sv_counts in zip(coords_zyx, labelindex.blocks.values()):
         svs = np.fromiter(sv_counts.counts.keys(), np.uint64, count=len(sv_counts.counts))
@@ -293,20 +297,25 @@ def _convert_labelindex_to_pandas(labelindex):
         coords = np.repeat(coord_zyx[None], len(svs), axis=0)
         #coords = np.lib.stride_tricks.as_strided(coord_zyx, shape=(len(svs), 3), strides=(0,4))
         #coords = np.broadcast_to(coord_zyx, (len(svs),3))
-        
+
         block_svs.append(svs)
         block_counts.append(counts)
         block_coords.append(coords)
 
-    # Concatenate all block data and load into one big DataFrame
-    all_coords = np.concatenate(block_coords)
-    all_svs = np.concatenate(block_svs)
-    all_counts = np.concatenate(block_counts)
-    
-    blocks_df = pd.DataFrame( all_coords, columns=['z', 'y', 'x'] )
-    blocks_df['sv'] = all_svs
-    blocks_df['count'] = all_counts
-    
+    if len(block_coords) == 0:
+        # Before editing this message, see filterwarnings, above.
+        warnings.warn(f"LabelIndex for label {labelindex.label} contains no block list!")
+        blocks_df = pd.DataFrame([], columns=['z', 'y', 'x', 'sv', 'count'], dtype=int)
+    else:
+        # Concatenate all block data and load into one big DataFrame
+        all_coords = np.concatenate(block_coords)
+        all_svs = np.concatenate(block_svs)
+        all_counts = np.concatenate(block_counts)
+
+        blocks_df = pd.DataFrame( all_coords, columns=['z', 'y', 'x'] )
+        blocks_df['sv'] = all_svs
+        blocks_df['count'] = all_counts
+
     return PandasLabelIndex( blocks_df,
                              labelindex.label,
                              labelindex.last_mutid,
