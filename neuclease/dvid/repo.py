@@ -97,6 +97,38 @@ fetch_repo_info = fetch_info
 
 
 @dvid_api_wrapper
+def post_info(server, uuid, info, *, session=None):
+    """
+    Allows changing of some repository properties by POSTing of a JSON similar to what
+    you'd use in posting a new repo.  The "alias" and "description" properties can be
+    optionally modified using this function.
+
+    .. code-block:: json
+
+        {
+            "alias": "myrepo",
+            "description": "This is the best repository in the universe"
+        }
+
+    Leaving out a property will keep it unchanged.
+
+    Args:
+        server:
+            DVID server
+        uuid:
+            repo uuid
+        info:
+            dict, to be encoded as JSON.
+    """
+    assert {*info.keys()} <= {'alias', 'description'}
+    assert isinstance(info.get('alias', ''), str)
+    assert isinstance(info.get('description', ''), str)
+
+    r = session.post(f'{server}/api/repo/{uuid}/info', json=info)
+    r.raise_for_status()
+
+
+@dvid_api_wrapper
 def fetch_log(server, repo_uuid, *, session=None):
     """
     Fetch the repo log stored in DVID.
