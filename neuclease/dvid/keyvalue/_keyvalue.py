@@ -572,6 +572,7 @@ DEFAULT_BODY_STATUS_CATEGORIES = [
     '',
     '0.5assign',
     'Anchor',
+    'Cleaved Anchor',
     'Sensory Anchor',
     'Cervical Anchor',
     'Soma Anchor',
