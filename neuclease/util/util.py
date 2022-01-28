@@ -613,7 +613,7 @@ def compute_parallel(func, iterable, chunksize=1, threads=0, processes=0, ordere
         ordered:
             Must be either True, False, or None.
             If True, process the items in order, and return results
-            in the same order as provded in the input.
+            in the same order as provided in the input.
             If False, process the items as quickly as possible,
             meaning that some results will be presented out-of-order,
             depending on how long they took to complete relative to the
@@ -660,7 +660,7 @@ def compute_parallel(func, iterable, chunksize=1, threads=0, processes=0, ordere
         total = len(iterable)
 
     # Pick a map() implementation
-    if threads == 0 and processes == 0:
+    if not threads and not processes:
         f_map = map
     elif ordered:
         f_map = partial(pool.imap, chunksize=chunksize)
