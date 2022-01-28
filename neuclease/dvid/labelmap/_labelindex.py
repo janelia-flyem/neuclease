@@ -13,6 +13,8 @@ from .. import dvid_api_wrapper
 from .labelops_pb2 import LabelIndex, LabelIndices
 from . import fetch_mapping
 
+PandasLabelIndex = namedtuple("PandasLabelIndex", "blocks label last_mutid last_mod_time last_mod_user")
+
 @dvid_api_wrapper
 def fetch_labelindex(server, uuid, instance, label, format='protobuf', *, session=None): # @ReservedAssignment
     """
@@ -251,8 +253,16 @@ def _copy_labelindex_batch(src_triple, dest_triple, labels_batch):
     post_labelindices(*dest_triple, indexes_batch)
 
 
-PandasLabelIndex = namedtuple("PandasLabelIndex", "blocks label last_mutid last_mod_time last_mod_user")
 def convert_labelindex_to_pandas(labelindex):
+    try:
+        return _convert_labelindex_to_pandas(labelindex)
+    except Exception as ex:
+        ex2 = RuntimeError(f"Can't convert labelindex for body {labelindex.label}")
+        ex2.labelindex = labelindex
+        raise ex2 from ex
+
+
+def _convert_labelindex_to_pandas(labelindex):
     """
     Convert a protobuf LabelIndex object into a PandasLabelIndex tuple,
     which returns supervoxel counts for all blocks in one big pd.DataFrame.
