@@ -31,7 +31,7 @@ def fetch_vnc_statuses(server, uuid):
 
             In [73]: ann.columns
             Out[73]:
-            Index(['status', 'user', 'naming_user', 'instance', 'status_user', 'comment',
+            Index(['status', 'user', 'instance_user', 'instance', 'status_user', 'comment',
                 'json', 'soma_x', 'soma_y', 'soma_z', 'has_soma', 'neck_x', 'neck_y',
                 'neck_z', 'is_cervical'],
                 dtype='object')
@@ -79,7 +79,7 @@ def fetch_vnc_statuses(server, uuid):
         if c[-2:] in ('_x', '_y', '_z'):
             ann_df[c] = ann_df[c].fillna(0).astype(int)
 
-    for c in ('status', 'user', 'naming_user', 'instance', 'status_user', 'comment'):
+    for c in ('status', 'user', 'instance_user', 'instance', 'status_user', 'comment'):
         ann_df[c].fillna("", inplace=True)
 
     dupes = ann_df['body'].duplicated().sum()
