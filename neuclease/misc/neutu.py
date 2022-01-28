@@ -120,13 +120,26 @@ def prepare_cleaving_assignment_setup(bodies, output_dir, bucket_path, csv_path,
     """
     This function will help prepare a set of cleaving assignments.
 
-    1. Generates JSON files
-    2. Uploads them to a google bucket (assuming you have permission)
-    3. Exports a CSV with the structure we like to use.  You'll have to manually import that CSV file into a Google sheet to share with the proofreaders.
+        1. Generates JSON files
+        2. Uploads them to a google bucket (assuming you have permission)
+        3. Exports a CSV with the structure we like to use.  You'll have to manually
+        import that CSV file into a Google sheet to share with the proofreaders.
 
-    Before running it, you need to enter the following terminal command, to log in to the Google Cloud system.
+    Before running this function, you need to to log in to the Google Cloud
+    system by entering the following command in your terminal:
 
         gcloud auth login <your-email-here>
+
+    Finally, here's a checklist of things you should consider doing in the google sheet:
+
+        - Protect column headers
+        - Protect left-hand columns (body, assignment, file)
+        - Conditional formatting to highlight assignment grouping:
+            - Select "Custom formula is" and enter "=mod($B2,2)"
+        - Conditional formatting to highlight uncompleted assignments
+            - Select "Custom formula is" and enter "=and(mod(row(K2), 10)=2, J2<>"", not(K2))"
+        - Data validation for 'date started' and 'date completed'
+            - Must be a date
 
     Args:
         bodies:
