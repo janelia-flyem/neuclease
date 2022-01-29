@@ -65,10 +65,15 @@ def fetch_labelindex(server, uuid, instance, label, format='protobuf', *, sessio
     elif format == 'pandas':
         return convert_labelindex_to_pandas(labelindex)
 
+
 @dvid_api_wrapper
-def fetch_labelindices(server, uuid, instance, labels, *, format='protobuf', session=None): # @ReservedAssignment
+def fetch_labelindices(server, uuid, instance, labels, *, format='protobuf', session=None):
     """
     Fetch a batch of label indexes via a single call to dvid.
+
+    Note:
+        No error is raised for bodies which do not exist.
+        Instead, an empty labelindex is returned.
 
     Args:
         labels:
@@ -305,7 +310,8 @@ def _convert_labelindex_to_pandas(labelindex):
     if len(block_coords) == 0:
         # Before editing this message, see filterwarnings, above.
         warnings.warn(f"LabelIndex for label {labelindex.label} contains no block list!")
-        blocks_df = pd.DataFrame([], columns=['z', 'y', 'x', 'sv', 'count'], dtype=int)
+        cols = ['z', 'y', 'x', 'sv', 'count']
+        blocks_df = pd.DataFrame(columns=cols, dtype=int).astype({'sv': np.uint64})
     else:
         # Concatenate all block data and load into one big DataFrame
         all_coords = np.concatenate(block_coords)
@@ -414,16 +420,17 @@ def fetch_sizes_via_labelindex(server, uuid, instance, labels, supervoxels=False
     if batch_size is None:
         assert threads is None and processes is None, \
             "Specify a batch size or don't use multithreading"
-        return _fetch_sizes_via_labelindex(server, uuid, instance, labels, supervoxels=supervoxels, session=session)
+        sizes = _fetch_sizes_via_labelindex(server, uuid, instance, labels, supervoxels=supervoxels, session=session)
+        return sizes.loc[labels]
 
     if threads is None and processes is None:
         threads = 1
 
-    f = partial(_fetch_sizes_via_labelindex, server, uuid, instance, supervoxels=supervoxels) # No session
+    f = partial(_fetch_sizes_via_labelindex, server, uuid, instance, supervoxels=supervoxels)
     batches = iter_batches(pd.unique(labels), batch_size)
     batch_sizes = compute_parallel(f, batches, 1, threads, processes, ordered=False, leave_progress=True)
     sizes = pd.concat(batch_sizes)
-    return sizes.loc[labels]  # re-order according to the user's input
+    return sizes.loc[labels]
 
 
 def _fetch_sizes_via_labelindex(server, uuid, instance, labels, supervoxels=False, *, session=None):
@@ -439,7 +446,15 @@ def _fetch_sizes_via_labelindex(server, uuid, instance, labels, supervoxels=Fals
         _supervoxel_set = set(labels)  # noqa
         df = df.query('sv in @_supervoxel_set')
         sizes = df.groupby('sv')['count'].sum()
+        sizes.index = sizes.index.astype(np.uint64)
         sizes.name = 'size'
+
+        # Non-existent supervoxels are given 0 size
+        if (mapping == 0).any():
+            missing_svs = mapping[mapping == 0].index
+            missing_sizes = pd.Series(0, index=missing_svs, name='size')
+            sizes = pd.concat((sizes, missing_sizes))
+
         return sizes
     else:
         labelindices = fetch_labelindices(server, uuid, instance, labels, format='protobuf')
@@ -451,7 +466,7 @@ def _fetch_sizes_via_labelindex(server, uuid, instance, labels, supervoxels=Fals
             block_sums = (sum(block_svs.counts.values()) for block_svs in index.blocks.values())
             total_sum = sum(block_sums)
             sizes.append(total_sum)
-        
+
         bodies = np.fromiter(bodies, np.uint64)
         sizes = pd.Series(sizes, index=bodies, name='size')
         sizes.index.name = 'body'
