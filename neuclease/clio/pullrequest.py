@@ -392,11 +392,8 @@ def apply_merges(dvid_server, uuid, seg_instance, mergeable_df, user):
     assert 'mergeset' in mergeable_df
     assert {*mergeable_df['coerced_assessment']} == {'target', 'fragment'}
 
-    # Re-sort
-    mergeable_df['assessment'] = pd.Categorical(mergeable_df['assessment'], ASSESSMENT_CATEGORIES, ordered=True)
-    mergeable_df['status'] = pd.Categorical(mergeable_df['status'], DEFAULT_BODY_STATUS_CATEGORIES, ordered=True)
-
-    mergeable_df = mergeable_df.sort_values(['mergeset', 'status', 'assessment'], ascending=[True, False, True])
+    # Make sure 'target' is the first row for each group.
+    mergeable_df = mergeable_df.sort_values(['coerced_assessment'], ascending=False)
 
     logger.info("Fetching body annotations")
     ann_df = fetch_body_annotations(dvid_server, uuid, f"{seg_instance}_annotations", bodies=mergeable_df.index)
