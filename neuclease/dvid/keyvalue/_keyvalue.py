@@ -671,9 +671,9 @@ def fetch_body_annotations(server, uuid, instance='segmentation_annotations', bo
         if not k.isdigit():
             continue
         if v.get('body ID', int(k)) != int(k):
-            raise RuntimeError(f"Json value in key {k} contains a mismatched body ID: {v['body ID']}")
+            logger.warning(f"Json value in key {k} contains a mismatched body ID: {v['body ID']}")
         if v.get('bodyid', int(k)) != int(k):
-            raise RuntimeError(f"Json value in key {k} contains a mismatched bodyid: {v['bodyid']}")
+            logger.warning(f"Json value in key {k} contains a mismatched bodyid: {v['bodyid']}")
         v['bodyid'] = int(k)
         values.append(v)
 
