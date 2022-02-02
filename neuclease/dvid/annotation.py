@@ -320,6 +320,27 @@ def load_elements_as_dataframe(elements):
     return df
 
 
+def elements_to_blocks(elements, block_width=64):
+    """
+    Convert a list of JSON elements (as returned by fetch_elements())
+    into a JSON dict of block-aligned lists (as returned by fetch_blocks()).
+    """
+    pos = [e['Pos'] for e in elements]
+    element_df = pd.DataFrame(pos, columns=[*'xyz'])
+    element_df['element'] = elements
+    element_df[['bx', 'by', 'bz']] = element_df[[*'xyz']] // block_width
+    element_df = element_df.sort_values(['bz', 'by', 'bx'])
+
+    blocks_df = element_df.groupby(['bz', 'by', 'bx'])['element'].agg(list)
+    blocks_df = blocks_df.reset_index()
+    blocks_df['key'] = (  blocks_df['bx'].astype(str) + ','
+                        + blocks_df['by'].astype(str) + ','
+                        + blocks_df['bz'].astype(str) )
+
+    blocks_dict = blocks_df.set_index('key')['element'].to_dict()
+    return blocks_dict
+
+
 @dvid_api_wrapper
 def fetch_all_elements(server, uuid, instance, format='json', *, session=None):
     """
@@ -451,6 +472,9 @@ def post_blocks(server, uuid, instance, blocks_json, kafkalog=False, *, merge_ex
 
         instance:
             dvid annotations instance name, e.g. 'bookmarks_todo'
+
+        blocks_json:
+            A block-oriented JSON dictionary of elements as described above.
 
         kafkalog:
             If True, log this post event in kafka
@@ -1006,7 +1030,7 @@ def load_synapses(path):
 def load_synapses_from_json(json_path, batch_size=1000):
     """
     Load the synapses to a dataframe from a JSON file
-    (which must have the same structure as the elements response from DVID).
+    (which must have the same structure as the GET .../elements response from DVID).
     The JSON file is consumed in batches, avoiding the need
     to load the entire JSON document in RAM at once.
     """
@@ -1026,7 +1050,6 @@ def load_synapses_from_json(json_path, batch_size=1000):
     point_df = pd.concat(point_dfs)
     partner_df = pd.concat(partner_dfs)
     return point_df, partner_df
-
 
 def load_relationships(elements, kind=None):
     """
