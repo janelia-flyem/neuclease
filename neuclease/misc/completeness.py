@@ -220,6 +220,33 @@ def _completeness_forecast(conn_df, syn_counts_df, stop_at_rank):
 
 
 def _filter_synapses(point_df, partner_df, min_tbar_conf=0.0, min_psd_conf=0.0, roi=None):
+    """
+    Filter rows out of the given synapse point table (point_df) and pre-post
+    connection table (partner_df) as specified by the other parameters.
+
+    In addition to filtering out rows according to the input criteria,
+    synapses will also be removed if their partner(s) were filtered out.
+    So, if a PSD's tbar is filtered out, then the PSD will also be removed from
+    these results, even if the PSD itself would have passed the given filters.
+
+    Args:
+        point_df:
+            As explained in completeness_forecast()
+        partner_df:
+            As explained in completeness_forecast()
+        min_tbar_conf:
+            Minimum tbar confidence to include in the output.
+        min_psd_conf:
+            Minimum PSD confidence to include in the output.
+        roi:
+            ROI name or list of names.
+            If this is provided, then point_df must contain a column for 'roi'.
+            Rows which don't match one of the given ROI names will be excluded from the results.
+
+    Returns:
+        (point_df, partner_df)
+        Same as the input, but excluding rows that were filtered out.
+    """
     filters = []
 
     if 0 in point_df['body'].values:
@@ -255,6 +282,11 @@ def _filter_synapses(point_df, partner_df, min_tbar_conf=0.0, min_psd_conf=0.0, 
 
 
 def _body_conn_df(point_df, partner_df):
+    """
+    Onto the given pre-to-post connection table given in partner_df,
+    merge additional columns ['body_pre', 'body_post'],
+    obtained from the given point_df table.
+    """
     # Did the user already provide the body_pre, body_post columns?
     if {'body_pre', 'body_post'} <= {*partner_df.columns}:
         return partner_df[['pre_id', 'post_id', 'body_pre', 'body_post']]
