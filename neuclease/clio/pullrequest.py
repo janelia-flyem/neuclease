@@ -5,17 +5,31 @@ from itertools import chain
 import numpy as np
 import pandas as pd
 import networkx as nx
-from requests.exceptions import HTTPError
 
 from ..util import find_root, tqdm_proxy as tqdm
 from ..dvid import (
     default_dvid_session, fetch_body_annotations, fetch_sizes, fetch_mutations,
-    post_key, compute_merge_hierarchies, post_merge, delete_key,
+    compute_merge_hierarchies, post_merge, delete_key,
     DEFAULT_BODY_STATUS_CATEGORIES)
 
 from . import clio_api_wrapper
 
 logger = logging.getLogger(__name__)
+
+
+# These are the possible 'assessments' of merge fragments as determined in assess_merges().
+# Note: This is list is ordered.
+ASSESSMENT_CATEGORIES = [
+    'target',
+    'old_target',
+    'mergeable',
+    'already_merged',
+    'merged_elsewhere',
+    'my_target_merged_elsewhere',
+    'unknown',
+    'unassessed'
+]
+
 
 @clio_api_wrapper
 def fetch_pull_requests(user_email='all', *, base=None, session=None):
@@ -264,6 +278,7 @@ def assess_merges(dvid_server, uuid, instance, merges, mutations=None):
     body_df['mergeset'] = mergesets
     body_df['owner'] = owners
 
+    assert set(ASSESSMENT_CATEGORIES) >= set(body_df['assessment']), set(body_df['assessment'])
     return body_df, g
 
 
@@ -341,15 +356,11 @@ def extract_and_coerce_mergeable_groups(body_df):
         17761         725936032  Anchor    True   mergeable    153127        17761             target
         153127        266944916            True      target    153127       153127           fragment
     """
-    asmt_categories = ['target', 'old_target', 'mergeable', 'already_merged', 'merged_elsewhere', 'my_target_merged_elsewhere', 'unknown', 'unassessed']
-    assert set(asmt_categories) >= set(body_df['assessment']), set(body_df['assessment'])
-
-    # Extracted from:
-
+    assert set(ASSESSMENT_CATEGORIES) >= set(body_df['assessment']), set(body_df['assessment'])
     assert set(DEFAULT_BODY_STATUS_CATEGORIES) >= set(body_df['status']), \
         "Unknown statuses: {}".format(set(body_df['status']) - set(DEFAULT_BODY_STATUS_CATEGORIES))
 
-    body_df['assessment'] = pd.Categorical(body_df['assessment'], asmt_categories, ordered=True)
+    body_df['assessment'] = pd.Categorical(body_df['assessment'], ASSESSMENT_CATEGORIES, ordered=True)
     body_df['status'] = pd.Categorical(body_df['status'], DEFAULT_BODY_STATUS_CATEGORIES, ordered=True)
 
     mergeable_assessments = ('target', 'old_target', 'mergeable')  # noqa
@@ -380,6 +391,12 @@ def apply_merges(dvid_server, uuid, seg_instance, mergeable_df, user):
     assert 'coerced_assessment' in mergeable_df.columns
     assert 'mergeset' in mergeable_df
     assert {*mergeable_df['coerced_assessment']} == {'target', 'fragment'}
+
+    # Re-sort
+    mergeable_df['assessment'] = pd.Categorical(mergeable_df['assessment'], ASSESSMENT_CATEGORIES, ordered=True)
+    mergeable_df['status'] = pd.Categorical(mergeable_df['status'], DEFAULT_BODY_STATUS_CATEGORIES, ordered=True)
+
+    mergeable_df = mergeable_df.sort_values(['mergeset', 'status', 'assessment'], ascending=[True, False, True])
 
     logger.info("Fetching body annotations")
     ann_df = fetch_body_annotations(dvid_server, uuid, f"{seg_instance}_annotations", bodies=mergeable_df.index)
