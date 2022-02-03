@@ -155,7 +155,7 @@ def _completeness_forecast(conn_df, syn_counts_df, stop_at_rank):
     # _pre and _post columns.  So, by the time we add a given max_rank body to our "traced set",
     # all of the preceding rows in the connection table have already been traced.
     logger.info("Sorting connections by body rank")
-    conn_df = conn_df.sort_values(['max_rank', 'min_rank']).reset_index(drop=True)
+    conn_df = conn_df.sort_values(['max_rank', 'min_rank'], ignore_index=True)
 
     logger.info("Calculating cumulative columns (tbars/psds/connections)")
 
