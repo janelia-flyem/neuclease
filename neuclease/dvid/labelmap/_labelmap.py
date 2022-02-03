@@ -20,7 +20,7 @@ from vigra.analysis import labelMultiArrayWithBackground
 
 from ...util import (Timer, round_box, extract_subvol, DEFAULT_TIMESTAMP, tqdm_proxy, find_root,
                      ndrange, ndrange_array, box_to_slicing, compute_parallel, boxes_from_grid, box_shape,
-                     overwrite_subvol, iter_batches, extract_labels_from_volume, box_intersection, downsample_mask)
+                     overwrite_subvol, iter_batches, extract_labels_from_volume, box_intersection)
 
 from .. import dvid_api_wrapper, fetch_generic_json, fetch_repo_info
 from ..repo import create_voxel_instance, fetch_repo_dag, resolve_ref, expand_uuid
@@ -32,6 +32,7 @@ from .labelops_pb2 import MappingOps, MappingOp
 from neuclease.dvid.server import fetch_server_info
 
 logger = logging.getLogger(__name__)
+
 
 @dvid_api_wrapper
 def create_labelmap_instance(server, uuid, instance, versioned=True, tags=[], block_size=64, voxel_size=8.0,
@@ -94,7 +95,7 @@ def fetch_maxlabel(server, uuid, instance, *, session=None, dag=None):
         for parent_uuid in parents:
             try:
                 parent_maxes.append( fetch_maxlabel(server, parent_uuid, instance, dag=dag) )
-            except HTTPError as ex:
+            except HTTPError:
                 parent_maxes.append(0)
 
         parent_max = max(parent_maxes)
@@ -103,6 +104,7 @@ def fetch_maxlabel(server, uuid, instance, *, session=None, dag=None):
             raise
 
         return parent_max
+
 
 @dvid_api_wrapper
 def post_maxlabel(server, uuid, instance, maxlabel, *, session=None):
@@ -179,9 +181,9 @@ def post_nextlabel(server, uuid, instance, num_labels, *, session=None):
 @dvid_api_wrapper
 def fetch_lastmod(server, uuid, instance, body, *, session=None):
     """
-	Returns last modification metadata for a label in JSON.
+    Returns last modification metadata for a label in JSON.
 
-	Time is returned in RFC3339 string format. Returns a status code 404 (Not Found)
+    Time is returned in RFC3339 string format. Returns a status code 404 (Not Found)
     if label does not exist.
 
     Args:
@@ -193,10 +195,10 @@ def fetch_lastmod(server, uuid, instance, body, *, session=None):
 
         instance:
             dvid instance name, e.g. 'segmentation'
-        
+
         body:
             Body ID
-    
+
     Returns:
         dict
 
@@ -209,7 +211,7 @@ def fetch_lastmod(server, uuid, instance, body, *, session=None):
             "last mod user": "johndoe",
             "last mod time": "2000-02-01 12:13:14 +0000 UTC", "last mod app": "Neu3"
         }
-	
+
     """
     url = f'{server}/api/node/{uuid}/{instance}/lastmod/{body}'
     r = session.get(url)
@@ -272,7 +274,7 @@ def fetch_supervoxels_for_bodies(server, uuid, instance, bodies, *, threads=0, p
           omitted from the results and an error will be logged.
         - The input list is de-duplicated before fetching the results.
     """
-    bodies = pd.unique(bodies).copy() # Apparently this copy is needed or else we get a segfault
+    bodies = pd.unique(bodies).copy()  # Apparently this copy is needed or else we get a segfault
 
     _fetch = partial(_fetch_supervoxels_for_body, server, uuid, instance)
 
@@ -366,6 +368,7 @@ def fetch_size(server, uuid, instance, label_id, supervoxels=False, *, session=N
     response = fetch_generic_json(url, session=session)
     return response['voxels']
 
+
 # FIXME: Deprecated name
 fetch_body_size = fetch_size
 
@@ -448,6 +451,7 @@ def _fetch_sizes(server, uuid, instance, label_ids, supervoxels, session=None):
 
     return sizes
 
+
 # FIXME: Deprecated name
 fetch_body_sizes = fetch_sizes
 
@@ -467,7 +471,7 @@ def fetch_supervoxel_sizes_for_body(server, uuid, instance, body_id, *, session=
     Returns:
         pd.Series, indexed by supervoxel
     """
-    from . import fetch_labelindex # late import to avoid recursive import
+    from . import fetch_labelindex  # late import to avoid recursive import
     li = fetch_labelindex(server, uuid, instance, body_id, format='pandas')
     return li.blocks.groupby('sv')['count'].sum().rename('size')
 
@@ -638,7 +642,6 @@ def compute_roi_distributions(server, uuid, labelmap_instance, label_ids, rois, 
     results = []
     logger.info(f"Processing {len(label_ids)} labels in {len(batches)} batches")
     for batch in tqdm_proxy(batches):
-        #minibatch_size = max(1, len(batch) // processes // 2)
         minibatch_size = 2
         minibatches = iter_batches(batch, minibatch_size)
         dfs = compute_parallel(_fetch_indices, minibatches, processes=processes, ordered=False)
@@ -654,10 +657,11 @@ def compute_roi_distributions(server, uuid, labelmap_instance, label_ids, rois, 
         extract_labels_from_volume(index_df, combined_vol, combined_box, 5, rois)
         index_df.rename(inplace=True, columns={'label': 'roi_label', 'label_name': 'roi'})
 
-        roi_dist_df = (index_df[['body', 'roi_label', 'roi', 'count']]
-                        .groupby(['body', 'roi_label'], sort=False)
-                        .agg({'roi': 'first', 'count': 'sum'})
-                        .reset_index())
+        roi_dist_df = (
+            index_df[['body', 'roi_label', 'roi', 'count']]
+            .groupby(['body', 'roi_label'], sort=False)
+            .agg({'roi': 'first', 'count': 'sum'})
+            .reset_index())
 
         results.append(roi_dist_df)
 
@@ -712,8 +716,10 @@ def fetch_label(server, uuid, instance, coordinate_zyx, supervoxels=False, scale
     r.raise_for_status()
     return np.uint64(r.json()["Label"])
 
+
 # Synonym. See wrapper_proxies.py
 fetch_labelmap_label = fetch_label
+
 
 # Old name (FIXME: remove)
 fetch_label_for_coordinate = fetch_label
@@ -973,7 +979,7 @@ def fetch_sparsevol_rles(server, uuid, instance, label, scale=0, supervoxels=Fal
 
     See also: neuclease.dvid.rle.parse_rle_response()
     """
-    supervoxels = str(bool(supervoxels)).lower() # to lowercase string
+    supervoxels = str(bool(supervoxels)).lower()  # to lowercase string
     url = f'{server}/api/node/{uuid}/{instance}/sparsevol/{label}?scale={scale}&supervoxels={supervoxels}'
     r = session.get(url)
     r.raise_for_status()
@@ -1005,7 +1011,6 @@ def post_split_supervoxel(server, uuid, instance, supervoxel, rle_payload_bytes,
         The two new IDs resulting from the split: (split_sv_id, remaining_sv_id)
     """
     url = f'{server}/api/node/{uuid}/{instance}/split-supervoxel/{supervoxel}'
-
 
     if bool(split_id) ^ bool(remain_id):
         msg = ("I'm not sure if DVID allows you to specify the split_id "
@@ -1056,7 +1061,7 @@ def fetch_mapping(server, uuid, instance, supervoxel_ids, *, session=None, as_se
 
 
 @dvid_api_wrapper
-def fetch_mappings(server, uuid, instance, as_array=False, *, format=None, session=None): # @ReservedAssignment
+def fetch_mappings(server, uuid, instance, as_array=False, *, format=None, session=None):
     """
     Fetch the complete sv-to-label in-memory mapping table
     from DVID and return it as a numpy array or a pandas Series (indexed by sv).
@@ -1091,9 +1096,9 @@ def fetch_mappings(server, uuid, instance, as_array=False, *, format=None, sessi
         parts = parts[:4]
         parts = tuple(int(p) for p in parts)
         if parts >= (0, 8, 24, 15):
-            format = 'binary' # @ReservedAssignment
+            format = 'binary'
         else:
-            format = 'csv' # @ReservedAssignment
+            format = 'csv'
 
     if format == 'binary':
         # This takes ~30 seconds so it's nice to log it.
@@ -1115,7 +1120,7 @@ def fetch_mappings(server, uuid, instance, as_array=False, *, format=None, sessi
             r = session.get(uri)
             r.raise_for_status()
 
-        with Timer(f"Parsing mapping", logger), BytesIO(r.content) as f:
+        with Timer("Parsing mapping", logger), BytesIO(r.content) as f:
             df = pd.read_csv(f, sep=' ', header=None, names=['sv', 'body'], engine='c', dtype=np.uint64)
             if as_array:
                 return df.values
@@ -1181,7 +1186,7 @@ def fetch_complete_mappings(server, uuid, instance, include_retired=True, kafka_
     split_tables = list(map(lambda t: np.asarray([row[:-1] for row in t], np.uint64), split_events.values()))
     if split_tables:
         split_table = np.concatenate(split_tables)
-        retired_svs = split_table[:, SplitEvent._fields.index('old')] #@UndefinedVariable
+        retired_svs = split_table[:, SplitEvent._fields.index('old')]
         retired_svs = set(retired_svs)
     else:
         retired_svs = set()
@@ -1202,7 +1207,7 @@ def fetch_complete_mappings(server, uuid, instance, include_retired=True, kafka_
     base_bodies = base_mapping[:,1]
 
     # Augment with identity rows, which aren't included in the base.
-    with Timer(f"Constructing missing identity-mappings", logger):
+    with Timer("Constructing missing identity-mappings", logger):
         missing_idents = set(base_bodies) - set(base_svs) - retired_svs - cleave_fragments
         missing_idents = np.fromiter(missing_idents, np.uint64)
         missing_idents_mapping = np.array((missing_idents, missing_idents)).transpose()
@@ -1544,7 +1549,7 @@ def fetch_sparsevol_coarse_threaded(server, uuid, instance, labels, supervoxels=
 
 @dvid_api_wrapper
 def fetch_sparsevol(server, uuid, instance, label, scale=0, supervoxels=False,
-                    *, format='coords', dtype=np.int32, mask_box=None, session=None): #@ReservedAssignment
+                    *, format='coords', dtype=np.int32, mask_box=None, session=None):
     """
     Return coordinates of all voxels in the given body/supervoxel at the given scale.
 
@@ -2320,12 +2325,14 @@ def post_labelmap_voxels(server, uuid, instance, offset_zyx, volume, scale=0, do
 
     post_labelmap_blocks(server, uuid, instance, corners, blocks, scale, downres, noindexing, throttle, session=session)
 
+
 # Deprecated name
 post_labelarray_voxels = post_labelmap_voxels
 
 
 @dvid_api_wrapper
-def post_labelmap_blocks(server, uuid, instance, corners_zyx, blocks, scale=0, downres=False, noindexing=False, throttle=False, *, is_raw=False, gzip_level=6, session=None, progress=False):
+def post_labelmap_blocks(server, uuid, instance, corners_zyx, blocks, scale=0, downres=False, noindexing=False, throttle=False,
+                         *, is_raw=False, gzip_level=6, session=None, progress=False):
     """
     Post supervoxel data to a labelmap instance, from a list of blocks.
 
@@ -2381,7 +2388,7 @@ def post_labelmap_blocks(server, uuid, instance, corners_zyx, blocks, scale=0, d
         body_data = encode_labelarray_blocks(corners_zyx, blocks, gzip_level, progress)
 
     if not body_data:
-        return # No blocks
+        return  # No blocks
 
     # These options are already false by default, so we'll only include them if we have to.
     opts = { 'downres': downres, 'noindexing': noindexing, 'throttle': throttle }
@@ -2393,6 +2400,7 @@ def post_labelmap_blocks(server, uuid, instance, corners_zyx, blocks, scale=0, d
 
     r = session.post(f'{server}/api/node/{uuid}/{instance}/blocks', params=params, data=body_data)
     r.raise_for_status()
+
 
 # Deprecated name
 post_labelarray_blocks = post_labelmap_blocks
@@ -2740,7 +2748,7 @@ def post_hierarchical_cleaves(server, uuid, instance, body_id, group_mapping, le
             group_mapping = pd.Series(index=svs, data=groups)
             final_mapping_df = post_hierarchical_cleaves(server, uuid, instance, body_id, group_mapping)
     """
-    from . import fetch_labelindex # late import to avoid recursive import
+    from . import fetch_labelindex  # late import to avoid recursive import
 
     assert isinstance(group_mapping, pd.Series)
     assert group_mapping.index.dtype == np.uint64
@@ -2816,7 +2824,6 @@ def post_hierarchical_cleaves(server, uuid, instance, body_id, group_mapping, le
         _cleave_groups(top_body, top_df, top_bodies)
         _cleave_groups(body, bottom_df, bottom_bodies)
 
-
     li_df = fetch_labelindex(server, uuid, instance, body_id, format='pandas', session=session).blocks
     orig_len = len(li_df)
     li_df = li_df.query('sv in @group_df.index')
@@ -2885,7 +2892,7 @@ def post_merge(server, uuid, instance, main_label, other_labels, *, session=None
     other_labels = list(map(int, other_labels))
     assert main_label not in other_labels, \
         (f"Can't merge {main_label} with itself.  "
-        "DVID does not behave correctly if you attempt to merge a body into itself!")
+         "DVID does not behave correctly if you attempt to merge a body into itself!")
 
     content = [main_label] + other_labels
 
@@ -3127,6 +3134,7 @@ def labelmap_kafka_msgs_to_df(kafka_msgs, default_timestamp=DEFAULT_TIMESTAMP, d
 
 
 AffectedBodies = namedtuple("AffectedBodies", "new_bodies changed_bodies removed_bodies new_svs deleted_svs")
+
 
 def compute_affected_bodies(kafka_msgs):
     """
