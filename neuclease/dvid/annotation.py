@@ -300,7 +300,7 @@ def load_elements_as_dataframe(elements):
     for i, e in enumerate(elements):
         pos[i] = e['Pos']
         kinds.append(e['Kind'])
-        tags.append(e['Tags'])
+        tags.append(e.get('Tags', None))
 
         if 'Prop' not in e or not e['Prop']:
             continue
