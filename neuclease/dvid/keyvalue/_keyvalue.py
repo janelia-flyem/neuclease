@@ -51,7 +51,7 @@ def fetch_keys(server, uuid, instance, *, session=None):
 
 
 @dvid_api_wrapper
-def fetch_keyrange(server, uuid, instance, key1, key2, *, session=None):
+def fetch_keyrange(server, uuid, instance, key1=' ', key2=chr(ord('~')+1), *, session=None):
     """
     Returns all keys between 'key1' and 'key2' for
     the given data instance (not their values).
@@ -87,13 +87,16 @@ def fetch_keyrange(server, uuid, instance, key1, key2, *, session=None):
 
         # This gets everything from '0' to 'zzzzz...'
         keys = fetch_keyrange('emdata3:8900', 'abc9', 'my-kv-instance', '0', chr(ord('z')+1))
+
+        # All visible ascii characters
+        keys = fetch_keyrange('emdata3:8900', 'abc9', 'my-kv-instance', ' ', chr(ord('~')+1))
     """
     url = f'{server}/api/node/{uuid}/{instance}/keyrange/{key1}/{key2}'
     return fetch_generic_json(url, session=session)
 
 
 @dvid_api_wrapper
-def fetch_keyrangevalues(server, uuid, instance, key1, key2, as_json=False, *, check=None, serialization=None, session=None):
+def fetch_keyrangevalues(server, uuid, instance, key1=' ', key2=chr(ord('~')+1), as_json=False, *, check=None, serialization=None, session=None):
     """
     Fetch a set of keys and values from DVID via the ``/keyrangevalues`` endpoint.
     Instead of specifying the list of keys explicitly as in fetch_keyvalues(),
@@ -142,8 +145,8 @@ def fetch_keyrangevalues(server, uuid, instance, key1, key2, as_json=False, *, c
         # This will catch everything from 'aaa...' to a single 'z', but not 'za'
         kvs = fetch_keyrangevalues('emdata3:8900', 'abc9', 'my-kv-instance', 'a', 'z')
 
-        # This gets everything from '0' to 'zzzzz...'
-        kvs = fetch_keyrangevalues('emdata3:8900', 'abc9', 'my-kv-instance', '0', chr(ord('z')+1))
+        # All visible ascii characters
+        keys = fetch_keyrange('emdata3:8900', 'abc9', 'my-kv-instance', ' ', chr(ord('~')+1))
     """
     if serialization is None:
         serialization = 'protobuf'
