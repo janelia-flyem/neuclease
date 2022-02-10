@@ -349,6 +349,25 @@ def fetch_all_elements(server, uuid, instance, format='json', *, session=None):
     equivalent to the /blocks endpoint but without the need to determine extents.
 
     The returned stream of data is the same as /blocks endpoint.
+
+    Example usage for analyzing "todo" items from NeuTu:
+
+    .. code-block:: python
+
+        todos = fetch_all_elements(*cns_master, 'segmentation_todo', format='pandas')
+        todos = todos.explode('tags')
+
+        todos['body'] = fetch_labels(*cns_seg, todos[[*'zyx']].values)
+        todos['body_size'] = fetch_sizes(*cns_seg, todos['body'].values, processes=32).values
+
+        todos['sv'] = fetch_labels(*cns_seg, todos[[*'zyx']].values, supervoxels=True)
+        todos['sv_size'] = fetch_sizes(*cns_seg, todos['sv'].values, supervoxels=True, processes=32).values
+
+        todos = todos.sort_values(['action', 'sv_size'], ascending=[True, False], ignore_index=True)
+
+        cols = ['body', 'body_size', 'sv', 'sv_size', 'x', 'y', 'z', 'kind', 'tags', 'action',
+                'createdTime', 'user', 'checked', 'comment', 'modifiedTime', 'checkedTime', 'priority']
+        todos = todos[cols]
     """
     assert format in ('pandas', 'json')
     url = f'{server}/api/node/{uuid}/{instance}/all-elements'
