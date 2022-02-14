@@ -1623,6 +1623,9 @@ def find_files(root_dir, file_exts=None, skip_exprs=None, file_exprs=None):
         except StopIteration:
             return []
 
+        files = sorted(files)
+        subdirs = sorted(subdirs)
+
         # Matching files
         if file_expr:
             files = filter(lambda f: file_rgx.fullmatch(f), files)
@@ -1637,6 +1640,6 @@ def find_files(root_dir, file_exts=None, skip_exprs=None, file_exprs=None):
         subdir_filesets = map(_find_files, subdirs)
 
         # Concatenate
-        return chain(sorted(files), *subdir_filesets)
+        return chain(files, *subdir_filesets)
 
     return list(_find_files(root_dir))
