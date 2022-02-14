@@ -320,6 +320,33 @@ def load_elements_as_dataframe(elements):
     return df
 
 
+def dataframe_to_elements(df, prop_cols=[]):
+    """
+    Convert a dataframe to JSON elements that can be posted to DVID.
+    Input must contian at least the following columns: ['x', 'y', 'z', 'Kind']
+
+    Note: No support for relationships in this function.
+    """
+    elements = []
+    for row in df.itertuples():
+        e = {
+            "Pos": [int(row.x), int(row.y), int(row.z)],
+            "Kind": row.Kind
+        }
+        if 'Tags' in df.columns:
+            e['Tags'] = list(row.Tags)
+        elements.append(e)
+
+    if prop_cols:
+        for e in elements:
+            e['Prop'] = {}
+        for col in prop_cols:
+            for e, p in zip(elements, df[col]):
+                e['Prop'][col] = str(p)  # properties must be strings
+
+    return elements
+
+
 def elements_to_blocks(elements, block_width=64):
     """
     Convert a list of JSON elements (as returned by fetch_elements())
