@@ -313,7 +313,7 @@ def _rank_syn_counts(point_df, conn_df, syn_counts_df=None, sort_by='SynWeight')
     else:
         # We can only sort using any columns the user provided,
         # plus SynWeight, which we can provide below.
-        assert syn_counts_df.columns >= {'PreSyn', 'PostSyn'}
+        assert {*syn_counts_df.columns} >= {'PreSyn', 'PostSyn'}
         assert {*sort_by} <= {*syn_counts_df.columns, 'SynWeight'}
 
     if syn_counts_df is None:
