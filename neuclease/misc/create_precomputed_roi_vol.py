@@ -1,5 +1,6 @@
 import os
 import json
+import copy
 import logging
 import tempfile
 import subprocess
@@ -10,6 +11,18 @@ from neuclease.util import tqdm_proxy as tqdm, dump_json
 from neuclease.dvid import fetch_combined_roi_volume
 
 logger = logging.getLogger()
+
+
+# Useful if you need to load a volume without tensorstore,
+# e.g. if you're just uploading meshes and segment_properties
+DEFAULT_VOLUME_INFO = {
+    "@type": "neuroglancer_multiscale_volume",
+    "scales": [{}],
+    "data_type": "uint64",
+    "num_channels": 1,
+    "mesh": "mesh",
+    "type": "segmentation",
+}
 
 
 def construct_ng_precomputed_layer_from_rois(server, uuid, rois, bucket_name, bucket_path, scale_0_res=8, decimation=0.01,
@@ -125,12 +138,23 @@ def create_precomputed_roi_vol(roi_vol, bucket_name, bucket_path, max_scale=3):
             store[:] = roi_vol.transpose()[:-2**scale+1:2**scale, :-2**scale+1:2**scale, :-2**scale+1:2**scale, None]
 
 
-def create_precomputed_ngmeshes(vol, vol_fullres_box, names, bucket_name, bucket_path, localdir=None, decimation=0.01):
+def create_precomputed_ngmeshes(vol, vol_fullres_box, names, bucket_name, bucket_path, localdir=None, decimation=0.01, volume_info=None):
     """
     Create meshes for the given labelvolume and upload them to a google bucket in
     neuroglancer legacy mesh format (i.e. what flyem calls "ngmesh" format).
     """
     from vol2mesh import Mesh
+    logger.info("Generating meshes")
+    meshes = Mesh.from_label_volume(vol, vol_fullres_box, smoothing_rounds=2)
+
+    logger.info("Simplifying meshes")
+    for mesh in meshes.values():
+        mesh.simplify(decimation)
+
+    upload_precompted_ngmeshes(meshes, names, bucket_name, bucket_path, localdir, volume_info)
+
+
+def upload_precompted_ngmeshes(meshes, names, bucket_name, bucket_path, localdir=None, volume_info=None):
     if not bucket_name.startswith('gs://'):
         bucket_name = 'gs://' + bucket_name
 
@@ -140,32 +164,28 @@ def create_precomputed_ngmeshes(vol, vol_fullres_box, names, bucket_name, bucket
     os.makedirs(f"{localdir}/mesh", exist_ok=True)
     dump_json({"@type": "neuroglancer_legacy_mesh"}, f"{localdir}/mesh/info")
 
-    logger.info("Generating meshes")
-    meshes = Mesh.from_label_volume(vol, vol_fullres_box, smoothing_rounds=2)
-
-    logger.info("Simplifying meshes")
-    for mesh in meshes.values():
-        mesh.simplify(decimation)
-
     logger.info("Serializing meshes")
     for label, mesh in meshes.items():
         name = names.get(label, str(label))
         mesh.serialize(f"{localdir}/mesh/{name}.ngmesh")
         dump_json({"fragments": [f"{name}.ngmesh"]}, f"{localdir}/mesh/{label}:0")
 
-    subprocess.run(f"gsutil cp {bucket_name}/{bucket_path}/info {localdir}/info", shell=True)
-    with open(f"{localdir}/info", 'r') as f:
-        info = json.load(f)
+    if volume_info:
+        volume_info = copy.deepcopy(volume_info)
+    else:
+        subprocess.run(f"gsutil -h 'Cache-Control:public, no-store' cp {bucket_name}/{bucket_path}/info {localdir}/info", shell=True)
+        with open(f"{localdir}/info", 'r') as f:
+            volume_info = json.load(f)
 
-    info["mesh"] = "mesh"
-    dump_json(info, f"{localdir}/info", unsplit_int_lists=True)
+    volume_info["mesh"] = "mesh"
+    dump_json(volume_info, f"{localdir}/info", unsplit_int_lists=True)
 
     logger.info("Uploading")
-    subprocess.run(f"gsutil cp {localdir}/info {bucket_name}/{bucket_path}/info", shell=True)
+    subprocess.run(f"gsutil -h 'Cache-Control:public, no-store' cp {localdir}/info {bucket_name}/{bucket_path}/info", shell=True)
     subprocess.run(f"gsutil cp -R {localdir}/mesh {bucket_name}/{bucket_path}/mesh", shell=True)
 
 
-def create_precomputed_segment_properties(names, bucket_name, bucket_path, localdir=None):
+def create_precomputed_segment_properties(names, bucket_name, bucket_path, localdir=None, volume_info=None):
     """
     Write the "segment properties" for a neuroglancer precomputed volume,
     i.e. the segment names.
@@ -198,12 +218,15 @@ def create_precomputed_segment_properties(names, bucket_name, bucket_path, local
 
     dump_json(props, f"{localdir}/segment_properties/info", unsplit_int_lists=True)
 
-    subprocess.run(f"gsutil cp {bucket_name}/{bucket_path}/info {localdir}/info", shell=True)
-    with open(f"{localdir}/info", 'r') as f:
-        info = json.load(f)
+    if volume_info:
+        volume_info = copy.deepcopy(volume_info)
+    else:
+        subprocess.run(f"gsutil cp {bucket_name}/{bucket_path}/info {localdir}/info", shell=True)
+        with open(f"{localdir}/info", 'r') as f:
+            volume_info = json.load(f)
 
-    info["segment_properties"] = "segment_properties"
-    dump_json(info, f"{localdir}/info", unsplit_int_lists=True)
+    volume_info["segment_properties"] = "segment_properties"
+    dump_json(volume_info, f"{localdir}/info", unsplit_int_lists=True)
 
-    subprocess.run(f"gsutil cp {localdir}/info {bucket_name}/{bucket_path}/info", shell=True)
-    subprocess.run(f"gsutil cp -R {localdir}/segment_properties {bucket_name}/{bucket_path}/segment_properties", shell=True)
+    subprocess.run(f"gsutil -h 'Cache-Control:public, no-store' cp {localdir}/info {bucket_name}/{bucket_path}/info", shell=True)
+    subprocess.run(f"gsutil -h 'Cache-Control:public, no-store' cp -R {localdir}/segment_properties {bucket_name}/{bucket_path}/segment_properties", shell=True)
