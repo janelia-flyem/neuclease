@@ -97,7 +97,7 @@ def assess_merges(dvid_server, uuid, instance, merges, mutations=None):
             The body is the target body in a merge set
         old_target:
             The target body was merged into something else,
-            so the target's "owner" is considerd the updated target.
+            so the target's "owner" is considered the updated target.
         mergeable:
             The merge fragment still exists and can be merged into
             its target (or updated target).
@@ -388,8 +388,9 @@ def apply_merges(dvid_server, uuid, seg_instance, mergeable_df, user):
         Merge metadata into the target?
     """
     assert mergeable_df.index.name == 'body'
+    assert 'owner' in mergeable_df.columns
     assert 'coerced_assessment' in mergeable_df.columns
-    assert 'mergeset' in mergeable_df
+    assert 'mergeset' in mergeable_df.columns
     assert {*mergeable_df['coerced_assessment']} == {'target', 'fragment'}
 
     # Make sure 'target' is the first row for each group.
@@ -405,9 +406,14 @@ def apply_merges(dvid_server, uuid, seg_instance, mergeable_df, user):
     for mergeset, df in tqdm(mergeable_df.groupby('mergeset'), total=num_mergesets):
         assert df['coerced_assessment'].iloc[0] == 'target'
         assert (df['coerced_assessment'].iloc[1:] == 'fragment').all()
-        target = df.index[0]
-        fragments = df.index[1:]
+        assert (df.index[1:] == df['owner'].iloc[1:]).all(), \
+            "Fragments that have been merged already (or merged elsewhere) are not eligible for merging!"
+
+        target = df['owner'].iloc[0]
+        fragments = df['owner'].iloc[1:]
         post_merge(dvid_server, uuid, seg_instance, target, fragments, session=s)
+
+        # Delete corresponding annotations in the segmentation_annotations keyvalue instance
         for fragment in fragments:
             if fragment in ann_df.index:
                 delete_key(dvid_server, uuid, f"{seg_instance}_annotations", str(fragment), session=s)
