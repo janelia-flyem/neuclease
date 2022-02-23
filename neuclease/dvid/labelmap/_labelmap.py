@@ -23,7 +23,7 @@ from ...util import (Timer, round_box, extract_subvol, DEFAULT_TIMESTAMP, tqdm_p
                      overwrite_subvol, iter_batches, extract_labels_from_volume, box_intersection)
 
 from .. import dvid_api_wrapper, fetch_generic_json, fetch_repo_info
-from ..repo import create_voxel_instance, fetch_repo_dag, resolve_ref, expand_uuid
+from ..repo import create_voxel_instance, fetch_repo_dag, resolve_ref, expand_uuid, find_repo_root
 from ..kafka import read_kafka_messages, kafka_msgs_to_df
 from ..rle import parse_rle_response, runlength_decode_from_ranges_to_mask, rle_ranges_box
 
@@ -2987,6 +2987,44 @@ def fetch_mutations(server, uuid, instance, userid=None, *, action_filter=None, 
     if action_filter is not None:
         action_filter = {*action_filter}
         msgs = [*filter(lambda m: m['Action'] in action_filter, msgs)]
+
+    if format == 'pandas':
+        return labelmap_kafka_msgs_to_df(msgs)
+    else:
+        return msgs
+
+
+@dvid_api_wrapper
+def fetch_history(server, uuid, instance, body, from_uuid=None, to_uuid=None, format='pandas', *, session=None):
+    """
+    Returns JSON for the all mutations pertinent to the label in the given range of versions.
+
+    Warning:
+        At the time of this writing (2022-02-23), this feature in DVID doesn't work very well.
+        Therefore, this function can't be used right now.
+
+    See also:
+        fetch_mutations(), compute_merge_hierarchies(), determine_owners()
+
+    Args:
+        server, uuid, instance:
+            A labelmap instance.
+        from_uuid:
+            First UUID in the range of UUIDs to fetch mutations from.
+            By default, this function determines the repo root UUID.
+        to_uuid:
+            The last UUID in the range of UUIDs (inclusive) to fetch mutations from.
+            By default, this function uses whichever UUID you supplied as the
+            second argument to this function, after 'server'.
+    """
+    assert format in ('pandas', 'json')
+    to_uuid = to_uuid or uuid
+    if from_uuid is None:
+        from_uuid = find_repo_root(server, uuid)
+
+    r = session.get(f'{server}/api/node/{uuid}/{instance}/history/{body}/{from_uuid}/{to_uuid}')
+    r.raise_for_status()
+    msgs = r.json()
 
     if format == 'pandas':
         return labelmap_kafka_msgs_to_df(msgs)
