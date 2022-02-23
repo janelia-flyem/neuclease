@@ -1648,20 +1648,28 @@ def fetch_sparsevol(server, uuid, instance, label, scale=0, supervoxels=False,
         return mask, mask_box
 
 
-def fetch_sparsevol_box(server, uuid, instance, label, scale=0, supervoxels=False, *, session=False):
+def fetch_sparsevol_box(server, uuid, instance, label, scale=0, supervoxels=False, *, missing='raise', session=None):
     """
     Convenience function for obtaining the bounding box of a body at a given scale, via it's sparsevol representation.
     """
-    rle = fetch_sparsevol(server, uuid, instance, label, scale, supervoxels, format='ranges', session=session)
-    return rle_ranges_box(rle)
+    assert missing in ('raise', 'ignore')
+    try:
+        rle = fetch_sparsevol(server, uuid, instance, label, scale, supervoxels, format='ranges', session=session)
+        return rle_ranges_box(rle)
+    except HTTPError as ex:
+        status_code = (ex.response is not None) and ex.response.status_code
+        if missing == 'ignore' and status_code == 404:
+            return np.array([[0,0,0], [0,0,0]], dtype=np.int32)
+        raise
 
 
-def fetch_sparsevol_boxes(server, uuid, instance, labels, scale=0, supervoxels=False, processes=4):
+def fetch_sparsevol_boxes(server, uuid, instance, labels, scale=0, supervoxels=False, processes=4, missing='raise'):
     """
     Fetch the bounding box of several bodies (or supervoxels).
     Returns the boxes as a single array (N, 2, 3)
     """
-    _fn = partial(fetch_sparsevol_box, server, uuid, instance, scale=scale, supervoxels=supervoxels)
+    assert missing in ('raise', 'ignore')
+    _fn = partial(fetch_sparsevol_box, server, uuid, instance, scale=scale, supervoxels=supervoxels, missing=missing)
     boxes = compute_parallel(_fn, labels, processes=processes)
     return np.array(boxes)
 
