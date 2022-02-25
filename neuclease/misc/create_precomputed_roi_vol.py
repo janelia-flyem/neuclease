@@ -142,6 +142,10 @@ def create_precomputed_ngmeshes(vol, vol_fullres_box, names, bucket_name, bucket
     """
     Create meshes for the given labelvolume and upload them to a google bucket in
     neuroglancer legacy mesh format (i.e. what flyem calls "ngmesh" format).
+
+    Args:
+        vol_fullres_box:
+            Full resolution box, in NANOMETERS
     """
     from vol2mesh import Mesh
     logger.info("Generating meshes")
@@ -218,7 +222,7 @@ def create_precomputed_segment_properties(names, bucket_name, bucket_path, local
 
     dump_json(props, f"{localdir}/segment_properties/info", unsplit_int_lists=True)
 
-    if volume_info:
+    if volume_info is not None:
         volume_info = copy.deepcopy(volume_info)
     else:
         subprocess.run(f"gsutil cp {bucket_name}/{bucket_path}/info {localdir}/info", shell=True)
