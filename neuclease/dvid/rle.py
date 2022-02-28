@@ -1,3 +1,4 @@
+from itertools import product
 import numpy as np
 from numba import jit
 from numba.types import int32
@@ -5,6 +6,8 @@ from numba.typed import List
 
 import pandas as pd
 
+
+from neuclease.util import lexsort_columns
 
 def extract_rle_size_and_first_coord(rle_payload_bytes):
     """
@@ -618,6 +621,11 @@ def rle_ranges_box(rle_array_zyx):
 
 @jit(nopython=True)
 def _write_mask_from_ranges(ranges_array, mask):
+    """
+    Fill the given mask using the given RLE ranges.
+    Note: Here, we assume EXCLUSIVE conventions,
+    i.e. [Z, Y, X0, X1], where X1 is one-past-the-end of the range.
+    """
     for i in range(len(ranges_array)):
         (z, y, x0, x1) = ranges_array[i]
         mask[z, y, x0:x1] = 1
@@ -672,3 +680,126 @@ def runlength_decode_from_ranges(rle_array_zyx):
             c += 1
 
     return coords
+
+
+@jit(nopython=True, nogil=True)
+def _split_x_ranges_for_grid(ranges, block_shape, halo=0):
+    """
+    Given RLEs encodings in the form of 'ranges' as returned by DVID:
+
+        [[Z,Y,X1,X2],
+         [Z,Y,X1,X2],
+         [Z,Y,X1,X2],
+         ...
+        ]
+
+    Note: The range INCLUDES X2, unlike numpy conventions.
+
+    Split the RLEs at block bounaries...
+    """
+    BZ, BY, BX = block_shape
+
+    BX1 = ranges[:, 2] // BX
+    BX2 = ranges[:, 3] // BX
+    num_split_ranges = (BX2 - BX1 + 1).sum()
+
+    # [Bz, By, Bx, z, y, x1, x2]
+    results = np.empty((num_split_ranges, 7), dtype=np.int32)
+    j = 0
+    for i in range(len(ranges)):
+        z, y, x1, x2 = ranges[i]
+        Bz, By, Bx = ranges[i, :3] // block_shape
+
+        xa, xb = x1, x2
+        while (xa // BX) != (x2 // BX):
+            xb = (xa // BX + 1) * BX - 1
+            results[j, :] = [Bz, By, Bx, z, y, max(x1, xa - halo), min(x2, xb + halo)]
+            j += 1
+            xa = xb + 1
+            Bx = (xa // BX)
+
+        results[j, :] = [Bz, By, Bx, z, y, max(x1, xa - halo), x2]
+        j += 1
+
+    assert j == num_split_ranges
+    return results
+
+
+def split_ranges_for_grid(ranges, block_shape, halo=0):
+    block_shape = np.array(block_shape)
+    grid_ranges = _split_x_ranges_for_grid(ranges, block_shape, halo)
+    df = pd.DataFrame(grid_ranges, columns=['Bz', 'By', 'Bx', 'z', 'y', 'x1', 'x2'])
+    if halo == 0:
+        return df
+
+    BZ, BY, BX = block_shape
+
+    # For speed, exclude the purely non-halo ranges since they aren't needed.
+    halo_ranges_df = df.query(
+        'not (Bz * @BZ + @halo <= z and z < (Bz+1) * @BZ - @halo and '
+        '     By * @BY + @halo <= y and y < (By+1) * @BY - @halo)')
+
+    halo_dfs = {}
+    halo_dfs['Z-upper'] = halo_ranges_df.query('z < Bz * @BZ + @halo').copy()
+    halo_dfs['Z-upper'][['Bz', 'By']] -= (1, 0)
+
+    halo_dfs['Y-upper'] = halo_ranges_df.query('y < By * @BY + @halo').copy()
+    halo_dfs['Y-upper'][['Bz', 'By']] -= (0, 1)
+
+    halo_dfs['Z-lower'] = halo_ranges_df.query('z >= (Bz+1) * @BZ - @halo').copy()
+    halo_dfs['Z-lower'][['Bz', 'By']] += (1, 0)
+
+    halo_dfs['Y-lower'] = halo_ranges_df.query('y >= (By+1) * @BY - @halo').copy()
+    halo_dfs['Y-lower'][['Bz', 'By']] += (0, 1)
+
+    # halo_dfs['Z-upper-Y-upper'] = df.query('z + 1 - Bz * @BZ < @halo').copy()
+    # halo_dfs['Z-upper-Y-upper'][['Bz', 'By']] -= (1, 0)
+
+    # Combine, then use an inner merge to drop any blocks ended up with only halos (no interior portion).
+    halo_df = pd.concat(halo_dfs.values(), ignore_index=True)
+    halo_df = df[['Bz', 'By', 'Bx']].drop_duplicates().merge(halo_df, 'inner', on=['Bz', 'By', 'Bx'])
+
+    df = pd.concat((df, halo_df), ignore_index=True)
+    df.sort_values(['Bz', 'By', 'Bx', 'z', 'y'], ignore_index=True, inplace=True)
+    return df
+
+
+    # for dz, dy in product((-1, 0, 1), (-1, 0, 1)):
+    #     if (dz, dy) == (0,0):
+    #         continue
+    #     halo_df[['Bz', 'By']] = df[['Bz', 'By']] - (dz, dy)
+    #     halo_df.query('(z - Bz*BZ) - @halo')
+    #     halo_df = df[['Bz', 'By', 'Bx']].merge(halo_df, 'inner', on=['Bz', 'By', 'Bx'])
+
+
+
+def blockwise_masks_from_ranges(ranges, block_shape, halo=0):
+    block_shape = np.asarray(block_shape)
+    full_block_shape = block_shape + 2*halo
+    assert len(block_shape) == 3
+    BZ, BY, BX = block_shape
+
+    ranges_df = split_ranges_for_grid(ranges, block_shape, halo)
+    coords = ranges_df[['Bz', 'By', 'Bx']].drop_duplicates().values
+    masks = np.zeros((len(coords), *full_block_shape), dtype=bool)
+
+    boxes = np.array([block_shape * coords - halo,
+                      block_shape * (coords + 1) + halo])
+    boxes = boxes.transpose(1, 0, 2)
+
+    for i, ((Bz, By, Bx), block_df) in enumerate(ranges_df.groupby(['Bz', 'By', 'Bx'], sort=False)):
+        block_ranges = block_df[['z', 'y', 'x1', 'x2']].values
+
+        Z_offset = Bz * BZ - halo
+        Y_offset = By * BY - halo
+        X_offset = Bx * BX - halo
+
+        # Offset to local coordinates,
+        # and switch X2 to EXCLUSIVE convention as expected by _write_mask_from_ranges()
+        block_ranges -= (Z_offset, Y_offset, X_offset, X_offset - 1)
+        _write_mask_from_ranges(block_ranges, masks[i])
+
+    assert i == len(masks) - 1
+    if halo == 0:
+        assert masks.sum() == (1 + ranges_df['x2'] - ranges_df['x1']).sum()
+    return boxes, masks
