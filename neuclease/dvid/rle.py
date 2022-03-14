@@ -7,8 +7,6 @@ from numba.typed import List
 import pandas as pd
 
 
-from neuclease.util import lexsort_columns
-
 def extract_rle_size_and_first_coord(rle_payload_bytes):
     """
     Given a binary RLE payload as returned by the /sparsevol endpoint,
@@ -774,6 +772,8 @@ def split_ranges_for_grid(ranges, block_shape, halo=0):
 
 
 def blockwise_masks_from_ranges(ranges, block_shape, halo=0):
+    if not hasattr(block_shape, '__len__'):
+        block_shape = 3 * (block_shape,)
     block_shape = np.asarray(block_shape)
     full_block_shape = block_shape + 2*halo
     assert len(block_shape) == 3
@@ -781,25 +781,24 @@ def blockwise_masks_from_ranges(ranges, block_shape, halo=0):
 
     ranges_df = split_ranges_for_grid(ranges, block_shape, halo)
     coords = ranges_df[['Bz', 'By', 'Bx']].drop_duplicates().values
-    masks = np.zeros((len(coords), *full_block_shape), dtype=bool)
-
     boxes = np.array([block_shape * coords - halo,
                       block_shape * (coords + 1) + halo])
     boxes = boxes.transpose(1, 0, 2)
+    groups = ranges_df.groupby(['Bz', 'By', 'Bx'], sort=False)
 
-    for i, ((Bz, By, Bx), block_df) in enumerate(ranges_df.groupby(['Bz', 'By', 'Bx'], sort=False)):
-        block_ranges = block_df[['z', 'y', 'x1', 'x2']].values
+    def gen_masks():
+        for i, ((Bz, By, Bx), block_df) in enumerate(groups):
+            block_ranges = block_df[['z', 'y', 'x1', 'x2']].values
 
-        Z_offset = Bz * BZ - halo
-        Y_offset = By * BY - halo
-        X_offset = Bx * BX - halo
+            Z_offset = Bz * BZ - halo
+            Y_offset = By * BY - halo
+            X_offset = Bx * BX - halo
 
-        # Offset to local coordinates,
-        # and switch X2 to EXCLUSIVE convention as expected by _write_mask_from_ranges()
-        block_ranges -= (Z_offset, Y_offset, X_offset, X_offset - 1)
-        _write_mask_from_ranges(block_ranges, masks[i])
+            # Offset to local coordinates,
+            # and switch X2 to EXCLUSIVE convention as expected by _write_mask_from_ranges()
+            block_ranges -= (Z_offset, Y_offset, X_offset, X_offset - 1)
+            mask = np.zeros(full_block_shape, dtype=bool)
+            _write_mask_from_ranges(block_ranges, mask)
+            yield mask
 
-    assert i == len(masks) - 1
-    if halo == 0:
-        assert masks.sum() == (1 + ranges_df['x2'] - ranges_df['x1']).sum()
-    return boxes, masks
+    return boxes, gen_masks()
