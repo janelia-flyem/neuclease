@@ -685,18 +685,38 @@ def _split_x_ranges_for_grid(ranges, block_shape, halo=0):
     """
     Given RLEs encodings in the form of 'ranges' as returned by DVID:
 
-        [[Z,Y,X1,X2],
-         [Z,Y,X1,X2],
-         [Z,Y,X1,X2],
-         ...
-        ]
-
-    Note: The range INCLUDES X2, unlike numpy conventions.
-
     Split the RLEs at block bounaries along the X-axis.
     If a halo is specified, then extend each block RLE
     in the X direction by the given number of pixels.
     Neighboring block RLEs will therefore have overlapping runs.
+
+    The result will have at least as many RLEs as the input,
+    but probably more, assuming that some of the original RLEs
+    span across block boundaries in the X direction.
+
+    Args:
+        ranges:
+            RLEs in the form of 'ranges' as returned by DVID.
+            Note: The range INCLUDES X2, unlike numpy conventions.
+
+                [[Z,Y,X1,X2],
+                [Z,Y,X1,X2],
+                [Z,Y,X1,X2],
+                ...
+                ]
+        block_shape:
+            Defines the grid structure
+
+        halo:
+            If non-zero, then extend each block-limited RLE beyond
+            the edge of the block in the X direction, up to the
+            specified number of voxels (but without extending
+            beyond the bounds of the original RLE, of course).
+
+    Returns:
+        ndarray with seven columns: ['Bz', 'By', 'Bx', 'z', 'y', 'x1', 'x2']
+        Where z,y,x1,x2 are in DVID RLE 'ranges' format (same format as the input),
+        and Bz,By,Bx are the grid index to which each RLE belongs.
     """
     BX = block_shape[2]
     BX1 = ranges[:, 2] // BX
@@ -726,7 +746,40 @@ def _split_x_ranges_for_grid(ranges, block_shape, halo=0):
 
 
 def split_ranges_for_grid(ranges, block_shape, halo=0):
-    BZ, BY, BX = block_shape
+    """
+    Given RLEs in the form of 'ranges' as returned by DVID,
+    'split' the RLEs into distinct grid blocks, such that
+    the entire sparse volume could be reconstructed one block at a time.
+
+    Args:
+        ranges:
+            RLEs in the form of 'ranges' as returned by DVID.
+            Note: The range INCLUDES X2, unlike numpy conventions.
+
+                [[Z,Y,X1,X2],
+                [Z,Y,X1,X2],
+                [Z,Y,X1,X2],
+                ...
+                ]
+
+        block_shape:
+            Defines the grid structure
+
+        halo:
+            If non-zero, then extend each block with a padding
+            (such that blocks overlap) of the specified width on all sides.
+            The resulting RLEs will span up to the size of a fully padded block.
+            Encoded coordinates within the halo region may be represented muliple times,
+            if they reside in more than one overlapping block.
+
+    Returns:
+        DataFrame with columns ['Bz', 'By', 'Bx', 'z', 'y', 'x1', 'x2']
+        Where z,y,x1,x2 are in RLE format (same as dvid uses),
+        and Bz,By,Bx are the grid index to which each RLE belongs.
+        Note that if you specified a halo, then some of the RLE encodings (z,y,x1,x2)
+        will be duplicated, but with unique grid index columns (Bz,By,Bx).
+    """
+    BZ, BY, BX = block_shape  # noqa
 
     # Start by splitting the RLEs in the X-dimension,
     # then duplicate the ZY halo portions below.
@@ -744,13 +797,13 @@ def split_ranges_for_grid(ranges, block_shape, halo=0):
     # Construct some queries that can extract the ZY halo RLEs.
     # There are 8 'halo' regions in the ZY dimensions (4 sides and 4 corners).
     z_margins = [
-        ('True', 0),
         ('z < Bz * @BZ + @halo', -1),
+        ('True', 0),
         ('z >= (Bz+1) * @BZ - @halo', 1)
     ]
     y_margins = [
-        ('True', 0),
         ('y < By * @BY + @halo', -1),
+        ('True', 0),
         ('y >= (By+1) * @BY - @halo', 1)
     ]
     halo_dfs = []
@@ -761,17 +814,49 @@ def split_ranges_for_grid(ranges, block_shape, halo=0):
         halo_df[['Bz', 'By']] += (z_off, y_off)
         halo_dfs.append(halo_df)
 
-    # Use an inner merge to drop any blocks ended up with only halos
-    # (if a block had no interior portion, we don't want it).
+    # Use an inner merge to drop any blocks ended up with *only* halo RLEs.
+    # (If a block had no interior portion, we don't want its halo.)
     halo_df = pd.concat(halo_dfs, ignore_index=True)
     halo_df = df[['Bz', 'By', 'Bx']].drop_duplicates().merge(halo_df, 'inner', on=['Bz', 'By', 'Bx'])
 
+    # Finally, concatenate the interior RLEs and halo RLEs.
     df = pd.concat((df, halo_df), ignore_index=True)
     df.sort_values(['Bz', 'By', 'Bx', 'z', 'y'], ignore_index=True, inplace=True)
     return df
 
 
 def blockwise_masks_from_ranges(ranges, block_shape, halo=0):
+    """
+    Given RLEs in the form of 'ranges' as returned by DVID,
+    'split' the RLEs into distinct grid blocks, and then 'inflate'
+    the block-aligned RLEs into 3D masks, such that the entire
+    sparse volume could be reconstructed one block at a time from the masks.
+
+    Args:
+        ranges:
+            RLEs in the form of 'ranges' as returned by DVID.
+            Note: The range INCLUDES X2, unlike numpy conventions.
+
+                [[Z,Y,X1,X2],
+                [Z,Y,X1,X2],
+                [Z,Y,X1,X2],
+                ...
+                ]
+
+        block_shape:
+            Defines the grid structure
+
+        halo:
+            If non-zero, then extend each block with a padding
+            (such that blocks overlap) of the specified width on all sides.
+            The resulting mask boxes will overlap spatially.
+
+    Returns:
+        boxes, mask_iterator
+        Where boxes has shape (N, 2, 3) and indicates the spatial location of each block mask,
+        and mask_iterator is a single-pass iterator (generator) that can produce
+        the 3D mask for each box, in the order indicated via the boxes array.
+    """
     if not hasattr(block_shape, '__len__'):
         block_shape = 3 * (block_shape,)
     block_shape = np.asarray(block_shape)
