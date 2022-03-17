@@ -35,17 +35,29 @@ def main():
     args = parse_args()
 
     labeled_slices = read_labeled_slices(args.slice_directory)
+    if args.z_min is None:
+        args.z_min = min(labeled_slices.keys())
+
+    if args.z_max is None:
+        args.z_max = max(labeled_slices.keys())
+
     distance_vol = signed_distance_interpolation(labeled_slices, args.minz, args.maxz)
 
     mask_vol = (distance_vol < 0).astype(np.uint8)
     mask_vol[:] *= args.out_label
     write_slices(mask_vol, args.output_directory, args.minz)
 
+    if args.export_numpy:
+        p = os.path.normpath(args.slice_directory) + '_interpolated.npy'
+        np.save(p, mask_vol)
+
     if args.export_distance_visualization:
         d = args.output_directory + '_distance_viz'
         if args.minz is None:
             args.minz = min(labeled_slices.keys())
         export_distance_visualization(distance_vol, d, args.minz)
+        if args.export_numpy:
+            np.save(d + '.npy', distance_vol)
 
     print("Done.")
 
@@ -60,6 +72,7 @@ def parse_args():
                         help='Debugging feature. Export the raw distance transform volume as png slices, '
                         'after taking the absolute value of the signed distance transform and '
                         'renormalizing to the range 0-255')
+    parser.add_argument('--export-numpy', action='store_true')
     parser.add_argument('slice_directory', help='Directory of input PNG slices. Unlabeled slices can be omitted.')
     parser.add_argument('output_directory', nargs='?', help='Directory to place the output slices. Must not exist yet.')
     args = parser.parse_args()
@@ -86,6 +99,12 @@ def read_labeled_slices(slice_directory):
     labeled_slices = {}
     for p in tqdm(slice_files):
         img = skimage.io.imread(p)
+
+        if img.ndim == 3:
+            # Combine channels
+            img = img.any(axis=2)
+
+        assert img.ndim == 2
 
         # Ignore slices with no labels at all
         if not img.any():
@@ -138,7 +157,8 @@ def signed_distance_interpolation(labeled_slices, z_min=None, z_max=None):
         z_max = max(labeled_slices.keys())
 
     assert z_min < z_max, f"Invalid output slice index range: {z_min}..{z_max}"
-    print(f"Interpolating {z_min}..{z_max}")
+
+    print(f"Computing signed distance transform on {len(labeled_slices)} labeled slices")
 
     # Compute signed distance transform slices
     distances = {}
@@ -148,9 +168,12 @@ def signed_distance_interpolation(labeled_slices, z_min=None, z_max=None):
         # distances will be negative inside the mask, positive outside
         distances[z] = scipy.ndimage.distance_transform_edt(~img)
         distances[z] -= scipy.ndimage.distance_transform_edt(img)
+        distances[z] = distances[z].astype(np.float32)
 
+    print(f"Interpolating {z_min}..{z_max}")
     x = list(distances.keys())
     y = list(distances.values())
+
     interpolator = scipy.interpolate.interp1d(
         x, y, axis=0, bounds_error=False, fill_value=np.inf, assume_sorted=True)
 
@@ -158,11 +181,13 @@ def signed_distance_interpolation(labeled_slices, z_min=None, z_max=None):
     return distance_vol.astype(np.float32)
 
 
-def write_slices(vol, out_dir, z_min=0):
+def write_slices(vol, out_dir, z_min=None):
     """
     Write the given volume to disk as a sequence of PNG files.
     The slice file numbering will start with z_min.
     """
+    if z_min is None:
+        z_min = 0
     z_max = z_min + len(vol)
     os.makedirs(out_dir)
     print(f"Writing {len(vol)} slices to {out_dir}/")
