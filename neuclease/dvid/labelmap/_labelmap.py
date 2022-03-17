@@ -1802,7 +1802,7 @@ def generate_sample_coordinate(server, uuid, instance, label_id, supervoxels=Fal
         return middle_block_coord + nonzero_coords[len(nonzero_coords)//2]
 
 
-def locate_bodies(server, uuid, instance, bodies, supervoxels=False, *, interior=False, processes=4):
+def generate_sample_coordinates(server, uuid, instance, bodies, supervoxels=False, *, interior=False, processes=4):
     """
     Calls generate_sample_coordinate() in parallel for a batch of bodies.
     See that function for argument details.
@@ -1812,6 +1812,10 @@ def locate_bodies(server, uuid, instance, bodies, supervoxels=False, *, interior
     coords = compute_parallel(gen_coord, bodies, processes=processes)
     label_type = {False: 'body', True: 'supervoxel'}[supervoxels]
     return pd.DataFrame(coords, columns=[*'zyx'], index=bodies).rename_axis(label_type)
+
+
+# Alternative name
+locate_bodies = generate_sample_coordinates
 
 
 @dvid_api_wrapper
