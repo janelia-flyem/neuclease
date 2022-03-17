@@ -88,7 +88,7 @@ def construct_ng_precomputed_layer_from_rois(server, uuid, rois, bucket_name, bu
     logger.info(f"Done creating layer in {bucket_name}/{bucket_path}")
 
 
-def create_precomputed_roi_vol(roi_vol, bucket_name, bucket_path, max_scale=3):
+def create_precomputed_roi_vol(roi_vol, bucket_name, bucket_path, max_scale=3, resolution_nm=8*(2**5)):
     """
     Upload the given ROI volume (which must be a scale-5 volume, i.e. 256nm resolution)
     as a neuroglancer precomputed volume.
@@ -128,7 +128,11 @@ def create_precomputed_roi_vol(roi_vol, bucket_name, bucket_path, max_scale=3):
                 "encoding": "compressed_segmentation",
                 "compressed_segmentation_block_size": [8, 8, 8],
                 "chunk_size": [64, 64, 64],
-                "resolution": [256*2**scale, 256*2**scale, 256*2**scale]
+                "resolution": [
+                    resolution_nm * 2**scale,
+                    resolution_nm * 2**scale,
+                    resolution_nm * 2**scale
+                ]
             }
         }).result()
         if scale == 0:
