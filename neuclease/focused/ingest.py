@@ -166,6 +166,9 @@ def fetch_focused_decisions(server, uuid, instance='segmentation_merged',
     """
     assert normalize_pairs in (None, 'sv', 'body')
 
+    assert subset_pairs is None, \
+        "The key format has changed, so subset_pairs doesn't work in this code until I fix that."
+
     if subset_pairs is None:
         with Timer(f"Fetching keys from '{instance}'", logger):
             keys = fetch_keys(server, uuid, instance)
