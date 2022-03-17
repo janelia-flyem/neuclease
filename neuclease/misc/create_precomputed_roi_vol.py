@@ -182,7 +182,7 @@ def upload_precompted_ngmeshes(meshes, names, bucket_name, bucket_path, localdir
     if volume_info:
         volume_info = copy.deepcopy(volume_info)
     else:
-        subprocess.run(f"gsutil -h 'Cache-Control:public, no-store' cp {bucket_name}/{bucket_path}/info {localdir}/info", shell=True)
+        subprocess.run(f"gsutil cp {bucket_name}/{bucket_path}/info {localdir}/info", shell=True)
         with open(f"{localdir}/info", 'r') as f:
             volume_info = json.load(f)
 
