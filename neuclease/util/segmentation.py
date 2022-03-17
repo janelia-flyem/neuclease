@@ -37,7 +37,14 @@ def block_stats_for_volume(block_shape, volume, physical_box):
     for box in block_boxes:
         clipped_box = box_intersection(box, physical_box) - physical_box[0]
         block_vol = volume[box_to_slicing(*clipped_box)]
-        counts = pd.Series(block_vol.reshape(-1)).value_counts(sort=False)
+        try:
+            counts = pd.Series(block_vol.reshape(-1)).value_counts(sort=False)
+        except ValueError:
+            # Bizarrely, I've encountered this error emerging from
+            # pandas._libs.hashtable.value_count_uint64():
+            # "ValueError: buffer source array is read-only"
+            # ...so if this fails, just try again, with a clean copy...
+            counts = pd.Series(block_vol.ravel().copy()).value_counts(sort=False)
         segment_ids = counts.index.values
         counts = counts.values.astype(np.uint32)
 
