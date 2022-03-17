@@ -100,9 +100,14 @@ def read_labeled_slices(slice_directory):
     for p in tqdm(slice_files):
         img = skimage.io.imread(p)
 
+        # Combine channels
         if img.ndim == 3:
-            # Combine channels
-            img = img.any(axis=2)
+            if img.shape[2] < 4:
+                img = img[..., :3].any(axis=2)
+            else:
+                # If there's an alpha channel, apply it (in boolean fashion).
+                alpha = (img[..., 3] > np.iinfo(img.dtype).max / 2)
+                img = img[..., :3].any(axis=2) & alpha
 
         assert img.ndim == 2
 
