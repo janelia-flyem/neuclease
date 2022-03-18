@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Given a set of binary masks which correspond to specific Z slices,
-produce a complete volume in which the unlabeled intermediate slices
-are filled in with labels. The new label positions are determined by
-interpolating between the signed distance transforms of the masks in
-the labeled slices.
+Given a set of binary masks which correspond to specific Z slices
+within a larger volume, produce a complete volume in which the
+unlabeled intermediate slices are filled in with labels. The new
+label positions are determined by interpolating between the signed
+distance transforms of the masks in the labeled slices.
 
 Usage:
 
@@ -41,7 +41,7 @@ def main():
     if args.z_max is None:
         args.z_max = max(labeled_slices.keys())
 
-    distance_vol = signed_distance_interpolation(labeled_slices, args.minz, args.maxz)
+    distance_vol = signed_distance_interpolation(labeled_slices, args.minz, args.maxz, args.kind)
 
     mask_vol = (distance_vol < 0).astype(np.uint8)
     mask_vol[:] *= args.out_label
@@ -67,6 +67,9 @@ def parse_args():
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--minz", type=int, help='First output slice to produce')
     parser.add_argument("--maxz", type=int, help='Last output slice to produce')
+    parser.add_argument("--kind", default='linear',
+                        help='Type of interpolation to use, such as linear or quadratic. '
+                             'For details, see scipy docs about interp1d()')
     parser.add_argument("--out-label", '-l', type=int, default=255, help='The value to assign for labeled output pixels. (e.g. 255)')
     parser.add_argument("--export-distance-visualization", "-e", action="store_true",
                         help='Debugging feature. Export the raw distance transform volume as png slices, '
@@ -130,7 +133,7 @@ def read_labeled_slices(slice_directory):
     return labeled_slices
 
 
-def signed_distance_interpolation(labeled_slices, z_min=None, z_max=None):
+def signed_distance_interpolation(labeled_slices, z_min=None, z_max=None, kind='linear'):
     """
     Given a set of binary masks corresponding to specific
     Z-positions in a volume, compute their signed distnace
@@ -147,6 +150,9 @@ def signed_distance_interpolation(labeled_slices, z_min=None, z_max=None):
         z_max:
             The last slice to produce output for
             Default is the last labeled slice.
+        kind:
+            See the scipy docs for choices:
+            https://docs.scipy.org/doc/scipy/reference/generated/scipy.interpolate.interp1d.html
 
     Returns:
         3D ndarray of shape (Z,Y,X), where Z = 1 + z_max - z_min
@@ -180,7 +186,7 @@ def signed_distance_interpolation(labeled_slices, z_min=None, z_max=None):
     y = list(distances.values())
 
     interpolator = scipy.interpolate.interp1d(
-        x, y, axis=0, bounds_error=False, fill_value=np.inf, assume_sorted=True)
+        x, y, kind, axis=0, bounds_error=False, fill_value=np.inf, assume_sorted=True)
 
     distance_vol = interpolator(np.arange(z_min, z_max+1))
     return distance_vol.astype(np.float32)
