@@ -2344,7 +2344,7 @@ post_labelarray_voxels = post_labelmap_voxels
 
 @dvid_api_wrapper
 def post_labelmap_blocks(server, uuid, instance, corners_zyx, blocks, scale=0, downres=False, noindexing=False, throttle=False,
-                         *, is_raw=False, gzip_level=6, session=None, progress=False):
+                         *, is_raw=False, gzip_level=6, session=None, progress=False, ingestion_mode=False):
     """
     Post supervoxel data to a labelmap instance, from a list of blocks.
 
@@ -2410,7 +2410,12 @@ def post_labelmap_blocks(server, uuid, instance, corners_zyx, blocks, scale=0, d
         if value:
             params[opt] = str(bool(value)).lower()
 
-    r = session.post(f'{server}/api/node/{uuid}/{instance}/blocks', params=params, data=body_data)
+    if ingestion_mode:
+        endpoint = 'ingest-supervoxels'
+    else:
+        endpoint = 'blocks'
+
+    r = session.post(f'{server}/api/node/{uuid}/{instance}/{endpoint}', params=params, data=body_data)
     r.raise_for_status()
 
 
