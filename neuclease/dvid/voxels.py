@@ -311,6 +311,8 @@ def update_extents(server, uuid, instance, minimal_extents_zyx, *, session=None)
             3D bounding box [min_zyx, max_zyx] = [(z0,y0,x0), (z1,y1,x1)].
             If provided, data extents will be at least this large (possibly larger).
             (The max extent should use python conventions, i.e. the MaxPoint + 1)
+    Returns:
+        True if the extents were modified, False otherwise
     """
     minimal_extents_zyx = np.array(minimal_extents_zyx, dtype=int)
     assert minimal_extents_zyx.shape == (2,3), \
@@ -334,3 +336,5 @@ def update_extents(server, uuid, instance, minimal_extents_zyx, *, session=None)
 
     if (minimal_extents_xyz != orig_extents_xyz).any():
         post_extents(server, uuid, instance, minimal_extents_xyz[:, ::-1])
+        return True
+    return False
