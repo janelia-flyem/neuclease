@@ -129,6 +129,9 @@ class LabelmapMergeGraph:
             return 0
 
         focused_decisions = fetch_focused_decisions(server, uuid, focused_decisions_instance)
+        if len(focused_decisions) == 0 or 'result' not in focused_decisions.columns:
+            return 0
+
         focused_merges = focused_decisions.query('result == "merge" or result == "mergeLater"')
         focused_merges = focused_merges[["sv_a", "sv_b", "xa", "ya", "za", "xb", "yb", "zb"]]
         focused_merges.rename(inplace=True, columns={'sv_a': 'id_a', 'sv_b': 'id_b'})
