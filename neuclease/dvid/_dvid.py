@@ -38,6 +38,11 @@ DEFAULT_ADMIN_TOKEN = os.environ.get("DVID_ADMIN_TOKEN", None)
 DvidInstanceInfo = namedtuple("DvidInstanceInfo", "server uuid instance")
 
 
+def clear_default_dvid_sessions():
+    DEFAULT_DVID_SESSIONS.clear()
+    DEFAULT_DVID_NODE_SERVICES.clear()
+
+
 def default_dvid_session(appname=DEFAULT_APPNAME, user=getpass.getuser(), admintoken=None):
     """
     Return a default requests.Session() object that automatically appends the
