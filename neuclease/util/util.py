@@ -13,6 +13,7 @@ import contextlib
 from itertools import chain
 from operator import itemgetter
 from functools import partial, lru_cache
+from multiprocessing import get_context
 from multiprocessing.pool import Pool, ThreadPool
 from datetime import datetime, timedelta
 from itertools import product, starmap
@@ -652,7 +653,7 @@ def compute_parallel(func, iterable, chunksize=1, threads=0, processes=0, ordere
     if threads:
         pool = ThreadPool(threads, **pool_kwargs)
     elif processes:
-        pool = Pool(processes, **pool_kwargs)
+        pool = get_context('spawn').Pool(processes, **pool_kwargs)
     else:
         pool = _DummyPool()
 
@@ -720,7 +721,7 @@ class KeyboardInterruptWithResults(KeyboardInterrupt):
         self.total_items = total_items
 
     def __str__(self):
-        return f'{len(self.partial_results)}/{self.total_items} results completed'
+        return f'{len(self.partial_results)}/{self.total_items} results completed (see sys.last_value)'
 
 
 @contextlib.contextmanager
