@@ -700,8 +700,8 @@ def _split_x_ranges_for_grid(ranges, block_shape, halo=0):
             Note: The range INCLUDES X2, unlike numpy conventions.
 
                 [[Z,Y,X1,X2],
-                [Z,Y,X1,X2],
-                [Z,Y,X1,X2],
+                 [Z,Y,X1,X2],
+                 [Z,Y,X1,X2],
                 ...
                 ]
         block_shape:
@@ -814,7 +814,7 @@ def split_ranges_for_grid(ranges, block_shape, halo=0):
         halo_df[['Bz', 'By']] += (z_off, y_off)
         halo_dfs.append(halo_df)
 
-    # Use an inner merge to drop any blocks ended up with *only* halo RLEs.
+    # Use an inner merge to drop any blocks which ended up with *only* halo RLEs.
     # (If a block had no interior portion, we don't want its halo.)
     halo_df = pd.concat(halo_dfs, ignore_index=True)
     halo_df = df[['Bz', 'By', 'Bx']].drop_duplicates().merge(halo_df, 'inner', on=['Bz', 'By', 'Bx'])
@@ -831,6 +831,9 @@ def blockwise_masks_from_ranges(ranges, block_shape, halo=0):
     'split' the RLEs into distinct grid blocks, and then 'inflate'
     the block-aligned RLEs into 3D masks, such that the entire
     sparse volume could be reconstructed one block at a time from the masks.
+    The full inflation of each block is not performed immediately.
+    Instead, an iterator is returned, and the inflation occurs lazily
+    during iteration.
 
     Args:
         ranges:
@@ -838,8 +841,8 @@ def blockwise_masks_from_ranges(ranges, block_shape, halo=0):
             Note: The range INCLUDES X2, unlike numpy conventions.
 
                 [[Z,Y,X1,X2],
-                [Z,Y,X1,X2],
-                [Z,Y,X1,X2],
+                 [Z,Y,X1,X2],
+                 [Z,Y,X1,X2],
                 ...
                 ]
 
@@ -872,7 +875,7 @@ def blockwise_masks_from_ranges(ranges, block_shape, halo=0):
     groups = ranges_df.groupby(['Bz', 'By', 'Bx'], sort=False)
 
     def gen_masks():
-        for i, ((Bz, By, Bx), block_df) in enumerate(groups):
+        for (Bz, By, Bx), block_df in groups:
             block_ranges = block_df[['z', 'y', 'x1', 'x2']].values
 
             Z_offset = Bz * BZ - halo

@@ -2390,6 +2390,14 @@ def post_labelmap_blocks(server, uuid, instance, corners_zyx, blocks, scale=0, d
 
         gzip_level:
             The level of gzip compression to use, from 0 (no compression) to 9.
+
+        ingestion_mode:
+            If true, use ``POST .../ingest-supervoxels`` to send the data,
+            which is similar to ``POST .../blocks`` except that it's faster because
+            it doesn't use any mutexes to protect against multi-threaded access to
+            the same blocks or label indexes.
+            You can use this if you're ingesting data and you've disabled indexing and
+            downres on the DVID side.
     """
     assert not downres or scale == 0, "downres option is only valid for scale 0"
 
