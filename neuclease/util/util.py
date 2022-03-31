@@ -693,13 +693,34 @@ def compute_parallel(func, iterable, chunksize=1, threads=0, processes=0, ordere
         results_progress = tqdm_proxy(iter_results, initial=initial, total=total, leave=leave_progress, disable=not show_progress)
         with results_progress:
             # Here's where the work is actually done.
-            results = list(results_progress)
+            results = []
+            try:
+                for item in results_progress:
+                    results.append(item)
+            except KeyboardInterrupt as ex:
+                # If the user killed the job early, provide the results that have completed so far in the exception.
+                if reorder:
+                    results.sort(key=itemgetter(0))
+                    results = [r for (_, r) in results]
+
+                # IPython users can access the exception via sys.last_value
+                raise KeyboardInterruptWithResults(results, total or '?') from ex
 
     if reorder:
         results.sort(key=itemgetter(0))
         results = [r for (_, r) in results]
 
     return results
+
+
+class KeyboardInterruptWithResults(KeyboardInterrupt):
+    def __init__(self, partial_results, total_items):
+        super().__init__()
+        self.partial_results = partial_results
+        self.total_items = total_items
+
+    def __str__(self):
+        return f'{len(self.partial_results)}/{self.total_items} results completed'
 
 
 @contextlib.contextmanager
