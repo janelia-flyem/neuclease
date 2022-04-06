@@ -589,7 +589,7 @@ class _iter_batches_with_len(_iter_batches):
 
 def compute_parallel(func, iterable, chunksize=1, threads=0, processes=0, ordered=None,
                      leave_progress=False, total=None, initial=0, starmap=False, show_progress=None,
-                     **pool_kwargs):
+                     context=None, **pool_kwargs):
     """
     Use the given function to process the given iterable in a ThreadPool or process Pool,
     showing progress using tqdm.
@@ -638,22 +638,27 @@ def compute_parallel(func, iterable, chunksize=1, threads=0, processes=0, ordere
             If True, show a progress bar.
             By default, only show a progress bar if ``iterable`` has more than one element.
 
+        context:
+            In Python, process pools can be created via 'fork', 'spawn', or 'forkserver'.
+            Spawn is more robust, but comes with certain requirements
+            (such as your main code being shielded within a __main__ conditional).
+            See the Python multiprocessing docs for details.
+
         pool_kwargs:
             keyword arguments to pass to the underlying Pool object,
             such as ``initializer`` or ``maxtasksperchild``.
     """
     assert not bool(threads) or not bool(processes), \
         "Specify either threads or processes, not both"
-
+    assert context in (None, 'fork', 'spawn', 'forkserver')
     assert ordered in (True, False, None)
     reorder = (ordered is None)
-    ordered = (ordered is True)
 
     # Pick a pool implementation
     if threads:
         pool = ThreadPool(threads, **pool_kwargs)
     elif processes:
-        pool = get_context('spawn').Pool(processes, **pool_kwargs)
+        pool = get_context(context).Pool(processes, **pool_kwargs)
     else:
         pool = _DummyPool()
 
