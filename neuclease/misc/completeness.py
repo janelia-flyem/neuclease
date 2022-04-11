@@ -441,3 +441,83 @@ def plot_connectivity_forecast(conn_df, max_rank=None, plotted_points=20_000, ho
         bokeh_save(hv.render(p))
 
     return p
+
+
+def plot_categorized_connectivity_forecast(
+        conn_df, category_col, max_rank=None, plotted_points=20_000, hover_cols=[],
+        title='connectivity after prioritized merging', export_path=None):
+    """
+    Plot the curves of captured tbars, captured PSDs and captured dual-sided
+    connections as bodies are traced/merged from large to small.
+
+    This function is similar to plot_connectivity_forecast() (above),
+    but this plots the curves in several segments, according to a
+    category provided in 'color_by_col'.
+
+    Note:
+        This function returns a bokeh plot, not holoviews.
+        Display it in a notebook via bokeh.plotting.show().
+
+    Note:
+        Not all bodies are included in the resulting plot.
+        We'll just be plotting the stats associated with the "max_rank" body,
+        but some bodies never appear in the table as the "max_rank" body at all.
+        If a body is "larger" (i.e. better ranked) than ALL bodies it conencts to,
+        then it will never be the "max_rank" body and will therefore not be included
+        in these plot curves.
+
+    Args:
+        conn_df:
+            connectivity completion dataframe, as returned by completeness_forecast()
+        max_rank:
+            Truncate the plot's X axis, stopping at the given rank.
+        plotted_points:
+            The full input dataframe probably has too many points to plot at once.
+            You can reduce the resolution of the plot by specifiying how many points
+            you want to be shown in total, with this argument.
+            You won't notice the difference at all when zoomed out, but if you zoom
+            in on the plot you may notice that the X-axis is discontiguous.
+    """
+    from bokeh.plotting import figure, output_file, save as bokeh_save
+    from bokeh.models import HoverTool
+    from bokeh.palettes import Category20
+
+    assert not export_path or export_path.endswith('.html')
+
+    _df = conn_df
+
+    # Zoom in on left-hand region
+    if max_rank:
+        _df = _df.query('max_rank <= @max_rank')
+
+    _df = _df.drop_duplicates('max_rank', keep='last')
+
+    # Avoid plotting too many points
+    step = max(1, len(_df) // plotted_points)
+    _df = _df.iloc[::step]
+
+    p = figure(align='center', height=500, width=800, title=title)
+
+    for i, (_t, df) in enumerate(_df.groupby(category_col)):
+        p.line('max_rank', 'traced_tbar_frac', color=Category20[20][2 * (i % 10)], line_width=5, source=df)
+        p.line('max_rank', 'traced_psd_frac',  color=Category20[20][2 * (i % 10) + 1], line_width=5, source=df)
+        p.line('max_rank', 'traced_conn_frac', color=Category20[20][2 * (i % 10)], line_width=5, source=df)
+
+    hover = HoverTool()
+    hover.tooltips = [
+        (category_col, f"@{category_col}"),
+        ("body rank", "@max_rank"),
+        ("body", "@body_max_rank"),
+        ("tbars captured", "@traced_tbar_frac"),
+        ("psds captured", "@traced_psd_frac"),
+        ("connectiions captured", "@traced_conn_frac"),
+        *[(col, f"@{col}") for col in hover_cols]
+    ]
+
+    p.add_tools(hover)
+
+    if export_path:
+        output_file(filename=export_path, title=title)
+        bokeh_save(p)
+
+    return p
