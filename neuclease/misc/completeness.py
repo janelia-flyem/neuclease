@@ -147,7 +147,7 @@ def _completeness_forecast(conn_df, syn_counts_df, stop_at_rank):
     # Now order the connection pairs according to the SMALLER of the two bodies in the pair,
     # i.e. sort according to the body with greater rank (i.e. worse rank).
     # The idea is that if we were to trace all bodies in rank-order, the connection pairs
-    # will be sorted in the order in which they are completed, i.e. with a traced body onh
+    # will be sorted in the order in which they are completed, i.e. with a traced body on
     # both the input side and the output side.
     #
     # Notice that when the table is sorted this way, then for every row in the table,
@@ -309,7 +309,8 @@ def _rank_syn_counts(point_df, conn_df, syn_counts_df=None, sort_by='SynWeight')
     if isinstance(sort_by, str):
         sort_by = [sort_by]
     if syn_counts_df is None:
-        assert {*sort_by} <= {'PreSyn', 'PostSyn', 'SynWeight'}
+        assert {*sort_by} <= {'PreSyn', 'PostSyn', 'SynWeight'}, \
+            "If you want to sort using non-standard columns, you have to provide your own syn_counts_df"
     else:
         # We can only sort using any columns the user provided,
         # plus SynWeight, which we can provide below.
