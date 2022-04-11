@@ -1,12 +1,17 @@
 import os
 import sys
 import glob
-import ujson
+import logging
+import subprocess
+from math import ceil, log10
 
+import ujson
 import numpy as np
 import pandas as pd
 
-from ..util import tqdm_proxy, swap_df_cols
+from ..util import tqdm_proxy, swap_df_cols, iter_batches
+
+logger = logging.getLogger(__name__)
 
 def generate_focused_assignment(merge_table, output_path=None):
     """
@@ -128,3 +133,79 @@ def load_focused_assignments(directory):
         dfs.append(df)
     
     return pd.concat(dfs)
+
+
+def define_task_batches(tasks,
+                        total_tasks_per_assignment=100,
+                        qc_tasks_per_assignment=10,
+                        assignments_per_batch=10):
+    """
+    Given a dataframe where each row represents a proofreading task,
+    this function will assign each task to an 'assignment' and each assignment to a 'batch'.
+    All assignments within a batch will share a certain number of QC (quality control) tasks,
+    i.e. the QC tasks will be duplicated so they can be included within every assignment of the batch.
+    The placement of the QC tasks within each assignment will be randomized.
+
+    Returns:
+        DataFrame, with 'batch' and 'assignment' columns (in addition to the columns of the input).
+    """
+    regular_tasks_per_assignment = total_tasks_per_assignment - qc_tasks_per_assignment
+    unique_tasks_per_batch = regular_tasks_per_assignment * assignments_per_batch + qc_tasks_per_assignment
+
+    # Truncate to make uniform batch sizes
+    total_tasks = (len(tasks) // unique_tasks_per_batch) * unique_tasks_per_batch
+    tasks = tasks.iloc[:total_tasks]
+    tasks = tasks.reset_index(drop=True)
+    tasks = tasks.copy()
+    tasks['batch'] = tasks.index // unique_tasks_per_batch
+    tasks['assignment'] = -1
+    
+    batch_dfs = []
+    for _, batch_df in tasks.groupby('batch'):
+        qc_df = batch_df.sample(qc_tasks_per_assignment)
+        reg_df = batch_df.loc[~(batch_df.index.isin(qc_df.index))].sample(frac=1.0)
+        for i, assign_df in enumerate(iter_batches(reg_df, regular_tasks_per_assignment)):
+            assign_df = pd.concat((assign_df, qc_df), ignore_index=True).sample(frac=1.0)
+            assign_df['assignment'] = i
+            batch_dfs.append(assign_df)
+
+    final_df = pd.concat(batch_dfs, ignore_index=True)
+
+    cols = tasks.columns.tolist()
+    cols.remove('batch')
+    cols.remove('assignment')
+    cols = ['batch', 'assignment', *cols]
+    return final_df[cols]
+
+
+def upload_batched_assignments(tasks, bucket_path, campaign='focused'):
+    output_dir = f'{campaign}-assignments'
+    os.makedirs(output_dir)
+
+    batch_digits = int(ceil(log10(tasks['batch'].max())))
+    assignment_digits = int(ceil(log10(tasks['assginment'].max())))
+
+    num_assignments = len(tasks.drop_duplicates(['batch', 'assignment']))
+    files = []
+    for (batch, assignment), assign_df in tqdm_proxy(tasks.groupby(['batch', 'assignment']), total=num_assignments):
+        name = f"{output_dir}/{campaign}-batch-{{batch:0{batch_digits}d}}-assignment-{{assignment:0{assignment_digits}d}}.json"
+        name = name.format(batch=batch, assignment=assignment)
+        generate_focused_assignment(assign_df, name)
+        files.append((batch, assignment, name))
+
+    # Explicitly *unset* content type, to trigger browsers to download the file, not display it as JSON.
+    # Also, forbid caching.
+    logging.info(f"Uploading {len(files)} files to gs://{bucket_path}/{output_dir}")
+    cmd = f"gsutil -m -h 'Cache-Control:public, no-store' -h 'Content-Type' cp -r {output_dir} gs://{bucket_path}/"
+    _ = subprocess.run(cmd, shell=True, check=True, capture_output=True)
+
+    tracking_df = pd.DataFrame(files, columns=['batch', 'assignment', 'file'])
+    tracking_df['file'] = f'https://storage.googleapis.com/{bucket_path}/' + tracking_df['file']
+    tracking_df['user'] = ''
+    tracking_df['hidden_col'] = ''
+    tracking_df['date started'] = ''
+    tracking_df['date completed'] = ''
+    tracking_df['notes'] = ''
+    p = f'{campaign}-tracking-template.csv'
+    tracking_df.to_csv(p, index=False, header=True)
+    logger.info(f"Wrote {p}")
