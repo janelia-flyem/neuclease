@@ -346,6 +346,14 @@ def plot_connectivity_forecast(conn_df, max_rank=None, plotted_points=20_000, ho
     Plot the curves of captured tbars, captured PSDs and captured dual-sided
     connections as bodies are traced/merged from large to small.
 
+    Note:
+        Not all bodies are included in the resulting plot.
+        We'll just be plotting the stats associated with the "max_rank" body,
+        but some bodies never appear in the table as the "max_rank" body at all.
+        If a body is "larger" (i.e. better ranked) than ALL bodies it conencts to,
+        then it will never be the "max_rank" body and will therefore not be included
+        in these plot curves.
+
     Args:
         conn_df:
             connectivity completion dataframe, as returned by completeness_forecast()
@@ -390,15 +398,19 @@ def plot_connectivity_forecast(conn_df, max_rank=None, plotted_points=20_000, ho
     _df = _df.iloc[::step]
 
     if color_by_col:
-        p = _df.hvplot.scatter(
-                'body priority ranking',  # noqa
-                [renames[k] for k in show_cols][0],
-                hover_cols=['tbars captured', 'psds captured', 'pairwise connections', *hover_cols],
-                legend='bottom_right',
-                ylabel='fraction',
-                by=color_by_col,
-                width=800,
-                height=500)
+        plots = []
+        for col in [renames[k] for k in show_cols]:
+            p = _df.hvplot.scatter(
+                    'body priority ranking',  # noqa
+                    [renames[k] for k in show_cols],
+                    hover_cols=['tbars captured', 'psds captured', 'pairwise connections', *hover_cols],
+                    legend='bottom_right',
+                    ylabel='fraction',
+                    by=color_by_col,
+                    width=800,
+                    height=500)
+            plots.append(plots)
+        p = hv.Overlay(plots)
     else:
         p = _df.hvplot(
                 'body priority ranking', # noqa
