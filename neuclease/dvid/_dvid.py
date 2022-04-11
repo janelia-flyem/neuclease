@@ -8,6 +8,9 @@ import threading
 from collections import namedtuple
 
 import requests
+import requests.adapters
+from urllib3.util.retry import Retry
+
 from libdvid import DVIDNodeService
 
 # On Mac, requests uses a system library which is not fork-safe,
@@ -38,6 +41,23 @@ DEFAULT_ADMIN_TOKEN = os.environ.get("DVID_ADMIN_TOKEN", None)
 DvidInstanceInfo = namedtuple("DvidInstanceInfo", "server uuid instance")
 
 
+class DefaultTimeoutHTTPAdapter(requests.adapters.HTTPAdapter):
+    """
+    Transport adapter to set a default timeout on all of a Session's
+    requests if the caller didn't provide one explicitly.
+    Effectively injects the 'timeout' parameter to Session.get().
+    """
+    def __init__(self, *args, timeout=None, **kwargs):
+        self.timeout = timeout
+        super().__init__(*args, **kwargs)
+
+    def send(self, *args, **kwargs):
+        timeout = kwargs.get('timeout', None)
+        if timeout is None:
+            kwargs['timeout'] = self.timeout
+        return super().send(*args, **kwargs)
+
+
 def clear_default_dvid_sessions():
     DEFAULT_DVID_SESSIONS.clear()
     DEFAULT_DVID_NODE_SERVICES.clear()
@@ -64,7 +84,18 @@ def default_dvid_session(appname=DEFAULT_APPNAME, user=getpass.getuser(), admint
     try:
         s = DEFAULT_DVID_SESSIONS[(appname, user, admintoken, thread_id, pid)]
     except KeyError:
+        # If the connection fails, retry a couple times.
+        retries = Retry(connect=2, backoff_factor=0.1)
+
+        # Medium timeout for connections, but no timeout for data
+        # https://docs.python-requests.org/en/latest/user/advanced/#timeouts
+        timeout = (3.05, None)
+        adapter = DefaultTimeoutHTTPAdapter(max_retries=retries, timeout=timeout)
+
         s = requests.Session()
+        s.mount('http://', adapter)
+        s.mount('https://', adapter)
+
         s.params = { 'u': user, 'app': appname }
         if admintoken:
             s.params['admintoken'] = admintoken
