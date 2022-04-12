@@ -87,9 +87,9 @@ def default_dvid_session(appname=DEFAULT_APPNAME, user=getpass.getuser(), admint
         # If the connection fails, retry a couple times.
         retries = Retry(connect=2, backoff_factor=0.1)
 
-        # Medium timeout for connections, but no timeout for data
+        # Medium timeout for connections, long timeout for data
         # https://docs.python-requests.org/en/latest/user/advanced/#timeouts
-        timeout = (3.05, None)
+        timeout = (3.05, 120.0)
         adapter = DefaultTimeoutHTTPAdapter(max_retries=retries, timeout=timeout)
 
         s = requests.Session()
