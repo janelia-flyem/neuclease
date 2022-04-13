@@ -48,8 +48,8 @@ class DefaultTimeoutHTTPAdapter(requests.adapters.HTTPAdapter):
     Effectively injects the 'timeout' parameter to Session.get().
     """
     def __init__(self, *args, timeout=None, **kwargs):
-        self.timeout = timeout
         super().__init__(*args, **kwargs)
+        self.timeout = timeout
 
     def send(self, *args, **kwargs):
         timeout = kwargs.get('timeout', None)
@@ -57,10 +57,58 @@ class DefaultTimeoutHTTPAdapter(requests.adapters.HTTPAdapter):
             kwargs['timeout'] = self.timeout
         return super().send(*args, **kwargs)
 
+    def __getstate__(self):
+        state = super().__getstate__()
+        state['timeout'] = self.timeout
+        return state
+
+    def __repr__(self):
+        return f"DefaultTimeoutHTTPAdapter(timeout={self.timeout})"
+
 
 def clear_default_dvid_sessions():
+    global DEFAULT_DVID_SESSIONS
+    global DEFAULT_DVID_NODE_SERVICES
     DEFAULT_DVID_SESSIONS.clear()
     DEFAULT_DVID_NODE_SERVICES.clear()
+
+
+def _default_dvid_session_template(appname=DEFAULT_APPNAME, user=getpass.getuser(), admintoken=None, timeout=None):
+    """
+    Note: To specify no timeout at all, set timeout=(None, None)
+    """
+    # If the connection fails, retry a couple times.
+    retries = Retry(connect=2, backoff_factor=0.1)
+
+    if timeout is None:
+        # Medium timeout for connections, long timeout for data
+        # https://docs.python-requests.org/en/latest/user/advanced/#timeouts
+        timeout = (3.05, 120.0)
+    adapter = DefaultTimeoutHTTPAdapter(max_retries=retries, timeout=timeout)
+
+    s = requests.Session()
+    s.mount('http://', adapter)
+    s.mount('https://', adapter)
+
+    s.params = { 'u': user, 'app': appname }
+    if admintoken:
+        s.params['admintoken'] = admintoken
+
+    return s
+
+
+# Note:
+#   To change the settings for all new default sessions,
+#   modify this global template and then clear the cached sessions:
+#
+#       default_dvid_session_template().adapters['http://'].timeout = (3.05, 600.0)
+#       clear_default_dvid_sessions()
+#
+DEFAULT_DVID_SESSION_TEMPLATE = _default_dvid_session_template()
+
+
+def default_dvid_session_template():
+    return DEFAULT_DVID_SESSION_TEMPLATE
 
 
 def default_dvid_session(appname=DEFAULT_APPNAME, user=getpass.getuser(), admintoken=None):
@@ -84,22 +132,7 @@ def default_dvid_session(appname=DEFAULT_APPNAME, user=getpass.getuser(), admint
     try:
         s = DEFAULT_DVID_SESSIONS[(appname, user, admintoken, thread_id, pid)]
     except KeyError:
-        # If the connection fails, retry a couple times.
-        retries = Retry(connect=2, backoff_factor=0.1)
-
-        # Medium timeout for connections, long timeout for data
-        # https://docs.python-requests.org/en/latest/user/advanced/#timeouts
-        timeout = (3.05, 120.0)
-        adapter = DefaultTimeoutHTTPAdapter(max_retries=retries, timeout=timeout)
-
-        s = requests.Session()
-        s.mount('http://', adapter)
-        s.mount('https://', adapter)
-
-        s.params = { 'u': user, 'app': appname }
-        if admintoken:
-            s.params['admintoken'] = admintoken
-
+        s = copy.deepcopy(DEFAULT_DVID_SESSION_TEMPLATE)
         DEFAULT_DVID_SESSIONS[(appname, user, admintoken, thread_id, pid)] = s
 
     return s
@@ -193,4 +226,3 @@ def fetch_generic_json(url, json=None, *, params=None, session=None):
     r = session.get(url, json=json, params=params)
     r.raise_for_status()
     return r.json()
-
