@@ -91,6 +91,10 @@ def _default_dvid_session_template(appname=DEFAULT_APPNAME, user=getpass.getuser
     s.mount('https://', adapter)
 
     s.params = { 'u': user, 'app': appname }
+
+    if admintoken is None:
+        admintoken = DEFAULT_ADMIN_TOKEN
+
     if admintoken:
         s.params['admintoken'] = admintoken
 
