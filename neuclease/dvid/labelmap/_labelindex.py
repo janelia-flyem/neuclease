@@ -155,7 +155,6 @@ def post_labelindex(server, uuid, instance, label, proto_index, *, session=None)
     r = session.post(f'{server}/api/node/{uuid}/{instance}/index/{label}', data=payload)
     r.raise_for_status()
 
-
 @dvid_api_wrapper
 def post_labelindices(server, uuid, instance, indices, *, session=None):
     """
@@ -204,6 +203,28 @@ def post_labelindices(server, uuid, instance, indices, *, session=None):
 
 # Deprecated name
 post_labelindex_batch = post_labelindices
+
+
+@dvid_api_wrapper
+def delete_labelindices(server, uuid, instance, bodies, *, session=None):
+    """
+    Delete the label indexes for a list of bodies.
+    DVID supports deletion en masse via POST of empty label index prototbuf structures.
+    (See the DVID docs for POST .../index and POST .../indices)
+    """
+    index_list = []
+    for body in bodies:
+        li = LabelIndex()
+        li.label = int(body)
+        index_list.append(li)
+
+    indices = LabelIndices()
+    indices.indices.extend(index_list)
+    payload = indices.SerializeToString()
+
+    endpoint = f'{server}/api/node/{uuid}/{instance}/indices'
+    r = session.post(endpoint, data=payload)
+    r.raise_for_status()
 
 
 def copy_labelindices(src_triple, dest_triple, labels, *, batch_size=10_000, threads=None, processes=None):
