@@ -20,7 +20,7 @@ from vigra.analysis import labelMultiArrayWithBackground
 
 from ...util import (Timer, round_box, extract_subvol, DEFAULT_TIMESTAMP, tqdm_proxy, find_root,
                      ndrange, ndrange_array, box_to_slicing, compute_parallel, boxes_from_grid, box_shape,
-                     overwrite_subvol, iter_batches, extract_labels_from_volume, box_intersection)
+                     overwrite_subvol, iter_batches, extract_labels_from_volume, box_intersection, lexsort_columns)
 
 from .. import dvid_api_wrapper, fetch_generic_json, fetch_repo_info
 from ..repo import create_voxel_instance, fetch_repo_dag, resolve_ref, expand_uuid, find_repo_root
@@ -1920,6 +1920,11 @@ def fetch_labelmap_specificblocks(server, uuid, instance, corners_zyx, scale=0, 
     """
     Fetch a set of blocks from a labelmap instance.
 
+    Note:
+        Unlike the bare DVID /specificblocks endpoint, this function WILL produce an
+        all-zero block in cases where there there are no labels in the block.
+        Thus, the number of output blocks will exactly match the number of input blocks.
+
     Args:
         server:
             dvid server, e.g. 'emdata3:8900'
@@ -1933,6 +1938,10 @@ def fetch_labelmap_specificblocks(server, uuid, instance, corners_zyx, scale=0, 
         corners_zyx:
             List of blocks to fetch, specified via their starting corners,
             in units corresponding to the given scale.
+
+            Note:
+                The keys of the results will not necessarily match the input order.
+                The result is sorted by key, in scan-order.
 
         scale:
             Which downsampling scale to fetch from
@@ -1992,6 +2001,7 @@ def fetch_labelmap_specificblocks(server, uuid, instance, corners_zyx, scale=0, 
 
     assert not (corners_zyx % 64).any(), "corners_zyx must be block-aligned!"
 
+    corners_zyx = lexsort_columns(corners_zyx)
     block_ids = corners_zyx[:, ::-1] // 64
     params = {
         'blocks': ','.join(map(str, block_ids.reshape(-1)))
@@ -2022,7 +2032,7 @@ def fetch_labelmap_specificblocks(server, uuid, instance, corners_zyx, scale=0, 
     max_corner = corners_zyx.max(axis=0) + 64
     full_shape = max_corner - min_corner
 
-    blocks = {}
+    blocks = {c: None for c in map(tuple, corners_zyx.tolist())}
     start = 0
     while start < len(r.content):
         header = np.frombuffer(r.content[start:start+16], dtype=np.int32)
@@ -2084,6 +2094,8 @@ def fetch_labelmap_specificblocks(server, uuid, instance, corners_zyx, scale=0, 
 
 
 def _inflate_block(corner, buf):
+    if not buf:
+        return corner, np.zeros((64,64,64), np.uint64)
     block = DVIDNodeService.inflate_labelarray_blocks3D_from_raw(buf, (64,64,64), corner)
     return (corner, block)
 
