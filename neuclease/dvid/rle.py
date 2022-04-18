@@ -776,6 +776,7 @@ def split_ranges_for_grid(ranges, block_shape, halo=0):
         DataFrame with columns ['Bz', 'By', 'Bx', 'z', 'y', 'x1', 'x2']
         Where z,y,x1,x2 are in RLE format (same as dvid uses),
         and Bz,By,Bx are the grid index to which each RLE belongs.
+        The result will be returned in sorted order (by block coordinate).
         Note that if you specified a halo, then some of the RLE encodings (z,y,x1,x2)
         will be duplicated, but with unique grid index columns (Bz,By,Bx).
     """
@@ -786,6 +787,7 @@ def split_ranges_for_grid(ranges, block_shape, halo=0):
     grid_ranges = _split_x_ranges_for_grid(ranges, block_shape, halo)
     df = pd.DataFrame(grid_ranges, columns=['Bz', 'By', 'Bx', 'z', 'y', 'x1', 'x2'])
     if halo == 0:
+        df.sort_values(['Bz', 'By', 'Bx', 'z', 'y'], ignore_index=True, inplace=True)
         return df
 
     # The queries below will be faster if we preemptively drop
@@ -872,7 +874,7 @@ def blockwise_masks_from_ranges(ranges, block_shape, halo=0):
     boxes = np.array([block_shape * coords - halo,
                       block_shape * (coords + 1) + halo])
     boxes = boxes.transpose(1, 0, 2)
-    groups = ranges_df.groupby(['Bz', 'By', 'Bx'], sort=False)
+    groups = ranges_df.groupby(['Bz', 'By', 'Bx'], sort=True)
 
     def gen_masks():
         for (Bz, By, Bx), block_df in groups:
