@@ -40,7 +40,7 @@ logger = logging.getLogger(__name__)
 
 
 @contextlib.contextmanager
-def Timer(msg=None, logger=None, level=logging.INFO):
+def Timer(msg=None, logger=None, level=logging.INFO, log_start=True):
     """
     Simple context manager that acts as a wall-clock timer.
     
@@ -58,10 +58,11 @@ def Timer(msg=None, logger=None, level=logging.INFO):
         >>> print(timer.seconds)
         >>> print(timer.timedelta)
     """
+    result = _TimerResult()
     if msg:
         logger = logger or logging.getLogger(__name__)
-        logger.log(level, msg + '...')
-    result = _TimerResult()
+        if log_start:
+            logger.log(level, msg + '...')
     yield result
     result.stop = time.time()
     if msg:
