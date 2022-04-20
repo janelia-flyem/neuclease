@@ -325,7 +325,7 @@ def boxes_from_mask(mask, mask_offset=(0,0,0), grid=(64,64,64), clipped=False):
     Note:
         The current implementation of this function works by calling
         mask.nonzero() and creating a DataFrame from the resulting
-        coordiantes.  That will be expensive for large masks.
+        coordinates.  That will be expensive for large masks.
         Use with caution.  In the future, a more RAM-friendly implementation
         could be written that operates directly on the mask voxels,
         one grid block at a time.
