@@ -29,9 +29,9 @@ class FindHBWBOverlaps:
                 'segmentation'
             )
 
-    def find_hbwb_overlaps(self, halfbrain_body, scale=0, threshold_frac=0.05, show_progress=True):
+    def find_hbwb_overlaps(self, halfbrain_body, scale=0, supervoxels=False, threshold_frac=0.05, show_progress=True):
         """
-        For a given body in our half-brain segmentation, determine
+        For a given body (or supervoxel) in our half-brain segmentation, determine
         which bodies it overlaps with in out whole-brain segmentation.
 
         Returns a table of whole-brain body IDs along with the count of
@@ -48,18 +48,20 @@ class FindHBWBOverlaps:
         else:
             log_level = logging.DEBUG
 
+        label_type = {True: 'sv', False: 'body'}[supervoxels]
+
         def empty_counts():
             """Return an empty dataframe with the appropriate columns."""
-            empty_index = pd.Index(np.array([], dtype=np.uint64), name='brain_body')
+            empty_index = pd.Index(np.array([], dtype=np.uint64), name=f'brain_{label_type}')
             counts = pd.Series([], name='count', dtype=np.int64, index=empty_index)
             df = counts.to_frame()
             df['halfbrain_frac'] = 0.0
-            df['halfbrain_body'] = halfbrain_body
-            return df.reset_index()[['halfbrain_body', 'brain_body', 'count', 'halfbrain_frac']]
+            df[f'halfbrain_{label_type}'] = halfbrain_body
+            return df.reset_index()[[f'halfbrain_{label_type}', f'brain_{label_type}', 'count', 'halfbrain_frac']]
 
         with Timer(f"Body {halfbrain_body}: Fetching sparsevol", None, log_level):
             try:
-                rng = fetch_sparsevol(*self.halfbrain_seg, halfbrain_body, scale=scale, format='ranges')
+                rng = fetch_sparsevol(*self.halfbrain_seg, halfbrain_body, scale=scale, supervoxels=supervoxels, format='ranges')
                 body_size = (rng[:, 3] - rng[:, 2] + 1).sum()
             except HTTPError:
                 return empty_counts()
@@ -73,7 +75,7 @@ class FindHBWBOverlaps:
 
         with Timer(f"Body {halfbrain_body}: Fetching specificblocks", None, log_level):
             brain_corners = 4096 // (2**scale) + boxes[:, 0, :]
-            seg_dict = fetch_labelmap_specificblocks(*self.brain_seg, brain_corners, scale=scale, format='callable-blocks')
+            seg_dict = fetch_labelmap_specificblocks(*self.brain_seg, brain_corners, scale=scale, supervoxels=supervoxels, format='callable-blocks')
             assert len(boxes) == len(seg_dict), \
                 f"Body {halfbrain_body}: Mismatch between masks and seg: {len(boxes)} != {len(seg_dict)}"
 
@@ -89,7 +91,7 @@ class FindHBWBOverlaps:
 
                 OUT_OF_MASK = 2**63
                 seg = np.where(mask, compressed_seg(), OUT_OF_MASK)
-                vc = pd.value_counts(seg.ravel()).rename_axis('brain_body').rename('count')
+                vc = pd.value_counts(seg.ravel()).rename_axis(f'brain_{label_type}').rename('count')
                 vc = vc[vc.index != OUT_OF_MASK]
                 block_counts.append(vc)
 
@@ -101,8 +103,8 @@ class FindHBWBOverlaps:
         df = counts.to_frame()
         df['halfbrain_frac'] = df['count'] / body_size
         df = df[df['halfbrain_frac'] >= threshold_frac]
-        df['halfbrain_body'] = halfbrain_body
-        return df.reset_index()[['halfbrain_body', 'brain_body', 'count', 'halfbrain_frac']]
+        df[f'halfbrain_{label_type}'] = halfbrain_body
+        return df.reset_index()[[f'halfbrain_{label_type}', f'brain_{label_type}', 'count', 'halfbrain_frac']]
 
     @wraps(find_hbwb_overlaps)
     def __call__(self, *args, **kwargs):
