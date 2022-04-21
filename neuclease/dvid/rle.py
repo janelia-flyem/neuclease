@@ -866,7 +866,7 @@ def blockwise_masks_from_ranges(ranges, block_shape, halo=0):
         block_shape = 3 * (block_shape,)
     block_shape = np.asarray(block_shape)
     full_block_shape = block_shape + 2*halo
-    assert len(block_shape) == 3
+    assert len(block_shape) == len(full_block_shape) == 3
     BZ, BY, BX = block_shape
 
     ranges_df = split_ranges_for_grid(ranges, block_shape, halo)
