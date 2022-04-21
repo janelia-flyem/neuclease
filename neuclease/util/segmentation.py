@@ -1150,6 +1150,11 @@ def region_features(label_img, grayscale_img=None, features=['Box', 'Count'], ig
         dtype=object, and each item in the series is a 2D array.
         TODO: This might be a good place to use Xarray
     """
+    ##
+    ## FIXME: The remapping logic we apply in the uint64 case should probably be applied in most uint32 cases, too.
+    ##        There should be a separate flag to specify whether or not to remap the input to consecutive integers,
+    ##        and it should be True by default.
+    ##
     assert label_img.ndim in (2,3)
     axes = 'zyx'[-label_img.ndim:]
 
@@ -1247,5 +1252,13 @@ def region_features(label_img, grayscale_img=None, features=['Box', 'Count'], ig
     if label_img.dtype == np.uint64:
         for v in results.values():
             v.index = label_ids
+
+    # vigra didn't process the ignore_label,
+    # but it still appears in the results (with uninitialized values)
+    # Remove it from our results.
+    for k in [*results.keys()]:
+        v = results[k]
+        v = v[v.index != ignore_label].copy()
+        results[k] = v
 
     return results
