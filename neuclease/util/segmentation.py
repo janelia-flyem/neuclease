@@ -1262,3 +1262,131 @@ def region_features(label_img, grayscale_img=None, features=['Box', 'Count'], ig
         results[k] = v
 
     return results
+
+
+def meshes_from_volume(vol, fullres_box_zyx=None, subset_labels=None, *,
+                       cuffs=False, capped=False,
+                       min_voxels=0,
+                       smoothing=0, constrain_exterior=False,
+                       decimation=1.0, minimum_decimation_vertices=20,
+                       keep_normals=False,
+                       progress=True):
+    """
+    Generate meshes for all (or some subset) of the segments in a label image.
+    To do this efficiently, care is taken to pre-calculate the extents of each
+    object so that the minimal mask can be extracted for marching cubes to use.
+    Otherwise, it's easy to accidentally degrade to quadratic behavior.
+
+    Args:
+        vol:
+            3D label image
+        fullres_box_zyx:
+            The spatial extents of the volume, in spatial (mesh) coordinates, not voxel coordinates.
+        subset_labels:
+            A list of labels to process.  By default, all labels are processed except for label 0.
+        cuffs:
+            If True, pad the volume by duplicating each of the six volume edges.
+            For objects which lie on the volume edge, this will add an extra "cuff"
+            to the edge of the object.
+            This can be useful for artificially closing gaps between segments in neighboring volumes,
+            assuming you're computing a large set of meshes in block-wise fashion without "properly"
+            stitching the objects in neighboring blocks together.
+        capped:
+            If True, pad the volume with an empty layer of voxels around each of the six volume edges.
+            This will ensure that volumes on the edge of the volume are "capped" rather then left open.
+        min_voxels:
+            Only process objects with at least this many voxels in the volume.
+            Skip the others and don't include them in the results.
+        smoothing:
+            How many rounds of "laplacian smoothing" to apply to the resulting mesh, before decimation.
+        constrain_exterior:
+            If True, don't allow the smoothing operation to adjust the coordinates of mesh vertices at
+            the edge of the volume.  Leave those vertices "unsmoothed" to avoid mesh shrinkage.
+            Has no effect unless cuffs=True.
+        decimation:
+            Decimate the mesh with the given target fraction.
+            Examples:
+                - 1.0: No decimation is performed.
+                - 0.25: Remove vertices until only 25% of the original vertices remain.
+        minimum_decimation_vertices:
+            Don't even bother decimating meshes of objects that have fewer vertices than this count.
+        keep_normals:
+            If True, keep the normal vectors in the mesh before returning.
+            Otherwise, discard them.  (If you aren't planning to use them anyway,
+            you can reduce the RAM footprint of the mesh.)
+        progress:
+            If True, show a progress bar while meshes are being generated.
+
+    Returns:
+        df, mesh_gen
+        Where df is a DataFrame indexed by the labels that will
+        be processed along with their sizes and (local) extents,
+        and mesh_gen is a generator which will produce a single mesh per
+        iteration until all requested meshes have been produced.
+    """
+    from vol2mesh import Mesh
+
+    if fullres_box_zyx is None:
+        fullres_box_zyx = np.array([(0,0,0), vol.shape])
+    else:
+        fullres_box_zyx = np.asarray(fullres_box_zyx)
+
+    # Infer the resolution of the downsampled volume
+    fullres_shape = fullres_box_zyx[1] - fullres_box_zyx[0]
+    resolution = (fullres_box_zyx[1] - fullres_box_zyx[0]) // vol.shape
+
+    # The fullres start/end do not need to be even multiples of the resolution,
+    # but the *width* of each dimension must divide cleanly.
+    assert not (fullres_shape % vol.shape).any(), \
+        "Mask volume dimensions must divide cleanly into full-res dimensions."
+
+    fullres_padded_box = fullres_box_zyx
+    if cuffs:
+        vol = np.pad(vol, 1, 'edge')
+        fullres_padded_box += resolution * np.array([[-1, -1, -1], [1, 1, 1]])
+
+    if capped:
+        vol = np.pad(vol, 1, 'constant')
+        fullres_padded_box += resolution * np.array([[-1, -1, -1], [1, 1, 1]])
+
+    # FIXME: For now, we need to compute region features on the uint64 volume
+    #        because the function above doesn't work ideally for uint32.
+    if vol.dtype == np.uint32:
+        vol = vol.astype(np.uint64)
+    feat = region_features(vol, ignore_label=0)
+    feat_df = feat['Box'].to_frame()
+    feat_df['Count'] = feat['Count']
+    feat_df = feat_df.rename_axis('label')
+    feat_df = feat_df.query('label != 0 and Count >= @min_voxels')
+
+    if subset_labels:
+        feat_df = feat_df.query('label in @subset_labels')
+
+    # Now convert (if possible)
+    if vol.dtype in (np.uint64, np.int64) and vol.max() < np.iinfo(np.uint32).max:
+        vol = vol.astype(np.uint32)
+
+    def _meshes_for_volume():
+        for label, segment_box in tqdm_proxy(feat_df['Box'].items(), total=len(feat_df), disable=not progress):
+            mask_box = segment_box.copy()
+            mask_box[0] = np.maximum(0, segment_box[0] - 1)
+            mask_box[1] = np.minimum(vol.shape, segment_box[1] + 1)
+            mask = vol[box_to_slicing(*mask_box)] == label
+            m = Mesh.from_binary_vol(mask, mask_box * resolution + fullres_padded_box[0])
+
+            m.box = segment_box * resolution + fullres_padded_box[0]
+
+            if constrain_exterior:
+                m.laplacian_smooth(smoothing, constrain_exterior=fullres_box_zyx)
+            else:
+                m.laplacian_smooth(smoothing)
+
+            if len(m.vertices_zyx) > minimum_decimation_vertices:
+                m.simplify_openmesh(decimation)
+
+            if not keep_normals:
+                m.drop_normals()
+
+            yield label, m
+
+    return feat_df.copy(), _meshes_for_volume()
