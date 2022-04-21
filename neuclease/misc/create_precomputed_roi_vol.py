@@ -49,7 +49,7 @@ def construct_ng_precomputed_layer_from_rois(server, uuid, rois, bucket_name, bu
             .../segment_properties/info
     """
     invalid_steps = set(steps) - {'voxels', 'meshes', 'properties'}
-    assert not invalid_steps, "Invalid steps: {steps}"
+    assert not invalid_steps, f"Invalid steps: {steps}"
 
     if not localdir:
         localdir = tempfile.mkdtemp()
