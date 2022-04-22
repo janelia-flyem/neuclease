@@ -1266,7 +1266,7 @@ def region_features(label_img, grayscale_img=None, features=['Box', 'Count'], ig
 
 def meshes_from_volume(vol, fullres_box_zyx=None, subset_labels=None, *,
                        cuffs=False, capped=False,
-                       min_voxels=0,
+                       min_voxels=0, max_voxels=None,
                        smoothing=0, constrain_exterior=False,
                        decimation=1.0, minimum_decimation_vertices=20,
                        keep_normals=False,
@@ -1349,6 +1349,8 @@ def meshes_from_volume(vol, fullres_box_zyx=None, subset_labels=None, *,
         vol = np.pad(vol, 1, 'constant')
         fullres_padded_box += resolution * np.array([[-1, -1, -1], [1, 1, 1]])
 
+    max_voxels = max_voxels or np.prod(vol.shape)
+
     # FIXME: For now, we need to compute region features on the uint64 volume
     #        because the function above doesn't work ideally for uint32.
     if vol.dtype == np.uint32:
@@ -1357,7 +1359,7 @@ def meshes_from_volume(vol, fullres_box_zyx=None, subset_labels=None, *,
     feat_df = feat['Box'].to_frame()
     feat_df['Count'] = feat['Count']
     feat_df = feat_df.rename_axis('label')
-    feat_df = feat_df.query('label != 0 and Count >= @min_voxels')
+    feat_df = feat_df.query('label != 0 and Count >= @min_voxels and Count <= @max_voxels')
 
     if subset_labels:
         feat_df = feat_df.query('label in @subset_labels')
