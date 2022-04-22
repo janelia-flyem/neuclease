@@ -1340,7 +1340,7 @@ def meshes_from_volume(vol, fullres_box_zyx=None, subset_labels=None, *,
     assert not (fullres_shape % vol.shape).any(), \
         "Mask volume dimensions must divide cleanly into full-res dimensions."
 
-    fullres_padded_box = fullres_box_zyx
+    fullres_padded_box = fullres_box_zyx.copy()
     if cuffs:
         vol = np.pad(vol, 1, 'edge')
         fullres_padded_box += resolution * np.array([[-1, -1, -1], [1, 1, 1]])
