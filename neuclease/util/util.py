@@ -1410,7 +1410,7 @@ def mask_centroid(mask, as_int=False):
     Compute the centroid of an ND mask.
     Requires N passes but not much RAM overhead.
     """
-    # Use broadcasting tricks to avoid creating a full field of coordinates
+    # Use broadcasting tricks to avoid creating a full field of coordinates.
     # When implicitly broadcasted with the 'where' arg below,
     # the operation sums over all coordinates that belong to a non-zero voxel.
     mask = mask.astype(bool, copy=False)
@@ -1459,6 +1459,20 @@ def ellipsoid_mask_axis_aligned(rz, ry, rx):
     # The result will be cached, so don't let the caller overwrite it!
     mask.flags['WRITEABLE'] = False
     return mask
+
+
+def place_sphere(vol, center_point, radius, label=1):
+    """
+    Place a sphere mask within the given volume
+    """
+    p = np.asarray(center_point)
+    r = radius
+    sphere_box = [p - r, p + r + 1]
+    cropped_box = box_intersection([(0,0,0), vol.shape], sphere_box)
+    m = extract_subvol(sphere_mask(radius), cropped_box - sphere_box[0])
+
+    subvol = vol[box_to_slicing(*cropped_box)]
+    subvol[:] = np.where(m, label, subvol)
 
 
 def ellipsoid_mask(v0, v1, v2):
