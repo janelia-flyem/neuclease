@@ -1361,7 +1361,7 @@ def meshes_from_volume(vol, fullres_box_zyx=None, subset_labels=None, *,
     feat_df = feat_df.rename_axis('label')
     feat_df = feat_df.query('label != 0 and Count >= @min_voxels and Count <= @max_voxels')
 
-    if subset_labels:
+    if subset_labels is not None and len(subset_labels):
         feat_df = feat_df.query('label in @subset_labels')
 
     # Now convert (if possible)
