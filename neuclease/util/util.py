@@ -29,7 +29,7 @@ import pandas as pd
 from numba import jit
 
 from .downsample_with_numba import downsample_binary_3d_suppress_zero
-from .box import extract_subvol, box_intersection, round_coord
+from .box import box_to_slicing, box_union, extract_subvol, box_intersection, round_coord
 from .view_as_blocks import view_as_blocks
 
 # Disable the monitor thread entirely.
@@ -841,6 +841,9 @@ def closest_approach_between_masks(mask_a, mask_b):
         the masks to lists of coordinates and then use KD-trees to find
         the closest approach.
     """
+    # Avoid circular import
+    from neuclease.util.segmentation import compute_nonzero_box
+
     # Wrapper function just for visibility to profilers
     def vectorDistanceTransform(mask):
         mask = mask.astype(np.uint32)
@@ -851,6 +854,13 @@ def closest_approach_between_masks(mask_a, mask_b):
         vdt = vigra.filters.vectorDistanceTransform(mask)
         vdt = vdt[..., ::-1]
         return vdt
+
+    # Extract the minimal subvolume that captures both masks
+    box_a = compute_nonzero_box(mask_a)
+    box_b = compute_nonzero_box(mask_b)
+    box_u = box_union(box_a, box_b)
+    mask_a = extract_subvol(mask_a, box_u)
+    mask_b = extract_subvol(mask_b, box_u)
 
     # For all voxels, find the shortest vector toward id_b
     to_b_vectors = vectorDistanceTransform(mask_b)
@@ -864,12 +874,17 @@ def closest_approach_between_masks(mask_a, mask_b):
 
     # Find the point within id_a with the smallest vector
     point_a = np.unravel_index(np.argmin(to_b_distances), to_b_distances.shape)
-    point_a = tuple(np.array(point_a, np.int32))
+    point_a = np.array(point_a, np.int32)
 
     # Its closest point id_b is indicated by the corresponding vector
-    point_b = tuple((point_a + to_b_vectors[point_a]).astype(np.int32))
+    point_b = (point_a + to_b_vectors[point_a]).astype(np.int32)
 
-    return (point_a, point_b, to_b_distances[point_a])
+    # Add the subvolume offset
+    distance = to_b_distances[point_a]
+    point_a = tuple(point_a + box_u[0])
+    point_b = tuple(point_b + box_u[0])
+
+    return (point_a, point_b, distance)
 
 
 def approximate_closest_approach(vol, id_a, id_b, scale=1):
