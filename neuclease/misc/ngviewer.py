@@ -98,3 +98,43 @@ def update_mask_layer(v, name, vol, scale, box, res0=8):
         }
     """)
     v.set_state(s)
+
+
+def quickview(*unnamed_vols, port=8080, **named_volumes):
+    import time
+    import webbrowser
+    import neuroglancer.server
+    init_ngserver('localhost', port=port)
+    viewer = create_viewer()
+    url = 'http://localhost:' + viewer.get_viewer_url().split(':')[2]
+    print(url)
+    webbrowser.open(url)
+
+    volumes = {}
+    for i, vol in enumerate(unnamed_vols):
+        volumes[f'volume_{i}'] = vol
+    volumes.update(named_volumes)
+    update_layers(viewer, **volumes)
+
+    try:
+        while True:
+            # Wait for KeyboardInterrupt
+            time.sleep(1.0)
+    finally:
+        neuroglancer.server.stop()
+
+
+if __name__ == '__main__':
+    import os.path
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-p', '--port', default=8080, type=int)
+    parser.add_argument('volumes', nargs='+')
+    args = parser.parse_args()
+
+    volumes = {}
+    for path in args.volumes:
+        name = os.path.basename(path).replace('_', '_').replace(' ', '_')
+        volumes[name] = np.load(path)
+
+    quickview(args.port, **volumes)
