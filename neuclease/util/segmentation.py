@@ -1115,7 +1115,7 @@ GRAYSCALE_FEATURE_NAMES = [
 ]
 
 
-def region_features(label_img, grayscale_img=None, features=['Box', 'Count'], ignore_label=None):
+def region_features(label_img, grayscale_img=None, features=['Box', 'Count'], ignore_label=0):
     """
     Wrapper around vigra.analysis.extractRegionFeatures() that supports uint64 and
     returns each feature as a pandas Series or DataFrame, indexed by object ID.
