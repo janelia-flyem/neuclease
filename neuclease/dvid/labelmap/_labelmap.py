@@ -1874,6 +1874,8 @@ def fetch_labelmap_voxels(server, uuid, instance, box_zyx, scale=0, throttle=Fal
     # So, block-align the request no matter what.
     aligned_box = round_box(box_zyx, 64, 'out')
     aligned_shape = aligned_box[1] - aligned_box[0]
+    assert (aligned_shape > 0).all(), \
+        f"Requested box has zero or negative size (ZYX): {box_zyx.tolist()}"
 
     shape_str = '_'.join(map(str, aligned_shape[::-1]))
     offset_str = '_'.join(map(str, aligned_box[0, ::-1]))
