@@ -1021,7 +1021,7 @@ def distance_transform_watershed(mask, smoothing=0.0, seed_mask=None, seed_label
     seed_values = None
     if labeled_seeds.dtype in (np.uint64, np.int64):
         labeled_seeds = labeled_seeds.astype(np.uint64)
-        seed_values = np.sort(pd.unique(labeled_seeds.ravel()))
+        seed_values = np.sort(pd.unique(labeled_seeds.reshape(-1)))
         if seed_values[0] != 0:
             seed_values = np.array([0] + list(seed_values), np.uint64)
 
@@ -1186,7 +1186,7 @@ def region_features(label_img, grayscale_img=None, features=['Box', 'Count'], ig
         label_img32 = label_img.view(np.uint32)
     elif label_img.dtype in (np.int64, np.uint64):
         label_img = label_img.view(np.uint64)
-        label_ids = np.sort(pd.unique(label_img.ravel()))
+        label_ids = np.sort(pd.unique(label_img.reshape(-1)))
 
         # Map from uint64 -> uint32
         label_ids_32 = np.arange(len(label_ids), dtype=np.uint32)
