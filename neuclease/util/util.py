@@ -177,8 +177,10 @@ def switch_cwd(d, create=False):
         os.makedirs(d, exist_ok=True)
     old_dir = os.getcwd()
     os.chdir(d)
-    yield
-    os.chdir(old_dir)
+    try:
+        yield
+    finally:
+        os.chdir(old_dir)
 
 
 class ndrange:
