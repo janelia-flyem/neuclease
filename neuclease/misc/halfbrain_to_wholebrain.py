@@ -11,6 +11,26 @@ from neuclease.dvid.rle import blockwise_masks_from_ranges
 
 
 class FindHBWBOverlaps:
+    """
+    Find overlapping segments between our halfbrain
+    segmentation and the whole-brain segmentation.
+
+    Example:
+
+        from neuclease.misc.halfbrain_to_wholebrain import find_hbwb_overlaps
+        counts = find_hbwb_overlaps(2457385246, scale=3, supervoxels=False, show_progress=True)
+
+    Multiprocessing Example:
+
+        from functools import partial
+        import pandas as pd
+        from neuclease.util import compute_parallel
+
+        fn = partial(find_hbwb_overlaps, scale=6, show_progress=False)
+        all_counts = compute_parallel(fn, my_body_list, processes=16)
+        all_counts_df = pd.concat(all_counts, ignore_index=True)
+        all_counts_df = all_counts_df.sort_values(['halfbrain_body', 'count'], ascending=[True, False])
+    """
     def __init__(self, halfbrain_seg=None, brain_seg=None):
         self.halfbrain_seg = halfbrain_seg
         self.brain_seg = brain_seg
@@ -24,7 +44,7 @@ class FindHBWBOverlaps:
         self.brain_seg = brain_seg
         if brain_seg is None:
             self.brain_seg = (
-                'http://emdata6.int.janelia.org:8510',
+                'http://emdata6.int.janelia.org:9000',
                 '138069aba8e94612b37d119778a89a1c',
                 'segmentation'
             )
