@@ -43,7 +43,7 @@ logger = logging.getLogger(__name__)
 def Timer(msg=None, logger=None, level=logging.INFO, log_start=True):
     """
     Simple context manager that acts as a wall-clock timer.
-    
+
     Args:
         msg:
             Optional message to be logged at the start
@@ -63,10 +63,17 @@ def Timer(msg=None, logger=None, level=logging.INFO, log_start=True):
         logger = logger or logging.getLogger(__name__)
         if log_start:
             logger.log(level, msg + '...')
-    yield result
-    result.stop = time.time()
-    if msg:
-        logger.log(level, msg + f' took {result.timedelta}')
+    try:
+        yield result
+    except BaseException as ex:
+        result.stop = time.time()
+        if msg:
+            logger.error(msg + f' failed due to {type(ex).__name__} after {result.timedelta}')
+        raise
+    else:
+        result.stop = time.time()
+        if msg:
+            logger.log(level, msg + f' took {result.timedelta}')
 
 
 class _TimerResult(object):
