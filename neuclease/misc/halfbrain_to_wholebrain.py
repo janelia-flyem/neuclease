@@ -61,6 +61,10 @@ class FindHBWBOverlaps:
             The results will include body 0 if the body's mask overlaps
             with label 0 in the whole-brain segmentation.
         """
+        # Notes:
+        # - The last tab of the halfbrain (starting at 35202 in the half-brain),
+        #   was realigned, so we don't look at that region.
+        # - The translation offet between half-brain and whole-brain is (4096, 4096, 4096)
         HALFBRAIN_LAST_TAB_X = (35202 // 64) * 64 // 2**scale
 
         if show_progress:
@@ -89,7 +93,7 @@ class FindHBWBOverlaps:
         with Timer(f"Body {halfbrain_body}: Setting up masks", None, log_level):
             boxes, masks = blockwise_masks_from_ranges(rng, (64,64,64))
 
-        if (boxes[:, 0, :] > HALFBRAIN_LAST_TAB_X).all():
+        if (boxes[:, 0, 2] > HALFBRAIN_LAST_TAB_X).all():
             # Fast path for objects that lie completely within the taboo region.
             return empty_counts()
 
@@ -102,11 +106,11 @@ class FindHBWBOverlaps:
         with Timer(f"Body {halfbrain_body}: Counting voxels", None, log_level):
             block_counts = []
             seg_items = seg_dict.items()
-            mask_items = zip(brain_corners, masks)
+            mask_items = zip(boxes[:, 0, :], masks)
             for (mask_corner, mask), (seg_corner, compressed_seg) in tqdm(zip(mask_items, seg_items), disable=not show_progress, total=len(seg_items)):
-                assert (mask_corner == seg_corner).all(), \
+                assert (mask_corner + 4096 // 2**scale == seg_corner).all(), \
                     f"Body {halfbrain_body}: Mask corner doesn't match seg_corner: {mask_corner} != {seg_corner}"
-                if mask_corner[0] >= HALFBRAIN_LAST_TAB_X:
+                if mask_corner[2] >= HALFBRAIN_LAST_TAB_X:
                     continue
 
                 OUT_OF_MASK = 2**63
@@ -132,3 +136,22 @@ class FindHBWBOverlaps:
 
 
 find_hbwb_overlaps = FindHBWBOverlaps()
+
+
+if __name__ == '__main__':
+    #
+    # debug stuff...
+    #
+    brain_server = 'http://emdata6.int.janelia.org:9000'
+    brain_root = (brain_server, 'f3969dc575d74e4f922a8966709958c8')
+    brain_agglo = (brain_server, '138069aba8e94612b37d119778a89a1c')
+    brain_import = (brain_server, 'd26e15af06784aedbfcac1ff82684b51')
+    halfbrain_base = ('http://emdata6.int.janelia.org:8000', '0ea0d0e28874440a93bf156f9fbd65ca')
+
+    find_hbwb_overlaps = FindHBWBOverlaps(
+        (*halfbrain_base, 'segmentation'),
+        (*brain_import, 'segmentation')
+    )
+
+    counts = find_hbwb_overlaps(1467281664, scale=3, supervoxels=False, show_progress=True)
+    print(counts)
