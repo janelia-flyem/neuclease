@@ -1192,7 +1192,7 @@ def region_features(label_img, grayscale_img=None, features=['Box', 'Count'], ig
         label_ids_32 = np.arange(len(label_ids), dtype=np.uint32)
         mapper = LabelMapper(label_ids, label_ids_32)
         label_img32 = mapper.apply(label_img)
-        if ignore_label is not None:
+        if ignore_label is not None and ignore_label in label_ids:
             ignore_label = mapper.apply(np.array([ignore_label], np.uint64))[0]
     else:
         label_img32 = label_img.astype(np.uint32)
