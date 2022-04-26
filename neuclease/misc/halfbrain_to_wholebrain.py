@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 from requests import HTTPError
 
-from neuclease.util import Timer, tqdm_proxy as tqdm
+from neuclease.util import Timer, tqdm_proxy as tqdm, round_coord
 from neuclease.dvid import fetch_sparsevol, fetch_labelmap_specificblocks
 from neuclease.dvid.rle import blockwise_masks_from_ranges
 
@@ -64,8 +64,10 @@ class FindHBWBOverlaps:
         # Notes:
         # - The last tab of the halfbrain (starting at 35202 in the half-brain),
         #   was realigned, so we don't look at that region.
+        # - Same for the first tab of the halfbrain, ending at 6772
         # - The translation offet between half-brain and whole-brain is (4096, 4096, 4096)
-        HALFBRAIN_LAST_TAB_X = (35202 // 64) * 64 // 2**scale
+        HALFBRAIN_FIRST_TAB_X = round_coord(6772, 64, 'up') // 2**scale
+        HALFBRAIN_LAST_TAB_X = round_coord(35202, 64, 'down') // 2**scale
 
         if show_progress:
             log_level = logging.INFO
@@ -93,8 +95,10 @@ class FindHBWBOverlaps:
         with Timer(f"Body {halfbrain_body}: Setting up masks", None, log_level):
             boxes, masks = blockwise_masks_from_ranges(rng, (64,64,64))
 
-        if (boxes[:, 0, 2] > HALFBRAIN_LAST_TAB_X).all():
-            # Fast path for objects that lie completely within the taboo region.
+        # Fast path for objects that lie completely within the taboo region.
+        if (boxes[:, 1, 2] <= HALFBRAIN_FIRST_TAB_X).all():
+            return empty_counts()
+        if (boxes[:, 0, 2] >= HALFBRAIN_LAST_TAB_X).all():
             return empty_counts()
 
         with Timer(f"Body {halfbrain_body}: Fetching specificblocks", None, log_level):
@@ -106,11 +110,13 @@ class FindHBWBOverlaps:
         with Timer(f"Body {halfbrain_body}: Counting voxels", None, log_level):
             block_counts = []
             seg_items = seg_dict.items()
-            mask_items = zip(boxes[:, 0, :], masks)
-            for (mask_corner, mask), (seg_corner, compressed_seg) in tqdm(zip(mask_items, seg_items), disable=not show_progress, total=len(seg_items)):
-                assert (mask_corner + 4096 // 2**scale == seg_corner).all(), \
-                    f"Body {halfbrain_body}: Mask corner doesn't match seg_corner: {mask_corner} != {seg_corner}"
-                if mask_corner[2] >= HALFBRAIN_LAST_TAB_X:
+            mask_items = zip(boxes, masks)
+            for (mask_box, mask), (seg_corner, compressed_seg) in tqdm(zip(mask_items, seg_items), disable=not show_progress, total=len(seg_items)):
+                assert (mask_box[0] + 4096 // 2**scale == seg_corner).all(), \
+                    f"Body {halfbrain_body}: Mask corner doesn't match seg_corner: {mask_box[0]} != {seg_corner}"
+                if mask_box[1, 2] <= HALFBRAIN_FIRST_TAB_X:
+                    continue
+                if mask_box[0, 2] >= HALFBRAIN_LAST_TAB_X:
                     continue
 
                 OUT_OF_MASK = 2**63
@@ -126,6 +132,7 @@ class FindHBWBOverlaps:
         counts.sort_values(ascending=False, inplace=True)
         df = counts.to_frame()
         df['halfbrain_frac'] = df['count'] / body_size
+        df['halfbrain_frac_within_frozen'] = df['count'] / df['count'].sum()
         df = df[df['halfbrain_frac'] >= threshold_frac]
         df[f'halfbrain_{label_type}'] = halfbrain_body
         return df.reset_index()[[f'halfbrain_{label_type}', f'brain_{label_type}', 'count', 'halfbrain_frac']]
