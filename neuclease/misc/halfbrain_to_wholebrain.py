@@ -135,7 +135,7 @@ class FindHBWBOverlaps:
         df['halfbrain_frac_within_frozen'] = df['count'] / df['count'].sum()
         df = df[df['halfbrain_frac'] >= threshold_frac]
         df[f'halfbrain_{label_type}'] = halfbrain_body
-        return df.reset_index()[[f'halfbrain_{label_type}', f'brain_{label_type}', 'count', 'halfbrain_frac']]
+        return df.reset_index()[[f'halfbrain_{label_type}', f'brain_{label_type}', 'count', 'halfbrain_frac', 'halfbrain_frac_within_frozen']]
 
     @wraps(find_hbwb_overlaps)
     def __call__(self, *args, **kwargs):
