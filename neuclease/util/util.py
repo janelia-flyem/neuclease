@@ -14,7 +14,7 @@ from itertools import chain
 from operator import itemgetter
 from functools import partial, lru_cache
 from multiprocessing import get_context
-from multiprocessing.pool import Pool, ThreadPool
+from multiprocessing.pool import ThreadPool
 from datetime import datetime, timedelta
 from itertools import product, starmap
 from collections.abc import Mapping, Iterable, Iterator, Sequence
@@ -599,7 +599,7 @@ class _iter_batches_with_len(_iter_batches):
 
 def compute_parallel(func, iterable, chunksize=1, threads=0, processes=0, ordered=None,
                      leave_progress=False, total=None, initial=0, starmap=False, show_progress=None,
-                     context=None, **pool_kwargs):
+                     context=None, shutdown_delay=0.05, **pool_kwargs):
     """
     Use the given function to process the given iterable in a ThreadPool or process Pool,
     showing progress using tqdm.
@@ -684,7 +684,7 @@ def compute_parallel(func, iterable, chunksize=1, threads=0, processes=0, ordere
         f_map = partial(pool.imap_unordered, chunksize=chunksize)
 
     # If we'll need to reorder the results,
-    # then pass an index in and out of the function,
+    # then pass an index into (and out of) the function,
     # which we'll use to sort the results afterwards.
     if reorder:
         iterable = enumerate(iterable)
@@ -707,20 +707,50 @@ def compute_parallel(func, iterable, chunksize=1, threads=0, processes=0, ordere
     with pool:
         iter_results = f_map(func, iterable)
         results_progress = tqdm_proxy(iter_results, initial=initial, total=total, leave=leave_progress, disable=not show_progress)
-        with results_progress:
-            # Here's where the work is actually done.
-            results = []
-            try:
+        try:
+            with results_progress:
+                # Here's where the work is actually done, i.e. during iteration.
+                results = []
                 for item in results_progress:
                     results.append(item)
-            except KeyboardInterrupt as ex:
-                # If the user killed the job early, provide the results that have completed so far in the exception.
-                if reorder:
-                    results.sort(key=itemgetter(0))
-                    results = [r for (_, r) in results]
+        except KeyboardInterrupt as ex:
+            # If the user killed the job early, provide the results
+            # that have completed so far via an exception attribute.
+            if reorder:
+                results.sort(key=itemgetter(0))
+                results = [r for (_, r) in results]
 
-                # IPython users can access the exception via sys.last_value
-                raise KeyboardInterruptWithResults(results, total or '?') from ex
+            # IPython users can access the exception via sys.last_value
+            raise KeyboardInterruptWithResults(results, total or '?') from ex
+        finally:
+            # I see hangs here from time to time during normal operation,
+            # even when no exception is raised (I think).
+            # I suspect this is either related to my use of 'fork' as a multiprocecssing mode,
+            # (which is generally frowned upon), or perhaps it's a bug in multiprocessing itself.
+            # In any case, I'll try to combat the issue with two tricks:
+            #
+            #   1. Call close() before exiting this pool's context manager
+            #      (which calls terminate() internally in __exit__, not close()).
+            #      Maybe it helps to close() the pool first?
+            #
+            #   2. Fight possible race conditions with a slight delay after the
+            #      last item completes.
+            #
+            # For reference, here is an example traceback for a hanged pool:
+            #
+            #     Thread 2854017 (idle): "Dask-Default-Threads-2848426-2"
+            #         poll (multiprocessing/popen_fork.py:28)
+            #         wait (multiprocessing/popen_fork.py:48)
+            #         join (multiprocessing/process.py:140)
+            #         _terminate_pool (multiprocessing/pool.py:617)
+            #         __call__ (multiprocessing/util.py:224)
+            #         terminate (multiprocessing/pool.py:548)
+            #         __exit__ (multiprocessing/pool.py:623)
+            #         compute_parallel (neuclease/util/util.py:723)
+            #         ...
+            pool.close()
+            if shutdown_delay:
+                time.sleep(shutdown_delay)
 
     if reorder:
         results.sort(key=itemgetter(0))
@@ -739,9 +769,15 @@ class KeyboardInterruptWithResults(KeyboardInterrupt):
         return f'{len(self.partial_results)}/{self.total_items} results completed (see sys.last_value)'
 
 
-@contextlib.contextmanager
-def _DummyPool():
-    yield
+class _DummyPool:
+    def __enter__(self):
+        pass
+
+    def __exit__(self, *args):
+        pass
+
+    def close(self):
+        pass
 
 
 def _apply_star(func, arg):
@@ -1328,7 +1364,6 @@ def tqdm_proxy(iterable=None, *, logger=None, level=logging.INFO, **kwargs):
                 kwargs['miniters'] = kwargs['total'] // 20
             elif hasattr(iterable, '__len__'):
                 kwargs['miniters'] = len(iterable) // 20
-
 
     kwargs['file'] = _file
     bar = _tqdm(iterable, **kwargs)
