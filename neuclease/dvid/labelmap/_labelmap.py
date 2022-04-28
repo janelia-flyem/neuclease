@@ -2806,7 +2806,9 @@ def post_hierarchical_cleaves(server, uuid, instance, body_id, group_mapping, le
     group_mapping = group_mapping.rename('group', copy=False)
     group_mapping = group_mapping.rename_axis('sv', copy=False)
 
-    dvid_mapping = fetch_mapping(server, uuid, instance, group_mapping.index.values, as_series=True, session=session)
+    logger.info(f"Verifying mapping for {len(group_mapping)} supervoxels")
+    dvid_mapping = fetch_mapping(server, uuid, instance, group_mapping.index.values, as_series=True,
+                                 batch_size=10_000, processes=8, session=session)
     assert (dvid_mapping == body_id).all(), \
         "All supervoxels in the group_mapping index must map (in DVID) to the given body_id"
 
@@ -2875,7 +2877,8 @@ def post_hierarchical_cleaves(server, uuid, instance, body_id, group_mapping, le
         _cleave_groups(top_body, top_df, top_bodies)
         _cleave_groups(body, bottom_df, bottom_bodies)
 
-    li_df = fetch_labelindex(server, uuid, instance, body_id, format='pandas', session=session).blocks
+    with Timer(f"Fetching label index for body {body_id}", logger):
+        li_df = fetch_labelindex(server, uuid, instance, body_id, format='pandas', session=session).blocks
     orig_len = len(li_df)
     li_df = li_df.query('sv in @group_df.index')
 
@@ -2902,7 +2905,8 @@ def post_hierarchical_cleaves(server, uuid, instance, body_id, group_mapping, le
     if not need_initial_cleave:
         num_cleaves -= 1
 
-    with tqdm_proxy(total=num_cleaves, leave=leave_progress, logger=logger) as progress_bar:
+    with Timer(f"Performing {num_cleaves} cleaves", logger), \
+            tqdm_proxy(total=num_cleaves, leave=leave_progress, logger=logger) as progress_bar:
         progress_bar.update(0)
 
         if need_initial_cleave:
