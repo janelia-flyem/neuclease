@@ -1040,7 +1040,7 @@ split_supervoxel = post_split_supervoxel
 
 
 @dvid_api_wrapper
-def fetch_mapping(server, uuid, instance, supervoxel_ids, *, session=None, as_series=False):
+def fetch_mapping(server, uuid, instance, supervoxel_ids, *, session=None, batch_size=None, processes=0, as_series=False):
     """
     For each of the given supervoxels, ask DVID what body they belong to.
     If the supervoxel no longer exists, it will map to label 0.
@@ -1049,16 +1049,28 @@ def fetch_mapping(server, uuid, instance, supervoxel_ids, *, session=None, as_se
         If as_series=True, return pd.Series, with index named 'sv' and values named 'body'.
         Otherwise, return the bodies as an array, in the same order in which the supervoxels were given.
     """
-    supervoxel_ids = list(map(int, supervoxel_ids))
-    body_ids = fetch_generic_json(f'{server}/api/node/{uuid}/{instance}/mapping', json=supervoxel_ids, session=session)
-    mapping = pd.Series(body_ids, index=np.asarray(supervoxel_ids, np.uint64), dtype=np.uint64, name='body')
-    mapping.index.name = 'sv'
+    batch_size = batch_size or len(supervoxel_ids)
+    if processes > 0:
+        # Don't pass the session to child processes.
+        session = None
+
+    fn = partial(_fetch_mapping, server, uuid, instance, session=session)
+    sv_batches = iter_batches(supervoxel_ids, batch_size)
+    batch_results = compute_parallel(fn, sv_batches, processes=processes)
+    mapping = pd.concat(batch_results)
 
     if as_series:
         return mapping
     else:
         return mapping.values
 
+@dvid_api_wrapper
+def _fetch_mapping(server, uuid, instance, supervoxel_ids, *, session=None):
+    supervoxel_ids = list(map(int, supervoxel_ids))
+    body_ids = fetch_generic_json(f'{server}/api/node/{uuid}/{instance}/mapping', json=supervoxel_ids, session=session)
+    mapping = pd.Series(body_ids, index=np.asarray(supervoxel_ids, np.uint64), dtype=np.uint64, name='body')
+    mapping.index.name = 'sv'
+    return mapping
 
 @dvid_api_wrapper
 def fetch_mappings(server, uuid, instance, as_array=False, *, format=None, session=None):
