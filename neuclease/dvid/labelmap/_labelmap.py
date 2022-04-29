@@ -23,13 +23,16 @@ from ...util import (Timer, round_box, extract_subvol, DEFAULT_TIMESTAMP, tqdm_p
                      overwrite_subvol, iter_batches, extract_labels_from_volume, box_intersection, lexsort_columns)
 
 from .. import dvid_api_wrapper, fetch_generic_json, fetch_repo_info
+from ..server import fetch_server_info
 from ..repo import create_voxel_instance, fetch_repo_dag, resolve_ref, expand_uuid, find_repo_root
 from ..kafka import read_kafka_messages, kafka_msgs_to_df
 from ..rle import parse_rle_response, runlength_decode_from_ranges_to_mask, rle_ranges_box
 
 from ._split import SplitEvent, fetch_supervoxel_splits_from_kafka
+
+# $ protoc --python_out=. neuclease/dvid/labelmap/labelops.proto
 from .labelops_pb2 import MappingOps, MappingOp
-from neuclease.dvid.server import fetch_server_info
+
 
 logger = logging.getLogger(__name__)
 
@@ -1369,6 +1372,35 @@ def copy_mappings(src_info, dest_info, batch_size=None, *, session=None):
 
     mappings = fetch_mappings(*src_info)
     post_mappings(*dest_info, mappings, mutid, batch_size=batch_size, session=session)
+
+
+@dvid_api_wrapper
+def post_renumber(server, uuid, instance, renumbering, *, batch_size=None, session=None):
+    """
+    Change the body ID of a set of bodies.
+
+    Args:
+        server:
+            DVID server
+        uuid:
+            DVID node
+        instance:
+            DVID labelmap instance
+        renumbering:
+            pd.Series named 'new_body', indexed by 'body'
+        batch_size:
+            Provide this to split the operation into smaller batches
+    """
+    assert isinstance(renumbering, pd.Series)
+    assert renumbering.index.name == 'body'
+    assert renumbering.name == 'new_body'
+
+    batch_size = batch_size or len(renumbering)
+    batches = iter_batches(renumbering, batch_size)
+    for batch in tqdm_proxy(batches, disable=len(batches) <= 1):
+        payload = batch.reset_index()[['new_body', 'body']].values.reshape(-1).tolist()
+        r = session.post(f'{server}/api/node/{uuid}/{instance}/renumber', json=payload)
+        r.raise_for_status()
 
 
 @dvid_api_wrapper
@@ -2733,6 +2765,8 @@ def post_cleave(server, uuid, instance, body_id, supervoxel_ids, *, session=None
         The label ID of the new body created by the cleave operation.
     """
     supervoxel_ids = list(map(int, supervoxel_ids))
+    assert len(supervoxel_ids) > 0, \
+        "Can't cleave away an empty list of supervoxels"
 
     r = session.post(f'{server}/api/node/{uuid}/{instance}/cleave/{body_id}', json=supervoxel_ids)
     r.raise_for_status()
@@ -2750,6 +2784,7 @@ def post_hierarchical_cleaves(server, uuid, instance, body_id, group_mapping, le
     and then re-cleave the coarsely cleaved objects.
     That will run faster than cleaving off little bits one at a time,
     thanks to the reduced labelindex sizes at each step.
+    (In other words, N*log(N) is faster than N^2.)
 
     Given a set of N supervoxel groups that belong to a single body,
     this function will issue N cleaves to leave each group as its own body,
