@@ -69,9 +69,15 @@ class DefaultTimeoutHTTPAdapter(requests.adapters.HTTPAdapter):
 def clear_default_dvid_sessions():
     global DEFAULT_DVID_SESSIONS
     global DEFAULT_DVID_NODE_SERVICES
+    global DEFAULT_DVID_SESSION_TEMPLATE
     DEFAULT_DVID_SESSIONS.clear()
     DEFAULT_DVID_NODE_SERVICES.clear()
+    DEFAULT_DVID_SESSION_TEMPLATE = _default_dvid_session_template()
 
+
+# Medium timeout for connections, long timeout for data
+# https://docs.python-requests.org/en/latest/user/advanced/#timeouts
+DEFAULT_DVID_TIMEOUT = (3.05, 120.0)
 
 def _default_dvid_session_template(appname=DEFAULT_APPNAME, user=getpass.getuser(), admintoken=None, timeout=None):
     """
@@ -81,9 +87,7 @@ def _default_dvid_session_template(appname=DEFAULT_APPNAME, user=getpass.getuser
     retries = Retry(connect=2, backoff_factor=0.1)
 
     if timeout is None:
-        # Medium timeout for connections, long timeout for data
-        # https://docs.python-requests.org/en/latest/user/advanced/#timeouts
-        timeout = (3.05, 120.0)
+        timeout = DEFAULT_DVID_TIMEOUT
     adapter = DefaultTimeoutHTTPAdapter(max_retries=retries, timeout=timeout)
 
     s = requests.Session()
@@ -111,6 +115,13 @@ def _default_dvid_session_template(appname=DEFAULT_APPNAME, user=getpass.getuser
 DEFAULT_DVID_SESSION_TEMPLATE = _default_dvid_session_template()
 
 
+def create_dvid_session(timeout=DEFAULT_DVID_TIMEOUT):
+    s = copy.deepcopy(DEFAULT_DVID_SESSION_TEMPLATE)
+    s.adapters['http://'].timeout = timeout
+    s.adapters['https://'].timeout = timeout
+    return s
+
+
 def default_dvid_session_template():
     return DEFAULT_DVID_SESSION_TEMPLATE
 
@@ -136,7 +147,7 @@ def default_dvid_session(appname=DEFAULT_APPNAME, user=getpass.getuser(), admint
     try:
         s = DEFAULT_DVID_SESSIONS[(appname, user, admintoken, thread_id, pid)]
     except KeyError:
-        s = copy.deepcopy(DEFAULT_DVID_SESSION_TEMPLATE)
+        s = create_dvid_session()
         DEFAULT_DVID_SESSIONS[(appname, user, admintoken, thread_id, pid)] = s
 
     return s
