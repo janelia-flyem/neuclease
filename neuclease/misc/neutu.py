@@ -169,7 +169,15 @@ def prepare_cleaving_assignment_setup(bodies, output_dir, bucket_path, csv_path,
     except subprocess.SubprocessError as ex:
         raise RuntimeError(f"Can't access gs://{bucket_path}") from ex
 
-    df = create_cleaving_assignments(bodies, output_dir, prefix, batch_size)
+    if isinstance(bodies, pd.DataFrame):
+        assert bodies.index.name == 'body'
+        df = create_cleaving_assignments(bodies.index, output_dir, prefix, batch_size)
+        assert not ({*bodies.columns} & {*df.columns}), \
+            "Make sure the DataFrame you provided doesn't have column names that clash with the columns this function adds"
+        df = bodies.merge(df, 'left', on='body')
+    else:
+        df = create_cleaving_assignments(bodies, output_dir, prefix, batch_size)
+
     logger.info("Uploading assignment files")
 
     # Explicitly *unset* content type, to trigger browsers to download the file, not display it as JSON.
@@ -187,9 +195,12 @@ def prepare_cleaving_assignment_setup(bodies, output_dir, bucket_path, csv_path,
     df['date started'] = ''
     df['date completed'] = ''
     df['notes'] = ''
-    df.to_csv(csv_path, index=True, header=True)
 
+    assert df.index.name == 'body'
+
+    df.to_csv(csv_path, index=True, header=True)
     return df
+
 
 
 def create_connection_validation_assignment(df, output_path):
