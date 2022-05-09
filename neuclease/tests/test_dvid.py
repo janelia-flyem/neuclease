@@ -605,13 +605,13 @@ def test_fetch_mutations(labelmap_setup):
     mut_df = fetch_mutations(dvid_server, uuid2, instance, dag_filter='leaf-only')
     assert len(mut_df) == 2
     assert (mut_df['uuid'] == uuid2).all()
-    assert (mut_df['action'] == 'merge').all()
+    assert (mut_df['action'] == 'merge-complete').all()
     assert (mut_df['target_body'] == [9, 1]).all()
 
     mut_df = fetch_mutations(dvid_server, uuid2, instance, dag_filter='leaf-and-parents')
     assert len(mut_df) == 4
     assert (mut_df['uuid'] == [uuid, uuid, uuid2, uuid2]).all()
-    assert (mut_df['action'] == 'merge').all()
+    assert (mut_df['action'] == 'merge-complete').all()
     assert (mut_df['target_body'] == [1, 5, 9, 1]).all()
 
 

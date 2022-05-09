@@ -365,17 +365,11 @@ def kafka_msgs_to_df(msgs, drop_duplicates=False, default_timestamp=DEFAULT_TIME
     if convert_tz:
         msgs_df['timestamp'] = msgs_df['timestamp'].dt.tz_localize('UTC').dt.tz_convert(convert_tz)
 
-    if 'MutationID' in msgs[0]:
-        mutids = []
-        for msg in msgs_df['msg']:
-            try:
-                mutids.append( msg['MutationID'] )
-            except KeyError:
-                mutids.append( 0 )
-        msgs_df['mutid'] = mutids
+    if any('MutationID' in m for m in msgs):
+        msgs_df['mutid'] = [msg.get('MutationID', None) for msg in msgs_df['msg']]
 
-    if 'Key' in msgs[0]:
-        msgs_df['key'] = [msg['Key'] for msg in msgs_df['msg']]
+    if any('Key' in m for m in msgs):
+        msgs_df['key'] = [msg.get('Key', None) for msg in msgs_df['msg']]
 
     columns = ['timestamp', 'uuid', 'mutid', 'key', 'msg']
 

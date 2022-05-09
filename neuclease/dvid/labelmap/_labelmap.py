@@ -4,7 +4,7 @@ import gzip
 import logging
 from io import BytesIO
 from functools import partial, lru_cache, wraps
-from itertools import starmap
+from itertools import starmap, chain
 from multiprocessing.pool import ThreadPool
 from collections import defaultdict, namedtuple
 
@@ -1208,7 +1208,7 @@ def fetch_complete_mappings(server, uuid, instance, include_retired=True, kafka_
 
     def extract_cleave_fragments():
         for msg in kafka_msgs:
-            if msg["Action"] == "cleave":
+            if msg["Action"] == "cleave-complete":
                 yield msg["CleavedLabel"]
 
     # Cleave fragment IDs (i.e. bodies that were created via a cleave)
@@ -3081,7 +3081,20 @@ def fetch_mutations(server, uuid, instance, userid=None, *, action_filter=None, 
         msgs = [*filter(lambda m: m['Action'] in action_filter, msgs)]
 
     if format == 'pandas':
-        return labelmap_kafka_msgs_to_df(msgs)
+        # We don't need special handling of '*-complete' messages
+        # because the mutation log only contains completed messages.
+        # However in older mutation logs the message action isn't marked as a '*-complete'
+        msg_df = labelmap_kafka_msgs_to_df(msgs, completes_only=False, fill_completes=False)
+
+        # New convention is for DVID to emit '-complete' messages, but old servers didn't do that.
+        # We just patch the log to make it look like that's what happened.
+        replace = {k:k for k in msg_df['action'].unique()}
+        replace.update({k: f'{k}-complete' for k in ('cleave', 'merge', 'split-supervoxel', 'split', 'renumber')})
+        msg_df['action'] = msg_df['action'].map(replace)
+
+        for msg in msg_df['msg']:
+            msg['Action'] = replace[msg['Action']]
+        return msg_df
     else:
         return msgs
 
@@ -3125,7 +3138,7 @@ def fetch_history(server, uuid, instance, body, from_uuid=None, to_uuid=None, fo
 
 
 def read_labelmap_kafka_df(server, uuid, instance='segmentation', action_filter=None, dag_filter='leaf-and-parents',
-                           default_timestamp=DEFAULT_TIMESTAMP, drop_completes=True, group_id=None):
+                           default_timestamp=DEFAULT_TIMESTAMP, completes_only=True, group_id=None):
     """
     Convenience function for reading the kafka log for
     a labelmap instance and loading it into a DataFrame.
@@ -3154,7 +3167,7 @@ def read_labelmap_kafka_df(server, uuid, instance='segmentation', action_filter=
         default_timestamp:
             See labelmap_kafka_msgs_to_df()
 
-        drop_completes:
+        completes_only:
             See labelmap_kafka_msgs_to_df()
 
     Returns:
@@ -3162,11 +3175,11 @@ def read_labelmap_kafka_df(server, uuid, instance='segmentation', action_filter=
             ['timestamp', 'uuid', 'mutid', 'action', 'target_body', 'target_sv', 'msg']
     """
     msgs = read_kafka_messages(server, uuid, instance, action_filter, dag_filter, group_id=group_id)
-    msgs_df = labelmap_kafka_msgs_to_df(msgs, default_timestamp, drop_completes)
+    msgs_df = labelmap_kafka_msgs_to_df(msgs, default_timestamp, completes_only)
     return msgs_df
 
 
-def labelmap_kafka_msgs_to_df(kafka_msgs, default_timestamp=DEFAULT_TIMESTAMP, drop_completes=True):
+def labelmap_kafka_msgs_to_df(kafka_msgs, default_timestamp=DEFAULT_TIMESTAMP, completes_only=True, fill_completes=True):
     """
     Convert the kafka messages for a labelmap instance into a DataFrame.
 
@@ -3178,17 +3191,22 @@ def labelmap_kafka_msgs_to_df(kafka_msgs, default_timestamp=DEFAULT_TIMESTAMP, d
             Old versions of DVID did not emit a timestamp with each message.
             For such messages, we'll assign a default timestamp, specified by this argument.
 
-        drop_completes:
-            If True, don't return the completion confirmation messages.
-            That is, drop 'merge-complete', 'cleave-complete', 'split-complete',
-            and 'split-supervoxel-complete'.
-            Note: No attempt is made to ensure that all returned messages actually
-            had a corresponding 'complete' message.  If some operation in the log
-            failed (and thus has no corresponding 'complete' message), it will
-            still be included in the output.
+        completes_only:
+            Some operations are logged in kafka twice: once for the initial request,
+            and another when the operation completes.
+            (If an operation fails to complete, the completion message is not logged.)
+            This argument will filter out the 'trigger' messages, leaving only the completion messages.
 
+        fill_completes:
+            In newer versions of DVID, the '*-complete' message includes all the same fields that
+            the original (trigger) message included, but older versions of DVID didn't automatically
+            include all fields in both messages.
+            With this argument, the '*-complete' messages from old kafka logs are modified to include
+            all fields, which are obtained by copying them out of the corresponding trigger messsage.
     """
     FINAL_COLUMNS = ['timestamp', 'uuid', 'mutid', 'action', 'target_body', 'target_sv', 'user', 'merged', 'msg']
+
+    # Generic conversion to DataFrame.
     df = kafka_msgs_to_df(kafka_msgs, drop_duplicates=False, default_timestamp=default_timestamp)
 
     if len(df) == 0:
@@ -3198,68 +3216,105 @@ def labelmap_kafka_msgs_to_df(kafka_msgs, default_timestamp=DEFAULT_TIMESTAMP, d
     df['action'] = [msg['Action'] for msg in df['msg']]
     df['user'] = [msg['User'] if 'User' in msg else '' for msg in df['msg']]
 
-    if drop_completes:
-        completes = df['action'].map(lambda s: s.endswith('-complete'))
-        df = df[~completes].copy()
+    KNOWN_ACTIONS = {
+        'post-maxlabel', 'post-nextlabel',
+        *chain(*((a, f'{a}-complete') for a in ('cleave', 'merge', 'split', 'split-supervoxel', 'renumber')))}
 
-    if len(df) == 0:
-        return pd.DataFrame([], columns=FINAL_COLUMNS)
+    COMPLETE_ACTIONS = {
+        'post-maxlabel', 'post-nextlabel',
+        'cleave-complete', 'merge-complete',
+        'split-complete', 'split-supervoxel-complete',
+        'renumber-complete'
+    }
 
-    mutation_bodies = defaultdict(lambda: 0)
-    mutation_svs = defaultdict(lambda: 0)
+    unknown_actions = set(df['action'].unique()) - KNOWN_ACTIONS
+    assert not unknown_actions, f"Unknown actions in mutation log: {unknown_actions}"
 
     target_bodies = []
     target_svs = []
     merged_bodies = []
 
-    # This logic is somewhat more complex than you might think is necessary,
-    # but that's because the kafka logs (sadly) contain duplicate mutation IDs,
-    # i.e. the mutation ID was not unique in our earlier logs.
+    # Determine which field to place in the target_body, target_sv, merged fields
     for msg in df['msg'].values:
         action = msg['Action']
-        try:
-            mutid = msg['MutationID']
-        except KeyError:
-            mutid = 0
+        target_body = np.nan
+        target_sv = np.nan
+        merges = None
 
-        if not action.endswith('complete'):
-            target_body = 0
-            target_sv = 0
-            merges = None
+        if action in ('cleave', 'cleave-complete'):
+            target_body = msg.get('OrigLabel', np.nan)
+        if action in ('merge', 'merge-complete'):
+            target_body = msg.get('Target', np.nan)
+            merges = msg.get('Labels', np.nan)
+        elif action in ('split', 'split-complete'):
+            target_body = msg.get('Target', np.nan)
+        elif action in ('split-supervoxel', 'split-supervoxel-complete'):
+            target_sv = msg.get('Supervoxel', np.nan)
+        if action in ('renumber', 'renumber-complete'):
+            target_body = msg['NewLabel']
+            merges = [msg['OrigLabel']]
 
-            if action == 'cleave':
-                target_body = msg['OrigLabel']
-            if action == 'merge':
-                target_body = msg['Target']
-                merges = msg['Labels']
-            elif action == 'split':
-                target_body = msg['Target']
-            elif action == 'split-supervoxel':
-                target_sv = msg['Supervoxel']
-
-            target_bodies.append(target_body)
-            target_svs.append(target_sv)
-            merged_bodies.append(merges)
-
-            mutation_bodies[mutid] = target_body
-            mutation_svs[mutid] = target_sv
-
-        else:
-            # The ...-complete messages contain nothing but the action, uuid, and mutation ID,
-            # but as a convenience we will match them with the target_body or target_sv,
-            # based on the most recent message with a matching mutation ID.
-            target_bodies.append( mutation_bodies[mutid] )
-            target_svs.append( mutation_svs[mutid] )
-            merged_bodies.append(None)
+        target_bodies.append(target_body)
+        target_svs.append(target_sv)
+        merged_bodies.append(merges)
 
     df['target_body'] = target_bodies
     df['target_sv'] = target_svs
     df['merged'] = merged_bodies
 
+    # Create completely empty columns if necessary to provide the expected output columns.
     for col in FINAL_COLUMNS:
         if col not in df:
             df[col] = np.nan
 
+    if not fill_completes:
+        if completes_only:
+            df = df.query('action in @COMPLETE_ACTIONS')
+        df['target_body'] = df['target_body'].fillna(0).astype(np.uint64)
+        df['target_sv'] = df['target_sv'].fillna(0).astype(np.uint64)
+        df['mutid'] = df['mutid'].fillna(-1).astype(int)
+        return df[FINAL_COLUMNS]
+
+    # This logic is somewhat more complex than you might think is necessary,
+    # but that's because the kafka logs (sadly) contain duplicate mutation IDs,
+    # i.e. the mutation ID was not unique in our earlier logs.
+    # So, we might have two pairs of merge + merge-complete messages that use the same mutation ID
+    # We append a 'transaction_id' to distinguish between those pairs.
+    # The transaction_id is just the index of the completion message.
+    df['trigger'] = df['action'].map(lambda s: s[:-len('-complete')] if '-complete' in s else s)
+    completion_idx = df.query('action in @COMPLETE_ACTIONS').index
+    df['transaction_id'] = np.nan
+    df.loc[completion_idx, 'transaction_id'] = completion_idx
+
+    # Fill backwards to associate each trigger message with the completion message that follows it.
+    df['transaction_id'] = df.groupby(['uuid', 'mutid', 'trigger'])['transaction_id'].bfill()
+
+    # But undo that filling operation for those trigger messages
+    # which DON'T HAVE a completion message (because the operation failed).
+    df['transaction_component'] = df.iloc[::-1].groupby('transaction_id').cumcount()
+    df.loc[df['transaction_component'] > 1, 'transaction_id'] = np.nan
+
+    # Old kafka logs didn't include all fields in the 'complete' message,
+    # so fill them in from the trigger message to ensure that 'complete'
+    # message JSON contains all the info that the corresponding trigger
+    # message contained..
+    for _, tx_df in df.groupby('transaction_id'):
+        assert len(tx_df) == 2
+        first, second = tx_df['msg'].values
+        for k, v in first.items():
+            second.setdefault(k, v)
+
+    # Also forward-fill in the columns to ensure that the 'complete' rows have everything the 'trigger' rows had.
+    fill_cols = list({*df.columns} - {'action', 'uuid', 'mutid', 'timestamp', 'trigger', 'transaction_id', 'transaction_component'})
+    df[fill_cols] = df.groupby('transaction_id')[fill_cols].ffill()
+
+    if completes_only:
+        df = df.query('action in @COMPLETE_ACTIONS')
+
+    df = df.copy()
+    df['target_body'] = df['target_body'].fillna(0).astype(np.uint64)
+    df['target_sv'] = df['target_sv'].fillna(0).astype(np.uint64)
+    df['mutid'] = df['mutid'].fillna(-1).astype(int)
     return df[FINAL_COLUMNS]
 
 
@@ -3283,14 +3338,21 @@ def compute_affected_bodies(kafka_msgs):
         If you're interested in all supervoxel splits, see fetch_supervoxel_splits().
 
     Note:
-        These results do not consider any '-complete' messsages in the list.
-        If an operation failed, it may still be included in these results.
+        This function analyzes ONLY the '*-complete' messages, and it's assumed that they
+        contain ALL fields that the corresponding trigger messages contained.
+        For newer versions of DVID, they do contain all fields.
+        However, that's not true for older kafka logs.
+        Fortunately the labelmap_kafka_msgs_to_df() function will transform the log messages to
+        appear as if they had been written by a newer version of DVID.
+        Pre-process the kafka log with that function first.
 
     See also:
         neuclease.dvid.kafka.filter_kafka_msgs_by_timerange()
 
     Args:
-        Kafka log for a labelmap instance, obtained via ``read_kafka_messages()`` or ``read_labelmap_kafka_df()``
+        Kafka log for a labelmap instance, obtained via ``read_kafka_messages()`` or ``read_labelmap_kafka_df()``.
+        It's recommended to use the latter, as it will transform old kafka logs to put
+        them in the newer format as explained in the note above.
 
     Returns:
         new_bodies, changed_bodies, removed_bodies, new_svs, deleted_svs
@@ -3316,25 +3378,25 @@ def compute_affected_bodies(kafka_msgs):
     deleted_svs = set()
 
     for msg in kafka_msgs:
-        if msg['Action'].endswith('complete'):
+        if not msg['Action'].endswith('complete'):
             continue
 
-        if msg['Action'] == 'cleave':
+        if msg['Action'] == 'cleave-complete':
             changed_bodies.add( msg['OrigLabel'] )
             new_bodies.add( msg['CleavedLabel'] )
 
-        if msg['Action'] == 'merge':
+        if msg['Action'] == 'merge-complete':
             changed_bodies.add( msg['Target'] )
             labels = set( msg['Labels'] )
             removed_bodies |= labels
             changed_bodies -= labels
             new_bodies -= labels
 
-        if msg['Action'] == 'split':
+        if msg['Action'] == 'split-complete':
             changed_bodies.add( msg['Target'] )
             new_bodies.add( msg['NewLabel'] )
 
-        if msg['Action'] == 'split-supervoxel':
+        if msg['Action'] == 'split-supervoxel-complete':
             new_svs.add(msg['SplitSupervoxel'])
             new_svs.add(msg['RemainSupervoxel'])
             deleted_svs.add(msg['Supervoxel'])
@@ -3368,7 +3430,7 @@ def compute_merge_hierarchies(msgs):
 
     g = nx.DiGraph()
     for msg in msgs:
-        if msg['Action'] != 'merge':
+        if msg['Action'] != 'merge-complete':
             continue
         target = msg['Target']
         edges = [(target, label) for label in msg['Labels']]

@@ -105,7 +105,7 @@ def fetch_supervoxel_splits_from_dvid(server, uuid, instance, *, session=None):
     return events
 
 @dvid_api_wrapper
-def fetch_supervoxel_splits_from_kafka(server, uuid, instance, actions=['split', 'split-supervoxel'], kafka_msgs=None, *, session=None):
+def fetch_supervoxel_splits_from_kafka(server, uuid, instance, actions=['split-complete', 'split-supervoxel-complete'], kafka_msgs=None, *, session=None):
     """
     Read the kafka log for the given instance and return a log of
     all supervoxel split events, partitioned by UUID.
@@ -146,11 +146,15 @@ def fetch_supervoxel_splits_from_kafka(server, uuid, instance, actions=['split',
         which is the opposite ordering from fetch_supervoxel_splits_from_dvid().
 
     """
+    from neuclease.dvid.labelmap import labelmap_kafka_msgs_to_df
     assert not (set(actions) - set(['split', 'split-supervoxel'])), \
         f"Invalid actions: {actions}"
     
     if kafka_msgs is None:
         msgs = read_kafka_messages(server, uuid, instance, action_filter=actions, dag_filter='leaf-and-parents', session=session)
+
+        # Standardize the log format; ensure 'complete' messages have all info we need.
+        msgs = labelmap_kafka_msgs_to_df(msgs)['msg']
     else:
         msgs = list(filter(lambda msg: msg["Action"] in actions, kafka_msgs))
     
@@ -158,11 +162,11 @@ def fetch_supervoxel_splits_from_kafka(server, uuid, instance, actions=['split',
     # We need to parse them both.
     events = {}
     for msg in msgs:
-        if msg['Action'] == 'split-supervoxel':
+        if msg['Action'] == 'split-supervoxel-complete':
             event = SplitEvent( msg["MutationID"], msg["Supervoxel"], msg["RemainSupervoxel"], msg["SplitSupervoxel"], "split-supervoxel" )
             events.setdefault(msg["UUID"], []).append( event )
     
-        elif msg['Action'] == 'split':
+        elif msg['Action'] == 'split-complete':
             if msg["SVSplits"] is None:
                 logger.error(f"SVSplits is null for body {msg['Target']}")
                 continue
