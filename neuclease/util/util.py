@@ -1716,7 +1716,7 @@ def find_files(root_dir, file_exts=None, skip_exprs=None, file_exprs=None):
     skip_rgx = re.compile(skip_expr)
 
     def _find_files(parent_dir):
-        logger.debug("Searching " + parent_dir)
+        logger.debug("Searching %s", parent_dir)
 
         try:
             # Get only the parent directory contents (not subdir contents),
