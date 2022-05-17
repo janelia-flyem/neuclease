@@ -599,7 +599,7 @@ class _iter_batches_with_len(_iter_batches):
 
 def compute_parallel(func, iterable, chunksize=1, threads=0, processes=0, ordered=None,
                      leave_progress=False, total=None, initial=0, starmap=False, show_progress=None,
-                     context=None, shutdown_delay=0.05, **pool_kwargs):
+                     context=None, shutdown_delay=0.15, **pool_kwargs):
     """
     Use the given function to process the given iterable in a ThreadPool or process Pool,
     showing progress using tqdm.
@@ -748,9 +748,20 @@ def compute_parallel(func, iterable, chunksize=1, threads=0, processes=0, ordere
             #         __exit__ (multiprocessing/pool.py:623)
             #         compute_parallel (neuclease/util/util.py:723)
             #         ...
+            #
+            # Relevant discussions that might be related to this deadlock issue:
+            # - https://sefiks.com/2021/07/05/handling-hang-in-python-multiprocessing/
+            # - https://bugs.python.org/issue33997 and PR https://github.com/python/cpython/pull/8009
+            # - https://stackoverflow.com/questions/65620077
+            #
+            if shutdown_delay:
+                time.sleep(shutdown_delay/3)
             pool.close()
             if shutdown_delay:
-                time.sleep(shutdown_delay)
+                time.sleep(shutdown_delay/3)
+            pool.terminate()
+            if shutdown_delay:
+                time.sleep(shutdown_delay/3)
 
     if reorder:
         results.sort(key=itemgetter(0))
