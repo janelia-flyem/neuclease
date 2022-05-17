@@ -64,9 +64,9 @@ class FindHBWBOverlaps:
         # Notes:
         # - The last tab of the halfbrain (starting at 35202 in the half-brain),
         #   was realigned, so we don't look at that region.
-        # - Same for the first tab of the halfbrain, ending at 6772
+        # - Same for the first tab of the halfbrain, ending at 2676
         # - The translation offet between half-brain and whole-brain is (4096, 4096, 4096)
-        HALFBRAIN_FIRST_TAB_X = round_coord(6772, 64, 'up') // 2**scale
+        HALFBRAIN_FIRST_TAB_X = round_coord(2676, 64, 'up') // 2**scale
         HALFBRAIN_LAST_TAB_X = round_coord(35202, 64, 'down') // 2**scale
 
         if show_progress:
