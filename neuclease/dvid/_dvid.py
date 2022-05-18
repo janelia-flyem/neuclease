@@ -195,7 +195,9 @@ def dvid_api_wrapper(f):
         if not server.startswith('http://') and not server.startswith('https://'):
             server = 'http://' + server
 
+        is_default_session = False
         if session is None:
+            is_default_session = True
             session = default_dvid_session()
 
         try:
@@ -204,6 +206,12 @@ def dvid_api_wrapper(f):
             if hasattr(ex, 'response_content_appended'):
                 # We already processed this exception (via a nested dvid_api_wrapper call)
                 raise
+
+            if isinstance(ex, requests.ConnectionError) and is_default_session:
+                # If we're seeing connection errors, let's try discarding the old session.
+                # I have no idea if sessions (and connections) can become 'tainted'
+                # by failed/aborted connections, but this seems harmless enough.
+                clear_default_dvid_sessions()
 
             if (ex.response is None and ex.request is None):
                 # There's no additional info to show
