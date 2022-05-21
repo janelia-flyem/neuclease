@@ -1190,6 +1190,8 @@ def fetch_complete_mappings(server, uuid, instance, include_retired=True, kafka_
     """
     assert sort in (None, 'sv', 'body')
 
+    logger.warning("FIXME: This function is horribly inefficient and should be rewritten to use pandas indexes, not sets.")
+
     # Read complete kafka log; we need both split and cleave info
     if kafka_msgs is None:
         try:
