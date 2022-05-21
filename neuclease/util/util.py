@@ -790,6 +790,9 @@ class _DummyPool:
     def close(self):
         pass
 
+    def terminate(self):
+        pass
+
 
 def _apply_star(func, arg):
     return func(*arg)
