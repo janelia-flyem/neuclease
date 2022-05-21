@@ -6,7 +6,7 @@ import pandas as pd
 from requests import HTTPError
 
 from neuclease.util import Timer, tqdm_proxy as tqdm, round_coord
-from neuclease.dvid import fetch_sparsevol, fetch_labelmap_specificblocks
+from neuclease.dvid import find_master, fetch_sparsevol, fetch_labelmap_specificblocks
 from neuclease.dvid.rle import blockwise_masks_from_ranges
 
 
@@ -35,19 +35,15 @@ class FindHBWBOverlaps:
         self.halfbrain_seg = halfbrain_seg
         self.brain_seg = brain_seg
         if halfbrain_seg is None:
-            self.halfbrain_seg = (
-                'http://emdata6.int.janelia.org:8000',
-                'eaef6946397647d3a6889568c2f96f4b',
-                'segmentation'
-            )
+            hb_root = ('http://emdata6.int.janelia.org:8000', '2ccfbf9230c34a35a4248e2340fae280')
+            hb_master = (hb_root[0], find_master(*hb_root))
+            self.halfbrain_seg = (*hb_master, 'segmentation')
 
         self.brain_seg = brain_seg
         if brain_seg is None:
-            self.brain_seg = (
-                'http://emdata6.int.janelia.org:9000',
-                '138069aba8e94612b37d119778a89a1c',
-                'segmentation'
-            )
+            brain_root = ('http://emdata6.int.janelia.org:9000', 'f3969dc575d74e4f922a8966709958c8')
+            brain_master = (brain_root[0], find_master(*brain_root))
+            self.brain_seg = (*brain_master, 'segmentation')
 
     def find_hbwb_overlaps(self, halfbrain_body, scale=0, supervoxels=False, threshold_frac=0.05, show_progress=True):
         """
