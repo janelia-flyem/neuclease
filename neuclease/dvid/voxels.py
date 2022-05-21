@@ -9,15 +9,9 @@ from . import dvid_api_wrapper
 logger = logging.getLogger(__name__)
 
 @dvid_api_wrapper
-def fetch_raw(server, uuid, instance, box_zyx, throttle=False, *, dtype=np.uint8, session=None):
+def fetch_raw(server, uuid, instance, box_zyx, throttle=False, scale=0, *, dtype=np.uint8, session=None):
     """
     Fetch raw array data from an instance that contains voxels.
-    
-    Note:
-        Most voxels data instances do not support a 'scale' parameter, so it is not included here.
-        Instead, by convention, we typically create multiple data instances with a suffix indicating the scale.
-        For instance, 'grayscale', 'grayscale_1', 'grayscale_2', etc.
-        (For labelarray and labelmap instances, see fetch_labelarray_voxels(), which does support scale.)
     
     Args:
         server:
@@ -39,6 +33,13 @@ def fetch_raw(server, uuid, instance, box_zyx, throttle=False, *, dtype=np.uint8
             if the server is too busy to service the request.
             It is your responsibility to catch DVIDExceptions in that case.
 
+        scale:
+            For instance types that support it, specify the scale to fetch.
+            Note:
+                Some voxels data instances do not support a 'scale' parameter.
+                Instead, by convention, we create multiple data instances with a suffix indicating the scale.
+                For instance, 'grayscale', 'grayscale_1', 'grayscale_2', etc.
+    
         dtype:
             The datatype of the underlying data instance.
             Must match the data instance dtype, e.g. np.uint8 for instances of type uint8blk.
@@ -53,8 +54,11 @@ def fetch_raw(server, uuid, instance, box_zyx, throttle=False, *, dtype=np.uint8
 
     params = {}
     if throttle:
-        params['throttle'] = 'true'        
-    
+        params['throttle'] = 'true'
+
+    if scale:
+        params['scale'] = int(scale)
+
     shape_zyx = (box_zyx[1] - box_zyx[0])
     shape_str = '_'.join(map(str, shape_zyx[::-1]))
     offset_str = '_'.join(map(str, box_zyx[0, ::-1]))
