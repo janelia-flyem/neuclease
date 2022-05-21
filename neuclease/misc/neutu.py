@@ -116,7 +116,7 @@ def create_cleaving_assignment(bodies, output_path):
         json.dump(assignment, f, indent=2)
 
 
-def prepare_cleaving_assignment_setup(bodies, output_dir, bucket_path, csv_path, prefix='cleaving-', batch_size=20):
+def prepare_cleaving_assignment_setup(bodies, output_dir, bucket_path, csv_path, prefix='cleaving-', batch_size=10):
     """
     This function will help prepare a set of cleaving assignments.
 
