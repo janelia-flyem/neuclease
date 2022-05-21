@@ -17,7 +17,7 @@ def create_bookmark_files(df, output_dir, prefix='bookmarks-', batch_size=100, d
     os.makedirs(output_dir)
     digits = int(ceil(log10(len(df) / batch_size)))
     for i, bdf in enumerate(iter_batches(df, batch_size)):
-        path = f"{output_dir}/{prefix}{{i:0{digits}d}}.json".format(i=i)
+        path = f"{output_dir}/{prefix}{i:0{digits}d}.json"
         create_bookmark_file(bdf, path, default_text)
 
 
@@ -90,7 +90,7 @@ def create_cleaving_assignments(bodies, output_dir, prefix='cleaving-', batch_si
 
     batch_grouping = []
     for i, batch in enumerate(iter_batches(bodies, batch_size)):
-        path = f"{output_dir}/{prefix}{{i:0{digits}d}}.json".format(i=i)
+        path = f"{output_dir}/{prefix}{i:0{digits}d}.json"
         create_cleaving_assignment(batch, path)
         batch_grouping.extend((body, i, path) for body in batch)
 
@@ -202,7 +202,6 @@ def prepare_cleaving_assignment_setup(bodies, output_dir, bucket_path, csv_path,
     return df
 
 
-
 def create_connection_validation_assignment(df, output_path):
     """
     Create a single connection validation assignment.
@@ -245,5 +244,5 @@ def create_connection_validation_assignments(df, output_dir, prefix='connection-
     os.makedirs(output_dir)
     digits = int(ceil(log10(len(df) / batch_size)))
     for i, batch_df in enumerate(iter_batches(df, batch_size)):
-        path = f"{output_dir}/{prefix}{{i:0{digits}d}}.json".format(i=i)
+        path = f"{output_dir}/{prefix}{i:0{digits}d}.json"
         create_connection_validation_assignment(batch_df, path)

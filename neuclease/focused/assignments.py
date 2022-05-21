@@ -188,8 +188,7 @@ def upload_batched_assignments(tasks, bucket_path, campaign='focused'):
     num_assignments = len(tasks.drop_duplicates(['batch', 'assignment']))
     files = []
     for (batch, assignment), assign_df in tqdm_proxy(tasks.groupby(['batch', 'assignment']), total=num_assignments):
-        name = f"{output_dir}/{campaign}-batch-{{batch:0{batch_digits}d}}-assignment-{{assignment:0{assignment_digits}d}}.json"
-        name = name.format(batch=batch, assignment=assignment)
+        name = f"{output_dir}/{campaign}-batch-{batch:0{batch_digits}d}-assignment-{assignment:0{assignment_digits}d}.json"
         generate_focused_assignment(assign_df, name)
         files.append((batch, assignment, name))
 

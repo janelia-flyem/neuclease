@@ -55,7 +55,8 @@ def export_sparsevol(server, uuid, instance, neurons_df, scale=5, format='tiff',
     box_scaled = box // 2**scale
 
     # How many digits will we need in each slice file name?
-    digits = int(np.ceil(np.log10(box_scaled[1, 0])))
+    max_z = box_scaled[1, 0]
+    digits = int(np.ceil(np.log10(max_z)))
 
     # Export a mask stack for each group.
     groups = neurons_df.groupby('group', sort=False)
@@ -76,7 +77,7 @@ def export_sparsevol(server, uuid, instance, neurons_df, scale=5, format='tiff',
         d = f'{output_dir}/{group}.stack'
         os.makedirs(d, exist_ok=True)
         for z in tqdm_proxy(range(group_mask.shape[0]), leave=False):
-            p = ('{d}/{z:' + f'0{digits}' + 'd}.{f}').format(d=d, z=z, f=format)
+            p = f'{d}/{z:0{digits}d}.{format}'
             vigra.impex.writeImage(group_mask[z].astype(np.uint8), p)
 
 

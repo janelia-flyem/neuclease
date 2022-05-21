@@ -208,8 +208,7 @@ def write_slices(vol, out_dir, z_min=None):
 
         digits = int(np.ceil(np.log10(z_max)))
         for z, img in enumerate(tqdm(vol), start=z_min):
-            p = (out_dir + '/{' + f':0{digits}' + '}.png').format(z)
-            skimage.io.imsave(p, img)
+            skimage.io.imsave(f'{out_dir}/{z:0{digits}d}.png', img)
 
 
 def export_distance_visualization(distance_vol, out_dir, z_min):
