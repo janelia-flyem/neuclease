@@ -366,7 +366,7 @@ def fetch_exists(server, uuid, instance, supervoxels, batch_size=None, *, sessio
             result_chunks.append( result )
     else:
         _fetch_batch = partial(fetch_exists, server, uuid, instance)
-        result_chunks = compute_parallel(_fetch_batch, sv_chunks, processes=processes, show_progress=show_progress)
+        result_chunks = compute_parallel(_fetch_batch, sv_chunks, processes=processes, ordered=True, show_progress=show_progress)
 
     results = pd.concat(result_chunks)
     assert results.index.dtype == np.uint64
