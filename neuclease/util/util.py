@@ -727,14 +727,13 @@ def compute_parallel(func, iterable, chunksize=1, threads=0, processes=0, ordere
             # even when no exception is raised (I think).
             # I suspect this is either related to my use of 'fork' as a multiprocecssing mode,
             # (which is generally frowned upon), or perhaps it's a bug in multiprocessing itself.
-            # In any case, I'll try to combat the issue with two tricks:
+            # In any case, I'll try to combat the issue via:
             #
-            #   1. Call close() before exiting this pool's context manager
-            #      (which calls terminate() internally in __exit__, not close()).
-            #      Maybe it helps to close() the pool first?
-            #
-            #   2. Fight possible race conditions with a slight delay after the
+            #   1. Fight possible race conditions with a slight delay after the
             #      last item completes.
+            #
+            #   2. I also tried calling pool.close() here, but it seemed to cause
+            #      deadlocks when terminate() is called.
             #
             # For reference, here is an example traceback for a hanged pool:
             #
@@ -754,14 +753,12 @@ def compute_parallel(func, iterable, chunksize=1, threads=0, processes=0, ordere
             # - https://bugs.python.org/issue33997 and PR https://github.com/python/cpython/pull/8009
             # - https://stackoverflow.com/questions/65620077
             #
+            #
+            # Note: I could call pool.close() here, but I think that creates a
+            #        deadlock in terminate() so I don't do that anymore.
             if shutdown_delay:
-                time.sleep(shutdown_delay/3)
-            pool.close()
-            if shutdown_delay:
-                time.sleep(shutdown_delay/3)
+                time.sleep(shutdown_delay)
             pool.terminate()
-            if shutdown_delay:
-                time.sleep(shutdown_delay/3)
 
     if reorder:
         results.sort(key=itemgetter(0))
