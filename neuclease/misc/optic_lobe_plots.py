@@ -276,18 +276,18 @@ def emit_reports(stats, cell_type_counts, rois, export=True):
     for cell_type, ctdf in tqdm_proxy(stats.groupby('type', sort=False), total=stats['type'].nunique()):
         plots = []
         for roi, rdf in ctdf.groupby('roi', sort=True, observed=False):
-            for kind, df in rdf.groupby('kind', sort=True, observed=False):
+            for type_syn, df in rdf.groupby('type_syn', sort=True, observed=False):
                 if len(df) == 0:
                     plots.append(None)
                 else:
-                    p = syn_histogram(df, cell_type, kind, roi)
+                    p = syn_histogram(df, cell_type, type_syn, roi)
                     plots.append(p)
 
-            for kind, df in rdf.groupby('kind', sort=True, observed=False):
+            for type_syn, df in rdf.groupby('type_syn', sort=True, observed=False):
                 if len(df) == 0:
                     plots.append(None)
                 else:
-                    p = plot_neuron_positions(df, cell_type, kind, roi)
+                    p = plot_neuron_positions(df, cell_type, type_syn, roi)
                     plots.append(p)
 
         layout = gridplot([plots[i:i+2] for i in range(0, len(plots), 2)], merge_tools=False)
