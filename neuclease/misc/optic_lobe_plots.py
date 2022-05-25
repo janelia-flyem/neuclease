@@ -23,7 +23,7 @@ TEMPLATE_LINK = "https://clio-ng.janelia.org/#!%7B%22title%22:%22CNS%20Brain%22%
 # The link above uses an internal name.
 # This function will swap it to the obscure public one.
 def update_template_link_server(server):
-    assert server.startwith('http')
+    assert server.startswith('http')
     global TEMPLATE_LINK
     TEMPLATE_LINK = TEMPLATE_LINK.replace('http://emdata6.int.janelia.org:9000', server)
 
