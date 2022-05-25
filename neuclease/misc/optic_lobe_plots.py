@@ -256,17 +256,17 @@ def write_onepage_png_report(export_dir, cell_type_counts):
         """))
 
 
-def emit_reports(stats, cell_type_counts, rois, export=True):
-    cell_types = cell_type_counts.index
-    cell_types = [ct.replace('/', '-') for ct in cell_types]
-    cell_type_counts.index = cell_types
+def emit_reports(stats, cell_types=None, rois=None, export=True):
+    # Filter stats for requested types/rois
+    cell_types = cell_types or stats['type'].unique()
+    rois = rois or stats['roi'].unique()
+    stats = stats.query('type in @cell_types and roi in @rois').copy()
 
     stats['type'] = stats['type'].str.replace('/', '-')
 
-    stats = stats.query('type in @cell_types and roi in @rois').copy()
     stats['roi'] = pd.Categorical(stats['roi'], categories=rois, ordered=True)
 
-    today = datetime.now().strftime("%Y-%m-%d")
+    today = datetime.datetime.now().strftime("%Y-%m-%d")
     export_dir = f'reports-{today}'
     os.makedirs(export_dir, exist_ok=True)
     os.makedirs(f'{export_dir}/png', exist_ok=True)
@@ -305,6 +305,11 @@ def emit_reports(stats, cell_type_counts, rois, export=True):
             bokeh_save(layout)
 
     if export:
+        # Determine counts, tweak some names (avoid '/' in the name)
+        cell_type_counts = stats.drop_duplicates('bodyId')['type'].value_counts()
+        cell_types = [ct.replace('/', '-') for ct in cell_type_counts.index]
+        cell_type_counts.index = cell_types
+
         write_onepage_png_report(export_dir, cell_type_counts)
 
     return layouts
