@@ -38,9 +38,9 @@ projectionOrientations = {
 
 # These descriptions are used to label our scatter plots.
 projectionAxes = {
-    'ME(R)': ['< -- posterior / anterior -->', '<-- ventral / dorsal -->'],
-    'LO(R)': ['< -- anterior / posterior -->', '<-- ventral / dorsal -->'],
-    'LOP(R)': ['< -- anterior / posterior -->', '<-- ventral / dorsal -->'],
+    'ME(R)': ['<-- posterior / anterior -->', '<-- ventral / dorsal -->'],
+    'LO(R)': ['<-- anterior / posterior -->', '<-- ventral / dorsal -->'],
+    'LOP(R)': ['<-- anterior / posterior -->', '<-- ventral / dorsal -->'],
 }
 
 
@@ -58,7 +58,7 @@ def rotate_cns_points(syn_pos):
     #    So, here we *invert* the rotation we obtained from neuroglancer.
     rotations = {k: Rotation.from_quat(v).inv() for k,v in projectionOrientations.items()}
 
-    syn_pos[['px', 'py', 'pz']] = 0
+    syn_pos[['px', 'py', 'pz']] = syn_pos[[*'xyz']]
 
     # Compute rotations
     for roi, rot in rotations.items():
@@ -117,8 +117,8 @@ def plot_neuron_positions(syn_pos_df, type_cell, type_syn, roi):
         xlim=xlim,
         ylim=ylim,
         title=f'{type_cell} {type_syn} counts in {roi} ({len(df)} cells)',
-        xlabel=projectionAxes[roi][0],
-        ylabel=projectionAxes[roi][1],
+        xlabel=projectionAxes.get(roi, '<-- right / left -->')[0],
+        ylabel=projectionAxes.get(roi, '<-- ventral / dorsal -->')[1],
         xticks=[1e6],
         yticks=[1e6],
         cmap='viridis',
@@ -181,7 +181,8 @@ def plot_neuron_positions(syn_pos_df, type_cell, type_syn, roi):
     # Start with a generic link, then overwrite some settings.
     link_data = parse_nglink(TEMPLATE_LINK)
     link_data['position'] = [111111111, 222222222, 333333333]
-    link_data['projectionOrientation'] = projectionOrientations[roi]
+    if roi in projectionOrientations:
+        link_data['projectionOrientation'] = projectionOrientations[roi]
 
     # Note: In the template link, I know layer [1] is the segmentation layer.
     link_data['layers'][1]['segmentQuery'] = "999999999"
