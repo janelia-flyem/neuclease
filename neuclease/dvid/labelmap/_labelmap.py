@@ -3251,6 +3251,7 @@ def labelmap_kafka_msgs_to_df(kafka_msgs, default_timestamp=DEFAULT_TIMESTAMP, c
         elif action in ('split', 'split-complete'):
             target_body = msg.get('Target', np.nan)
         elif action in ('split-supervoxel', 'split-supervoxel-complete'):
+            target_body = msg.get('Body', np.nan)
             target_sv = msg.get('Supervoxel', np.nan)
         if action in ('renumber', 'renumber-complete'):
             target_body = msg['NewLabel']
