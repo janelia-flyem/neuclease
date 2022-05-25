@@ -282,7 +282,7 @@ def emit_reports(stats, cell_types=None, rois=None, export=True):
                     plots.append(None)
                 else:
                     p = syn_histogram(df, cell_type, type_syn, roi)
-                    plots.append(p)
+                    plots.append(hv.render(p))
 
             for type_syn, df in rdf.groupby('type_syn', sort=True, observed=False):
                 if len(df) == 0:
