@@ -67,12 +67,13 @@ def rotate_cns_points(syn_pos):
         syn_pos.loc[selection, ['px', 'py', 'pz']] = rotated.T
 
 
-def plot_neuron_positions(syn_pos_df, type_cell, type_syn, roi):
+def plot_neuron_positions(syn_pos_df, type_cell, type_syn, roi, template_link=None):
     """
     Generate a fancy plot of mean synapse positions, scaled and colored according to the synapse count.
 
     Returns a bokeh figure, not a holoviews figure.
     """
+    template_link = template_link or TEMPLATE_LINK
     df = syn_pos_df.query('type == @type_cell and type_syn == @type_syn and roi == @roi')
 
     # Making a copy so I can add temporary columns
@@ -179,7 +180,7 @@ def plot_neuron_positions(syn_pos_df, type_cell, type_syn, roi):
 
     # Pre-generate a neuroglancer link to use if the user clicks on a point in the scatter plot.
     # Start with a generic link, then overwrite some settings.
-    link_data = parse_nglink(TEMPLATE_LINK)
+    link_data = parse_nglink(template_link)
     link_data['position'] = [111111111, 222222222, 333333333]
     if roi in projectionOrientations:
         link_data['projectionOrientation'] = projectionOrientations[roi]
@@ -257,7 +258,7 @@ def write_onepage_png_report(export_dir, cell_type_counts):
         """))
 
 
-def emit_reports(stats, cell_types=None, rois=None, export=True):
+def emit_reports(stats, cell_types=None, rois=None, export=True, template_link=None):
     # Filter stats for requested types/rois
     cell_types = cell_types or stats['type'].unique()
     rois = rois or stats['roi'].unique()
@@ -288,7 +289,7 @@ def emit_reports(stats, cell_types=None, rois=None, export=True):
                 if len(df) == 0:
                     plots.append(None)
                 else:
-                    p = plot_neuron_positions(df, cell_type, type_syn, roi)
+                    p = plot_neuron_positions(df, cell_type, type_syn, roi, template_link)
                     plots.append(p)
 
         layout = gridplot([plots[i:i+2] for i in range(0, len(plots), 2)], merge_tools=False)
