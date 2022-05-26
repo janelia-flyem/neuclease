@@ -174,6 +174,7 @@ def check_tarsupervoxels_status_via_exists(server, uuid, tsv_instance, bodies, s
     unmapped_bodies = np.fromiter(unmapped_bodies, np.uint64)
     singleton_mapping = pd.Series(index=unmapped_bodies, data=unmapped_bodies, dtype=np.uint64)
     mapping = pd.concat((mapping, singleton_mapping))
+    mapping = mapping[~mapping.index.duplicated()]
     
     assert mapping.index.values.dtype == np.uint64
     assert mapping.values.dtype == np.uint64
