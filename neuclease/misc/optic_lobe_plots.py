@@ -92,6 +92,19 @@ def plot_neuron_positions(syn_pos_df, type_cell, type_syn, roi, template_link=No
     ylim[0] -= 0.05 * ywidth
     ylim[1] += 0.05 * ywidth
 
+    # Compute a normalized version of the count for the size display
+    # FIXME:
+    #   This is just a fudge factor that seems to work okay in the ME and LO.
+    #   It would be better to determine the ideal scaling factor
+    #   according to the spatial spread of the data.
+    if len(df) <= 1 or df['count'].std(ddof=0) == 0:
+        df['count_scaled'] = 100
+    else:
+        df['count_scaled'] = (df['count'] - df['count'].mean()) / df['count'].std(ddof=0)
+        df['count_scaled'] *= 30
+        df['count_scaled'] -= df['count_scaled'].min()
+        df['count_scaled'] += 5
+
     # Bokeh draws points from first to last, with last on top.
     # To make outliers more prominent, sort by deviation from the mean.
     # That puts the 'ordinary' things on the bottom and the outliers are drawn last, on top.
@@ -110,7 +123,7 @@ def plot_neuron_positions(syn_pos_df, type_cell, type_syn, roi, template_link=No
     hv_plot = df.hvplot.scatter(
         'px',
         'py',
-        size=type_syn,
+        size='count_scaled',
         color=type_syn,
         flip_yaxis=True,
         height=height + 50,
@@ -148,6 +161,9 @@ def plot_neuron_positions(syn_pos_df, type_cell, type_syn, roi, template_link=No
     cds.add(df['z'], 'z')
 
     # If the user selects some points, show the body IDs in a text box next to the plot.
+    # Also, copy the body IDs to the user's clipboard.
+    # TODO: Add a button that opens a neuroglancer link for all selected bodies.
+    #       (Right now, the link is only opened when a single body is clicked.)
     # Docs: https://docs.bokeh.org/en/2.4.0/docs/user_guide/interaction/widgets.html#textareainput
     textbox = TextAreaInput(rows=20, cols=20)
     cds.selected.js_on_change(
