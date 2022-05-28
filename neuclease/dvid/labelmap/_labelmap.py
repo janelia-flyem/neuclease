@@ -1854,11 +1854,19 @@ def generate_sample_coordinates(server, uuid, instance, bodies, supervoxels=Fals
     See that function for argument details.
     """
     assert processes > 0
-    gen_coord = partial(generate_sample_coordinate, server, uuid, instance, supervoxels=supervoxels, interior=interior)
+    gen_coord = partial(_generate_sample_coordinate_no404, server, uuid, instance, supervoxels=supervoxels, interior=interior)
     coords = compute_parallel(gen_coord, bodies, processes=processes)
     label_type = {False: 'body', True: 'supervoxel'}[supervoxels]
     return pd.DataFrame(coords, columns=[*'zyx'], index=bodies).rename_axis(label_type)
 
+
+def _generate_sample_coordinate_no404(*args, **kwargs):
+    try:
+        return generate_sample_coordinate(*args, **kwargs)
+    except HTTPError as ex:
+        if ex.response.status_code == 404:
+            return [0,0,0]
+        raise
 
 # Alternative name
 locate_bodies = generate_sample_coordinates
