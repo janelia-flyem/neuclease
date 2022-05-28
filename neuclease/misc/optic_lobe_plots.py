@@ -246,20 +246,62 @@ def write_onepage_png_report(export_dir, cell_type_counts):
             <html>
             <head>
             <title>Report summary</title>
+
+            <!-- https://mottie.github.io/tablesorter/docs/ -->
+
+            <!-- FIXME: I'm hot-linking here, because I'm a generally irresponsible person. -->
+
+            <!-- jQuery: required (tablesorter works with jQuery 1.2.3+) -->
+            <script src="https://mottie.github.io/tablesorter/docs/js/jquery-1.2.6.min.js"></script>
+
+            <!-- Pick a theme, load the plugin & initialize plugin -->
+            <link href="https://mottie.github.io/tablesorter/dist/css/theme.default.min.css" rel="stylesheet">
+            <script src="https://mottie.github.io/tablesorter/dist/js/jquery.tablesorter.min.js"></script>
+            <script src="https://mottie.github.io/tablesorter/dist/js/jquery.tablesorter.widgets.min.js"></script>
+            <script>
+            $(function(){
+                $('table').tablesorter({
+                    widgets        : ['zebra', 'columns'],
+                    usNumberFormat : false,
+                    sortReset      : true,
+                    sortRestart    : true
+                });
+            });
+            </script>
+
+            <!-- Override the default style to shrink the width of the table -->
+            <style>
+                .tablesorter-default{
+                    width:200px
+                }
+            </style>
+
             </head>
             <body>
             """))
-        f.write("<h2>Contents</h2><br>")
-        f.write("<table>")
+        f.write("<h2>Synapse Distribution Reports</h2>\n")
+        f.write('<table class="tablesorter">\n')
+        f.write(dedent("""\
+            <thead>
+              <tr>
+                <th>Cell Type</th>
+                <th>count</th>
+                <th>link</th>
+              </tr>
+            </thead>
+        """))
+        f.write('<tbody>\n')
         for i, cell in enumerate(cell_types):
             f.write(dedent(f"""\
-            <tr>
-            <td><a href="#{i}">{cell}</a><br></td>
-            <td><a href="#{i}">{cell_type_counts.loc[cell]}</a><br></td>
-            <td><a href="html/{cell}.html">(html)</a><br></td>
-            </tr>
+            \n
+              <tr>
+                <td><a href="#{i}">{cell}</a><br></td>
+                <td><a href="#{i}">{cell_type_counts.loc[cell]}</a><br></td>
+                <td><a href="html/{cell}.html">(html)</a><br></td>
+              </tr>
         """))
-        f.write("</table>")
+        f.write('</tbody>\n')
+        f.write('</table>\n')
 
         for i, cell in enumerate(cell_types):
             f.write(dedent(f"""\
