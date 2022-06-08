@@ -104,12 +104,13 @@ def fetch_supervoxel_splits_from_dvid(server, uuid, instance, *, session=None):
  
     return events
 
+
 @dvid_api_wrapper
 def fetch_supervoxel_splits_from_kafka(server, uuid, instance, actions=['split-complete', 'split-supervoxel-complete'], kafka_msgs=None, *, session=None):
     """
     Read the kafka log for the given instance and return a log of
     all supervoxel split events, partitioned by UUID.
-    
+
     This produces the same output as fetch_supervoxel_splits_from_dvid(),
     but uses the kafka log instead of the DVID /supervoxel-splits endpoint.
     See the warning in that function's docstring for an explanation of why
@@ -117,25 +118,25 @@ def fetch_supervoxel_splits_from_kafka(server, uuid, instance, actions=['split-c
 
     To return all supervoxel splits, this function parses both 'split'
     and 'split-supervoxel' kafka messages.
-    
+
     As a debugging feature, you can opt to select splits of only one
     type by specifying which actions to filter with.
-    
+
     Args:
         server:
             dvid server, e.g. 'emdata3:8900'
-        
+
         uuid:
             dvid uuid, e.g. 'abc9'
-        
+
         instance:
             dvid instance name, e.g. 'segmentation'
-        
+
         actions:
             Supervoxels can become split in two ways: body ("arbitrary") splits, and supervoxel splits.
             Normally you don't care how it was split, so you'll want the complete log,
-            but as a debuggin feature you can optionally select only one type or the other via this parameter.
-        
+            but as a debugging feature you can optionally select only one type or the other via this parameter.
+
         kafka_msgs:
             The first step of this function is to fetch the kafka log, but if you've already downloaded it,
             you can provide it here.  Should be a list of parsed JSON structures.
@@ -147,9 +148,10 @@ def fetch_supervoxel_splits_from_kafka(server, uuid, instance, actions=['split-c
 
     """
     from neuclease.dvid.labelmap import labelmap_kafka_msgs_to_df
-    assert not (set(actions) - set(['split', 'split-supervoxel'])), \
-        f"Invalid actions: {actions}"
-    
+    valid_actions = {'split-complete', 'split-supervoxel-complete'}
+    assert set(actions) <= valid_actions, \
+        f"Invalid actions: {set(actions) - valid_actions}"
+
     if kafka_msgs is None:
         msgs = read_kafka_messages(server, uuid, instance, action_filter=actions, dag_filter='leaf-and-parents', session=session)
 
@@ -157,21 +159,21 @@ def fetch_supervoxel_splits_from_kafka(server, uuid, instance, actions=['split-c
         msgs = labelmap_kafka_msgs_to_df(msgs)['msg']
     else:
         msgs = list(filter(lambda msg: msg["Action"] in actions, kafka_msgs))
-    
+
     # Supervoxels can be split via either /split or /split-supervoxel.
     # We need to parse them both.
     events = {}
     for msg in msgs:
         if msg['Action'] == 'split-supervoxel-complete':
-            event = SplitEvent( msg["MutationID"], msg["Supervoxel"], msg["RemainSupervoxel"], msg["SplitSupervoxel"], "split-supervoxel" )
+            event = SplitEvent( msg["MutationID"], msg["Supervoxel"], msg["RemainSupervoxel"], msg["SplitSupervoxel"], "split-supervoxel-complete" )
             events.setdefault(msg["UUID"], []).append( event )
-    
+
         elif msg['Action'] == 'split-complete':
             if msg["SVSplits"] is None:
                 logger.error(f"SVSplits is null for body {msg['Target']}")
                 continue
             for old_sv_str, split_info in msg["SVSplits"].items():
-                event = SplitEvent(msg["MutationID"], int(old_sv_str), split_info["Remain"], split_info["Split"], "split")
+                event = SplitEvent(msg["MutationID"], int(old_sv_str), split_info["Remain"], split_info["Split"], "split-complete")
                 events.setdefault(msg["UUID"], []).append( event )
 
     return events
