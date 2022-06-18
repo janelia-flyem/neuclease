@@ -6,9 +6,11 @@ import datetime
 import subprocess
 from math import ceil, log10
 
+import numpy as np
 import pandas as pd
 
 from neuclease.util import dump_json, iter_batches
+from neuclease.dvid import generate_sample_coordinates
 
 logger = logging.getLogger(__name__)
 
@@ -16,9 +18,12 @@ logger = logging.getLogger(__name__)
 def create_bookmark_files(df, output_dir, prefix='bookmarks-', batch_size=100, default_text=None):
     os.makedirs(output_dir)
     digits = int(ceil(log10(len(df) / batch_size)))
+    paths = []
     for i, bdf in enumerate(iter_batches(df, batch_size)):
         path = f"{output_dir}/{prefix}{i:0{digits}d}.json"
+        paths.append(path)
         create_bookmark_file(bdf, path, default_text)
+    return paths
 
 
 def create_bookmark_file(df, output_path=None, default_text=None):
@@ -84,6 +89,89 @@ def create_bookmark_file(df, output_path=None, default_text=None):
     return contents
 
 
+def prepare_bookmark_assignment_setup(df, output_dir, bucket_path, csv_path, prefix='bookmarks-', batch_size=50, default_text=None):
+    """
+    This function will help prepare a set of orphan-link (bookmark) assignments.
+    Unlike the analogous cleaving setup (below), the resulting spreadsheet
+    doesn't contain a separate row for every body.
+    We just put each assignment on its own row.
+
+        1. Generates JSON files
+        2. Uploads them to a google bucket (assuming you have permission)
+        3. Exports a CSV. You'll have to manually import that CSV file into
+           a Google sheet to share with the proofreaders.
+
+    Before running this function, you need to to log in to the Google Cloud
+    system by entering the following command in your terminal:
+
+        gcloud auth login <your-email-here>
+
+    Finally, here's a checklist of things you should consider doing in the google sheet:
+
+        - Protect column headers
+        - Protect left-hand columns (body, assignment, file)
+        - Data validation for 'date started' and 'date completed'
+            - Must be a date
+
+    Args:
+        df:
+            DataFrame of xyz coordinates, or a list of bodies.
+        output_dir:
+            Name of a local directory to create for the assignments
+        bucket_path:
+            The bucket name + directory to which the assignment directory will be copied.
+            Example: gs://foobar-flyem-assignments/cns
+        csv_path:
+            A CSV file will be written to the given path.
+            That's the CSV file you'll want to import into Google Sheets
+        prefix:
+            If provided, each assignment file will be named with this prefix
+            (and followed with an assignment number, e.g. bookmarks-001.json)
+        batch_size:
+            How many bodies per assignment
+
+    Returns:
+        The assignment CSV data.
+    """
+    assert bucket_path.startswith('gs://')
+    bucket_path = bucket_path[len('gs://'):]
+
+    try:
+        subprocess.run(f'gsutil ls gs://{bucket_path}', shell=True, check=True, capture_output=True)
+    except subprocess.SubprocessError as ex:
+        raise RuntimeError(f"Can't access gs://{bucket_path}") from ex
+
+    if not isinstance(df, pd.DataFrame):
+        # Assume we've got a body list
+        assert np.array(df).ndim == 1
+        bodies = df
+        df = generate_sample_coordinates(bodies, interior=True).reset_index()
+
+    output_paths = create_bookmark_files(df, output_dir, prefix, batch_size, default_text)
+    tracking_df = pd.DataFrame(list(enumerate(output_paths)), columns=['assignment', 'file'])
+
+    logger.info("Uploading bookmark files")
+
+    # Explicitly *unset* content type, to trigger browsers to download the file, not display it as JSON.
+    # Also, forbid caching.
+    cmd = f"gsutil -m -h 'Cache-Control:public, no-store' -h 'Content-Type' cp -r {output_dir} gs://{bucket_path}/"
+    _ = subprocess.run(cmd, shell=True, check=True, capture_output=True)
+
+    tracking_df['file'] = f'https://storage.googleapis.com/{bucket_path}/' + tracking_df['file']
+
+    # Delete redundant file paths -- keep only the first row in each assignment group.
+    tracking_df['file'] = tracking_df.groupby('assignment')['file'].head(1)
+    tracking_df['file'].fillna("", inplace=True)
+
+    tracking_df['user'] = ''
+    tracking_df['date started'] = ''
+    tracking_df['date completed'] = ''
+    tracking_df['notes'] = ''
+
+    tracking_df.to_csv(csv_path, index=False, header=True)
+    return tracking_df
+
+
 def create_cleaving_assignments(bodies, output_dir, prefix='cleaving-', batch_size=20):
     os.makedirs(output_dir)
     digits = int(ceil(log10(len(bodies) / batch_size)))
@@ -123,7 +211,7 @@ def prepare_cleaving_assignment_setup(bodies, output_dir, bucket_path, csv_path,
         1. Generates JSON files
         2. Uploads them to a google bucket (assuming you have permission)
         3. Exports a CSV with the structure we like to use.  You'll have to manually
-        import that CSV file into a Google sheet to share with the proofreaders.
+           import that CSV file into a Google sheet to share with the proofreaders.
 
     Before running this function, you need to to log in to the Google Cloud
     system by entering the following command in your terminal:
