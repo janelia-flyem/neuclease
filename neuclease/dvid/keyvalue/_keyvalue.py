@@ -568,6 +568,7 @@ def extend_list_value(server, uuid, instance, key, new_list, *, session=None):
 # http://emdata5.janelia.org:8400/api/node/b31220/neutu_config/key/body_status_v2
 DEFAULT_BODY_STATUS_CATEGORIES = [
     'Unimportant',
+    'Glia',
     'Orphan-artifact',
     'Orphan',
     'Orphan hotknife',
