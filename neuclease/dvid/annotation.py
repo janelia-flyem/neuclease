@@ -12,6 +12,8 @@ import pandas as pd
 
 from dvidutils import LabelMapper
 
+from neuclease.dvid.repo import find_repo_root
+
 from . import dvid_api_wrapper, fetch_generic_json
 from .common import post_tags
 from .node import fetch_instance_info
@@ -1950,7 +1952,7 @@ def select_autapses(partner_df):
     """
     Select rows from the given 'partner table' that correspond to autapses.
     Must have columns body_pre and body_post.
-    """ 
+    """
     return partner_df.query('body_pre == body_post')
 
 
@@ -2038,3 +2040,26 @@ def example_purge_bad_psds(server, uuid, syn_instance):
 
         redundant_df = select_redundant_psds(partner_df)
         assert len(redundant_df) == 0
+
+
+def example_ingest(server, uuid, tbar_and_psd_pickle_path):
+    from neuclease.dvid import create_instance, load_gary_partners, post_tbar_jsons, post_psd_jsons, post_sync, post_reload
+
+    print("loading data")
+    partner_df = load_gary_partners(tbar_and_psd_pickle_path)
+
+    print("Creating instance")
+    root_uuid = find_repo_root(server, uuid)
+    create_instance(server, root_uuid, 'synapses', 'annotation')
+
+    print("Posting tbars")
+    post_tbar_jsons(server, uuid, 'synapses', partner_df, merge_existing=False, processes=32)
+
+    print("Posting PSDs")
+    post_psd_jsons(server, uuid, 'synapses', partner_df, merge_existing=True, processes=32)
+
+    print("posting sync/reload")
+    post_sync(server, root_uuid, 'synapses', ['segmentation'])
+    post_reload(server, uuid, 'synapses')
+
+    print("Done.  Reload initiated.")
