@@ -93,6 +93,7 @@ def completeness_forecast(labeled_point_df, partner_df, syn_counts_df=None,
         )
         logger.warning(msg)
 
+    # Subset columns for labeled_point_df
     assert labeled_point_df.index.name == 'point_id'
     cols = ['kind', 'conf', 'body']
     if roi:
@@ -462,7 +463,7 @@ def plot_categorized_connectivity_forecast(
         Not all bodies are included in the resulting plot.
         We'll just be plotting the stats associated with the "max_rank" body,
         but some bodies never appear in the table as the "max_rank" body at all.
-        If a body is "larger" (i.e. better ranked) than ALL bodies it conencts to,
+        If a body is "larger" (i.e. better ranked) than ALL bodies it connects to,
         then it will never be the "max_rank" body and will therefore not be included
         in these plot curves.
 

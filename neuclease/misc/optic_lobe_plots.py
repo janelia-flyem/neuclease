@@ -69,7 +69,8 @@ def rotate_cns_points(syn_pos):
 
 def plot_neuron_positions(syn_pos_df, type_cell, type_syn, roi, template_link=None):
     """
-    Generate a fancy plot of mean synapse positions, scaled and colored according to the synapse count.
+    Generate a fancy plot of mean synapse positions,
+    scaled and colored according to the synapse count.
 
     Returns a bokeh figure, not a holoviews figure.
     """
@@ -239,13 +240,18 @@ def syn_histogram(syn_pos_df, type_cell, type_syn, roi):
 
 
 def write_onepage_png_report(export_dir, cell_type_counts):
+    """
+    Helper function for emit_reports().
+
+    Produces an index listing of the plots in the given export directory.
+    """
     cell_types = sorted(cell_type_counts.index)
 
     with open(f'{export_dir}/full-report.html', 'w') as f:
         f.write(dedent("""\
             <html>
             <head>
-            <title>Report summary</title>
+            <title>Synapse Distributions</title>
 
             <!-- https://mottie.github.io/tablesorter/docs/ -->
 
@@ -279,7 +285,7 @@ def write_onepage_png_report(export_dir, cell_type_counts):
             </head>
             <body>
             """))
-        f.write("<h2>Synapse Distribution Reports</h2>\n")
+        f.write("<h2>Synapse Distributions</h2>\n")
         f.write('<table class="tablesorter">\n')
         f.write(dedent("""\
             <thead>
@@ -317,13 +323,20 @@ def write_onepage_png_report(export_dir, cell_type_counts):
 
 
 def emit_reports(stats, cell_types=None, rois=None, export=True, template_link=None):
+    """
+    Produce a grid of plots for each of the given cell types,
+    using the table of synapse stats for each body and roi.
+
+    Optionally export the layouts to disk as both html and png.
+
+    Reutrns a list of bokeh layouts.
+    """
     # Filter stats for requested types/rois
     cell_types = cell_types or stats['type'].unique()
     rois = rois or stats['roi'].unique()
     stats = stats.query('type in @cell_types and roi in @rois').copy()
 
     stats['type'] = stats['type'].str.replace('/', '-')
-
     stats['roi'] = pd.Categorical(stats['roi'], categories=rois, ordered=True)
 
     today = datetime.datetime.now().strftime("%Y-%m-%d")
@@ -335,7 +348,10 @@ def emit_reports(stats, cell_types=None, rois=None, export=True, template_link=N
     layouts = []
     for cell_type, ctdf in tqdm_proxy(stats.groupby('type', sort=False), total=stats['type'].nunique()):
         plots = []
+
+        # Make plots for all ROIs that that contain any cells of this type
         for roi, rdf in ctdf.groupby('roi', sort=True, observed=False):
+            # Histogram
             for type_syn, df in rdf.groupby('type_syn', sort=True, observed=False):
                 if len(df) == 0:
                     plots.append(None)
@@ -343,6 +359,7 @@ def emit_reports(stats, cell_types=None, rois=None, export=True, template_link=N
                     p = syn_histogram(df, cell_type, type_syn, roi)
                     plots.append(hv.render(p))
 
+            # Scatter
             for type_syn, df in rdf.groupby('type_syn', sort=True, observed=False):
                 if len(df) == 0:
                     plots.append(None)
@@ -350,21 +367,26 @@ def emit_reports(stats, cell_types=None, rois=None, export=True, template_link=N
                     p = plot_neuron_positions(df, cell_type, type_syn, roi, template_link)
                     plots.append(p)
 
+        # Combine into a single layout for this cell type
         layout = gridplot([plots[i:i+2] for i in range(0, len(plots), 2)], merge_tools=False)
         layouts.append(layout)
+
         if export:
             cell_type = cell_type.replace('/', '-')
 
+            # Export the layout as one png
             path = f'{export_dir}/png/{cell_type}.png'
             rm_f(path)
             export_png(layout, filename=path)
 
+            # Export as html
             path = f'{export_dir}/html/{cell_type}.html'
             rm_f(path)
             output_file(filename=path, title=f'{cell_type} report')
             bokeh_save(layout)
 
     if export:
+        # Create an index page
         # Determine counts, tweak some names (avoid '/' in the name)
         cell_type_counts = stats.drop_duplicates('bodyId')['type'].value_counts()
         cell_types = [ct.replace('/', '-') for ct in cell_type_counts.index]
