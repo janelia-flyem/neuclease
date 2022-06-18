@@ -79,7 +79,8 @@ class FindHBWBOverlaps:
             df = counts.to_frame()
             df['halfbrain_frac'] = 0.0
             df[f'halfbrain_{label_type}'] = halfbrain_body
-            return df.reset_index()[[f'halfbrain_{label_type}', f'brain_{label_type}', 'count', 'halfbrain_frac']]
+            df['halfbrain_frac_within_frozen'] = 0.0
+            return df.reset_index()[[f'halfbrain_{label_type}', f'brain_{label_type}', 'count', 'halfbrain_frac', 'halfbrain_frac_within_frozen']]
 
         with Timer(f"Body {halfbrain_body}: Fetching sparsevol", None, log_level):
             try:
