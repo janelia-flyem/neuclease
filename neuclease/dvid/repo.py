@@ -778,7 +778,7 @@ def find_parent(server, uuids, dag=None):
 
 
 @lru_cache()
-def find_repo_root(server, uuid):
+def find_repo_root(server, uuid=None):
     """
     Return the repo root uuid for the given dvid node.
     The result of this function is memoized.
@@ -794,6 +794,8 @@ def find_repo_root(server, uuid):
     try:
         repo_info = fetch_repo_info(server, uuid)
     except Exception:
+        if uuid is None:
+            raise
         uuid = resolve_ref(server, uuid)
         repo_info = fetch_repo_info(server, uuid)
 
