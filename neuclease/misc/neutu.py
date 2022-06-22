@@ -136,9 +136,15 @@ def prepare_bookmark_assignment_setup(df, output_dir, bucket_path, csv_path, pre
     assert bucket_path.startswith('gs://')
     bucket_path = bucket_path[len('gs://'):]
 
+    # First, verify that we have permission to edit the bucket.
+    with open("/tmp/test-file.txt", 'w') as f:
+        f.write("Just testing my bucket access...\n")
     try:
-        subprocess.run(f'gsutil ls gs://{bucket_path}', shell=True, check=True, capture_output=True)
+        p = subprocess.run(f"gsutil cp /tmp/test-file.txt gs://{bucket_path}/test-file.txt", shell=True, check=True, capture_output=True)
+        p = subprocess.run(f"gsutil rm gs://{bucket_path}/test-file.txt", shell=True, check=True, capture_output=True)
     except subprocess.SubprocessError as ex:
+        print(p.stdout)
+        print(p.stderr)
         raise RuntimeError(f"Can't access gs://{bucket_path}") from ex
 
     if not isinstance(df, pd.DataFrame):
@@ -252,9 +258,15 @@ def prepare_cleaving_assignment_setup(bodies, output_dir, bucket_path, csv_path,
     assert bucket_path.startswith('gs://')
     bucket_path = bucket_path[len('gs://'):]
 
+    # First, verify that we have permission to edit the bucket.
+    with open("/tmp/test-file.txt", 'w') as f:
+        f.write("Just testing my bucket access...\n")
     try:
-        subprocess.run(f'gsutil ls gs://{bucket_path}', shell=True, check=True, capture_output=True)
+        p = subprocess.run(f"gsutil cp /tmp/test-file.txt gs://{bucket_path}/test-file.txt", shell=True, check=True, capture_output=True)
+        p = subprocess.run(f"gsutil rm gs://{bucket_path}/test-file.txt", shell=True, check=True, capture_output=True)
     except subprocess.SubprocessError as ex:
+        print(p.stdout)
+        print(p.stderr)
         raise RuntimeError(f"Can't access gs://{bucket_path}") from ex
 
     if isinstance(bodies, pd.DataFrame):
