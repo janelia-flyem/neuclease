@@ -971,8 +971,16 @@ def fetch_bodies_for_many_points(server, uuid, seg_instance, point_df, mutations
     assert mapping.shape[1] == 2
     assert mapping.dtype == np.uint64
 
-    mapper = LabelMapper(*mapping.T)
-    point_df['body'] = mapper.apply(point_df['sv'].values, True)
+    max_sv = mapping[:, 0].max()
+    if max_sv < 6*len(mapping):
+        # Flat LUT is faster than a hash table,
+        # as long as it doesn't take too much RAM.
+        lut = np.arange(max_sv+np.uint64(1), dtype=np.uint64)
+        lut[mapping[:, 0]] = mapping[:, 1]
+        point_df['body'] = lut[point_df['sv'].values]
+    else:
+        mapper = LabelMapper(*mapping.T)
+        point_df['body'] = mapper.apply(point_df['sv'].values, True)
 
 
 @dvid_api_wrapper
