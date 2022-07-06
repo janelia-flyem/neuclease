@@ -382,14 +382,23 @@ if __name__ == "__main__":
     #                          shuffle=True,
     #                          description=description)
 
-    np.random.seed(0)
-    description = "focused-2021-05-02"
-    p = f'/Users/bergs/workspace/vnc-focused-queries/tables/{description}.csv'
-    VNC_DVID_SRC = 'dvid://https://emdata5-avempartha.janelia.org/d9670ddd1681495db4c10865bf4819e4/segmentation'
-    _ = edges_to_assignments(p, VNC_GRAY, VNC_DVID_SRC, sv_as_body=True,
-                             output_path=f'/Users/bergs/workspace/vnc-focused-queries/tables/{description}/tasks.json',
-                             shuffle=True,
-                             description=description)
+    # np.random.seed(0)
+    # description = "focused-2021-05-02"
+    # p = f'/Users/bergs/workspace/vnc-focused-queries/tables/{description}.csv'
+    # VNC_DVID_SRC = 'dvid://https://emdata5-avempartha.janelia.org/d9670ddd1681495db4c10865bf4819e4/segmentation'
+    # _ = edges_to_assignments(p, VNC_GRAY, VNC_DVID_SRC, sv_as_body=True,
+    #                          output_path=f'/Users/bergs/workspace/vnc-focused-queries/tables/{description}/tasks.json',
+    #                          shuffle=True,
+    #                          description=description)
+
+    # np.random.seed(0)
+    # description = "unapplied-merges-2021-05-03"
+    # p = f'/Users/bergs/workspace/vnc-focused-queries/tables/{description}.csv'
+    # VNC_DVID_SRC = 'dvid://https://emdata5-avempartha.janelia.org/d9670ddd1681495db4c10865bf4819e4/segmentation'
+    # _ = edges_to_assignments(p, VNC_GRAY, VNC_DVID_SRC, sv_as_body=True,
+    #                          output_path=f'/Users/bergs/workspace/vnc-focused-queries/tables/{description}/tasks.json',
+    #                          shuffle=True,
+    #                          description=description)
 
     np.random.seed(0)
     description = "unapplied-merges-2021-05-03"
@@ -399,3 +408,4 @@ if __name__ == "__main__":
                              output_path=f'/Users/bergs/workspace/vnc-focused-queries/tables/{description}/tasks.json',
                              shuffle=True,
                              description=description)
+
