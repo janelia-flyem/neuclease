@@ -974,7 +974,7 @@ def fetch_bodies_for_many_points(server, uuid, seg_instance, point_df, mutations
     assert mapping.shape[1] == 2
     assert mapping.dtype == np.uint64
 
-    max_sv = mapping[:, 0].max()
+    max_sv = max(point_df['sv'].max(), mapping[:, 0].max())
     if max_sv < 6*len(mapping):
         # Flat LUT is faster than a hash table,
         # as long as it doesn't take too much RAM.
