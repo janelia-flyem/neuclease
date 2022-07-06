@@ -110,6 +110,15 @@ post_annotation_reload = post_reload
 
 
 @dvid_api_wrapper
+def fetch_tags(server, uuid, instance, *, session=None):
+    r = session.get(f'{server}/api/node/{uuid}/{instance}/tags')
+    r.raise_for_status()
+    return r.json()
+
+
+fetch_annotation_tags = fetch_tags
+
+@dvid_api_wrapper
 def fetch_label(server, uuid, instance, label, relationships=False, *, format='json', session=None):
     """
     Returns all point annotations within the given label as an array of elements.
