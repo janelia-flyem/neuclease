@@ -6,7 +6,7 @@ import graph_tool as gt
 from neuclease.util import Timer, compute_parallel
 
 
-def construct_graph(weights):
+def construct_graph(weights, multigraph=True):
     """
     Construct a single-layer graph from the given edge weights.
 
@@ -18,6 +18,13 @@ def construct_graph(weights):
             pd.Series, indexed by node *pairs* (e.g. body pairs).
             Values are edge weights, e.g. the number of
             synapses a pairwise connection between neurons.
+
+        multigraph:
+            If True, add multiple edges between each node pair,
+            according to the given weights.
+            If False, add only a single edge between each node pair,
+            but add an 'edge property map' to the graph to store the
+            edge weights.
 
     Returns:
         g, sorted_nodes
@@ -36,9 +43,14 @@ def construct_graph(weights):
 
     g = gt.Graph(directed=True)
     g.add_vertex(np.uint32(len(vertexes)))
-    g.add_edge_list(edges)
-    g.ep["weight"] = g.new_edge_property("int")
-    g.ep["weight"].a = weights.values
+
+    if multigraph:
+        edges = np.repeat(edges, weights.values, axis=0)
+        g.add_edge_list(edges)
+    else:
+        g.add_edge_list(edges)
+        g.ep["weight"] = g.new_edge_property("int")
+        g.ep["weight"].a = weights.values
 
     return g, sorted_bodies
 
