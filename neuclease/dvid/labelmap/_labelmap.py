@@ -962,6 +962,9 @@ def fetch_bodies_for_many_points(server, uuid, seg_instance, point_df, mutations
     #
     if mapping is None:
         mapping = fetch_mappings(server, uuid, seg_instance, as_array=True)
+    elif len(mapping) == 0:
+        point_df['body'] = point_df['sv']
+        return
     elif isinstance(mapping, pd.Series):
         # Convert to ndarray
         assert mapping.index.name == 'sv'
