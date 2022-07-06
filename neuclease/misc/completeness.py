@@ -9,7 +9,8 @@ logger = logging.getLogger(__name__)
 
 
 def completeness_forecast(labeled_point_df, partner_df, syn_counts_df=None,
-                          min_tbar_conf=0.0, min_psd_conf=0.0, roi=None, sort_by='SynWeight', stop_at_rank=None):
+                          min_tbar_conf=0.0, min_psd_conf=0.0, roi=None,
+                          sort_by='SynWeight', stop_at_rank=None):
     """
     Produces a DataFrame listing all pairwise synapse connections,
     ordered according to the size of the smaller body in the pair.
@@ -108,7 +109,7 @@ def completeness_forecast(labeled_point_df, partner_df, syn_counts_df=None,
     return conn_df, syn_counts_df
 
 
-def _completeness_forecast(conn_df, syn_counts_df, stop_at_rank):
+def _completeness_forecast(conn_df, syn_counts_df, stop_at_rank, _debug_cols=False):
     """
     Main implementation of completeness_forecast()
 
@@ -160,15 +161,17 @@ def _completeness_forecast(conn_df, syn_counts_df, stop_at_rank):
 
     logger.info("Calculating cumulative columns (tbars/psds/connections)")
 
-    # Moving down the list of connection pairs,
-    # calculate the number of unique tbars we've seen so far.
-    nondupes = ~(conn_df['pre_id'].duplicated())
-    conn_df['num_tbars'] = nondupes.cumsum()
+    if _debug_cols:
+        # Moving down the list of connection pairs,
+        # calculate the number of unique tbars we've seen so far.
+        nondupes = ~(conn_df['pre_id'].duplicated())
+        conn_df['num_tbars'] = nondupes.cumsum()
 
-    # This indicates the number of unique tbars involved in connections thus far,
-    # i.e. the number of tbars with at least one traced output partner.
-    # It's not a particularly interesting statistic, but we happen to get it for free here.
-    conn_df['minimally_connected_tbar_frac'] = conn_df['num_tbars'] / nondupes.sum()
+        # This indicates the number of unique tbars involved in connections thus far,
+        # i.e. the number of tbars with at least one traced output partner.
+        # It's not a particularly interesting statistic, but we happen to get it for free here.
+        conn_df['minimally_connected_tbar_frac'] = conn_df['num_tbars'] / nondupes.sum()
+        del nondupes
 
     # As we move down the list, we're adding all of each body's tbars and psds
     # to our set of "traced" synapses in the sense that they belong to a traced body,
@@ -185,11 +188,13 @@ def _completeness_forecast(conn_df, syn_counts_df, stop_at_rank):
     flattened_bodies.loc[dupes, 'PostSyn'] = 0
     flattened_bodies['traced_tbars'] = flattened_bodies['PreSyn'].cumsum()
     flattened_bodies['traced_psds'] = flattened_bodies['PostSyn'].cumsum()
+    del dupes
 
     # Reshape the above giant lists of cumulatively traced synapses
     # to fit it back into our connection table.
     conn_df['cumulative_traced_tbars'] = flattened_bodies['traced_tbars'].values.reshape(-1, 2).max(axis=1)
     conn_df['cumulative_traced_psds'] = flattened_bodies['traced_psds'].values.reshape(-1, 2).max(axis=1)
+    del flattened_bodies
 
     conn_df['traced_tbar_frac'] = conn_df['cumulative_traced_tbars'] / syn_counts_df['PreSyn'].sum()
     conn_df['traced_psd_frac'] = conn_df['cumulative_traced_psds'] / syn_counts_df['PostSyn'].sum()
@@ -206,6 +211,7 @@ def _completeness_forecast(conn_df, syn_counts_df, stop_at_rank):
     conn_df['body_max_rank'] = conn_df['body_pre']
     post_is_max = conn_df.eval('body_post_rank > body_pre_rank')
     conn_df.loc[post_is_max, 'body_max_rank'] = conn_df.loc[post_is_max, 'body_post']
+    del post_is_max
 
     # It's also useful to see the synapse stats of the body with max rank,
     # since the 'max rank' body is the body that's conceptually being "appended"
@@ -287,6 +293,9 @@ def _body_conn_df(point_df, partner_df):
     Onto the given pre-to-post connection table given in partner_df,
     merge additional columns ['body_pre', 'body_post'],
     obtained from the given point_df table.
+
+    Returns:
+        DataFrame with columns ['pre_id', 'post_id', 'body_pre', 'body_post']
     """
     # Did the user already provide the body_pre, body_post columns?
     if {'body_pre', 'body_post'} <= {*partner_df.columns}:
