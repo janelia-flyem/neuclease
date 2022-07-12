@@ -1,7 +1,8 @@
-from io import StringIO
+from io import BytesIO, StringIO
 
 import numpy as np
 import pandas as pd
+
 
 def swc_to_dataframe(swc_text):
     """
@@ -11,10 +12,11 @@ def swc_to_dataframe(swc_text):
     if isinstance(swc_text, bytes):
         swc_text = swc_text.decode('utf-8')
 
+    # Drop comments
     lines = swc_text.split('\n')
     lines = [*filter(lambda l: len(l) and l[0] not in '# \t', lines)]
     swc_text = '\n'.join(lines)
-    
+
     columns = ['node', 'kind', 'x', 'y', 'z', 'radius', 'parent']
     dtypes = { 'node': np.int32,
                'kind': np.uint8,
@@ -27,3 +29,32 @@ def swc_to_dataframe(swc_text):
     df = pd.read_csv(StringIO(swc_text), sep=' ', names=columns, dtype=dtypes)
     return df
 
+
+def skeleton_to_neuroglancer(skeleton_df, orig_resolution_nm=8, output_path=None):
+    """
+    Convert a skeleton from DVID into the binary format that neuroglancer expects,
+    as described here:
+    https://github.com/google/neuroglancer/blob/master/src/neuroglancer/datasource/precomputed/skeletons.md#encoded-skeleton-file-format
+    """
+    assert (skeleton_df['node'] == np.arange(1, len(skeleton_df)+1)).all()
+
+    num_vertices = len(skeleton_df)
+    num_edges = skeleton_df.eval('parent != -1').sum()
+    vertex_positions = skeleton_df[[*'xyz']].values.astype(np.float32, 'C')
+    vertex_positions[:] *= orig_resolution_nm
+    edges = skeleton_df.query('parent != -1')[['node', 'parent']].values.astype(np.uint32, 'C')
+
+    # Neuroglancer expects 0-based IDs
+    edges -= 1
+
+    stream = BytesIO()
+    stream.write(np.uint32(num_vertices).tobytes())
+    stream.write(np.uint32(num_edges).tobytes())
+    stream.write(vertex_positions)
+    stream.write(edges)
+
+    b = stream.getvalue()
+    if output_path:
+        with open(output_path, 'wb') as f:
+            f.write(b)
+    return b
