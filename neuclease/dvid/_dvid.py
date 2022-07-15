@@ -1,3 +1,4 @@
+from multiprocessing import connection
 import os
 import copy
 import getpass
@@ -66,13 +67,20 @@ class DefaultTimeoutHTTPAdapter(requests.adapters.HTTPAdapter):
         return f"DefaultTimeoutHTTPAdapter(timeout={self.timeout})"
 
 
-def clear_default_dvid_sessions():
+def clear_default_dvid_sessions(connection_timeout=None, timeout=None):
     global DEFAULT_DVID_SESSIONS
     global DEFAULT_DVID_NODE_SERVICES
     global DEFAULT_DVID_SESSION_TEMPLATE
     DEFAULT_DVID_SESSIONS.clear()
     DEFAULT_DVID_NODE_SERVICES.clear()
     DEFAULT_DVID_SESSION_TEMPLATE = _default_dvid_session_template()
+    if connection_timeout is None:
+        connection_timeout = DEFAULT_DVID_TIMEOUT[0]
+    if timeout is None:
+        timeout = DEFAULT_DVID_TIMEOUT[1]
+
+    DEFAULT_DVID_SESSION_TEMPLATE.adapters['http://'].timeout = (connection_timeout, timeout)
+    DEFAULT_DVID_SESSION_TEMPLATE.adapters['https://'].timeout = (connection_timeout, timeout)
 
 
 # Medium timeout for connections, long timeout for data
@@ -109,8 +117,8 @@ def _default_dvid_session_template(appname=DEFAULT_APPNAME, user=getpass.getuser
 #   To change the settings for all new default sessions,
 #   modify this global template and then clear the cached sessions:
 #
+#       clear_default_dvid_sessions(3.05, 600.0)
 #       default_dvid_session_template().adapters['http://'].timeout = (3.05, 600.0)
-#       clear_default_dvid_sessions()
 #
 DEFAULT_DVID_SESSION_TEMPLATE = _default_dvid_session_template()
 
