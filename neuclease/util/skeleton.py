@@ -30,14 +30,45 @@ def swc_to_dataframe(swc_text):
     return df
 
 
+def normalize_skeleton(skeleton_df):
+    """
+    Ensure that a skeleton's nodes have contiguous IDs from 1..N,
+    and that they are listed in sorted order.
+
+    Works IN-PLACE.
+    """
+    # Remap vertices to range 1..N
+    if (skeleton_df['node'] == np.arange(1, 1+len(skeleton_df))).all():
+        return skeleton_df
+
+    # Use 0 for virtual root instead of -1
+    assert skeleton_df['node'].min() >= 1
+    assert skeleton_df['parent'].min() == -1
+    skeleton_df.loc[skeleton_df['parent'] == -1, 'parent'] = 0
+
+    num_nodes = skeleton_df['node'].nunique()
+    remap = np.zeros(skeleton_df['node'].max()+1, dtype=int)
+    remap[np.sort(skeleton_df['node'].unique())] = np.arange(1, num_nodes+1)
+
+    skeleton_df['node'] = remap[skeleton_df['node'].values]
+    skeleton_df['parent'] = remap[skeleton_df['parent'].values]
+    skeleton_df = skeleton_df.sort_values('node', ignore_index=True)
+
+    # Virtual root is -1 again
+    skeleton_df.loc[skeleton_df['parent'] == 0, 'parent'] = -1
+
+    assert (skeleton_df['node'] == np.arange(1, 1+len(skeleton_df))).all()
+    assert skeleton_df['parent'].min() == -1
+    assert not (skeleton_df['parent'] == 0).any()
+
+
 def skeleton_to_neuroglancer(skeleton_df, orig_resolution_nm=8, output_path=None):
     """
     Convert a skeleton from DVID into the binary format that neuroglancer expects,
     as described here:
     https://github.com/google/neuroglancer/blob/master/src/neuroglancer/datasource/precomputed/skeletons.md#encoded-skeleton-file-format
     """
-    assert (skeleton_df['node'] == np.arange(1, len(skeleton_df)+1)).all()
-
+    normalize_skeleton(skeleton_df)
     num_vertices = len(skeleton_df)
     num_edges = skeleton_df.eval('parent != -1').sum()
     vertex_positions = skeleton_df[[*'xyz']].values.astype(np.float32, 'C')

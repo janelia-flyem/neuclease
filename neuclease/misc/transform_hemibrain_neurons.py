@@ -1,33 +1,40 @@
+"""
+Transform a list of hemibrain neurons (skeletons, meshes, or both)
+to male CNS using John Bogovic's alignment scripts.
+"""
 import os
 import sys
-import json
+import logging
 import argparse
 import tempfile
 import subprocess
-from functools import partial
+
+logger = logging.getLogger(__name__)
 
 Hemibrain_v12 = ('emdata4:8900', '31597d95bd844060b0ccc928a1a8a0a4')
 
 # John Bogovic's programs to transform hemibrain points into unisex template and unisex to CNS
-#Hemibrain_to_unisex = '/nrs/saalfeld/john/flyem_maleBrain/transformation_2022Apr07/csv_hemibrainNm-JRC2018Uum'
-#Unisex_to_cns = '/nrs/saalfeld/john/flyem_maleBrain/transformation_2022Apr07/csv_JRC2018Uum-to-EMnm'
+# Warning: Despite the name, this hemibrain script expects voxel units, not nm
+# Expects voxels, produces microns
+Hemibrain_to_unisex = '/nrs/saalfeld/john/flyem_maleBrain/transformation_2022Apr07/csv_hemibrainNm-JRC2018Uum'
 
-Hemibrain_to_unisex = '/groups/flyem/data/scratchspace/flyemflows/cns-brain/alignment/csv_hemibrainNm-JRC2018Uum'
+# Expects um, produces nm
 Unisex_to_cns = '/nrs/saalfeld/john/flyem_maleBrain/transformation_2022July11/csv_JRC2018Uum-to-EMnm'
-
 
 UNISEX_MIDLINE_MICRONS = 313.5
 
-SWC_COLUMNS = ['node', 'kind', 'x', 'y', 'z', 'radius', 'parent']
-
 
 def main():
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument('--matching-only', action='store_true', help='Only process those bodies whose CNS match is listed in the CSV file')
     parser.add_argument('--target-space', '-t', choices=['unisex-template', 'male-cns'], default='male-cns')
-    parser.add_argument('--processes', '-p', type=int, default=2)
-    parser.add_argument('--format', '-f', choices=['swc-voxels', 'neuroglancer'], default='neuroglancer')
-    parser.add_argument('--reflect', action='store_true', default=False, help='reflect the skeletons in template space')
-    parser.add_argument('--skip-existing', action='store_true', default=False, help='Skip neurons which already have results in the output directory')
+    parser.add_argument('--info', action='store_true', help='Write (or overwrite) neuroglancer metadata')
+    parser.add_argument('--skeleton', action='store_true', help='Download and transform skeletons')
+    parser.add_argument('--mesh', action='store_true', help='Download and transform meshes')
+    parser.add_argument('--reflect', action='store_true', default=False, help='Reflect the skeletons in template space')
+    parser.add_argument('--starting-index', type=int, default=1, help="Discard rows of the input CSV before this row (first row is 0)")
+    parser.add_argument('--count', type=int, help="Process this many bodies, discarding all subsequent rows of the input CSV")
+    parser.add_argument('--processes', '-p', type=int, default=0, help='How many processes to use when downloading skeletons/meshes')
     parser.add_argument('body_csv')
     parser.add_argument('output_dir')
     args = parser.parse_args()
@@ -36,77 +43,231 @@ def main():
     configure_default_logging()
 
     transform_hemibrain_neurons(args)
-    print("DONE")
+    logger.info("DONE")
 
 
 def transform_hemibrain_neurons(args):
-    from neuclease.util import read_csv_col, tqdm_proxy, compute_parallel
-    from neuclease.dvid import fetch_skeleton
+    if not args.mesh and not args.skeleton and not args.info:
+        raise RuntimeError("Please specify at least one of --info --mesh --skeleton")
 
-    bodies = read_csv_col(args.body_csv)
-    tmpdir = tempfile.mkdtemp()
-    print(f"Working in {tmpdir}")
-    os.makedirs(args.output_dir, exist_ok=True)
-    if args.format == 'neuroglancer':
-        with open(f'{args.output_dir}/info', 'w') as f:
-            info = {"@type": "neuroglancer_skeletons"}
-            json.dump(info, f, indent=2)
+    body_df = _make_body_df(args)
+    if len(body_df) == 0:
+        sys.exit("No bodies to process")
 
-    fn = partial(_transform_hemibrain_neuron, args, tmpdir)
-    compute_parallel(fn, bodies, processes=args.processes)
+    if args.info:
+        write_neuroglancer_info(args, body_df)
 
-
-def _transform_hemibrain_neuron(args, tmpdir, body):
-    from neuclease.dvid import fetch_skeleton
-    from neuclease.util import skeleton_to_neuroglancer
-    from requests import HTTPError
-
-    output_path = f'{args.output_dir}/{body}'
-    if args.format == 'swc-voxels':
-        output_path += '.swc'
-    
-    if args.skip_existing and os.path.exists(output_path):
+    if not args.skeleton and not args.mesh:
         return
 
+    body_df, hemi_df = _fetch_hemi_data(args, body_df)
+    output_df = _transform_points(args, hemi_df)
+    _write_files(args, body_df, output_df)
+
+
+def _make_body_df(args):
+    import pandas as pd
+    from neuprint import Client, fetch_neurons
+
+    body_df = pd.read_csv(args.body_csv)
+
+    # Select a subset of the input (useful for processing array jobs on the cluster)
+    start = args.starting_index
+    count = args.count or len(body_df) - start
+    body_df = body_df.iloc[start:start+count]
+
+    if args.matching_only:
+        if args.reflect:
+            body_df = body_df.query('not cns_body_counterpart.isnull()').copy()
+        else:
+            body_df = body_df.query('not cns_body.isnull()').copy()
+
+    if len(body_df) == 0:
+        return body_df
+
+    Client('neuprint.janelia.org', 'hemibrain:v1.2.1')
+    neurons = fetch_neurons(body_df['hemibrain_body'].values)[0].set_index('bodyId').rename_axis('hemibrain_body')
+    neurons['instance'] = neurons['instance'].fillna(neurons['type'])
+    instances = neurons['instance']
+    body_df = body_df.merge(instances, 'left', on='hemibrain_body')
+    body_df['instance'] = body_df['instance'].fillna('') + ' (' + body_df['hemibrain_body'].astype(str) + ')'
+    body_df['object_id'] = body_df['hemibrain_body']
+
+    if 'cns_body_counterpart' in body_df.columns and args.reflect:
+        body_df['object_id'] = body_df['cns_body_counterpart']
+    elif 'cns_body' in body_df.columns:
+        body_df['object_id'] = body_df['cns_body']
+    body_df['object_id'] = body_df['object_id'].fillna(body_df['hemibrain_body']).astype(int)
+    return body_df
+
+
+def write_neuroglancer_info(args, body_df):
+    """
+    Write the neuroglancer 'info' files for a skeletons directory and a mesh directory.
+    and also create a 'segment_properties' directory for each, using
+    properties metadata from the data in body_df.
+
+    Note:
+        We always rewrite the info from scratch!
+        Pre-existing info will be overwritten, and any
+        properties on existing neurons will be deleted.
+    """
+    from neuclease.util import dump_json
+    logger.info(f"Writing neuroglancer metadata to {args.output_dir}")
+
+    props = {
+        "@type": "neuroglancer_segment_properties",
+        "inline": {
+            "ids": [],
+            "properties": [
+                {
+                    "id": "source",
+                    "type": "label",
+                    "values": []
+                }
+            ]
+        }
+    }
+
+    body_df = body_df.sort_values('object_id')
+    for object_id, instance in body_df[['object_id', 'instance']].values:
+        props["inline"]["ids"].append(str(object_id))
+        props["inline"]["properties"][0]["values"].append(instance)
+
+    if args.skeleton or os.path.exists(f"{args.output_dir}/skeleton"):
+        os.makedirs(f"{args.output_dir}/skeleton", exist_ok=True)
+        dump_json(
+            {
+                "@type": "neuroglancer_skeletons",
+                "segment_properties": "segment_properties"
+            },
+            f"{args.output_dir}/skeleton/info"
+        )
+        props_dir = f"{args.output_dir}/skeleton/segment_properties"
+        os.makedirs(props_dir, exist_ok=True)
+        dump_json(props, f"{props_dir}/info", unsplit_int_lists=True)
+
+    if args.mesh or os.path.exists(f"{args.output_dir}/mesh"):
+        os.makedirs(f"{args.output_dir}/mesh", exist_ok=True)
+        dump_json(
+            {
+                "@type": "neuroglancer_legacy_mesh",
+                "segment_properties": "segment_properties"
+            },
+            f"{args.output_dir}/mesh/info"
+        )
+        props_dir = f"{args.output_dir}/mesh/segment_properties"
+        os.makedirs(props_dir, exist_ok=True)
+        dump_json(props, f"{props_dir}/info", unsplit_int_lists=True)
+
+
+def _fetch_hemi_data(args, body_df):
+    import pandas as pd
+    from neuclease.util import compute_parallel
+
+    hemi_dfs = []
+    if args.skeleton:
+        logger.info(f"Fetching {len(body_df)} skeletons")
+        skeletons = compute_parallel(_fetch_hemibrain_skeleton, body_df['hemibrain_body'], processes=args.processes)
+        skeletons = filter(lambda x: x is not None, skeletons)
+
+        # Create a giant DataFrame of all skeleton points
+        skeleton_df = pd.concat(skeletons, ignore_index=True)
+        hemi_dfs.append(skeleton_df)
+
+    if args.mesh:
+        logger.info(f"Fetching {len(body_df)} meshes")
+        meshes_and_dfs = compute_parallel(_fetch_hemibrain_mesh, body_df['hemibrain_body'], processes=args.processes)
+        hemi_bodies, meshes, vertices_dfs = zip(*filter(None, meshes_and_dfs))
+
+        # Create a giant DataFrame of all Mesh vertices
+        vertices_df = pd.concat(vertices_dfs, ignore_index=True)
+        hemi_dfs.append(vertices_df)
+
+        # Create a column in body_df for the Mesh objects
+        mesh_df = pd.DataFrame({'hemibrain_body': hemi_bodies, 'mesh': meshes})
+        body_df = body_df.merge(mesh_df, 'left', on='hemibrain_body')
+        body_df.loc[body_df['mesh'].isnull(), 'mesh'] = None
+
+    hemi_df = pd.concat(hemi_dfs, ignore_index=True)
+    return body_df, hemi_df
+
+
+def _fetch_hemibrain_skeleton(hemi_body):
+    from requests import HTTPError
+    from tqdm import tqdm
+    from neuclease.dvid import fetch_skeleton
+
     try:
-        hemi_df = fetch_skeleton(*Hemibrain_v12, 'segmentation_skeletons', body, 'pandas')
-    except HTTPError as ex:
-        print(f"Failed to fetch skeleton for body {body}", file=sys.stderr)
+        df = fetch_skeleton(*Hemibrain_v12, 'segmentation_skeletons', hemi_body, 'pandas')
+        df['hemibrain_body'] = hemi_body
+        df['source'] = 'skeleton'
+        return df
+    except HTTPError:
+        with tqdm.external_write_mode():
+            logger.error(f"Failed to fetch skeleton for body {hemi_body}")
         return None
 
-    unisex_df = transform_hemibrain_neuron_to_unisex(hemi_df, None, tmpdir, body)
+
+def _fetch_hemibrain_mesh(hemi_body):
+    import pandas as pd
+    from requests import HTTPError
+    from tqdm import tqdm
+    from neuclease.dvid import fetch_key
+    from vol2mesh import Mesh
+
+    try:
+        buf = fetch_key(*Hemibrain_v12, 'segmentation_meshes', f'{hemi_body}.ngmesh')
+        m = Mesh.from_buffer(buf, fmt='ngmesh')
+
+        # Convert from nm to voxels
+        m.vertices_zyx = m.vertices_zyx / 8
+
+        df = pd.DataFrame(m.vertices_zyx, columns=[*'zyx'])
+        df['hemibrain_body'] = hemi_body
+        df['source'] = 'mesh'
+        return hemi_body, m, df
+    except HTTPError:
+        with tqdm.external_write_mode():
+            logger.error(f"Failed to fetch mesh for body {hemi_body}")
+        return None
+
+
+def _transform_points(args, hemi_df):
+    # Perform conversion all in one step,
+    # (The computation is dominated by overhead, so parallelism doesn't help much here,
+    # and apparently the conversion program isn't multiprocess-safe.)
+    from neuclease.util import Timer
+    with Timer(f"Transforming {len(hemi_df)} points to unisex space", logger):
+        unisex_df = transform_hemibrain_points_to_unisex(hemi_df)
 
     if args.reflect:
-        midline = UNISEX_MIDLINE_MICRONS * 1000 / 8
+        logger.info(f"Reflecting {len(hemi_df)} points across the unisex midline")
+        midline = UNISEX_MIDLINE_MICRONS * 1000 / 8  # noqa
         unisex_df['x'] = (unisex_df.eval('2 * @midline - x'))
 
     assert args.target_space in ('male-cns', 'unisex-template')
-    if args.target_space == 'male-cns':
-        output_df = transform_unisex_neuron_to_cns(unisex_df, None, tmpdir, body)
-    elif target_space == 'unisex-template':
-        output_df = unisex_df
+    if args.target_space == 'unisex-template':
+        return unisex_df
 
-    if args.format == 'neuroglancer':
-        skeleton_to_neuroglancer(output_df, 8, output_path)
-    else:
-        output_df.to_csv(output_path, sep=' ', index=False, header=False)
+    with Timer(f"Transforming {len(unisex_df)} points to CNS space", logger):
+        return transform_unisex_points_to_cns(unisex_df)
 
 
-def transform_hemibrain_neuron_to_unisex(hemi_df, output_path=None, tmpdir=None, body=0):
+def transform_hemibrain_points_to_unisex(hemi_df, tmpdir=None):
     """
     Transform a hemibrain neuron to unisex template space.
     The resulting skeleton is in voxel units, per FlyEM/DVID conventions.
     """
+    import numpy as np
     import pandas as pd
 
     if not tmpdir:
         tmpdir = tempfile.mkdtemp()
-    hemi_csv = f'{tmpdir}/{body}-hemi.csv'
-    unisex_csv = f'{tmpdir}/{body}-unisex.csv'
+    hemi_csv = f'{tmpdir}/hemi.csv'
+    unisex_csv = f'{tmpdir}/unisex.csv'
 
-    ## Convert to nm [edit: nevermind, this program expects voxel units]
-    #hemi_df = hemi_df.copy(deep=True)
-    #hemi_df[[*'xyz']] *= 8
+    # Note: The hemibrain script expects voxels, not nm
     hemi_df[[*'xyz']].to_csv(hemi_csv, header=False, index=False)
 
     # Run John's conversion
@@ -117,33 +278,30 @@ def transform_hemibrain_neuron_to_unisex(hemi_df, output_path=None, tmpdir=None,
         print(ex.stdout.decode('utf-8'), '\n', ex.stderr.decode('utf-8'), file=sys.stderr)
         raise
 
-    unisex_df = pd.read_csv(unisex_csv, header=None, names=[*'xyz'])
+    unisex_coords = pd.read_csv(unisex_csv, header=None, names=[*'xyz'])
 
-    # Copy other columns and convert back to voxels
-    unisex_df[['node', 'kind', 'radius', 'parent']] = hemi_df[['node', 'kind', 'radius', 'parent']]
-    unisex_df[[*'xyz']] *= 1000/8
-    unisex_df = unisex_df[SWC_COLUMNS]
-
-    if output_path:
-        unisex_df.to_csv(output_path, sep=' ', index=False, header=False)
-
+    # Overwrite with transformed points, converted to voxels
+    unisex_df = hemi_df.copy()
+    unisex_df[[*'xyz']] = unisex_coords * 1000 / 8
+    unisex_df[[*'xyz']] = unisex_df[[*'xyz']].astype(np.float32)
     return unisex_df
 
 
-def transform_unisex_neuron_to_cns(unisex_df, output_path=None, tmpdir=None, body=0):
+def transform_unisex_points_to_cns(unisex_df, tmpdir=None):
     """
     Transform a unisex neuron to CNS template space.
     We assume the input is in voxel units, per FlyEM/DVID conventions,
     and the result will also be in voxel units.
     """
+    import numpy as np
     import pandas as pd
 
     if not tmpdir:
         tmpdir = tempfile.mkdtemp()
-    unisex_csv = f'{tmpdir}/{body}-unisex.csv'
-    cns_csv = f'{tmpdir}/{body}-cns.csv'
+    unisex_csv = f'{tmpdir}/unisex.csv'
+    cns_csv = f'{tmpdir}/cns.csv'
 
-    # Convert to microns
+    # Convert from voxels to to microns
     unisex_df = unisex_df.copy(deep=True)
     unisex_df[[*'xyz']] *= 8/1000
     unisex_df[[*'xyz']].to_csv(unisex_csv, index=False, header=False)
@@ -155,19 +313,49 @@ def transform_unisex_neuron_to_cns(unisex_df, output_path=None, tmpdir=None, bod
     except subprocess.CalledProcessError as ex:
         print(ex.stdout.decode('utf-8'), '\n', ex.stderr.decode('utf-8'), file=sys.stderr)
         raise
-    
-    cns_df = pd.read_csv(cns_csv, header=None, names=[*'xyz'])
 
-    # Copy other columns and convert back to voxels
-    cns_df[['node', 'kind', 'radius', 'parent']] = unisex_df[['node', 'kind', 'radius', 'parent']]
-    cns_df[[*'xyz']] /= 8
-    cns_df = cns_df[SWC_COLUMNS]
+    cns_coords = pd.read_csv(cns_csv, header=None, names=[*'xyz'])
 
-    if output_path:
-        cns_df.to_csv(output_path, sep=' ', index=False, header=False)
-
+    # Overwrite with transformed points, converted from nm to voxels
+    cns_df = unisex_df.copy()
+    cns_df[[*'xyz']] = cns_coords / 8
+    cns_df[[*'xyz']] = cns_df[[*'xyz']].astype(np.float32)
     return cns_df
-    
+
+
+def _write_files(args, body_df, output_df):
+    from neuclease.util import skeleton_to_neuroglancer
+    body_df = body_df.set_index('hemibrain_body')
+
+    if args.skeleton:
+        os.makedirs(f"{args.output_dir}/skeleton", exist_ok=True)
+    if args.mesh:
+        os.makedirs(f"{args.output_dir}/mesh", exist_ok=True)
+
+    for (source, hemi_body), df in output_df.groupby(['source', 'hemibrain_body'], sort=False):
+        assert source in ('skeleton', 'mesh')
+        object_id = body_df.loc[hemi_body, 'object_id']
+        if source == 'skeleton':
+            try:
+                skeleton_to_neuroglancer(df, 8, f"{args.output_dir}/skeleton/{object_id}")
+            except Exception as ex:
+                logger.error(f"Failed to write skeleton for hemibrain body {hemi_body}: {ex}")
+        if source == 'mesh':
+            mesh = body_df.loc[hemi_body, 'mesh']
+            if mesh:
+                mesh_to_neuroglancer(object_id, df, mesh, 8, args.output_dir)
+
+
+def mesh_to_neuroglancer(object_id, vertices_df, mesh, resolution, output_dir):
+    from neuclease.util import dump_json
+
+    # Overwrite with transformed points, and convert to nm
+    mesh.vertices_zyx = resolution * vertices_df[[*'zyx']].values
+
+    # Dump mesh file and fragment pointer JSON file
+    mesh.serialize(f"{output_dir}/mesh/{object_id}.ngmesh")
+    dump_json({"fragments": [f"{object_id}.ngmesh"]}, f"{output_dir}/mesh/{object_id}:0")
+
 
 if __name__ == "__main__":
     main()
