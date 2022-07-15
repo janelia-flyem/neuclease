@@ -58,3 +58,35 @@ def skeleton_to_neuroglancer(skeleton_df, orig_resolution_nm=8, output_path=None
         with open(output_path, 'wb') as f:
             f.write(b)
     return b
+
+
+def neuroglancer_skeleton_to_df(buf):
+    """
+    Converts a neuroglancer skeleton to a DataFrame.
+    Leaves positions in nm units.
+    Does not correspond to the original SWC from DVID.
+    """
+    if isinstance(buf, str):
+        buf = open(buf, 'rb').read()
+
+    stream = BytesIO(buf)
+    num_vertices = np.frombuffer(stream.read(4), dtype=np.uint32)[0]
+    num_edges = np.frombuffer(stream.read(4), dtype=np.uint32)[0]
+    vertex_positions = np.frombuffer(stream.read(4*3*num_vertices), dtype=np.float32).reshape((-1, 3))
+    edges = np.frombuffer(stream.read(4*2*num_edges), dtype=np.int32).reshape((-1, 2))
+
+    if stream.tell() != len(buf):
+        raise RuntimeError("Didn't consume the full buffer.  Skeleton is malformed or contains vertex attributes (unsupported)")
+
+    # The neuroglancer spec doesn't specify a parent/child relationship,
+    # so technically I should be doing some sort of toposort here,
+    # but instead I'm going to assume that this skeleton was written
+    # with the function above.
+    edge_df = pd.DataFrame(edges, columns=['node', 'parent'])
+
+    df = pd.DataFrame(vertex_positions, columns=[*'xyz'])
+    df['node'] = np.arange(len(df), dtype=np.uint32)
+    df = df.merge(edge_df, 'left', on='node')
+    df['parent'].fillna(-1, inplace=True)
+    df['parent'] = df['parent'].astype(np.int32)
+    return df
