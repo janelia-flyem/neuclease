@@ -89,6 +89,65 @@ def construct_ng_precomputed_layer_from_rois(server, uuid, rois, bucket_name, bu
     logger.info(f"Done creating layer in {bucket_name}/{bucket_path}")
 
 
+def construct_ng_precomputed_layer_from_roi_seg(roi_vol, roi_names, bucket_name, bucket_path, scale_0_res=8, decimation=0.01,
+                                                localdir=None, steps={'voxels', 'meshes', 'properties'}):
+    """
+    Similar to above, but when you have an ROI volume from elsewhere (not ROIs in DVID).
+
+    1. Upload the label volume to a google bucket in neuroglancer precomputed format, using tensorstore.
+
+    2. Generate a mesh for each ROI in the label volume, and upload it in neuroglancer's "legacy" (single resolution) format.
+        - Upload to a directory named .../mesh
+        - Also edit json files:
+            .../info
+            .../mesh/info
+
+    3. Update the neuroglancer "segment properties" metadata file for the layer.
+        - Edit json files:
+            .../info
+            .../segment_properties/info
+
+    Args:
+        roi_vol:
+            Must have scale-5 resolution, and must start at (0,0,0).
+
+        roi_names:
+            Should be a dict of {id: name}
+    """
+    invalid_steps = set(steps) - {'voxels', 'meshes', 'properties'}
+    assert not invalid_steps, f"Invalid steps: {steps}"
+
+    if not localdir:
+        localdir = tempfile.mkdtemp()
+    os.makedirs(localdir, exist_ok=True)
+
+    # First, verify that we have permission to edit the bucket.
+    with open(f"{localdir}/test-file.txt", 'w') as f:
+        f.write("Just testing my bucket access...\n")
+    subprocess.run(f"gsutil cp {localdir}/test-file.txt {bucket_name}/{bucket_path}/test-file.txt", shell=True, check=True)
+    subprocess.run(f"gsutil rm {bucket_name}/{bucket_path}/test-file.txt", shell=True, check=True)
+
+    if 'voxels' in steps:
+        logger.info("Uploading segmentation volume")
+        create_precomputed_roi_vol(roi_vol, bucket_name, bucket_path)
+
+    if 'meshes' in steps:
+        logger.info("Preparing legacy neuroglancer meshes")
+        roi_res = scale_0_res * (2**5)
+        roi_box = np.array([(0,0,0), roi_vol.shape])
+
+        # pad volume to ensure mesh faces on all sides
+        roi_vol = np.pad(roi_vol, 1)
+        roi_box += [[-1, -1, -1], [1, 1, 1]]
+        create_precomputed_ngmeshes(roi_vol, roi_res * roi_box, roi_names, bucket_name, bucket_path, localdir, decimation)
+
+    if 'properties' in steps:
+        logger.info("Adding segment properties (ROI names)")
+        create_precomputed_segment_properties(roi_names, bucket_name, bucket_path, localdir)
+
+    logger.info(f"Done creating layer in {bucket_name}/{bucket_path}")
+
+
 def create_precomputed_roi_vol(roi_vol, bucket_name, bucket_path, max_scale=3, resolution_nm=8*(2**5)):
     """
     Upload the given ROI volume (which must be a scale-5 volume, i.e. 256nm resolution)
@@ -157,7 +216,7 @@ def create_precomputed_ngmeshes(vol, vol_fullres_box, names, bucket_name, bucket
     meshes = Mesh.from_label_volume(vol, vol_fullres_box, smoothing_rounds=2)
 
     logger.info("Simplifying meshes")
-    for mesh in meshes.values():
+    for mesh in tqdm(meshes.values()):
         mesh.simplify(decimation)
 
     upload_precompted_ngmeshes(meshes, names, bucket_name, bucket_path, localdir, volume_info)
