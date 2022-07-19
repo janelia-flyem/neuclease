@@ -4,6 +4,7 @@ to male CNS using John Bogovic's alignment scripts.
 """
 import os
 import sys
+import glob
 import logging
 import argparse
 import tempfile
@@ -32,6 +33,7 @@ def main():
     parser.add_argument('--skeleton', action='store_true', help='Download and transform skeletons')
     parser.add_argument('--mesh', action='store_true', help='Download and transform meshes')
     parser.add_argument('--reflect', action='store_true', default=False, help='Reflect the skeletons in template space')
+    parser.add_argument('--skip-existing', action='store_true', help="Don't process bodies whose skeletons and/or meshes already exist in the output directory")
     parser.add_argument('--starting-index', type=int, default=1, help="Discard rows of the input CSV before this row (first row is 0)")
     parser.add_argument('--count', type=int, help="Process this many bodies, discarding all subsequent rows of the input CSV")
     parser.add_argument('--processes', '-p', type=int, default=0, help='How many processes to use when downloading skeletons/meshes')
@@ -71,10 +73,16 @@ def _make_body_df(args):
 
     body_df = pd.read_csv(args.body_csv)
 
+    if len(body_df) == 0:
+        sys.exit("Body list is empty")
+
     # Select a subset of the input (useful for processing array jobs on the cluster)
     start = args.starting_index
     count = args.count or len(body_df) - start
     body_df = body_df.iloc[start:start+count]
+
+    if len(body_df) == 0:
+        sys.exit("No bodies in specified subset")
 
     if args.matching_only:
         if args.reflect:
@@ -83,10 +91,25 @@ def _make_body_df(args):
             body_df = body_df.query('not cns_body.isnull()').copy()
 
     if len(body_df) == 0:
-        return body_df
+        sys.exit("No hemibrain bodies were listed with a matching CNS body")
 
-    Client('neuprint.janelia.org', 'hemibrain:v1.2.1')
-    neurons = fetch_neurons(body_df['hemibrain_body'].values)[0].set_index('bodyId').rename_axis('hemibrain_body')
+    dupes = body_df.loc[body_df['hemibrain_body'].duplicated(), 'hemibrain_body']
+    if len(dupes) > 0:
+        logger.warning(
+            "Some hemibrain bodies are listed multiple times. "
+            f"Only the first will be processed: {sorted(dupes.unique().tolist())}")
+
+    body_df = body_df.drop_duplicates('hemibrain_body')
+
+    try:
+        Client('neuprint.janelia.org', 'hemibrain:v1.2.1')
+        neurons = fetch_neurons(body_df['hemibrain_body'].values)[0].set_index('bodyId').rename_axis('hemibrain_body')
+    except Exception:
+        # Try again in case of timeout
+        # (If we run on the cluster, we might be overloading the server.)
+        Client('neuprint.janelia.org', 'hemibrain:v1.2.1')
+        neurons = fetch_neurons(body_df['hemibrain_body'].values)[0].set_index('bodyId').rename_axis('hemibrain_body')
+
     neurons['instance'] = neurons['instance'].fillna(neurons['type'])
     instances = neurons['instance']
     body_df = body_df.merge(instances, 'left', on='hemibrain_body')
@@ -98,6 +121,28 @@ def _make_body_df(args):
     elif 'cns_body' in body_df.columns:
         body_df['object_id'] = body_df['cns_body']
     body_df['object_id'] = body_df['object_id'].fillna(body_df['hemibrain_body']).astype(int)
+
+    if args.skip_existing:
+        existing_skeleton_files = glob.glob(f"{args.output_dir}/skeleton/*")
+        existing_skeleton_files = (p.split('/')[-1] for p in existing_skeleton_files)
+        existing_skeleton_files = filter(str.isnumeric, existing_skeleton_files)
+        existing_skeleton_bodies = [*map(int, existing_skeleton_files)]  # noqa
+
+        existing_mesh_files = glob.glob(f"{args.output_dir}/mesh/*.ngmesh")
+        existing_mesh_files = (p.split('/')[-1][:-len(".ngmesh")] for p in existing_mesh_files)
+        existing_mesh_bodies = [*map(int, existing_mesh_files)]  # noqa
+
+        if args.skeleton and args.mesh:
+            body_df = body_df.query('object_id not in @existing_skeleton_bodies or object_id not in @existing_mesh_bodies')
+        elif args.skeleton:
+            body_df = body_df.query('object_id not in @existing_skeleton_bodies')
+        elif args.mesh:
+            body_df = body_df.query('object_id not in @existing_mesh_bodies')
+
+    if len(body_df) == 0:
+        logger.info("All bodies already have existing skeleton and mesh files.")
+        sys.exit(0)
+
     return body_df
 
 
@@ -169,25 +214,32 @@ def _fetch_hemi_data(args, body_df):
     if args.skeleton:
         logger.info(f"Fetching {len(body_df)} skeletons")
         skeletons = compute_parallel(_fetch_hemibrain_skeleton, body_df['hemibrain_body'], processes=args.processes)
-        skeletons = filter(lambda x: x is not None, skeletons)
-
-        # Create a giant DataFrame of all skeleton points
-        skeleton_df = pd.concat(skeletons, ignore_index=True)
-        hemi_dfs.append(skeleton_df)
+        skeletons = [*filter(lambda x: x is not None, skeletons)]
+        if len(skeletons) > 0:
+            # Create a giant DataFrame of all skeleton points
+            skeleton_df = pd.concat(skeletons, ignore_index=True)
+            hemi_dfs.append(skeleton_df)
 
     if args.mesh:
         logger.info(f"Fetching {len(body_df)} meshes")
         meshes_and_dfs = compute_parallel(_fetch_hemibrain_mesh, body_df['hemibrain_body'], processes=args.processes)
-        hemi_bodies, meshes, vertices_dfs = zip(*filter(None, meshes_and_dfs))
+        meshes_and_dfs = [*filter(None, meshes_and_dfs)]
+        if len(meshes_and_dfs) == 0:
+            body_df['mesh'] = None
+        else:
+            hemi_bodies, meshes, vertices_dfs = zip(*meshes_and_dfs)
 
-        # Create a giant DataFrame of all Mesh vertices
-        vertices_df = pd.concat(vertices_dfs, ignore_index=True)
-        hemi_dfs.append(vertices_df)
+            # Create a giant DataFrame of all Mesh vertices
+            vertices_df = pd.concat(vertices_dfs, ignore_index=True)
+            hemi_dfs.append(vertices_df)
 
-        # Create a column in body_df for the Mesh objects
-        mesh_df = pd.DataFrame({'hemibrain_body': hemi_bodies, 'mesh': meshes})
-        body_df = body_df.merge(mesh_df, 'left', on='hemibrain_body')
-        body_df.loc[body_df['mesh'].isnull(), 'mesh'] = None
+            # Create a column in body_df for the Mesh objects
+            mesh_df = pd.DataFrame({'hemibrain_body': hemi_bodies, 'mesh': meshes})
+            body_df = body_df.merge(mesh_df, 'left', on='hemibrain_body')
+            body_df.loc[body_df['mesh'].isnull(), 'mesh'] = None
+
+    if len(hemi_dfs) == 0:
+        sys.exit("None of the hemibrain objects could be fetched")
 
     hemi_df = pd.concat(hemi_dfs, ignore_index=True)
     return body_df, hemi_df
