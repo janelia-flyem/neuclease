@@ -68,6 +68,11 @@ def transform_hemibrain_neurons(args):
 
 
 def _make_body_df(args):
+    """
+    Read the user's input CSV and processing options,
+    and construct a DataFrame that outlines which
+    bodies will be processed and what their final object IDs will be.
+    """
     import pandas as pd
     from neuprint import Client, fetch_neurons
 
@@ -140,7 +145,7 @@ def _make_body_df(args):
             body_df = body_df.query('object_id not in @existing_mesh_bodies')
 
     if len(body_df) == 0:
-        logger.info("All bodies already have existing skeleton and mesh files.")
+        logger.info("All bodies already have existing skeleton and/or mesh files.")
         sys.exit(0)
 
     return body_df
@@ -207,6 +212,12 @@ def write_neuroglancer_info(args, body_df):
 
 
 def _fetch_hemi_data(args, body_df):
+    """
+    Fetch the skeletons and meshes for each of the bodies in body_df.
+    Return the skeleton nodes and mesh vertices in one gigantic DataFrame,
+    with extra columns indicating which body and source (skeleton vs. mesh)
+    they came from. Also return Mesh objects as a new column in body_df.
+    """
     import pandas as pd
     from neuclease.util import compute_parallel
 
@@ -246,6 +257,10 @@ def _fetch_hemi_data(args, body_df):
 
 
 def _fetch_hemibrain_skeleton(hemi_body):
+    """
+    Fetch the skeleton for a hemibrain neuron,
+    and attach columns for body and 'source'.
+    """
     from requests import HTTPError
     from tqdm import tqdm
     from neuclease.dvid import fetch_skeleton
@@ -262,6 +277,11 @@ def _fetch_hemibrain_skeleton(hemi_body):
 
 
 def _fetch_hemibrain_mesh(hemi_body):
+    """
+    Fetch the 'ngmesh' (single-resolution neuroglancer legacy mesh)
+    for a given neuron. Returns the Mesh object, along with the mesh
+    vertices extracted in a separate DataFrame.
+    """
     import pandas as pd
     from requests import HTTPError
     from tqdm import tqdm
@@ -286,6 +306,10 @@ def _fetch_hemibrain_mesh(hemi_body):
 
 
 def _transform_points(args, hemi_df):
+    """
+    Transform all coordinates in the given DataFrame into the target
+    coordinate space (either unisex-template or male-cns).
+    """
     # Perform conversion all in one step,
     # (The computation is dominated by overhead, so parallelism doesn't help much here,
     # and apparently the conversion program isn't multiprocess-safe.)
@@ -376,6 +400,11 @@ def transform_unisex_points_to_cns(unisex_df, tmpdir=None):
 
 
 def _write_files(args, body_df, output_df):
+    """
+    Write skeleton and mesh files in neuroglancer format,
+    using the coordinates given in output_df and the Mesh
+    faces from the 'mesh' column in body_df.
+    """
     from neuclease.util import skeleton_to_neuroglancer
     body_df = body_df.set_index('hemibrain_body')
 
@@ -399,6 +428,9 @@ def _write_files(args, body_df, output_df):
 
 
 def mesh_to_neuroglancer(object_id, vertices_df, mesh, resolution, output_dir):
+    """
+    Convert a mesh to neuroglancer format, overwriting the vertices first.
+    """
     from neuclease.util import dump_json
 
     # Overwrite with transformed points, and convert to nm

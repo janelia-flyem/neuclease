@@ -611,7 +611,7 @@ def fetch_body_annotations(server, uuid, instance='segmentation_annotations', bo
           You should check the results to see if every body annotation
           you requested was returned. (Otherwise, it was missing from dvid.)
 
-    Exmaple:
+    Example:
 
         .. code-block: python
 
