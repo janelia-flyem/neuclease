@@ -1859,25 +1859,36 @@ def generate_sample_coordinate(server, uuid, instance, label_id, supervoxels=Fal
         return middle_block_coord + nonzero_coords[len(nonzero_coords)//2]
 
 
-def generate_sample_coordinates(server, uuid, instance, bodies, supervoxels=False, *, interior=False, processes=4):
+def generate_sample_coordinates(server, uuid, instance, bodies, supervoxels=False, *, interior=False, processes=4, skip_out_of_sync=False):
     """
     Calls generate_sample_coordinate() in parallel for a batch of bodies.
     See that function for argument details.
+
+    Args:
+        skip_out_of_sync:
+            If True, don't raise an exception for bodies whose
+            label index is out-of-sync with the scale-0 segmentation.
+            Instead, return [-1, -1, -1].
     """
     assert processes > 0
-    gen_coord = partial(_generate_sample_coordinate_no404, server, uuid, instance, supervoxels=supervoxels, interior=interior)
+    gen_coord = partial(_generate_sample_coordinate_no404, skip_out_of_sync, server, uuid, instance, supervoxels=supervoxels, interior=interior)
     coords = compute_parallel(gen_coord, bodies, processes=processes)
     label_type = {False: 'body', True: 'supervoxel'}[supervoxels]
     return pd.DataFrame(coords, columns=[*'zyx'], index=bodies).rename_axis(label_type)
 
 
-def _generate_sample_coordinate_no404(*args, **kwargs):
+def _generate_sample_coordinate_no404(skip_out_of_sync, *args, **kwargs):
     try:
         return generate_sample_coordinate(*args, **kwargs)
     except HTTPError as ex:
         if ex.response.status_code == 404:
             return [0,0,0]
         raise
+    except RuntimeError as ex:
+        if 'out-of-sync' in str(ex) and skip_out_of_sync:
+            return [-1, -1, -1]
+        raise
+
 
 # Alternative name
 locate_bodies = generate_sample_coordinates
