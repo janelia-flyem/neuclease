@@ -36,7 +36,6 @@ if platform.system() == "Darwin" and 'no_proxy' not in os.environ:
 DEFAULT_DVID_SESSIONS = {}
 DEFAULT_DVID_NODE_SERVICES = {}
 DEFAULT_APPNAME = "neuclease"
-DEFAULT_ADMIN_TOKEN = os.environ.get("DVID_ADMIN_TOKEN", None)
 
 # FIXME: This should be eliminated or at least renamed
 DvidInstanceInfo = namedtuple("DvidInstanceInfo", "server uuid instance")
@@ -87,6 +86,7 @@ def clear_default_dvid_sessions(connection_timeout=None, timeout=None):
 # https://docs.python-requests.org/en/latest/user/advanced/#timeouts
 DEFAULT_DVID_TIMEOUT = (3.05, 120.0)
 
+
 def _default_dvid_session_template(appname=DEFAULT_APPNAME, user=getpass.getuser(), admintoken=None, timeout=None):
     """
     Note: To specify no timeout at all, set timeout=(None, None)
@@ -105,7 +105,7 @@ def _default_dvid_session_template(appname=DEFAULT_APPNAME, user=getpass.getuser
     s.params = { 'u': user, 'app': appname }
 
     if admintoken is None:
-        admintoken = DEFAULT_ADMIN_TOKEN
+        admintoken = os.environ.get("DVID_ADMIN_TOKEN", None)
 
     if admintoken:
         s.params['admintoken'] = admintoken
@@ -150,12 +150,12 @@ def default_dvid_session(appname=DEFAULT_APPNAME, user=getpass.getuser(), admint
     thread_id = threading.current_thread().ident
     pid = os.getpid()
     if admintoken is None:
-        admintoken = DEFAULT_ADMIN_TOKEN
+        admintoken = os.environ.get("DVID_ADMIN_TOKEN", None)
 
     try:
         s = DEFAULT_DVID_SESSIONS[(appname, user, admintoken, thread_id, pid)]
     except KeyError:
-        s = create_dvid_session()
+        s = _default_dvid_session_template(appname, user, admintoken)
         DEFAULT_DVID_SESSIONS[(appname, user, admintoken, thread_id, pid)] = s
 
     return s
