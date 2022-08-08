@@ -57,17 +57,6 @@ def fetch_supervoxel_splits_from_dvid(server, uuid, instance, *, session=None):
         The UUIDs in the dict appear in the same order that DVID provides them in the response.
         According to the docs, they appear in REVERSE-CHRONOLOGICAL order, starting with the
         requested UUID and moving toward the repo root UUID.
-        
-        FIXME: It would be simpler to return a pd.DataFrame, with a column for UUID.
-
-    WARNING:
-        The /supervoxel-splits endpoint was implemented relatively recently.  It is incapable
-        of returning split events for supervoxels that were split before that endpoint was
-        implemented and released.  On older server, the results returned by this function may
-        be incomplete, since older UUIDs predate the /supervoxel-splits endpoint support.
-        However the equivalent information can be extracted from the Kafka log, albeit
-        somewhat more slowly.  See fetch_supervoxel_splits_from_kafka()
-
     """
     # From the DVID docs:
     #
