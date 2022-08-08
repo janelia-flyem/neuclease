@@ -186,17 +186,17 @@ def split_events_to_graph(events):
         for (mutid, old, remain, split, _type) in event_list:
             g.add_edge(old, remain)
             g.add_edge(old, split)
-            if 'uuid' not in g.node[old]:
+            if 'uuid' not in g.nodes[old]:
                 # If the old ID is not a product of a split event, we don't know when it was created.
                 # (Presumably, it originates from the root UUID, but for old servers the /split-supervoxels
                 # endpoint is not comprehensive all the way to the root node.)
-                g.node[old]['uuid'] = '<unknown>'
-                g.node[old][mutid] = -1
+                g.nodes[old]['uuid'] = '<unknown>'
+                g.nodes[old][mutid] = -1
 
-            g.node[remain]['uuid'] = uuid
-            g.node[split]['uuid'] = uuid
-            g.node[remain]['mutid'] = mutid
-            g.node[split]['mutid'] = mutid
+            g.nodes[remain]['uuid'] = uuid
+            g.nodes[split]['uuid'] = uuid
+            g.nodes[remain]['mutid'] = mutid
+            g.nodes[split]['mutid'] = mutid
     
     return g
 
