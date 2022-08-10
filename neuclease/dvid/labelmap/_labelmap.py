@@ -782,7 +782,7 @@ def fetch_labels(server, uuid, instance, coordinates_zyx, scale=0, supervoxels=F
     return labels
 
 
-def fetch_labels_batched(server, uuid, instance, coordinates_zyx, supervoxels=False, scale=0, batch_size=10_000, threads=0, processes=0, presort=True):
+def fetch_labels_batched(server, uuid, instance, coordinates_zyx, supervoxels=False, scale=0, batch_size=10_000, threads=0, processes=0, presort=True, progress=True):
     """
     Like fetch_labels(), but fetches in batches, optionally multithreaded or multiprocessed.
 
@@ -855,13 +855,9 @@ def fetch_labels_batched(server, uuid, instance, coordinates_zyx, supervoxels=Fa
         batch_dfs.append(batch_df)
 
     with Timer("Fetching labels from DVID", logger):
-        batch_starts = list(range(0, len(coords_df), batch_size))
-        if threads <= 1 and processes <= 1:
-            batch_result_dfs = map(fetch_batch, batch_dfs)
-            batch_result_dfs = tqdm_proxy(batch_result_dfs, total=len(batch_starts), leave=False, logger=logger)
-            batch_result_dfs = list(batch_result_dfs)
-        else:
-            batch_result_dfs = compute_parallel(fetch_batch, batch_dfs, 1, threads, processes, ordered=False, leave_progress=False)
+        batch_result_dfs = compute_parallel(
+            fetch_batch, batch_dfs, 1, threads, processes, ordered=False,
+            leave_progress=False, show_progress=progress)
 
     return pd.concat(batch_result_dfs).sort_index()['label'].values
 
