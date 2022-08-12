@@ -782,7 +782,8 @@ def fetch_labels(server, uuid, instance, coordinates_zyx, scale=0, supervoxels=F
     return labels
 
 
-def fetch_labels_batched(server, uuid, instance, coordinates_zyx, supervoxels=False, scale=0, batch_size=10_000, threads=0, processes=0, presort=True, progress=True):
+def fetch_labels_batched(server, uuid, instance, coordinates_zyx, supervoxels=False, scale=0, batch_size=10_000,
+                         threads=0, processes=0, presort=True, progress=True):
     """
     Like fetch_labels(), but fetches in batches, optionally multithreaded or multiprocessed.
 
@@ -841,7 +842,7 @@ def fetch_labels_batched(server, uuid, instance, coordinates_zyx, supervoxels=Fa
             coords_df['bz'] = coords_df['z'] // 64
             coords_df['by'] = coords_df['y'] // 64
             coords_df['bx'] = coords_df['x'] // 64
-            coords_df.sort_values(['bz', 'by', 'bx'], inplace=True)
+            coords_df.sort_values(['bz', 'by', 'bx', *'zyx'], inplace=True)
             del coords_df['bz']
             del coords_df['by']
             del coords_df['bx']
