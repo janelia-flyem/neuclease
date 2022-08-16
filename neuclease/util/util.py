@@ -27,6 +27,7 @@ import ujson
 import requests
 from tqdm import tqdm
 
+import h5py
 import numpy as np
 import pandas as pd
 from numba import jit
@@ -574,7 +575,7 @@ class _iter_batches:
             for batch_start in range(0, len(it), batch_size):
                 yield it.iloc[batch_start:batch_start+batch_size]
             return
-        elif isinstance(it, (list, np.ndarray)):
+        elif isinstance(it, (list, np.ndarray, h5py.Dataset)):
             for batch_start in range(0, len(it), batch_size):
                 yield it[batch_start:batch_start+batch_size]
             return
