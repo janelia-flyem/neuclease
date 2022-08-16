@@ -626,16 +626,19 @@ def compute_parallel(func, iterable, chunksize=1, threads=0, processes=0, ordere
             Note: When using a process pool, your function and iterable items must be pickleable.
 
         ordered:
-            Must be either True, False, or None.
-            If True, process the items in order, and return results
-            in the same order as provided in the input.
-            If False, process the items as quickly as possible,
-            meaning that some results will be presented out-of-order,
-            depending on how long they took to complete relative to the
-            other items in the pool.
-            If None, then the items will be processed out-of-order,
-            but the results will be reordered to correspond to the original
-            input order before returning.
+            Must be either True, False, or None:
+
+            - If True, process the items in order, and return results
+              in the same order as provided in the input.
+
+            - If False, process the items as quickly as possible,
+              meaning that some results will be presented out-of-order,
+              depending on how long they took to complete relative to the
+             other items in the pool.
+
+            - If None, then the items will be processed out-of-order,
+              but the results will be reordered to correspond to the original
+              input order before returning.
 
         total:
             Optional. Specify the total number of tasks, for progress reporting.
@@ -1627,7 +1630,6 @@ def fit_ellipsoid(mask):
     radii_vec = radii_vec.transpose()[::-1, :]
 
     return size, center, radii_vec
-
 
 
 def perform_bigquery(q, client=None, project='janelia-flyem'):
