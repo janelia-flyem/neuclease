@@ -11,6 +11,7 @@ import logging
 import inspect
 import copyreg
 import contextlib
+from textwrap import indent
 from itertools import chain
 from operator import itemgetter
 from functools import partial, lru_cache
@@ -1645,6 +1646,59 @@ def perform_bigquery(q, client=None, project='janelia-flyem'):
     # but bigquery keeps giving me errors when I try that.
     r = client.query(q).result()
     return r.to_dataframe()
+
+
+def construct_query_to_convert_bq_ints(table, gcp_project='janelia-flyem', fields_only=False, client=None):
+    """
+    If you want to export an entire table from BigQuery,
+    you first need to convert any UINT64 to int64, since the former
+    is not supported by their parquet export.
+
+    This function produces a query string that can be used to retrieve the
+    entire contents of the table while casting all integers to int64 along the way.
+    It retains any nested (struct) object structure in the results.
+
+    Note:
+        It is assumed that the table's first row is representative of the full table schema.
+        If any nullable integer fields in the first row are missing, those fields won't be converted.
+
+    Args:
+        table:
+            name of the BigQuery table for which the conversion query should be made,
+            e.g. "fullbrain_seg_20220130_32fb16fb8f.rsg32_32fb16fb"
+        gcp_project:
+            name of the GCP project which owns the BigQuery table
+
+    Returns:
+        str
+    """
+    def _select_field(full_k, v):
+        k = full_k.split('.')[-1]
+        if isinstance(v, dict):
+            members = (_select_field(f'{full_k}.{ki}', vi) for ki, vi in v.items())
+            members = ',\n'.join(members)
+            return indent(f"struct(\n{members}\n) as {k}", '  ')
+
+        if v is None:
+            return f'  {full_k} as {k}'
+        elif isinstance(v, int):
+            return f"  cast({full_k} as int64) as {k}"
+        else:
+            return f"  {full_k}"
+
+    if client is None:
+        from google.cloud import bigquery
+        client = bigquery.Client(gcp_project)
+    r = client.query(f"select * from `{table}` limit 1").result()
+    example_row = dict(next(r))
+    fields = ',\n'.join(_select_field(k,v) for k,v in example_row.items())
+    if fields_only:
+        return fields
+    return (
+        f"select\n"
+        f"{fields}\n"
+        f"from `{table}`"
+    )
 
 
 def find_files(root_dir, file_exts=None, skip_exprs=None, file_exprs=None):
