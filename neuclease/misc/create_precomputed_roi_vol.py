@@ -7,6 +7,7 @@ import tempfile
 import subprocess
 
 import numpy as np
+import pandas as pd
 
 from neuclease.util import tqdm_proxy as tqdm, dump_json
 from neuclease.dvid import fetch_combined_roi_volume
@@ -60,14 +61,18 @@ def construct_ng_precomputed_layer_from_rois(server, uuid, rois, bucket_name, bu
     subprocess.run(f"gsutil cp {localdir}/test-file.txt {bucket_name}/{bucket_path}/test-file.txt", shell=True, check=True)
     subprocess.run(f"gsutil rm {bucket_name}/{bucket_path}/test-file.txt", shell=True, check=True)
 
-    if sorted(rois) != rois:
-        logger.warning("Your ROIs aren't sorted")
-    roi_names = dict(enumerate(rois, start=1))
+    if isinstance(rois, pd.Series):
+        roi_names = dict(rois.items())
+        rois = {name: label for label, name in roi_names.items()}
+    else:
+        roi_names = dict(enumerate(rois, start=1))
+        if sorted(rois) != rois:
+            logger.warning("Your ROIs aren't sorted")
 
     logger.info("Consructing segmentation volume from ROI RLEs")
     roi_vol, roi_box, overlaps = fetch_combined_roi_volume(server, uuid, rois, box_zyx=[(0,0,0), None])
     if len(overlaps):
-        raise RuntimeError("The ROIs you specified overlap:\n{overlaps}")
+        raise RuntimeError(f"The ROIs you specified overlap:\n{overlaps}")
 
     if 'voxels' in steps:
         logger.info("Uploading segmentation volume")
