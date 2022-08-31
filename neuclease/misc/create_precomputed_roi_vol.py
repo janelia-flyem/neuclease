@@ -28,7 +28,7 @@ DEFAULT_VOLUME_INFO = {
 
 
 def construct_ng_precomputed_layer_from_rois(server, uuid, rois, bucket_name, bucket_path, scale_0_res=8, decimation=0.01,
-                                             localdir=None, steps={'voxels', 'meshes', 'properties'}):
+                                             localdir=None, steps={'voxels', 'meshes', 'properties'}, permit_overlaps=False):
     """
     Given a list of ROIs, generate a neuroglancer precomputed layer for them.
 
@@ -71,7 +71,7 @@ def construct_ng_precomputed_layer_from_rois(server, uuid, rois, bucket_name, bu
 
     logger.info("Consructing segmentation volume from ROI RLEs")
     roi_vol, roi_box, overlaps = fetch_combined_roi_volume(server, uuid, rois, box_zyx=[(0,0,0), None])
-    if len(overlaps):
+    if len(overlaps) and not permit_overlaps:
         raise RuntimeError(f"The ROIs you specified overlap:\n{overlaps}")
 
     if 'voxels' in steps:
