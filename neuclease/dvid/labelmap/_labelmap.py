@@ -1605,6 +1605,25 @@ def fetch_sparsevol_coarse_threaded(server, uuid, instance, labels, supervoxels=
     return dict(labels_coords)
 
 
+def fetch_sparsevol_coarse_box(server, uuid, instance, label, supervoxels=False, *, missing='raise', session=None):
+    """
+    Convenience function for obtaining the approximate bounding box
+    of a body via it's coarse sparsevol representation, which is
+    derived from the label index.
+
+    The results are returned at scale 6.
+    """
+    assert missing in ('raise', 'ignore')
+    try:
+        rle = fetch_sparsevol_coarse(server, uuid, instance, label, supervoxels, format='ranges', session=session)
+        return rle_ranges_box(rle)
+    except HTTPError as ex:
+        status_code = (ex.response is not None) and ex.response.status_code
+        if missing == 'ignore' and status_code == 404:
+            return np.array([[0,0,0], [0,0,0]], dtype=np.int32)
+        raise
+
+
 @dvid_api_wrapper
 def fetch_sparsevol(server, uuid, instance, label, scale=0, supervoxels=False,
                     *, format='coords', dtype=np.int32, mask_box=None, session=None):
