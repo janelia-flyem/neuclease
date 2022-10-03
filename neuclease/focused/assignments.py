@@ -152,22 +152,26 @@ def define_task_batches(tasks,
     regular_tasks_per_assignment = total_tasks_per_assignment - qc_tasks_per_assignment
     unique_tasks_per_batch = regular_tasks_per_assignment * assignments_per_batch + qc_tasks_per_assignment
 
-    # Truncate to make uniform batch sizes
-    total_tasks = (len(tasks) // unique_tasks_per_batch) * unique_tasks_per_batch
-    tasks = tasks.iloc[:total_tasks]
     tasks = tasks.reset_index(drop=True)
     tasks = tasks.copy()
     tasks['batch'] = tasks.index // unique_tasks_per_batch
     tasks['assignment'] = -1
-    
+
     batch_dfs = []
     for _, batch_df in tasks.groupby('batch'):
-        qc_df = batch_df.sample(qc_tasks_per_assignment)
+        qc_df = batch_df.sample(min(qc_tasks_per_assignment, len(batch_df)))
         reg_df = batch_df.loc[~(batch_df.index.isin(qc_df.index))].sample(frac=1.0)
-        for i, assign_df in enumerate(iter_batches(reg_df, regular_tasks_per_assignment)):
-            assign_df = pd.concat((assign_df, qc_df), ignore_index=True).sample(frac=1.0)
-            assign_df['assignment'] = i
+        if len(reg_df) == 0:
+            # The batch is so small that every task is a QC task.
+            # That's okay, we'll still emit an assignment (just one, though).
+            assign_df = qc_df
+            assign_df['assignment'] = 0
             batch_dfs.append(assign_df)
+        else:
+            for i, assign_df in enumerate(iter_batches(reg_df, regular_tasks_per_assignment)):
+                assign_df = pd.concat((assign_df, qc_df), ignore_index=True).sample(frac=1.0)
+                assign_df['assignment'] = i
+                batch_dfs.append(assign_df)
 
     final_df = pd.concat(batch_dfs, ignore_index=True)
 
