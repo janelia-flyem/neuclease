@@ -122,7 +122,8 @@ def box_intersection(box_A, box_B):
     box_A = np.asarray(box_A)
     box_B = np.asarray(box_B)
 
-    assert box_A.shape[-2:] == box_B.shape[-2:]
+    assert box_A.shape[-2:] == box_B.shape[-2:], \
+        f"Incompatible shapes: {box_A.shape} and {box_B.shape}"
 
     intersection = np.empty(np.broadcast(box_A, box_B).shape, np.int32)
     intersection[..., 0, :] = np.maximum( box_A[..., 0, :], box_B[..., 0, :] )
