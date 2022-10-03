@@ -1131,26 +1131,22 @@ def fetch_mappings(server, uuid, instance, as_array=False, *, format=None, sessi
         else:
             format = 'csv'
 
+    params = {}
     if format == 'binary':
-        # This takes ~30 seconds so it's nice to log it.
-        uri = f"{server}/api/node/{uuid}/{instance}/mappings?format=binary"
-        with Timer(f"Fetching {uri}", logger):
-            r = session.get(uri)
-            r.raise_for_status()
+        params['format'] = 'binary'
 
+    # This takes ~30 seconds so it's nice to log it.
+    uri = f"{server}/api/node/{uuid}/{instance}/mappings"
+    with Timer(f"Fetching {uri}", logger):
+        r = session.get(uri, params=params)
+        r.raise_for_status()
+
+    if format == 'binary':
         a = np.frombuffer(r.content, np.uint64).reshape(-1,2)
         if as_array:
             return a
-
         df = pd.DataFrame(a, columns=['sv', 'body'])
-
     else:
-        # This takes ~30 seconds so it's nice to log it.
-        uri = f"{server}/api/node/{uuid}/{instance}/mappings"
-        with Timer(f"Fetching {uri}", logger):
-            r = session.get(uri)
-            r.raise_for_status()
-
         with Timer("Parsing mapping", logger), BytesIO(r.content) as f:
             df = pd.read_csv(f, sep=' ', header=None, names=['sv', 'body'], engine='c', dtype=np.uint64)
             if as_array:
