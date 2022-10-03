@@ -148,10 +148,11 @@ def prepare_bookmark_assignment_setup(df, output_dir, bucket_path, csv_path, pre
         raise RuntimeError(f"Can't access gs://{bucket_path}") from ex
 
     if not isinstance(df, pd.DataFrame):
+        raise NotImplemented
         # Assume we've got a body list
         assert np.array(df).ndim == 1
         bodies = df
-        df = generate_sample_coordinates(bodies, interior=True).reset_index()
+        df = generate_sample_coordinates(server, uuid, instance, bodies, interior=True).reset_index()
 
     output_paths = create_bookmark_files(df, output_dir, prefix, batch_size, default_text)
     tracking_df = pd.DataFrame(list(enumerate(output_paths)), columns=['assignment', 'file'])
