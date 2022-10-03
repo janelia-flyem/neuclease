@@ -89,6 +89,18 @@ def create_bookmark_file(df, output_path=None, default_text=None):
     return contents
 
 
+def read_bookmark_points(path):
+    """
+    Read a bookmark JSON file and return a dataframe
+    with the enclosed points, and body IDs (if present).
+    """
+    with open(path, 'r') as f:
+        j = json.load(f)
+    df = pd.DataFrame(j['data']).rename(columns={'body ID': 'body'})
+    df[[*'xyz']] = df['location'].tolist()
+    del df['location']
+    return df
+
 def prepare_bookmark_assignment_setup(df, output_dir, bucket_path, csv_path, prefix='bookmarks-', batch_size=50, default_text=None):
     """
     This function will help prepare a set of orphan-link (bookmark) assignments.
