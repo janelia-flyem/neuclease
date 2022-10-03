@@ -1163,7 +1163,7 @@ def compute_focused_bodies(server, uuid, instance, synapse_samples, min_tbars, m
     split_source = 'dvid'
     
     # Load full mapping. It's needed for both synapses and body sizes.
-    mapping = fetch_complete_mappings(server, uuid, instance, include_retired=True, kafka_msgs=kafka_msgs)
+    mapping = fetch_complete_mappings(server, uuid, instance, kafka_msgs=kafka_msgs)
     mapper = LabelMapper(mapping.index.values, mapping.values)
 
     ##

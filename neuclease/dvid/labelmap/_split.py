@@ -38,17 +38,17 @@ def fetch_supervoxel_splits(server, uuid, instance, source='kafka', format='dict
 
 
 @dvid_api_wrapper
-def fetch_supervoxel_splits_from_dvid(server, uuid, instance, *, session=None):
+def fetch_supervoxel_splits_from_dvid(server, uuid, instance, *, format='dict', session=None):
     """
     Fetch the /supervoxel-splits info for the given instance.
-    
+
     Args:
         server:
             dvid server, e.g. 'emdata3:8900'
-        
+
         uuid:
             dvid uuid, e.g. 'abc9'
-        
+
         instance:
             dvid instance name, e.g. 'segmentation'
 
@@ -64,7 +64,7 @@ def fetch_supervoxel_splits_from_dvid(server, uuid, instance, *, session=None):
     #
     #     Returns JSON for all supervoxel splits that have occured up to this version of the
     #     labelmap instance.  The returned JSON is of format:
-    # 
+    #
     #         [
     #             "abc123",
     #             [[<mutid>, <old>, <remain>, <split>],
@@ -75,23 +75,27 @@ def fetch_supervoxel_splits_from_dvid(server, uuid, instance, *, session=None):
     #             [<mutid>, <old>, <remain>, <split>],
     #             [<mutid>, <old>, <remain>, <split>]]
     #         ]
-    #     
+    #
     #     The UUID examples above, "abc123" and "bcd234", would be full UUID strings and are in order
     #     of proximity to the given UUID.  So the first UUID would be the version of interest, then
     #     its parent, and so on.
+    assert format in ('dict', 'pandas')
 
     r = session.get(f'{server}/api/node/{uuid}/{instance}/supervoxel-splits')
     r.raise_for_status()
 
     events = {}
-    
+
     # Iterate in chunks of 2
     for uuid, event_list in zip(*2*[iter(r.json())]):
         assert isinstance(uuid, str)
         assert isinstance(event_list, list)
         events[uuid] = list(starmap(SplitEvent, event_list))
- 
-    return events
+
+    if format == 'pandas':
+        return split_events_to_dataframe(events)
+    else:
+        return events
 
 
 @dvid_api_wrapper

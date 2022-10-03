@@ -28,7 +28,7 @@ from ..repo import create_voxel_instance, fetch_repo_dag, resolve_ref, expand_uu
 from ..kafka import read_kafka_messages, kafka_msgs_to_df
 from ..rle import parse_rle_response, runlength_decode_from_ranges_to_mask, rle_ranges_box
 
-from ._split import SplitEvent, fetch_supervoxel_splits_from_kafka
+from ._split import fetch_supervoxel_splits_from_dvid
 
 # $ protoc --python_out=. neuclease/dvid/labelmap/labelops.proto
 from .labelops_pb2 import MappingOps, MappingOp
@@ -1160,7 +1160,7 @@ def fetch_mappings(server, uuid, instance, as_array=False, *, format=None, sessi
 
 
 @dvid_api_wrapper
-def fetch_complete_mappings(server, uuid, instance, include_retired=True, kafka_msgs=None, sort=None, *, session=None):
+def fetch_complete_mappings(server, uuid, instance, mutations=None, sort=None, *, session=None):
     """
     Fetch the complete mapping from DVID for all agglomerated bodies,
     including 'identity' mappings (for agglomerated bodies only)
@@ -1185,12 +1185,10 @@ def fetch_complete_mappings(server, uuid, instance, include_retired=True, kafka_
         instance:
             dvid instance name, e.g. 'segmentation'
 
-        include_retired:
-            If True, include rows for 'retired' supervoxels, which all map to 0.
-
-        kafka_msgs:
-            Optionally provide the complete labelmap kafka log if you've got it,
+        mutations:
+            Optionally provide the complete labelmap mutation log if you've got it,
             in which case this function doesn't need to re-fetch it.
+            Should be the messages obtained via fetch_mutations().
 
         sort:
             Optional.
@@ -1202,93 +1200,41 @@ def fetch_complete_mappings(server, uuid, instance, include_retired=True, kafka_
     """
     assert sort in (None, 'sv', 'body')
 
-    logger.warning("FIXME: This function is horribly inefficient and should be rewritten to use pandas indexes, not sets.")
+    if mutations is None:
+        mutations = fetch_mutations(server, uuid, instance)
 
-    # Read complete kafka log; we need both split and cleave info
-    if kafka_msgs is None:
-        try:
-            kafka_msgs = fetch_mutations(server, uuid, instance, dag_filter='leaf-and-parents', format='json')
-        except Exception:
-            kafka_msgs = read_kafka_messages(server, uuid, instance)
-
-    split_events = fetch_supervoxel_splits_from_kafka(server, uuid, instance, kafka_msgs=kafka_msgs, session=session)
-    split_tables = list(map(lambda t: np.asarray([row[:-1] for row in t], np.uint64), split_events.values()))
-    if split_tables:
-        split_table = np.concatenate(split_tables)
-        retired_svs = split_table[:, SplitEvent._fields.index('old')]
-        retired_svs = set(retired_svs)
-    else:
-        retired_svs = set()
-
-    def extract_cleave_fragments():
-        for msg in kafka_msgs:
-            if msg["Action"] == "cleave-complete":
-                yield msg["CleavedLabel"]
-
-    # Cleave fragment IDs (i.e. bodies that were created via a cleave)
-    # should not be included in the set of 'identity' rows.
-    # (These IDs are guaranteed to be disjoint from supervoxel IDs.)
-    cleave_fragments = set(extract_cleave_fragments())
+    if not isinstance(mutations, pd.DataFrame):
+        mutations = labelmap_kafka_msgs_to_df(mutations)
+    assert 'msg' in mutations.columns
 
     # Fetch base mapping
-    base_mapping = fetch_mappings(server, uuid, instance, as_array=True, session=session)
-    base_svs = base_mapping[:,0]
-    base_bodies = base_mapping[:,1]
+    base_mapping = fetch_mappings(server, uuid, instance, session=session)
 
-    # Augment with identity rows, which aren't included in the base.
-    with Timer("Constructing missing identity-mappings", logger):
-        missing_idents = set(base_bodies) - set(base_svs) - retired_svs - cleave_fragments
-        missing_idents = np.fromiter(missing_idents, np.uint64)
-        missing_idents_mapping = np.array((missing_idents, missing_idents)).transpose()
+    cleave_labels = [m['CleavedLabel'] for m in mutations.query('action == "cleave-complete"')['msg']]
+    cleave_labels = np.asarray(cleave_labels, np.uint64)
+    split_df = fetch_supervoxel_splits_from_dvid(server, uuid, instance, format='pandas')
+    renumber_targets = mutations.query('action == "renumber-complete"')['target_body'].values.astype(np.uint64)
 
-    parts = [base_mapping, missing_idents_mapping]
+    possible_retired = np.concatenate((split_df['old'].values.astype(np.uint64), cleave_labels, renumber_targets))
+    possible_retired = pd.Series(0, index=possible_retired, dtype=np.uint64).rename('body').rename_axis('sv')
 
-    # Optionally include 'retired' supervoxels -- mapped to 0
-    if include_retired:
-        retired_svs_array = np.fromiter(retired_svs, np.uint64)
-        retired_mapping = np.zeros((len(retired_svs_array), 2), np.uint64)
-        retired_mapping[:, 0] = retired_svs_array
-        parts.append(retired_mapping)
+    mapped_bodies = base_mapping.unique()
+    possible_identities = pd.Series(mapped_bodies, index=mapped_bodies).rename('body').rename_axis('sv')
+    possible_identities = possible_identities[(possible_identities != 0)]
 
-    # Combine into a single table
-    full_mapping = np.concatenate(parts)
-    full_mapping = np.asarray(full_mapping, order='C')
-
-    # Drop duplicates that may have been introduced via retired svs
-    # (if DVID didn't filter them out)
-    dupes = pd.Series(full_mapping[:,0]).duplicated(keep='last')
-    full_mapping = full_mapping[(~dupes).values]
-
-    # View as 1D buffer of structured dtype to sort in-place.
-    # (Sorted index is more efficient with speed and RAM in pandas)
-    mapping_view = memoryview(full_mapping.reshape(-1))
-    np.frombuffer(mapping_view, dtype=[('sv', np.uint64), ('body', np.uint64)]).sort()
-
-    # Construct pd.Series for fast querying
-    s = pd.Series(index=full_mapping[:,0], data=full_mapping[:,1])
-
-    if not include_retired:
-        # Drop all rows with retired supervoxels, including:
-        # identities we may have added that are now retired
-        # any retired SVs erroneously included by DVID itself in the fetched mapping
-        s.drop(retired_svs, inplace=True, errors='ignore')
-
-    # Reload index to ensure most RAM-efficient implementation.
-    # (This seems to make a big difference in RAM usage!)
-    s.index = s.index.values
-
-    s.index.name = 'sv'
-    s.name = 'body'
+    # We only add the 'retired' IDs in cases where the supervoxel DIDN'T exist in the mapping already.
+    # We only add 'identity' IDs in cases where the supervoxel DIDN'T exist in the mapping AND it wasn't retired.
+    mapping = pd.concat((base_mapping, possible_retired, possible_identities))
+    mapping = mapping.loc[~mapping.index.duplicated(keep='first')].copy()
 
     if sort == 'sv':
-        s.sort_index(inplace=True)
+        mapping.sort_index(inplace=True)
     elif sort == 'body':
-        s.sort_values(inplace=True)
+        mapping.sort_values(inplace=True)
 
-    assert s.index.dtype == np.uint64
-    assert s.dtype == np.uint64
-
-    return s
+    assert mapping.index.dtype == np.uint64
+    assert mapping.dtype == np.uint64
+    return mapping
 
 
 @dvid_api_wrapper

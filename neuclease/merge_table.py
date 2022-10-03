@@ -541,7 +541,7 @@ def update_merge_table(server, uuid, instance, table_df, complete_mapping=None, 
         
         complete_mapping:
             Optional.  Will be fetched if not provided.
-            Must be the complete mapping as returned by fetch_complete_mappings(..., include_retired=True)
+            Must be the complete mapping as returned by fetch_complete_mappings(...)
         
         split_mapping:
             Optional.  Will be fetched if not provided.

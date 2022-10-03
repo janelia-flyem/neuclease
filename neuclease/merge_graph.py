@@ -108,7 +108,7 @@ class LabelmapMergeGraph:
         # For testing purposes, we have a special means of avoiding kafkas
         if self.no_kafka:
             kafka_msgs = []
-        mapping = fetch_complete_mappings(server, uuid, instance, include_retired=True, kafka_msgs=kafka_msgs)
+        mapping = fetch_complete_mappings(server, uuid, instance, kafka_msgs=kafka_msgs)
         self.apply_mapping(mapping)
 
     def append_edges_for_focused_merges(self, server, uuid, focused_decisions_instance):
