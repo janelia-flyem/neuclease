@@ -1051,7 +1051,7 @@ split_supervoxel = post_split_supervoxel
 
 
 @dvid_api_wrapper
-def fetch_mapping(server, uuid, instance, supervoxel_ids, *, session=None, nolookup=False, batch_size=None, processes=0, as_series=False):
+def fetch_mapping(server, uuid, instance, supervoxel_ids, *, session=None, nolookup=False, batch_size=None, threads=0, processes=0, as_series=False):
     """
     For each of the given supervoxels, ask DVID what body they belong to.
     If the supervoxel no longer exists, it will map to label 0.
@@ -1067,7 +1067,7 @@ def fetch_mapping(server, uuid, instance, supervoxel_ids, *, session=None, noloo
 
     fn = partial(_fetch_mapping, server, uuid, instance, nolookup=nolookup, session=session)
     sv_batches = iter_batches(supervoxel_ids, batch_size)
-    batch_results = compute_parallel(fn, sv_batches, processes=processes)
+    batch_results = compute_parallel(fn, sv_batches, threads=threads, processes=processes, show_progress=batch_size < len(supervoxel_ids))
     mapping = pd.concat(batch_results)
 
     if as_series:
@@ -2882,7 +2882,7 @@ def post_hierarchical_cleaves(server, uuid, instance, body_id, group_mapping, le
 
     logger.info(f"Verifying mapping for {len(group_mapping)} supervoxels")
     dvid_mapping = fetch_mapping(server, uuid, instance, group_mapping.index.values, as_series=True,
-                                 batch_size=10_000, processes=8, session=session)
+                                 batch_size=10_000, threads=8, session=session)
     assert (dvid_mapping == body_id).all(), \
         "All supervoxels in the group_mapping index must map (in DVID) to the given body_id"
 
