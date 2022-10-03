@@ -937,16 +937,15 @@ def closest_approach_between_masks(mask_a, mask_b):
 
     # Find the point within id_a with the smallest vector
     point_a = np.unravel_index(np.argmin(to_b_distances), to_b_distances.shape)
-    point_a = np.array(point_a, np.int32)
+    distance = to_b_distances[tuple(point_a)]
 
     # Its closest point id_b is indicated by the corresponding vector
-    point_b = (point_a + to_b_vectors[point_a]).astype(np.int32)
+    point_a = np.asarray(point_a, np.int32)
+    point_b = (point_a + to_b_vectors[tuple(point_a)]).astype(np.int32)
 
     # Add the subvolume offset
-    distance = to_b_distances[point_a]
     point_a = tuple(point_a + box_u[0])
     point_b = tuple(point_b + box_u[0])
-
     return (point_a, point_b, distance)
 
 
@@ -961,7 +960,7 @@ def approximate_closest_approach(vol, id_a, id_b, scale=1):
     mask_b = (vol == id_b)
 
     if not mask_a.any() or not mask_b.any():
-        return np.inf
+        return ((-1, -1, -1), (-1, -1, -1), np.inf)
 
     scaled_mask_a, _ = downsample_binary_3d_suppress_zero(mask_a, (2**scale))
     scaled_mask_b, _ = downsample_binary_3d_suppress_zero(mask_b, (2**scale))
