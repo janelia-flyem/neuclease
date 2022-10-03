@@ -98,6 +98,8 @@ def _make_body_df(args):
     if len(body_df) == 0:
         sys.exit("No hemibrain bodies were listed with a matching CNS body")
 
+    # FIXME: Why is this necessary?
+    # I can't process duplicate CNS bodies, but duplicate hemibrain ought to be okay...
     dupes = body_df.loc[body_df['hemibrain_body'].duplicated(), 'hemibrain_body']
     if len(dupes) > 0:
         logger.warning(
