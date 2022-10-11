@@ -1650,6 +1650,124 @@ def perform_bigquery(q, client=None, project='janelia-flyem'):
     return r.to_dataframe()
 
 
+def perform_bigquery_upload(df, full_table_name, client=None):
+    """
+    Upload the given DataFrame to BigQuery.
+    If the table already exists, it will be overwritten.
+    """
+    from google.cloud import bigquery
+    assert 'GOOGLE_APPLICATION_CREDENTIALS' in os.environ
+
+    project, dataset, table = full_table_name.split('.')
+
+    if client is None:
+        assert project in os.environ['GOOGLE_APPLICATION_CREDENTIALS'], \
+            "Usually the credentials file name mentions the project name.  It looks like you have the wrong credentials loaded."
+        client = bigquery.Client(project)
+    else:
+        assert client.project == project, \
+            "Client project doesn't match the table's project name"
+
+    job_config = bigquery.LoadJobConfig(
+        write_disposition="WRITE_TRUNCATE",
+    )
+    job = client.load_table_from_dataframe(df, f'{dataset}.{table}', job_config=job_config)
+    r = job.result()
+    if job.state != "DONE":
+        raise RuntimeError(f"Upload failed: job state is {job.state}")
+    return r
+
+
+def upload_chunked_table(df, full_table_name, gbucket_dir, gbucket_subdir, local_dir='/tmp'):
+    """
+    Export the given DataFrame to chunked parquet, upload it to a gbucket,
+    and then load it as a table in BigQuery.
+
+    Args:
+        df: The DataFrame to upload.  The index is NOT uploaded.
+
+    This is useful for tables which are too large to upload in one chunk
+    via the Python API.
+    """
+    import pyarrow
+    import subprocess
+
+    assert gbucket_dir.startswith('gs://')
+
+    project, dataset, table = full_table_name.split('.')
+
+    if df is not None:
+        os.makedirs(full_table_name)
+        pyarrow.parquet.write_table(pyarrow.Table.from_pandas(df), f"{local_dir}/{table}/*.parquet")
+
+    subprocess.run(f"gsutil -q cp -r {local_dir}/{table} {gbucket_dir}/{gbucket_subdir}/", shell=True, check=True)
+    subprocess.run(f"gsutil ls -d {gbucket_dir}/{gbucket_subdir}/{table}", shell=True, check=True)
+    subprocess.run(f"bq load --source_format=PARQUET {dataset}.{table} {gbucket_dir}/{gbucket_subdir}/{table}/*.parquet", shell=True, check=True)
+
+
+def perform_bigquery_and_write_table(q, full_table_name, client=None):
+    """
+    Perform a query in BigQuery and save the resulting table to a new table with the given name.
+    If there is already a table with that name, it will be overwritten.
+    """
+    from google.cloud import bigquery
+    assert 'GOOGLE_APPLICATION_CREDENTIALS' in os.environ
+
+    project, dataset, table = full_table_name.split('.')
+
+    if client is None:
+        assert project in os.environ['GOOGLE_APPLICATION_CREDENTIALS'], \
+            "Usually the credentials file name mentions the project name.  It looks like you have the wrong credentials loaded."
+        client = bigquery.Client(project)
+    else:
+        assert client.project == project, \
+            "Client project doesn't match the table's project name"
+
+    job_config = bigquery.QueryJobConfig(
+        destination=full_table_name,
+        write_disposition='WRITE_TRUNCATE'
+    )
+    job = client.query(q, job_config=job_config)
+    r = job.result()
+    if job.state != "DONE":
+        raise RuntimeError(f"Upload failed: job state is {job.state}")
+    return r
+
+
+def extract_bigquery_table_to_gbucket(full_table_name, gbucket_dir, gbucket_subdir=None, client=None):
+    """
+    Extract a BigQuery table into a gbucket as a series of parquet files.
+    """
+    from google.cloud import bigquery
+    assert 'GOOGLE_APPLICATION_CREDENTIALS' in os.environ
+    assert gbucket_dir.startswith('gs://')
+
+    project, dataset, table = full_table_name.split('.')
+
+    if client is None:
+        assert project in os.environ['GOOGLE_APPLICATION_CREDENTIALS'], \
+            "Usually the credentials file name mentions the project name.  It looks like you have the wrong credentials loaded."
+        client = bigquery.Client(project)
+    else:
+        assert client.project == project, \
+            "Client project doesn't match the table's project name"
+
+    gbucket_subdir = gbucket_subdir or table
+
+    job_config = bigquery.job.ExtractJobConfig()
+    job_config.destination_format = 'parquet'
+    job = client.extract_table(
+        bigquery.DatasetReference(project, dataset).table(table),
+        f"{gbucket_dir}/{gbucket_subdir}/*.parquet",
+        location="US",
+        job_config=job_config,
+    )
+    r = job.result()
+    if job.state != "DONE":
+        raise RuntimeError(f"Extract failed: job state is {job.state}")
+    return r
+
+
 def construct_query_to_convert_bq_ints(table, gcp_project='janelia-flyem', fields_only=False, client=None):
     """
     If you want to export an entire table from BigQuery,
