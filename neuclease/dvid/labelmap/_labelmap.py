@@ -3202,7 +3202,14 @@ def labelmap_kafka_msgs_to_df(kafka_msgs, default_timestamp=DEFAULT_TIMESTAMP, c
             With this argument, the '*-complete' messages from old kafka logs are modified to include
             all fields, which are obtained by copying them out of the corresponding trigger messsage.
     """
-    FINAL_COLUMNS = ['timestamp', 'uuid', 'mutid', 'action', 'target_body', 'target_sv', 'user', 'merged', 'msg']
+    FINAL_COLUMNS = [
+        'timestamp', 'uuid', 'action', 'user', 'mutid',
+        'target_body', 'merged',
+        'child_cleaved_body', 'child_cleaved_svs',
+        'target_sv', 'child_split_sv', 'child_remain_sv',
+        'mutation_bodies',  # All bodies mentioned in the mutation (target, merged, cleaved, etc.)
+        'msg'
+    ]
 
     # Generic conversion to DataFrame.
     df = kafka_msgs_to_df(kafka_msgs, drop_duplicates=False, default_timestamp=default_timestamp)
@@ -3218,7 +3225,7 @@ def labelmap_kafka_msgs_to_df(kafka_msgs, default_timestamp=DEFAULT_TIMESTAMP, c
         'post-maxlabel', 'post-nextlabel',
         *chain(*((a, f'{a}-complete') for a in ('cleave', 'merge', 'split', 'split-supervoxel', 'renumber')))}
 
-    COMPLETE_ACTIONS = {
+    COMPLETE_ACTIONS = {  # noqa
         'post-maxlabel', 'post-nextlabel',
         'cleave-complete', 'merge-complete',
         'split-complete', 'split-supervoxel-complete',
@@ -3229,55 +3236,93 @@ def labelmap_kafka_msgs_to_df(kafka_msgs, default_timestamp=DEFAULT_TIMESTAMP, c
     assert not unknown_actions, f"Unknown actions in mutation log: {unknown_actions}"
 
     target_bodies = []
+    child_cleaved_bodies = []
+    child_cleaved_svs = []
     target_svs = []
+    child_split_svs = []
+    child_remain_svs = []
     merged_bodies = []
+
+    # This will be the full list of any body mentioned in the mutation.
+    mutation_bodies = []
 
     # Determine which field to place in the target_body, target_sv, merged fields
     for msg in df['msg'].values:
         action = msg['Action']
         target_body = np.nan
+        child_cleaved_body = np.nan
+        cleaved_svs = []
         target_sv = np.nan
-        merges = None
+        child_split_sv = np.nan
+        child_remain_sv = np.nan
+        merges = []
+        _mutation_bodies = []
 
         if action in ('cleave', 'cleave-complete'):
             target_body = msg.get('OrigLabel', np.nan)
-        if action in ('merge', 'merge-complete'):
+            child_cleaved_body = msg.get('CleavedLabel', np.nan)
+            cleaved_svs = msg.get('CleavedSupervoxels', np.nan)
+            _mutation_bodies = [target_body, child_cleaved_body]
+        elif action in ('merge', 'merge-complete'):
             target_body = msg.get('Target', np.nan)
             merges = msg.get('Labels', np.nan)
+            _mutation_bodies = [target_body, *merges]
         elif action in ('split', 'split-complete'):
             target_body = msg.get('Target', np.nan)
+            _mutation_bodies = [target_body]
         elif action in ('split-supervoxel', 'split-supervoxel-complete'):
             target_body = msg.get('Body', np.nan)
             target_sv = msg.get('Supervoxel', np.nan)
-        if action in ('renumber', 'renumber-complete'):
+            child_split_sv = msg.get('SplitSupervoxel', np.nan)
+            child_remain_sv = msg.get('RemainSupervoxel', np.nan)
+            _mutation_bodies = [target_body]
+        elif action in ('renumber', 'renumber-complete'):
             target_body = msg['NewLabel']
             merges = [msg['OrigLabel']]
+            _mutation_bodies = [target_body, *merges]
 
         target_bodies.append(target_body)
+        child_cleaved_bodies.append(child_cleaved_body)
+        child_cleaved_svs.append(cleaved_svs)
+        child_split_svs.append(child_split_sv)
+        child_remain_svs.append(child_remain_sv)
         target_svs.append(target_sv)
         merged_bodies.append(merges)
+        mutation_bodies.append(_mutation_bodies)
 
     df['target_body'] = target_bodies
     df['target_sv'] = target_svs
+    df['child_cleaved_body'] = child_cleaved_bodies
+    df['child_cleaved_svs'] = child_cleaved_svs
+    df['child_split_sv'] = child_split_svs
+    df['child_remain_sv'] = child_remain_svs
     df['merged'] = merged_bodies
+    df['mutation_bodies'] = mutation_bodies
 
     # Create completely empty columns if necessary to provide the expected output columns.
     for col in FINAL_COLUMNS:
         if col not in df:
             df[col] = np.nan
 
+    # We're usually not filling completes,
+    # so this is where most calls return.
     if not fill_completes:
         if completes_only:
             df = df.query('action in @COMPLETE_ACTIONS')
+
+        # Fill ints with zeros and convert to better dtype.
         df['target_body'] = df['target_body'].fillna(0).astype(np.uint64)
         df['target_sv'] = df['target_sv'].fillna(0).astype(np.uint64)
+        df['child_cleaved_body'] = df['child_cleaved_body'].fillna(0).astype(np.uint64)
+        df['child_split_sv'] = df['child_split_sv'].fillna(0).astype(np.uint64)
+        df['child_remain_sv'] = df['child_remain_sv'].fillna(0).astype(np.uint64)
         df['mutid'] = df['mutid'].fillna(-1).astype(int)
         return df[FINAL_COLUMNS]
 
     # This logic is somewhat more complex than you might think is necessary,
-    # but that's because the kafka logs (sadly) contain duplicate mutation IDs,
-    # i.e. the mutation ID was not unique in our earlier logs.
-    # So, we might have two pairs of merge + merge-complete messages that use the same mutation ID
+    # but that's because the kafka logs for some repos might (sadly) contain
+    # duplicate mutation IDs, i.e. the mutation ID was not unique in our earlier logs.
+    # So, we might have two pairs of merge + merge-complete messages that use the same mutation ID.
     # We append a 'transaction_id' to distinguish between those pairs.
     # The transaction_id is just the index of the completion message.
     df['trigger'] = df['action'].map(lambda s: s[:-len('-complete')] if '-complete' in s else s)
