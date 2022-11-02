@@ -200,7 +200,7 @@ def update_soma_statuses(server, uuid, dry_run=True):
     return needs_upgrade, needs_downgrade
 
 
-def post_statuses(server, uuid, statuses):
+def post_statuses(server, uuid, statuses, instance='segmentation_annotations'):
     """
     Update the body status information in DVID for a set of bodies.
 
@@ -237,9 +237,9 @@ def post_statuses(server, uuid, statuses):
     if len(to_change) == 0:
         print("Nothing to change")
         return
-    
+
     print(f"Changing {len(to_change)} statuses")
-    post_keyvalues(server, uuid, 'segmentation_annotations', updates)
+    post_keyvalues(server, uuid, instance, updates)
 
 
 def remove_dead_annotations(server, uuid):
