@@ -211,15 +211,19 @@ def assess_merges(dvid_server, uuid, instance, merges, mutations=None):
     for b in g.nodes():
         determine_owner(b)
 
+    # Assess each merge by iterating over the merge targets.
     bad_merges = []
     merge_roots = [n for n, d in g.in_degree() if d == 0]
     for root in merge_roots:
         root_owner = g.nodes[root]['owner']
         if root_owner == root:
+            # If it has an assessment already (as a fragment in a different merge),
+            # then it can't be a target.
             g.nodes[root].setdefault('assessment', 'target')
         else:
             g.nodes[root].setdefault('assessment', 'old_target')
 
+        # Assess each fragment in the merge
         for target, fragment in nx.dfs_edges(g, root):
             frag_owner = g.nodes[fragment]['owner']
             if root_owner == 0:
