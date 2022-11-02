@@ -186,8 +186,11 @@ def upload_batched_assignments(tasks, bucket_path, campaign='focused'):
     output_dir = f'{campaign}-assignments'
     os.makedirs(output_dir)
 
+    if bucket_path.startswith('gs://'):
+        bucket_path = bucket_path[len('gs://'):]
+
     batch_digits = int(ceil(log10(tasks['batch'].max())))
-    assignment_digits = int(ceil(log10(tasks['assginment'].max())))
+    assignment_digits = int(ceil(log10(tasks['assignment'].max())))
 
     num_assignments = len(tasks.drop_duplicates(['batch', 'assignment']))
     files = []
