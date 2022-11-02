@@ -537,7 +537,7 @@ def fetch_listlabels(server, uuid, instance, start=None, number=1_000_000, sizes
 
 
 @dvid_api_wrapper
-def fetch_listlabels_all(server, uuid, instance, sizes=False, *, batch_size=100_000, session=None):
+def fetch_listlabels_all(server, uuid, instance, sizes=False, *, start=0, stop=None, batch_size=100_000, session=None):
     """
     Convenience function for calling fetch_listlabels() repeatedly
     to obtain the complete list of all labels in the instance.
@@ -565,18 +565,29 @@ def fetch_listlabels_all(server, uuid, instance, sizes=False, *, batch_size=100_
         Otherwise, returns np.ndarray of body IDs.
     """
     all_bodies = []
-    start = 0
+    start = start or 0
 
     progress = tqdm_proxy()
     progress.update(0)
 
-    while True:
-        b = fetch_listlabels(server, uuid, instance, start, batch_size, sizes, session=session)
-        if len(b) == 0:
-            break
-        all_bodies.append(b)
-        progress.update(len(b))
-        start = b[-1] + 1
+    try:
+        while True:
+            b = fetch_listlabels(server, uuid, instance, start, batch_size, sizes, session=session)
+            if len(b) == 0:
+                break
+
+            all_bodies.append(b)
+            progress.update(len(b))
+
+            if isinstance(b, pd.Series):
+                start = b.index[-1] + 1
+            else:
+                start = b[-1] + 1
+
+            if stop is not None and start > stop:
+                break
+    except KeyboardInterrupt:
+        logger.warning("Interrupted.  Returning partial results.")
 
     if sizes:
         return pd.concat(all_bodies)
