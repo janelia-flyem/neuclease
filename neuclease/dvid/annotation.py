@@ -322,7 +322,7 @@ def load_elements_as_dataframe(elements):
                 pa = prop_arrays[k] = np.empty(len(elements), dtype=object)
             pa[i] = v
 
-    df = pd.DataFrame({'z': pos[:, 2], 'y': pos[:,1], 'x': pos[:,0],
+    df = pd.DataFrame({'x': pos[:, 0], 'y': pos[:, 1], 'z': pos[:, 2],
                        'kind': kinds, 'tags': tags, **prop_arrays})
 
     if 'conf' in df.columns:
@@ -334,9 +334,36 @@ def load_elements_as_dataframe(elements):
 def dataframe_to_elements(df, prop_cols=[]):
     """
     Convert a dataframe to JSON elements that can be posted to DVID.
-    Input must contian at least the following columns: ['x', 'y', 'z', 'Kind']
 
     Note: No support for relationships in this function.
+
+    Args:
+        df:
+            Must contain at least the following columns:
+            ['x', 'y', 'z', 'Kind']
+
+            If a 'Tags' column is provided and it contains only a single string per element,
+            the string elements will be wrapped in a list.
+
+        prop_cols:
+            The column names which should be included in
+            the elements as part of the 'Prop' subobject.
+    Returns:
+        list of dicts (JSON data), suitable for uploading via post_elements()
+
+    Example:
+
+        .. code-block:: python
+
+            points = pd.read_csv('points.csv')
+            assert not {*'xyz'} - {*points.columns}
+            points['Kind'] = 'Note'
+            points['user'] = 'foo@janelia.hhmi.org'
+            points['Tags'] = 'user:foo@janelia.hhmi.org'
+
+            elements = dataframe_to_elements(points, ['user'])
+            post_elements(server, uuid, 'mypoints', elements)
+
     """
     elements = []
     for row in df.itertuples():
@@ -344,8 +371,8 @@ def dataframe_to_elements(df, prop_cols=[]):
             "Pos": [int(row.x), int(row.y), int(row.z)],
             "Kind": row.Kind
         }
-        if 'Tags' in df.columns:
-            e['Tags'] = list(row.Tags)
+        if 'Tags' in df.columns and not isinstance(row.Tags, list):
+            e['Tags'] = [row.Tags]
         elements.append(e)
 
     if prop_cols:
@@ -380,13 +407,20 @@ def elements_to_blocks(elements, block_width=64):
 
 
 @dvid_api_wrapper
-def fetch_all_elements(server, uuid, instance, format='json', *, session=None):
+def fetch_all_elements(server, uuid, instance, format='blocks', *, session=None):
     """
     Returns all point annotations in the entire data instance, which could exceed data
     response sizes (set by server) if too many elements are present.  This should be
     equivalent to the /blocks endpoint but without the need to determine extents.
 
-    The returned stream of data is the same as /blocks endpoint.
+    Args:
+        server, uuid, instance:
+            DVID annotation instsance
+        format:
+            By default ('blocks'), the returned stream of data is the
+            same as that returned by the /blocks endpoint.
+            If 'list', then return the elements in one big list (rather than a blockwise dict).
+            If 'pandas', load the elements into a DataFrame and return that.
 
     Example usage for analyzing "todo" items from NeuTu:
 
@@ -407,13 +441,19 @@ def fetch_all_elements(server, uuid, instance, format='json', *, session=None):
                 'createdTime', 'user', 'checked', 'comment', 'modifiedTime', 'checkedTime', 'priority']
         todos = todos[cols]
     """
-    assert format in ('pandas', 'json')
+    assert format in ('pandas', 'json', 'blocks', 'list')
     url = f'{server}/api/node/{uuid}/{instance}/all-elements'
     json_data = fetch_generic_json(url, session=session)
-    if format == 'json':
+
+    if format in ('json', 'blocks'):
         return json_data
-    else:
-        return load_elements_as_dataframe([*chain(*json_data.values())])
+
+    elements = [*chain(*json_data.values())]
+    if format == 'list':
+        return elements
+
+    assert format == 'pandas'
+    return load_elements_as_dataframe(elements)
 
 
 @dvid_api_wrapper
