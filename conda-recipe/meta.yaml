@@ -19,11 +19,11 @@ build:
 
 requirements:
   build:
-    - python >=3.6,{{ python }}*
+    - python {{ python }}
     - setuptools
 
   run:
-    - python {{ python }}*
+    - python {{ python }}
     - requests
     - flask >=1.0
     - numpy >=1.17
@@ -35,14 +35,14 @@ requirements:
     - pytz
     - vigra
     - pillow
-    - libdvid-cpp >=0.3.post83
-    - dvidutils >=0.0.post81
+    - libdvid-cpp >=0.4.post21
+    - dvidutils >=0.0.post91
     - tqdm
     - ujson
     - pykafka
     - networkx >=2.1
     - asciitree
-    - protobuf 3.16
+    - protobuf 3
     - confiddler
 
     # Optional dependencies
@@ -52,7 +52,7 @@ requirements:
 test:
   requires:
     - pytest
-    - dvid >=dvid-0.9.6.post64
+    - dvid >=dvid-0.9.17
     - libdvid-cpp
 
   imports:
