@@ -1557,7 +1557,7 @@ def fetch_sparsevol_coarse_threaded(server, uuid, instance, labels, supervoxels=
 
     with ThreadPool(num_threads) as pool:
         labels_coords = pool.imap_unordered(fetch_coords, labels)
-        labels_coords = list(tqdm_proxy(labels_coords, total=len(labels)), logger=logger)
+        labels_coords = list(tqdm_proxy(labels_coords, total=len(labels), logger=logger))
 
     return dict(labels_coords)
 
