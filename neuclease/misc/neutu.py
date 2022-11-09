@@ -64,7 +64,7 @@ def create_bookmark_file(df, output_path=None, default_text=None, grayscale=None
     if 'extra' in df.columns:
         df["extra body IDs"] = df['extra'].map(lambda x: x if x else [])
 
-    cols = {'location', 'body ID', 'text', 'extra body IDs'} & {*df.columns}
+    cols = [*{'location', 'body ID', 'text', 'extra body IDs'} & {*df.columns}]
     data = df[cols].to_dict('records')
 
     # Does any of this metadata actually matter?
@@ -142,7 +142,7 @@ def prepare_bookmark_assignment_setup(df, output_dir, bucket_path, csv_path, pre
 
     Args:
         df:
-            DataFrame of xyz coordinates, or a list of bodies.
+            DataFrame of xyz coordinates.
         output_dir:
             Name of a local directory to create for the assignments
         bucket_path:
@@ -159,6 +159,16 @@ def prepare_bookmark_assignment_setup(df, output_dir, bucket_path, csv_path, pre
 
     Returns:
         The assignment CSV data.
+
+    Example:
+
+            tracking_df = prepare_bookmark_assignment_setup(
+                df,
+                'my-orphan-link-tasks',
+                'gs://my-assignments/foo/my-orphan-link'
+                'my-orphan-link-tracking.csv',
+                'my-orphan-link-',
+            )
     """
     assert bucket_path.startswith('gs://')
     bucket_path = bucket_path[len('gs://'):]
