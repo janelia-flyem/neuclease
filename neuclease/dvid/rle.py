@@ -112,6 +112,15 @@ def parse_rle_response(response_bytes, dtype=np.int32, format='coords'):  # @Res
     assert isinstance(response_bytes, bytes)
     assert dtype in (np.int32, np.int16)
     assert format in ('coords', 'rle', 'ranges')
+
+    if len(response_bytes) == 0:
+        if format == 'ranges':
+            return np.zeros((0, 4), dtype)
+        elif format == 'rle':
+            return np.zeros((0, 3), dtype), np.zeros((0,), dtype)
+        elif format == 'coords':
+            return np.zeros((0, 3), dtype)
+
     descriptor = response_bytes[0]
     ndim = response_bytes[1]
     run_dimension = response_bytes[2]
