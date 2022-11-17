@@ -4,6 +4,10 @@ suitable for the neu3 cleaving protocol.
 
 See the source code for argument definitions.
 
+Example:
+
+    supervoxel_meshes_for_body emdata6.int.janelia.org:9000 df383 segmentation 32939 --scale=4 --smoothing=2 --format=drc
+
 Note:
     This tool fetches the sparsevol (RLE) representation of the body.
     That's fine for generating the meshes for a single body,
