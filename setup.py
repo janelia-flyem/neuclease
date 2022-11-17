@@ -19,6 +19,7 @@ setup( name='neuclease',
                'point_neighborhoods = neuclease.misc.point_neighborhoods:main',
                'vnc_group_analysis = neuclease.misc.vnc_group_analysis_main:main',
                'prepare_user_branches = neuclease.misc.prepare_user_branches:main',
+               'supervoxel_meshes_for_body = neuclease.misc.supervoxel_meshes_for_body:main',
            ]
        }
     )
