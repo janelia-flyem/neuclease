@@ -1,3 +1,4 @@
+import getpass
 import logging
 from io import BytesIO
 from functools import partial
@@ -711,6 +712,48 @@ def fetch_body_annotations(server, uuid, instance='segmentation_annotations', bo
     # This is useful when you want to push changes back to dvid.
     df['json'] = values
     return df.sort_index()
+
+
+def post_statuses(server, uuid, statuses, instance='segmentation_annotations'):
+    """
+    Update the body status information in DVID for a set of bodies.
+
+    Args:
+        server:
+            dvid server
+        uuid:
+            uuid in which to edit the 'segmentation_annotations' instance
+        statuses:
+            A pd.Series which must be named 'status' and whose index must be named 'body'
+    """
+    assert isinstance(statuses, pd.Series)
+    assert statuses.index.name == 'body'
+    assert statuses.name == 'status'
+
+    ann = fetch_body_annotations(server, uuid, bodies=statuses.index)
+    ann = ann.merge(statuses.rename('new_status'), 'right', left_index=True, right_index=True)
+
+    to_change = ann.query('status.isnull() or status != new_status')
+    updates = {}
+    for row in to_change.itertuples():
+        j = row.json
+        if not isinstance(row.json, dict):
+            j = {}
+
+        j.update({
+            'bodyid': int(row.Index),
+            'status': row.new_status,
+            'user': getpass.getuser(),
+            'status_user': getpass.getuser()
+        })
+        updates[row.Index] = j
+
+    if len(to_change) == 0:
+        print("Nothing to change")
+        return
+
+    logger.info(f"Changing {len(to_change)} statuses")
+    post_keyvalues(server, uuid, instance, updates)
 
 
 def fetch_sphere_annotations(server, uuid, instance, seg_instance=None, *, session=None):
