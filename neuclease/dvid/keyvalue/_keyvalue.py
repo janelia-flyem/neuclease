@@ -730,7 +730,7 @@ def post_statuses(server, uuid, statuses, instance='segmentation_annotations'):
     assert statuses.index.name == 'body'
     assert statuses.name == 'status'
 
-    ann = fetch_body_annotations(server, uuid, bodies=statuses.index)
+    ann = fetch_body_annotations(server, uuid, instance, bodies=statuses.index)
     ann = ann.merge(statuses.rename('new_status'), 'right', left_index=True, right_index=True)
 
     to_change = ann.query('status.isnull() or status != new_status')
