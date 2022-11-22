@@ -169,7 +169,7 @@ def assess_merges(dvid_server, uuid, instance, merges, mutations=None):
     ann_df = fetch_body_annotations(dvid_server, uuid, f'{instance}_annotations', all_bodies)
 
     logger.info("Fetching body sizes")
-    body_df = fetch_sizes(dvid_server, uuid, instance, all_bodies).to_frame()
+    body_df = fetch_sizes(dvid_server, uuid, instance, all_bodies, processes=16).to_frame()
     body_df = body_df.merge(ann_df['status'], 'left', left_index=True, right_index=True)
     body_df['status'] = body_df['status'].fillna('')
     body_df['exists'] = (body_df['size'] != 0)
