@@ -714,7 +714,7 @@ def fetch_body_annotations(server, uuid, instance='segmentation_annotations', bo
     return df.sort_index()
 
 
-def post_statuses(server, uuid, statuses, instance='segmentation_annotations'):
+def post_statuses(server, uuid, instance='segmentation_annotations', statuses=None):
     """
     Update the body status information in DVID for a set of bodies.
 
@@ -726,6 +726,14 @@ def post_statuses(server, uuid, statuses, instance='segmentation_annotations'):
         statuses:
             A pd.Series which must be named 'status' and whose index must be named 'body'
     """
+    # This is a terrible hack, but older versions
+    # of this function had a different argument order (..., statuses, instances).
+    # Callers of this function are scattered across various old notebooks,
+    # so not easy to change all uses.  And it's hard to see how
+    # this little "fix" could lead to real trouble.
+    if isinstance(instance, pd.Series) and isinstance(statuses, str):
+        instance, statuses = statuses, instance
+
     assert isinstance(statuses, pd.Series)
     assert statuses.index.name == 'body'
     assert statuses.name == 'status'
