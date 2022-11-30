@@ -1,7 +1,7 @@
 """
 neuroglancer-related utility functions
 """
-
+import os
 import copy
 import json
 import urllib
@@ -133,3 +133,28 @@ def point_annotation_layer_json(points_df, name="annotations", color="#ffff00", 
     return data
 
 
+def upload_ngstate(bucket_path, state):
+    """
+    Upload the given JSON state to a gbucket location.
+    """
+    assert bucket_path.startswith('gs://')
+    bucket_path = bucket_path[len('gs://'):]
+
+    bucket = bucket_path.split('/')[0]
+    filename = bucket_path[1 + len(bucket):]
+
+    state_string = json.dumps(state, indent=2)
+    return _upload_to_bucket(bucket, filename, state_string)
+
+
+def _upload_to_bucket(bucket_name, blob_name, blob_contents):
+    """
+    Upload a blob of data to the specified google storage bucket.
+    """
+    from google.cloud import storage
+    storage_client = storage.Client()
+    bucket = storage_client.get_bucket(bucket_name)
+    blob = bucket.blob(blob_name)
+    blob.cache_control = 'public, no-store'
+    blob.upload_from_string(blob_contents, content_type='application/json')
+    return blob.public_url
