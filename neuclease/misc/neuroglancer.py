@@ -95,7 +95,7 @@ LOCAL_ANNOTATION_JSON = {
 }
 
 
-def point_annotation_layer_json(points_df, name="annotations", color="#ffff00", size=8.0):
+def point_annotation_layer_json(points_df, name="annotations", color="#ffff00", size=8.0, linkedSegmentationLayer=None):
     """
     Construct the JSON data for a neuroglancer local point annotations layer.
     This does not result in a complete neuroglancer link; it results in something
@@ -120,6 +120,9 @@ def point_annotation_layer_json(points_df, name="annotations", color="#ffff00", 
     data['annotationColor'] = color
     data['shader'] = SHADER_FMT.format(size=size)
     data['annotations'].clear()
+    if linkedSegmentationLayer:
+        data['linkedSegmentationLayer'] = linkedSegmentationLayer
+        data['filterBySegmentation'] = ['segments']
 
     for row in points_df.itertuples():
         entry = {}
@@ -128,6 +131,14 @@ def point_annotation_layer_json(points_df, name="annotations", color="#ffff00", 
         entry['id'] = row.id
         if 'description' in points_df.columns:
             entry['description'] = row.description
+
+        if linkedSegmentationLayer and 'segments' in points_df.columns:
+            segments = row.segments
+            if not hasattr(segments, '__len__'):
+                segments = [segments]
+            segments = [str(s) for s in segments]
+            entry['segments'] = segments
+
         data['annotations'].append(entry)
 
     return data
