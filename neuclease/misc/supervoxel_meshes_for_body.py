@@ -131,6 +131,7 @@ def supervoxel_meshes_for_body(server, uuid, instance, body, scale=2,
     )
     meshes = compute_parallel(func, sv_sizes.index, processes=processes)
     sv_meshes = dict(zip(sv_sizes.index, meshes))
+    sv_meshes = {f'{sv}.drc': mesh for sv, mesh in sv_meshes.items()}
 
     if upload:
         post_load(server, uuid, f'{instance}_sv_meshes', sv_meshes)
