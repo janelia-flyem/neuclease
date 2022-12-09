@@ -183,6 +183,8 @@ def supervoxel_mesh(server, uuid, instance, sv, scale=2,
         Either vol2mesh.Mesh or bytes, depending
         on whether or not 'serialize' was given.
     """
+    import numpy as np
+    from requests import HTTPError
     from neuclease.dvid.rle import blockwise_masks_from_ranges
     from neuclease.dvid.labelmap import fetch_sparsevol
 
@@ -190,7 +192,14 @@ def supervoxel_mesh(server, uuid, instance, sv, scale=2,
     from vol2mesh import Mesh
 
     assert 0.0 < decimation <= 1.0
-    ranges = fetch_sparsevol(server, uuid, instance, sv, scale, supervoxels=True, format='ranges')
+    try:
+        ranges = fetch_sparsevol(server, uuid, instance, sv, scale, supervoxels=True, format='ranges')
+    except HTTPError as ex:
+        if ex.response.status_code == 404:
+            ranges = np.zeros((0, 4), np.int32)
+        else:
+            raise
+
     boxes, masks = blockwise_masks_from_ranges(ranges, block_shape, halo)
 
     block_meshes = []
