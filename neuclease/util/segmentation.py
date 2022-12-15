@@ -237,6 +237,19 @@ def _compute_nonzero_box_numba(mask):
     return box
 
 
+def has_nonzero_exterior(mask):
+    """
+    Return True if the mask has any non-zero voxels on the 'exterior'
+    of the volume, i.e. in the first or last slice along any axis.
+    Otherwise, return False
+    """
+    for axis in range(mask.ndim):
+        v = np.moveaxis(mask, axis, 0)
+        if v[0].any() or v[-1].any():
+            return True
+    return False
+
+
 def edge_mask(label_img, mode='before', mark_volume_edges=False):
     """
     Find all boundaries between labels in the given ND volume,
@@ -809,6 +822,7 @@ def fill_triangle(image, verts):
     _fill(image, (b,c,a))
     _fill(image, (c,a,b))
 
+
 def line_nd(start, stop, *, endpoint=False, integer=True):
     """
     This is a copy of ``skimage.morphology.line_nd()``,
@@ -903,12 +917,37 @@ def normalize_image_range(img, dtype):
     return img
 
 
-def distance_transform(mask, background=False, smoothing=0.0, negate=False):
+def distance_transform(mask, background=False, smoothing=0.0, negate=False, pad=False):
     """
     Compute the distance transform of voxels inside (or outside) the given mask,
     with smoothing and negation post-processing options as a convenience.
+
+    Args:
+        mask:
+            A boolean mask
+        background:
+            If True, calculate distances within the background (zero voxels) to the nearest foreground voxel.
+            If False, calculate distances within the foreground (non-zero voxels) to the nearest background voxel.
+            Note: Our default setting is the OPPOSITE of vigra's default!
+        smoothing:
+            How must gaussian blur to apply before computing the max distance.
+        negate:
+            Negate the distance transform result before returning.
+            Useful if you plan to run a watershed segmentation on the results.
+        pad:
+            If True, pad the mask with a halo of zeros before computing the distance tranform,
+            in case the foreground
+            but strip off the padded voxels before returning the result.
+            The result will always have the same shape as the input.
+    Returns:
+        Same shape as mask, but float32.
     """
     mask = mask.astype(bool, copy=False)
+    if pad and has_nonzero_exterior(mask):
+        mask = np.pad(mask, 1)
+    else:
+        pad = False
+
     mask = vigra.taggedView(mask, 'zyx').astype(np.uint32)
     dt = vigra.filters.distanceTransform(mask, background=background)
     del mask
@@ -918,6 +957,10 @@ def distance_transform(mask, background=False, smoothing=0.0, negate=False):
 
     if negate:
         dt[:] *= -1
+
+    if pad:
+        sl = (slice(1, -1),) * dt.ndim
+        return dt[sl]
 
     return dt
 
