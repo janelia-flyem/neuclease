@@ -410,19 +410,15 @@ def plot_connectivity_forecast(conn_df, max_rank=None, plotted_points=20_000, ho
     _df = _df.iloc[::step]
 
     if color_by_col:
-        plots = []
-        for col in [renames[k] for k in show_cols]:
-            p = _df.hvplot.scatter(
-                    'body priority ranking',  # noqa
-                    [renames[k] for k in show_cols],
-                    hover_cols=['tbars captured', 'psds captured', 'pairwise connections', *hover_cols],
-                    legend='bottom_right',
-                    ylabel='fraction',
-                    by=color_by_col,
-                    width=800,
-                    height=500)
-            plots.append(plots)
-        p = hv.Overlay(plots)
+        p = _df.hvplot.scatter(
+                'body priority ranking',  # noqa
+                [renames[k] for k in show_cols],
+                hover_cols=['tbars captured', 'psds captured', 'pairwise connections', *hover_cols],
+                legend='bottom_right',
+                ylabel='fraction',
+                by=color_by_col,
+                width=800,
+                height=500)
     else:
         p = _df.hvplot(
                 'body priority ranking', # noqa
@@ -512,7 +508,7 @@ def plot_categorized_connectivity_forecast(
 
     for i, (cat, df) in list(enumerate(_df.groupby(category_col, observed=True)))[::-1]:
         p.line('max_rank', 'traced_tbar_frac', legend_label=cat, color=Category20[20][2 * (i % 10)], line_width=5, source=df)
-        p.line('max_rank', 'traced_psd_frac',  color=Category20[20][2 * (i % 10) + 1], line_width=5, source=df)
+        p.line('max_rank', 'traced_psd_frac', color=Category20[20][2 * (i % 10) + 1], line_width=5, source=df)
         p.line('max_rank', 'traced_conn_frac', color=Category20[20][2 * (i % 10)], line_width=5, source=df)
 
     p.legend.location = "bottom_right"
