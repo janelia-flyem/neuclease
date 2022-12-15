@@ -276,6 +276,9 @@ def post_sync(server, uuid, instance, sync_instances, replace=False, *, session=
             If True, replace existing sync instances with the given sync_instances.
             Otherwise append the sync_instances.
     """
+    if isinstance(sync_instances, str):
+        sync_instances = [sync_instances]
+
     body = { "sync": ",".join(sync_instances) }
 
     params = {}
