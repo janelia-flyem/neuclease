@@ -3541,3 +3541,40 @@ def determine_merge_chains(merge_hierarchy, bodies):
         'merge_count': merge_counts,
         'merge_chain': mc},
         index=bodies).rename_axis('body')
+
+
+def find_furthest_point(server, uuid, instance, body, starting_coord_zyx):
+    """
+    Find the approximate furthest point on a body from a given starting point
+    (in euclidean terms, not cable length).
+
+    This function uses the coarse sparsevol to narrow its search,
+    which means that the results are not guaranteed to be exact.
+    (A point in a different block might be chosen if that block's
+    distance is within 64px of the optimal distance.)
+
+    It can be inconvenient to work with and visualize points if they're
+    on the surface of a body, so we don't return the exact furthest point.
+    Instead, we return a point on the interior of the body near the actual
+    furthest point.
+
+    Returns:
+        coord_zyx, distance, in scale-0 units.
+    """
+    from vigra.filters import distanceTransform
+
+    # Determine furthest block via sparsevol-coarse
+    svc = (2**6) * fetch_sparsevol_coarse(server, uuid, instance, body, format='coords')
+    svc_centers = svc + (2**5)
+    i = np.argmax(np.linalg.norm(starting_coord_zyx - svc_centers, axis=1))
+
+    # Pick the center of the segment within that block
+    # (Proofreaders don't like it if the point is on the segment edge)
+    box = (svc[i], svc[i] + (2**6))
+    vol = fetch_labelmap_voxels(*server, uuid, instance, box)
+    mask = (vol == body)
+    dt = distanceTransform(mask.astype(np.uint32), background=False)
+    c = np.unravel_index(np.argmax(dt), dt.shape)
+    c += box[0]
+    dist = np.linalg.norm(starting_coord_zyx - c)
+    return (c, dist)
