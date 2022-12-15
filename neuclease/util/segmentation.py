@@ -917,7 +917,7 @@ def normalize_image_range(img, dtype):
     return img
 
 
-def distance_transform(mask, background=False, smoothing=0.0, negate=False, pad=False):
+def distance_transform(mask, background=False, smoothing=0.0, negate=False, pad=True):
     """
     Compute the distance transform of voxels inside (or outside) the given mask,
     with smoothing and negation post-processing options as a convenience.
@@ -936,8 +936,8 @@ def distance_transform(mask, background=False, smoothing=0.0, negate=False, pad=
             Useful if you plan to run a watershed segmentation on the results.
         pad:
             If True, pad the mask with a halo of zeros before computing the distance tranform,
-            in case the foreground
-            but strip off the padded voxels before returning the result.
+            in case the foreground occupies the edge of the volume and results in strange results.
+            But strip off the padded voxels before returning the result.
             The result will always have the same shape as the input.
     Returns:
         Same shape as mask, but float32.
