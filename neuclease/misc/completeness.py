@@ -324,8 +324,10 @@ def _rank_syn_counts(point_df, conn_df, syn_counts_df=None, sort_by='SynWeight')
     else:
         # We can only sort using any columns the user provided,
         # plus SynWeight, which we can provide below.
-        assert {*syn_counts_df.columns} >= {'PreSyn', 'PostSyn'}
-        assert {*sort_by} <= {*syn_counts_df.columns, 'SynWeight'}
+        assert {*syn_counts_df.columns} >= {'PreSyn', 'PostSyn'}, \
+            "synapse counts table needs columns for PreSyn and PostSyn"
+        assert {*sort_by} <= {*syn_counts_df.columns, 'SynWeight'}, \
+            "Can't sort by columns that aren't present in the synapse counts table."
 
     if syn_counts_df is None:
         logger.info("Computing per-body synapse table")
@@ -508,10 +510,12 @@ def plot_categorized_connectivity_forecast(
 
     p = figure(align='center', height=500, width=800, title=title)
 
-    for i, (_t, df) in enumerate(_df.groupby(category_col)):
-        p.line('max_rank', 'traced_tbar_frac', color=Category20[20][2 * (i % 10)], line_width=5, source=df)
+    for i, (cat, df) in list(enumerate(_df.groupby(category_col, observed=True)))[::-1]:
+        p.line('max_rank', 'traced_tbar_frac', legend_label=cat, color=Category20[20][2 * (i % 10)], line_width=5, source=df)
         p.line('max_rank', 'traced_psd_frac',  color=Category20[20][2 * (i % 10) + 1], line_width=5, source=df)
         p.line('max_rank', 'traced_conn_frac', color=Category20[20][2 * (i % 10)], line_width=5, source=df)
+
+    p.legend.location = "bottom_right"
 
     hover = HoverTool()
     hover.tooltips = [
@@ -520,7 +524,7 @@ def plot_categorized_connectivity_forecast(
         ("body", "@body_max_rank"),
         ("tbars captured", "@traced_tbar_frac"),
         ("psds captured", "@traced_psd_frac"),
-        ("connectiions captured", "@traced_conn_frac"),
+        ("connections captured", "@traced_conn_frac"),
         *[(col, f"@{col}") for col in hover_cols]
     ]
 
