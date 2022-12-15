@@ -965,6 +965,12 @@ def distance_transform(mask, background=False, smoothing=0.0, negate=False, pad=
     return dt
 
 
+def thickest_point_in_mask(mask):
+    dt = distance_transform(mask, pad=True)
+    maxpoint = np.unravel_index(np.argmax(dt), dt.shape)
+    return maxpoint, dt[maxpoint]
+
+
 def distance_transform_watershed(mask, smoothing=0.0, seed_mask=None, seed_labels=None, flood_from='interior'):
     """
     Compute a watershed over the distance transform within a mask.

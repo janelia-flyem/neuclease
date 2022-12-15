@@ -1,4 +1,3 @@
-from neuclease.util.graph import toposorted_ancestors
 import re
 import gzip
 import logging
@@ -20,7 +19,8 @@ from vigra.analysis import labelMultiArrayWithBackground
 
 from ...util import (Timer, round_box, extract_subvol, DEFAULT_TIMESTAMP, tqdm_proxy, find_root,
                      ndrange, ndrange_array, box_to_slicing, compute_parallel, boxes_from_grid, box_shape,
-                     overwrite_subvol, iter_batches, extract_labels_from_volume, box_intersection, lexsort_columns)
+                     overwrite_subvol, iter_batches, extract_labels_from_volume, box_intersection, lexsort_columns,
+                     toposorted_ancestors, distance_transform, thickest_point_in_mask)
 
 from .. import dvid_api_wrapper, fetch_generic_json, fetch_repo_info
 from ..server import fetch_server_info
@@ -3543,7 +3543,7 @@ def determine_merge_chains(merge_hierarchy, bodies):
         index=bodies).rename_axis('body')
 
 
-def find_furthest_point(server, uuid, instance, body, starting_coord_zyx):
+def find_furthest_point(server, uuid, instance, body, starting_coord_zyx, *, session=None):
     """
     Find the approximate furthest point on a body from a given starting point
     (in euclidean terms, not cable length).
@@ -3561,20 +3561,48 @@ def find_furthest_point(server, uuid, instance, body, starting_coord_zyx):
     Returns:
         coord_zyx, distance, in scale-0 units.
     """
-    from vigra.filters import distanceTransform
-
     # Determine furthest block via sparsevol-coarse
-    svc = (2**6) * fetch_sparsevol_coarse(server, uuid, instance, body, format='coords')
+    svc = (2**6) * fetch_sparsevol_coarse(server, uuid, instance, body, format='coords', session=session)
     svc_centers = svc + (2**5)
     i = np.argmax(np.linalg.norm(starting_coord_zyx - svc_centers, axis=1))
 
     # Pick the center of the segment within that block
     # (Proofreaders don't like it if the point is on the segment edge)
     box = (svc[i], svc[i] + (2**6))
-    vol = fetch_labelmap_voxels(*server, uuid, instance, box)
+    vol = fetch_labelmap_voxels(server, uuid, instance, box, session=session)
     mask = (vol == body)
-    dt = distanceTransform(mask.astype(np.uint32), background=False)
+    dt = distance_transform(mask.astype(np.uint32), background=False, pad=True)
     c = np.unravel_index(np.argmax(dt), dt.shape)
     c += box[0]
     dist = np.linalg.norm(starting_coord_zyx - c)
     return (c, dist)
+
+
+def thickest_point_in_body(server, uuid, instance, body, *, session=None):
+    """
+    Find the approximate "thickest point" in a body,
+    i.e. the point furthest from the body edge.
+
+    Returns:
+        (point_zyx, radius)
+        Both expressed in scale-0 units.
+
+    Note:
+        This function really returns a cheap approximation.
+        This function starts by finding the thickest point the coarse
+        sparsevol of the body, i.e. downsampled by 64x.
+        Then it picks a somewhat arbitrary point within that block.
+    """
+    try:
+        mask, mask_box = fetch_sparsevol_coarse(server, uuid, instance, body, format='mask', session=session)
+    except HTTPError:
+        return (0,0,0), 0
+
+    p, d = thickest_point_in_mask(mask)
+    p += mask_box[0]
+    p *= 64
+    d *= 64
+
+    block_seg = fetch_labelmap_voxels(server, uuid, instance, (p, p + 64))
+    p2, d2 = thickest_point_in_mask(block_seg == body)
+    return tuple(p + p2), d + d2
