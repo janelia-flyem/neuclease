@@ -1824,7 +1824,7 @@ def construct_query_to_convert_bq_ints(table, gcp_project='janelia-flyem', field
 def find_files(root_dir, file_exts=None, skip_exprs=None, file_exprs=None):
     """
     Utility for finding files that match a pattern within a directory tree,
-    but skipping directories that match a particular pattern.
+    but skipping directories that match a different pattern.
     Skipped directories are not even searched, saving time.
 
     Args:
