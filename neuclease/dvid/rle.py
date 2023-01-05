@@ -33,7 +33,7 @@ def extract_rle_size_and_first_coord(rle_payload_bytes):
     return voxel_count, first_coord_zyx
 
 
-def construct_rle_payload(coords_zyx):
+def construct_rle_payload_from_coords(coords_zyx):
     """
     Construct the RLE payload to send to DVID's split endpoint,
     including the header bytes.
@@ -51,6 +51,47 @@ def construct_rle_payload(coords_zyx):
     return payload
 
 
+def construct_rle_payload_from_ranges(ranges_zyxx):
+    """
+    Given some RLE in "ranges" form:
+
+        [[Z,Y,X1,X2],
+         [Z,Y,X1,X2],
+         [Z,Y,X1,X2],
+         ...
+        ]
+
+    Note:
+        The interval [X1,X2] is INCLUSIVE, following DVID conventions,
+        not Python conventions.
+
+    Construct the RLE payload that DVID can accept
+    which involves converting it to XYZ "lengths" form:
+
+        [[Z,Y,X,N],
+         [Z,Y,X,N],
+         [Z,Y,X,N],
+         ...
+        ]
+
+    ... and prepending some header info.
+
+    Returns:
+        bytes
+    """
+    lengths = 1 + ranges_zyxx[:, 3] - ranges_zyxx[:, 2]
+    rle_xyzn = ranges_zyxx[:, (2, 1, 0, 3)].astype(np.int32)
+    rle_xyzn[:, 3] = lengths
+
+    payload_items = []
+    payload_items.append( np.array([0, 3, 0, 0], dtype=np.uint8) )
+    payload_items.append( np.array([0, len(rle_xyzn)], dtype=np.uint32) )
+    payload_items.append( rle_xyzn )
+
+    payload = b''.join( list(map(bytes, payload_items)) )
+    return payload
+
+
 def combine_sparsevol_rle_responses(rle_payloads):
     """
     Combined two sets of RLE payloads (perhaps fetched from DVID),
@@ -58,7 +99,7 @@ def combine_sparsevol_rle_responses(rle_payloads):
     """
     combined_coords = map(parse_rle_response, rle_payloads)
     combined_coords = np.concatenate([*combined_coords])
-    return construct_rle_payload(combined_coords)
+    return construct_rle_payload_from_coords(combined_coords)
 
 
 def parse_rle_response(response_bytes, dtype=np.int32, format='coords'):  # @ReservedAssignment
