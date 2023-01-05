@@ -55,6 +55,8 @@ def construct_ng_precomputed_layer_from_rois(server, uuid, rois, bucket_name, bu
     if not localdir:
         localdir = tempfile.mkdtemp()
 
+    os.path.makedirs(localdir, exist_ok=True)
+
     # First, verify that we have permission to edit the bucket.
     with open(f"{localdir}/test-file.txt", 'w') as f:
         f.write("Just testing my bucket access...\n")
