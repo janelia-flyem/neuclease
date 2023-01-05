@@ -453,7 +453,8 @@ def plot_connectivity_forecast(conn_df, max_rank=None, plotted_points=20_000, ho
 
 def plot_categorized_connectivity_forecast(
         conn_df, category_col, max_rank=None, plotted_points=20_000, hover_cols=[],
-        title='connectivity after prioritized merging', export_path=None):
+        title='connectivity after prioritized merging', export_path=None,
+        selection_link=None):
     """
     Plot the curves of captured tbars, captured PSDs and captured dual-sided
     connections as bodies are traced/merged from large to small.
@@ -506,10 +507,17 @@ def plot_categorized_connectivity_forecast(
 
     p = figure(align='center', height=500, width=800, title=title)
 
+    dots = []
     for i, (cat, df) in list(enumerate(_df.groupby(category_col, observed=True)))[::-1]:
         p.line('max_rank', 'traced_tbar_frac', legend_label=cat, color=Category20[20][2 * (i % 10)], line_width=5, source=df)
         p.line('max_rank', 'traced_psd_frac', color=Category20[20][2 * (i % 10) + 1], line_width=5, source=df)
         p.line('max_rank', 'traced_conn_frac', color=Category20[20][2 * (i % 10)], line_width=5, source=df)
+        # if selection_link:
+        #     # https://github.com/bokeh/bokeh/issues/10056#issuecomment-1308510074
+        #     d1 = p.dot('max_rank', 'traced_tbar_frac', legend_label=cat, color=Category20[20][2 * (i % 10)], source=df)
+        #     d2 = p.dot('max_rank', 'traced_psd_frac', color=Category20[20][2 * (i % 10) + 1], source=df)
+        #     d3 = p.dot('max_rank', 'traced_conn_frac', color=Category20[20][2 * (i % 10)], source=df)
+        #     dots.extend([d1, d2, d3])
 
     p.legend.location = "bottom_right"
 
@@ -526,8 +534,83 @@ def plot_categorized_connectivity_forecast(
 
     p.add_tools(hover)
 
+    if selection_link:
+        _add_link_taptool(p, selection_link, dots)
+
     if export_path:
         output_file(filename=export_path, title=title)
         bokeh_save(p)
 
     return p
+
+
+def _add_link_taptool(bokeh_plot, template_link, dots):
+    from bokeh.models import ColumnDataSource, OpenURL, TapTool, BoxSelectTool, HoverTool, TextAreaInput, CustomJS
+    from neuclease.misc.neuroglancer import parse_nglink, format_nglink
+
+    # Pre-generate a neuroglancer link to use if the user clicks on a point in the scatter plot.
+    # Start with a generic link, then overwrite some settings.
+    link_data = parse_nglink(template_link)
+
+    selected_layer = link_data['selectedLayer']['layer']
+    sel_i = [i for i, l in enumerate(link_data['layers']) if l['name'] == selected_layer][0]
+
+    # Note: In the template link, I know layer [1] is the segmentation layer.
+    link_data['layers'][sel_i]['segmentQuery'] = "999999999"
+    link_data['layers'][sel_i]['segments'] = ["9191919191"]
+    template_link = format_nglink('https://clio-ng.janelia.org', link_data)
+
+    # The OpenURL function will replace variables in the link (e.g. @body_max_rank)
+    # with data from the ColumnDataSource (we added these variables to the CDS above).
+    onclick_link = template_link.replace('999999999', '@body_max_rank')
+    onclick_link = onclick_link.replace('9191919191', '@body_max_rank')
+
+    # If the user clicks on a point, open the URL.
+    # Docs: https://docs.bokeh.org/en/2.4.0/docs/user_guide/interaction/callbacks.html#openurl
+    taptool = TapTool()
+    taptool.callback = OpenURL(url=onclick_link)
+    bokeh_plot.add_tools(taptool)
+
+    # # Supposedly there's a way to get selection working for line glyphs,
+    # # but I'm not sure I'm smart enough:
+    # # https://github.com/bokeh/bokeh/issues/10056#issuecomment-1308510074
+    # bokeh_plot.add_tools(BoxSelectTool(dimensions='width', renderers=dots))
+
+    # # The JavaScript features below will make use of
+    # # variables stored in the plot's "ColumnDataSource".
+    # # The CDS already contains columns for the data in the scatter plot (e.g. px, py, color, etc.),
+    # # but we need to sneak some extra stuff in there: body IDs and 3D coordinates (mean positions).
+    # cds = bokeh_plot.select(type=ColumnDataSource)[0]
+    # cds.selected.js_on_change(
+    #     'indices',
+    #     CustomJS(args={'cds': cds}, code="""\
+    #         // Extract the body IDs from the column data that was stored in JavaScript.
+    #         // The user's selected indices are passed via the callback object (cb_obj).
+    #         const inds = cb_obj.line_indices;
+    #         var bodies = [];
+    #         for (let i = 0; i < inds.length; i++) {
+    #             bodies.push(cds.data['body'][inds[i]]);
+    #         }
+
+    #         console.log("Trying..." + bodies.join(', '))
+
+    #         // Open the template link, with the selected bodies
+    #         var link = "TEMPLATE_LINK";
+    #         link.replace("999999999", bodies.join(', '));
+    #         link.replace("[\"9191919191\"]", bodies.map(String));
+    #         window.open(link, '_blank').focus();
+    #         console.log("Trying " + link)
+
+    #         // If possible, also copy the body IDs to the user's clipboard.
+    #         //
+    #         // NOTE:
+    #         //   Javascript doesn't allow writing to the clipboard unless:
+    #         //   This page is served over https (so, this notebook won't work...)
+    #         //   OR the page is hosted via a static local file://
+    #         try {
+    #             navigator.clipboard.writeText(bodies.join('\\n'));
+    #         }
+    #         catch (err) {
+    #             console.error("Couldn't write body list to clipboard:", err)
+    #         }
+    # """.replace("TEMPLATE_LINK", template_link)))
