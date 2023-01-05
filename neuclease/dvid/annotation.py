@@ -4,7 +4,7 @@ import logging
 import warnings
 from itertools import chain
 from functools import partial
-from collections import namedtuple
+from collections import namedtuple, Counter
 
 import ujson
 import numpy as np
@@ -162,6 +162,53 @@ def fetch_label(server, uuid, instance, label, relationships=False, *, format='j
 
 # Synonym.  See wrapper_proxies.py
 fetch_annotation_label = fetch_label
+
+
+@dvid_api_wrapper
+def fetch_relcounts_for_label(server, uuid, instance, label, *, session=None):
+    """
+    Synapse relationship counts.
+
+    Fetch the synapse list (including relationships) for a given label
+    and return the count of tbars, psds, inputs, and outputs as a dict.
+
+    Note:
+        No confidence thresholding is applied, so these counts will differ
+        from what you might see in neuprint.
+    """
+    j = fetch_label(server, uuid, instance, label, True, session=session)
+    kind_counts = Counter(e['Kind'] for e in j)
+    rels = (e['Rels'] for e in j)
+    rel_counts = Counter(r['Rel'] for r in chain(*rels))
+
+    counts = {
+        'body': label,
+        'PreSyn': 0,
+        'PostSyn': 0,
+        'PreSynTo': 0,
+        'PostSynTo': 0,
+        }
+    counts.update(kind_counts)
+    counts.update(rel_counts)
+    counts['Rels'] = counts['PreSynTo'] + counts['PostSynTo']
+    return counts
+
+
+def fetch_relcounts_for_labels(server, uuid, instance, labels, *, session=None, processes=0, threads=0):
+    """
+    Synapse relationship counts.
+
+    Fetch the synapse list (including relationships) for a list of bodies
+    and return the count of tbars, psds, inputs, and outputs as a dict.
+
+    Note:
+        No confidence thresholding is applied, so these counts will differ
+        from what you might see in neuprint.
+    """
+    fn = partial(fetch_relcounts_for_label, server, uuid, instance, session=session)
+    counts = compute_parallel(fn, labels, processes=processes, threads=threads)
+    return pd.DataFrame(counts)
+
 
 @dvid_api_wrapper
 def fetch_tag(server, uuid, instance, tag, relationships=False, *, session=None):
