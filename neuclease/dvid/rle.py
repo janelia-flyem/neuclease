@@ -831,6 +831,7 @@ def split_ranges_for_grid(ranges, block_shape, halo=0):
         will be duplicated, but with unique grid index columns (Bz,By,Bx).
     """
     BZ, BY, BX = block_shape  # noqa
+    block_shape = np.asarray(block_shape)
 
     # Start by splitting the RLEs in the X-dimension,
     # then duplicate the ZY halo portions below.
