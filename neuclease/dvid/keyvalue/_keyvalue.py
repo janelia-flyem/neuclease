@@ -181,33 +181,43 @@ def fetch_keyrangevalues(server, uuid, instance, key1=' ', key2=chr(ord('~')+1),
 
 
 @dvid_api_wrapper
-def fetch_key(server, uuid, instance, key, as_json=False, *, check_head=False, session=None):
+def fetch_key(server, uuid, instance, key, *, as_json=False, check_head=False, show=None, session=None):
     """
     Fetch a single value from a DVID keyvalue instance.
-      
+
     Args:
         server:
             dvid server, e.g. 'emdata3:8900'
-         
+
         uuid:
             dvid uuid, e.g. 'abc9'
-         
+
         instance:
             keyvalue instance name, e.g. 'focused_merged'
-         
+
         key:
             A key (string) whose corresponding value will be fetched.
-         
+
         as_json:
             If True, interpret the value as json and load it into a Python value
-        
+
         check_head:
             If True, don't fetch the data, just perform a check using the HEAD http verb.
             Returns True if the key exists on the server, and False otherwise.
 
+        show:
+            Only for neuronjson data instances.
+            Optionally return extra metadata fields for each JSON field.
+            Choices are: None, 'user', 'time', 'all'
+
     Returns:
         Bytes or parsed json data (see ``as_json``), unless check_head=True
     """
+    params = None
+    assert show in ('user', 'time', 'all', None)
+    if show:
+        params = {'show': show}
+
     url = f'{server}/api/node/{uuid}/{instance}/key/{key}'
     if check_head:
         r = session.head(url)
@@ -217,7 +227,7 @@ def fetch_key(server, uuid, instance, key, as_json=False, *, check_head=False, s
             return False
         r.raise_for_status()
     else:
-        r = session.get(url)
+        r = session.get(url, params=params)
         r.raise_for_status()
         if as_json:
             return r.json()
@@ -280,7 +290,7 @@ def delete_key(server, uuid, instance, key, *, session=None):
 
 
 @dvid_api_wrapper
-def fetch_keyvalues(server, uuid, instance, keys, as_json=False, batch_size=None, *, check=None, serialization=None, session=None):
+def fetch_keyvalues(server, uuid, instance, keys, *, as_json=False, batch_size=None, check=None, serialization=None, show=None, session=None):
     """
     Fetch a list of values from a keyvalue instance in a single batch call,
     or split across multiple batches.
@@ -323,6 +333,11 @@ def fetch_keyvalues(server, uuid, instance, keys, as_json=False, batch_size=None
             Specifies which data format this function will request from DVID internally.
             Uses 'protobuf' by default.
 
+        show:
+            Only for neuronjson data instances.
+            Optionally return extra metadata fields for each JSON field.
+            Choices are: None, 'user', 'time', 'all'
+
     Returns:
         dict of ``{ key: value }``
     """
@@ -343,11 +358,11 @@ def fetch_keyvalues(server, uuid, instance, keys, as_json=False, batch_size=None
         batch_keys = keys[start:start+batch_size]
 
         if serialization == 'json':
-            batch_kvs = _fetch_keyvalues_via_json(server, uuid, instance, keys, check, session)
+            batch_kvs = _fetch_keyvalues_via_json(server, uuid, instance, keys, check, show, session)
         elif serialization == 'protobuf':
-            batch_kvs = _fetch_keyvalues_via_protobuf(server, uuid, instance, batch_keys, as_json, session=session)
+            batch_kvs = _fetch_keyvalues_via_protobuf(server, uuid, instance, batch_keys, as_json, show, session=session)
         elif serialization == 'jsontar':
-            batch_kvs = _fetch_keyvalues_via_jsontar(server, uuid, instance, batch_keys, as_json, session=session)
+            batch_kvs = _fetch_keyvalues_via_jsontar(server, uuid, instance, batch_keys, as_json, show, session=session)
         else:
             raise NotImplementedError(f"Unimplemented serialization choice: {serialization}")
 
@@ -356,12 +371,15 @@ def fetch_keyvalues(server, uuid, instance, keys, as_json=False, batch_size=None
     return keyvalues
 
 
-def _fetch_keyvalues_via_json(server, uuid, instance, keys, check, session):
+def _fetch_keyvalues_via_json(server, uuid, instance, keys, check, show, session):
     params = {'json': 'true'}
     if check:
         params['check'] = 'true'
     else:
         params['check'] = 'false'
+
+    if show:
+        params['show'] = show
 
     assert not isinstance(keys, str), "keys should be a list (or array) of strings"
     if isinstance(keys, np.ndarray):
@@ -382,14 +400,21 @@ def _fetch_keyvalues_via_json(server, uuid, instance, keys, check, session):
 
 
 @dvid_api_wrapper
-def _fetch_keyvalues_via_protobuf(server, uuid, instance, keys, as_json=False, *, use_jsontar=False, session=None):
-    assert not isinstance(keys, str), "keys should be a list (or array) of strings"
+def _fetch_keyvalues_via_protobuf(server, uuid, instance, keys, as_json=False, show=None, *, session=None):
+    assert not isinstance(keys, str), \
+        "keys should be a list (or array) of strings"
+
+    params = None
+    assert show in ('user', 'time', 'all', None)
+    if show:
+        params = {'show': show}
 
     proto_keys = Keys()
     for key in keys:
         proto_keys.keys.append(key)
 
-    r = session.get(f'{server}/api/node/{uuid}/{instance}/keyvalues', data=proto_keys.SerializeToString())
+    url = f'{server}/api/node/{uuid}/{instance}/keyvalues'
+    r = session.get(url, params=params, data=proto_keys.SerializeToString())
     r.raise_for_status()
     return _parse_protobuf_keyvalues(r.content, as_json)
 
@@ -420,8 +445,10 @@ def _parse_protobuf_keyvalues(buf, as_json):
 
 
 @dvid_api_wrapper
-def _fetch_keyvalues_via_jsontar(server, uuid, instance, keys, as_json, *, session=None):
+def _fetch_keyvalues_via_jsontar(server, uuid, instance, keys, as_json, show, *, session=None):
     params = {'jsontar': 'true'}
+    if show:
+        params['show'] = show
 
     assert not isinstance(keys, str), "keys should be a list (or array) of strings"
     if isinstance(keys, np.ndarray):
