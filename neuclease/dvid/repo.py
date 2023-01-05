@@ -27,6 +27,7 @@ INSTANCE_TYPENAMES = VOXEL_INSTANCE_TYPENAMES + """\
 annotation
 imagetile
 keyvalue
+neuronjson
 labelgraph
 labelsz
 labelvol

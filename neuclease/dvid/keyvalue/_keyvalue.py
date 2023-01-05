@@ -682,6 +682,10 @@ def fetch_body_annotations(server, uuid, instance='segmentation_annotations', bo
         v['bodyid'] = int(k)
         values.append(v)
 
+    return _body_annotations_dataframe(values, status_categories)
+
+
+def _body_annotations_dataframe(values, status_categories=None):
     if len(values) == 0:
         empty_index = pd.Series([], dtype=int, name='body')
         return pd.DataFrame({'status': [], 'json': []}, dtype=object, index=empty_index)

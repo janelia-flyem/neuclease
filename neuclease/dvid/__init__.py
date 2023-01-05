@@ -7,6 +7,7 @@ from .node import *
 from .kafka import *
 
 from .keyvalue import *
+from .neuronjson import *
 from .annotation import *
 from .roi import *
 from .tarsupervoxels import *
