@@ -235,7 +235,7 @@ def fetch_key(server, uuid, instance, key, *, as_json=False, check_head=False, s
 
 
 @dvid_api_wrapper
-def post_key(server, uuid, instance, key, data=None, json=None, *, session=None):
+def post_key(server, uuid, instance, key, data=None, json=None, *, replace=False, session=None):
     """
     Post a single value to a DVID keyvalue instance.
     
@@ -259,13 +259,23 @@ def post_key(server, uuid, instance, key, data=None, json=None, *, session=None)
             Instead of posting bytes, you can provide a JSON-serializable
             Python object via this argument.
             The object will be encoded as JSON and then posted.
+
+        replace:
+            For neuronjson instances only, replace=False overwrites only the keys provided
+            in the json object, leaving other json keys intact within the server-side object.
+            If replace=True, then the entire json object is overwritten with the provided values.
+            (For keyvalue instances, this parameter has no effect -- keyvalue post ALWAYS replaces everything.)
     """
+    params = None
+    if replace:
+        params = {'replace': 'true'}
+
     assert data is not None or json is not None, "No data to post"
     if data is not None:
         assert isinstance(data, bytes), f"Raw data must be posted as bytes, not {type(data)}"
-    r = session.post(f'{server}/api/node/{uuid}/{instance}/key/{key}', data=data, json=json)
+    r = session.post(f'{server}/api/node/{uuid}/{instance}/key/{key}', params=params, data=data, json=json)
     r.raise_for_status()
-    
+
 
 @dvid_api_wrapper
 def delete_key(server, uuid, instance, key, *, session=None):
@@ -484,35 +494,46 @@ def _parse_tarfile_keyvalues(buf, as_json):
 
 
 @dvid_api_wrapper
-def post_keyvalues(server, uuid, instance, keyvalues, batch_size=None, *, session=None, show_progress=True):
+def post_keyvalues(server, uuid, instance, keyvalues, *, batch_size=None, replace=False, session=None, show_progress=True):
     """
     Post a batch of key-value pairs to a keyvalue instance.
 
     TODO:
         - This can fail if a batch ends up larger than 2GB.
           Would be nice to automatically split batches if necessary.
-    
+
         server:
             dvid server, e.g. 'emdata3:8900'
-        
+
         uuid:
-            dvid uuid, e.g. 'abc9'
-        
+          dvid uuid, e.g. 'abc9'
+
         instance:
             keyvalue instance name, e.g. 'focused_merged'
-        
+
         keyvalues:
             A dictionary of { key : value }, in which key is a string and value is bytes.
             If the value is not bytes, it will be treated as JSON data and encoded to bytes.
-        
+
         batch_size:
             If provided, don't post all the values at once.
             Instead, break the values into smaller batches (of the given size),
             and post them one batch at a time.  Progress will be shown in the console.
+
+        replace:
+            For neuronjson instances only, replace=False overwrites only the keys provided
+            in the json object, leaving other json keys intact within the server-side object.
+            If replace=True, then the entire json object is overwritten with the provided values.
+            (For keyvalue instances, this parameter has no effect -- keyvalue post ALWAYS replaces everything.)
+
     """
     assert isinstance(keyvalues, Mapping)
     batch_size = batch_size or len(keyvalues)
-    
+
+    params = None
+    if replace:
+        params = {'replace': 'true'}
+
     keyvalues = list(keyvalues.items())
 
     batch_starts = range(0, len(keyvalues), batch_size)
@@ -524,14 +545,14 @@ def post_keyvalues(server, uuid, instance, keyvalues, batch_size=None, *, sessio
                 value = ujson.dumps(value)
             if isinstance(value, str):
                 value = value.encode('utf-8')
-    
+
             kvs.append( KeyValue(key=str(key), value=value) )
-    
+
         proto_keyvalues = KeyValues()
         proto_keyvalues.kvs.extend(kvs)
-    
+
         url = f'{server}/api/node/{uuid}/{instance}/keyvalues'
-        r = session.post(url, data=proto_keyvalues.SerializeToString())
+        r = session.post(url, params=params, data=proto_keyvalues.SerializeToString())
         r.raise_for_status()
 
 
