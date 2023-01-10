@@ -2006,7 +2006,7 @@ def fetch_labelmap_specificblocks(server, uuid, instance, corners_zyx, scale=0, 
 
         format:
             One of the following:
-                ('array', 'lazy-array', 'raw-response', 'blocks', 'lazy-blocks', 'raw-blocks')
+                ('array', 'lazy-array', 'raw-response', 'blocks', 'lazy-blocks', 'raw-blocks', 'callable-blocks')
 
             If 'array', inflate the compressed voxels from DVID into a single combined array, and return it.
             (Omitted or empty blocks will be filled with zeros in the result.)
