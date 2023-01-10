@@ -1,11 +1,13 @@
 import re
 import gzip
+import time
 import logging
 from io import BytesIO
 from functools import partial, lru_cache, wraps
 from itertools import starmap, chain
 from multiprocessing.pool import ThreadPool
 from collections import defaultdict, namedtuple
+from collections.abc import Sequence
 
 import numpy as np
 import pandas as pd
@@ -26,7 +28,7 @@ from .. import dvid_api_wrapper, fetch_generic_json, fetch_repo_info
 from ..server import fetch_server_info
 from ..repo import create_voxel_instance, fetch_repo_dag, resolve_ref, expand_uuid, find_repo_root
 from ..kafka import read_kafka_messages, kafka_msgs_to_df
-from ..rle import parse_rle_response, runlength_decode_from_ranges_to_mask, rle_ranges_box
+from ..rle import parse_rle_response, runlength_decode_from_ranges_to_mask, rle_ranges_box, construct_rle_payload_from_ranges, split_ranges_for_grid
 
 from ._split import fetch_supervoxel_splits_from_dvid
 
@@ -1031,6 +1033,10 @@ def post_split_supervoxel(server, uuid, instance, supervoxel, rle_payload_bytes,
 
     Returns:
         The two new IDs resulting from the split: (split_sv_id, remaining_sv_id)
+
+    Note:
+        DVID will not return until the mapping and label index have been updated,
+        but DVID may still be updating the voxel data (and multires pyramids).
     """
     url = f'{server}/api/node/{uuid}/{instance}/split-supervoxel/{supervoxel}'
 
@@ -3606,3 +3612,105 @@ def thickest_point_in_body(server, uuid, instance, body, *, session=None):
     block_seg = fetch_labelmap_voxels(server, uuid, instance, (p, p + 64))
     p2, d2 = thickest_point_in_mask(block_seg == body)
     return tuple(p + p2), d + d2
+
+
+def recursive_sv_split_by_grid(server, uuid, instance, sv, init_grid=8192, final_grid=2048):
+    """
+    Split a huge supervoxel into smaller pieces using a simple, block-aligned strategy.
+
+    For efficiency, the splits are first performed along a coarse grid and then
+    recursively split along finer grids.
+
+    Note:
+        The resulting pieces will NOT necessarily be contiguous.  This function exists
+        solely to make it easier to work with unmanagably large supervoxels by chopping
+        them up.
+    """
+    if not isinstance(init_grid, Sequence):
+        init_grid = 3 * (init_grid,)
+    if not isinstance(final_grid, Sequence):
+        final_grid = 3 * (final_grid,)
+
+    init_grid = np.asarray(init_grid, int)
+    final_grid = np.asarray(final_grid, int)
+
+    assert (init_grid >= final_grid).all(), \
+        "Final grid should not be larger than initial grid."
+    assert (np.log2(init_grid / final_grid) % 1 == 0).all(), \
+        "Final grid must divide into initial grid via a power of 2"
+
+    def _recursive_split(sv, rng, init_grid, new_svs, indent=0):
+        # Determine split ranges for each block
+        block_rng_df = split_ranges_for_grid(rng, init_grid)
+        block_ids_and_ranges = list(block_rng_df.groupby(['Bz', 'By', 'Bx']))
+        num_blocks = len(block_ids_and_ranges)
+        logger.info(f"{' '*indent}Splitting {sv} into {num_blocks} blocks [{tuple(init_grid)}]")
+
+        new_svs.setdefault(tuple(init_grid), {})
+        remain_sv = sv
+        for i, (block_id, rle_df) in enumerate(block_ids_and_ranges):
+            block_rng = rle_df[['z', 'y', 'x1', 'x2']].values.astype(np.int32)
+
+            if i < num_blocks - 1:
+                payload = construct_rle_payload_from_ranges(block_rng)
+                split_sv, remain_sv = post_split_supervoxel(server, uuid, instance, remain_sv, payload)
+
+                # Before continuing, poll RLEs until split appears complete.
+                _wait_for_split_done(server, uuid, instance, sv, split_sv, indent + 2)
+                _wait_for_split_done(server, uuid, instance, sv, remain_sv, indent + 2)
+
+                new_svs[tuple(init_grid)][block_id] = split_sv
+                if tuple(init_grid) != tuple(final_grid):
+                    _recursive_split(split_sv, block_rng, init_grid // 2, new_svs, indent+2)
+            else:
+                # The final, unprocessed block is the remainder.
+                new_svs[tuple(init_grid)][block_id] = remain_sv
+
+                if tuple(init_grid) != tuple(final_grid):
+                    _recursive_split(remain_sv, block_rng, init_grid // 2, new_svs, indent+2)
+
+        return new_svs
+
+    with Timer(f"Fetching full sparsevol for sv {sv}", logger):
+        full_rng = fetch_sparsevol(server, uuid, instance, sv, supervoxels=True, format='ranges')
+    return _recursive_split(sv, full_rng, init_grid, {})
+
+
+def _wait_for_split_done(server, uuid, instance, parent_sv, child_sv, indent=0, scales=[0, 3, 6]):
+    """
+    Helper function for recursive_sv_split_by_grid().
+
+    Waits until the given child supervoxel has been completely
+    updated in the DVID voxels at the given scales.
+
+    Determines whether a split is complete this by obtaining the set of blocks in which
+    the new (child) supervoxel should reside and checks their voxels for the ABSCENCE
+    of the PARENT id.  If the parent id is still present in any block, then that block
+    hasn't yet been rewritten, and therefore the supervoxel split is not yet complete.
+
+    (We can't check for the presence of the child ID because at low-res scales,
+    the child ID isn't guaranteed to exist in the voxels at all, due to downsampling
+    effects. But we know the parent MUST NOT be absent.)
+    """
+    def _determine_incomplete_blocks(server, uuid, instance, corners, scale):
+        lazyblocks = fetch_labelmap_specificblocks(server, uuid, instance, corners, scale, supervoxels=True, format='callable-blocks')
+
+        incomplete = set()
+        for corner, lb in lazyblocks.items():
+            if parent_sv in lb().reshape(-1):
+                incomplete.add(tuple(corner))
+        return sorted(incomplete)
+
+    svc = fetch_sparsevol_coarse(server, uuid, instance, child_sv, supervoxels=True, format='coords')
+
+    for scale in scales:
+        logger.info(f"{' '*indent}Split {parent_sv}->{child_sv}: Scale {scale}: Checking.")
+        incomplete_corners = pd.DataFrame(svc * (2**(6-scale)))
+        incomplete_corners = ((incomplete_corners // 64) * 64).drop_duplicates().values
+        while len(incomplete_corners):
+            incomplete_corners = _determine_incomplete_blocks(server, uuid, instance, incomplete_corners, 0)
+            if len(incomplete_corners):
+                logger.info(f"{' '*indent}Split {parent_sv}->{child_sv}: Scale {scale}: Not yet complete.")
+                time.sleep(1.0)
+
+    logger.info(f"{' '*indent}Split {parent_sv}->{child_sv}: Successfully completed.")
