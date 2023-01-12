@@ -37,6 +37,10 @@ DEFAULT_DVID_SESSIONS = {}
 DEFAULT_DVID_NODE_SERVICES = {}
 DEFAULT_APPNAME = "neuclease"
 
+# Medium timeout for connections, long timeout for data
+# https://docs.python-requests.org/en/latest/user/advanced/#timeouts
+DEFAULT_DVID_TIMEOUT = (3.05, 120.0)
+
 # FIXME: This should be eliminated or at least renamed
 DvidInstanceInfo = namedtuple("DvidInstanceInfo", "server uuid instance")
 
@@ -66,81 +70,56 @@ class DefaultTimeoutHTTPAdapter(requests.adapters.HTTPAdapter):
         return f"DefaultTimeoutHTTPAdapter(timeout={self.timeout})"
 
 
-def clear_default_dvid_sessions(connection_timeout=None, timeout=None):
-    global DEFAULT_DVID_SESSIONS
-    global DEFAULT_DVID_NODE_SERVICES
-    global DEFAULT_DVID_SESSION_TEMPLATE
-    DEFAULT_DVID_SESSIONS.clear()
-    DEFAULT_DVID_NODE_SERVICES.clear()
-    DEFAULT_DVID_SESSION_TEMPLATE = _default_dvid_session_template()
-    if connection_timeout is None:
-        connection_timeout = DEFAULT_DVID_TIMEOUT[0]
-    if timeout is None:
-        timeout = DEFAULT_DVID_TIMEOUT[1]
-
-    DEFAULT_DVID_SESSION_TEMPLATE.adapters['http://'].timeout = (connection_timeout, timeout)
-    DEFAULT_DVID_SESSION_TEMPLATE.adapters['https://'].timeout = (connection_timeout, timeout)
-
-
-# Medium timeout for connections, long timeout for data
-# https://docs.python-requests.org/en/latest/user/advanced/#timeouts
-DEFAULT_DVID_TIMEOUT = (3.05, 120.0)
-
-
-def _default_dvid_session_template(appname=DEFAULT_APPNAME, user=getpass.getuser(), admintoken=None, timeout=None):
+def _default_dvid_session_template():
     """
     Note: To specify no timeout at all, set timeout=(None, None)
     """
     # If the connection fails, retry a couple times.
     retries = Retry(connect=2, backoff_factor=0.1)
-
-    if timeout is None:
-        timeout = DEFAULT_DVID_TIMEOUT
-    adapter = DefaultTimeoutHTTPAdapter(max_retries=retries, timeout=timeout)
+    adapter = DefaultTimeoutHTTPAdapter(max_retries=retries, timeout=DEFAULT_DVID_TIMEOUT)
 
     s = requests.Session()
     s.mount('http://', adapter)
     s.mount('https://', adapter)
 
-    s.params = { 'u': user, 'app': appname }
+    s.params = { 'u': getpass.getuser(), 'app': DEFAULT_APPNAME }
 
-    if admintoken is None:
-        admintoken = os.environ.get("DVID_ADMIN_TOKEN", None)
-
+    admintoken = os.environ.get("DVID_ADMIN_TOKEN", None)
     if admintoken:
         s.params['admintoken'] = admintoken
 
     return s
 
 
-# Note:
-#   To change the settings for all new default sessions,
-#   modify this global template and then clear the cached sessions:
-#
-#       clear_default_dvid_sessions(3.05, 600.0)
-#       default_dvid_session_template().adapters['http://'].timeout = (3.05, 600.0)
-#
 DEFAULT_DVID_SESSION_TEMPLATE = _default_dvid_session_template()
 
 
-def create_dvid_session(timeout=DEFAULT_DVID_TIMEOUT):
-    s = copy.deepcopy(DEFAULT_DVID_SESSION_TEMPLATE)
-    s.adapters['http://'].timeout = timeout
-    s.adapters['https://'].timeout = timeout
-    return s
+def clear_default_dvid_sessions():
+    global DEFAULT_DVID_SESSIONS
+    global DEFAULT_DVID_NODE_SERVICES
+    global DEFAULT_DVID_SESSION_TEMPLATE
+    DEFAULT_DVID_SESSIONS.clear()
+    DEFAULT_DVID_NODE_SERVICES.clear()
+    DEFAULT_DVID_SESSION_TEMPLATE = _default_dvid_session_template()
 
 
-def default_dvid_session_template():
-    return DEFAULT_DVID_SESSION_TEMPLATE
+def set_default_dvid_session_timeout(conn_timeout, timeout):
+    clear_default_dvid_sessions()
+    global DEFAULT_DVID_SESSION_TEMPLATE
+    DEFAULT_DVID_SESSION_TEMPLATE.adapters['http://'].timeout = (conn_timeout, timeout)
+    DEFAULT_DVID_SESSION_TEMPLATE.adapters['https://'].timeout = (conn_timeout, timeout)
 
 
-def default_dvid_session(appname=DEFAULT_APPNAME, user=getpass.getuser(), admintoken=None):
+def default_dvid_session(appname=DEFAULT_APPNAME, user=getpass.getuser(), admintoken=None, timeout=None):
     """
     Return a default requests.Session() object that automatically appends the
     'u' and 'app' query string parameters to every request.
     The Session object is cached, so this function will return the same Session
     object if called again from the same thread with the same arguments.
     """
+    global DEFAULT_DVID_SESSION_TEMPLATE
+    global DEFAULT_DVID_SESSIONS
+
     # TODO:
     # Proper authentication will involve fetching a JWT from this endpoint:
     # https://hemibrain-dvid.janelia.org/api/server/token
@@ -155,7 +134,20 @@ def default_dvid_session(appname=DEFAULT_APPNAME, user=getpass.getuser(), admint
     try:
         s = DEFAULT_DVID_SESSIONS[(appname, user, admintoken, thread_id, pid)]
     except KeyError:
-        s = _default_dvid_session_template(appname, user, admintoken)
+        s = copy.deepcopy(DEFAULT_DVID_SESSION_TEMPLATE)
+        s.params = { 'u': user, 'app': appname }
+
+        if admintoken:
+            s.params['admintoken'] = admintoken
+
+        if timeout:
+            if hasattr(timeout, '__len__'):
+                assert len(timeout) == 2
+            else:
+                timeout = (DEFAULT_DVID_TIMEOUT[0], timeout)
+            s.adapters['http://'].timeout = timeout
+            s.adapters['https://'].timeout = timeout
+
         DEFAULT_DVID_SESSIONS[(appname, user, admintoken, thread_id, pid)] = s
 
     return s
@@ -167,6 +159,8 @@ def default_node_service(server, uuid, appname=DEFAULT_APPNAME, user=getpass.get
     The object is cached, so this function will return the same service
     object if called again from the same thread with the same arguments.
     """
+    global DEFAULT_DVID_NODE_SERVICES
+
     # One per thread/process
     thread_id = threading.current_thread().ident
     pid = os.getpid()
