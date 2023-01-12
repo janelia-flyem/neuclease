@@ -7,7 +7,7 @@ from functools import partial, lru_cache, wraps, reduce
 from itertools import starmap, chain
 from operator import or_
 from multiprocessing.pool import ThreadPool
-from collections import defaultdict, namedtuple
+from collections import namedtuple
 from collections.abc import Sequence
 
 import numpy as np
@@ -56,9 +56,15 @@ def create_labelmap_instance(server, uuid, instance, versioned=True, tags=[], bl
 
         Other args passed directly to create_voxel_instance().
     """
-    type_specific_settings = { "IndexedLabels": str(enable_index).lower(), "CountLabels": str(enable_index).lower(), "MaxDownresLevel": str(max_scale) }
-    create_voxel_instance( server, uuid, instance, 'labelmap', versioned, tags=tags, block_size=block_size, voxel_size=voxel_size,
-                           voxel_units=voxel_units, type_specific_settings=type_specific_settings, session=session )
+    type_specific_settings = {
+        "IndexedLabels": str(enable_index).lower(),
+        "CountLabels": str(enable_index).lower(),
+        "MaxDownresLevel": str(max_scale)
+    }
+    create_voxel_instance(server, uuid, instance, 'labelmap', versioned,
+                          tags=tags, block_size=block_size, voxel_size=voxel_size,
+                          voxel_units=voxel_units, type_specific_settings=type_specific_settings,
+                          session=session)
 
 
 @dvid_api_wrapper
