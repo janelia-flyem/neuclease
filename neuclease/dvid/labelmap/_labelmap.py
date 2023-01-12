@@ -3681,11 +3681,12 @@ def recursive_sv_split_by_grid(server, uuid, instance, sv, init_grid=8192, final
 
     def _recursive_split(sv, rng, init_grid, new_svs, indent=0):
         # Determine split ranges for each block
-        block_rng_df = split_ranges_for_grid(rng, init_grid)
-        block_ids_and_ranges = list(block_rng_df.groupby(['Bz', 'By', 'Bx']))
-        num_blocks = len(block_ids_and_ranges)
-        logger.info(f"{' '*indent}Splitting {sv} into {num_blocks} blocks [{tuple(init_grid)}]")
+        with Timer(f"Computing grid RLEs [{tuple(init_grid)}]", logger):
+            block_rng_df = split_ranges_for_grid(rng, init_grid)
+            block_ids_and_ranges = list(block_rng_df.groupby(['Bz', 'By', 'Bx']))
+            num_blocks = len(block_ids_and_ranges)
 
+        logger.info(f"{' '*indent}Splitting {sv} into {num_blocks} blocks [{tuple(init_grid)}]")
         new_svs.setdefault(tuple(init_grid), {})
         remain_sv = sv
         for i, (block_id, rle_df) in enumerate(block_ids_and_ranges):
@@ -3693,7 +3694,8 @@ def recursive_sv_split_by_grid(server, uuid, instance, sv, init_grid=8192, final
 
             if i < num_blocks - 1:
                 payload = construct_rle_payload_from_ranges(block_rng)
-                split_sv, remain_sv = post_split_supervoxel(server, uuid, instance, remain_sv, payload)
+                with Timer(f"{' '*(indent+2)}Posting split: {sv}", logger):
+                    split_sv, remain_sv = post_split_supervoxel(server, uuid, instance, remain_sv, payload)
 
                 # Before continuing, poll RLEs until split appears complete.
                 _wait_for_split_done(server, uuid, instance, sv, split_sv, indent + 2)
@@ -3732,15 +3734,6 @@ def _wait_for_split_done(server, uuid, instance, parent_sv, child_sv, indent=0, 
     the child ID isn't guaranteed to exist in the voxels at all, due to downsampling
     effects. But we know the parent MUST NOT be absent.)
     """
-    def _determine_incomplete_blocks(server, uuid, instance, corners, scale):
-        lazyblocks = fetch_labelmap_specificblocks(server, uuid, instance, corners, scale, supervoxels=True, format='callable-blocks')
-
-        incomplete = set()
-        for corner, lb in lazyblocks.items():
-            if parent_sv in lb().reshape(-1):
-                incomplete.add(tuple(corner))
-        return sorted(incomplete)
-
     svc = fetch_sparsevol_coarse(server, uuid, instance, child_sv, supervoxels=True, format='coords')
 
     for scale in scales:
@@ -3748,9 +3741,35 @@ def _wait_for_split_done(server, uuid, instance, parent_sv, child_sv, indent=0, 
         incomplete_corners = pd.DataFrame(svc * (2**(6-scale)))
         incomplete_corners = ((incomplete_corners // 64) * 64).drop_duplicates().values
         while len(incomplete_corners):
-            incomplete_corners = _determine_incomplete_blocks(server, uuid, instance, incomplete_corners, 0)
+            incomplete_corners = _determine_incomplete_blocks(server, uuid, instance, incomplete_corners, 0, parent_sv)
             if len(incomplete_corners):
                 logger.info(f"{' '*indent}Split {parent_sv}->{child_sv}: Scale {scale}: Not yet complete.")
                 time.sleep(1.0)
 
     logger.info(f"{' '*indent}Split {parent_sv}->{child_sv}: Successfully completed.")
+
+
+def _determine_incomplete_blocks(server, uuid, instance, corners, scale, parent_sv):
+    """
+    Helper function for recursive_sv_split_by_grid()
+    """
+    corner_batches = iter_batches(corners, 20)
+    impl_fn = partial(_determine_incomplete_blocks_impl, server, uuid, instance, scale, parent_sv)
+    proc = min(16, len(corner_batches))
+    if proc == 1:
+        proc = 0
+    incomplete = compute_parallel(impl_fn, corner_batches, processes=proc)
+    return sorted(chain(*incomplete))
+
+
+def _determine_incomplete_blocks_impl(server, uuid, instance, scale, parent_sv, corner_batch):
+    """
+    Helper function for recursive_sv_split_by_grid()
+    """
+    lazyblocks = fetch_labelmap_specificblocks(server, uuid, instance, corner_batch, scale,
+                                               supervoxels=True, format='callable-blocks')
+    incomplete = []
+    for corner, lb in lazyblocks.items():
+        if parent_sv in lb().reshape(-1):
+            incomplete.append(tuple(corner))
+    return incomplete
