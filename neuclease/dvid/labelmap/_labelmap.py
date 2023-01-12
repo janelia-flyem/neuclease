@@ -3,8 +3,9 @@ import gzip
 import time
 import logging
 from io import BytesIO
-from functools import partial, lru_cache, wraps
+from functools import partial, lru_cache, wraps, reduce
 from itertools import starmap, chain
+from operator import or_
 from multiprocessing.pool import ThreadPool
 from collections import defaultdict, namedtuple
 from collections.abc import Sequence
@@ -2159,6 +2160,45 @@ def _inflate_block(corner, buf):
         return corner, np.zeros((64,64,64), np.uint64)
     block = DVIDNodeService.inflate_labelarray_blocks3D_from_raw(buf, (64,64,64), corner)
     return (corner, block)
+
+
+def fetch_labelmap_specificblocks_batched(server, uuid, instance, corners_zyx, scale=0, supervoxels=False, format='blocks',
+                                          *, processes=0, batch_size=1000):
+    """
+    Same as fetch_labelmap_specificblocks(), but breaks the workload up into batches, optionally parallelized.
+
+    For argument descriptions, see fetch_labelmap_specificblocks(),
+    but note that this function doesn't support the 'array' output formats
+    and doesn't support map_on_client.
+    """
+    assert format in ('blocks', 'raw-blocks', 'lazy-blocks', 'callable-blocks')
+    batch_fmt = format
+    if format in ('lazy-blocks', 'callable-blocks'):
+        batch_fmt = 'raw-blocks'
+
+    fn = partial(fetch_labelmap_specificblocks, server, uuid, instance, scale=scale, supervoxels=supervoxels, format=batch_fmt)
+    corner_batches = iter_batches(corners_zyx, batch_size)
+    block_batches = compute_parallel(fn, corner_batches, processes=processes)
+    blocks = reduce(or_, block_batches)
+
+    def inflate_blocks(processes=None, threads=None):
+        # By default, this function is single-threaded but the user can
+        # optionally specify parallelism by passing processes or threads
+        # when calling it.
+        inflated_blocks = compute_parallel(
+            _inflate_block, blocks.items(), starmap=True, processes=processes, threads=threads, show_progress=False)
+        return dict(inflated_blocks)
+
+    if format in ('raw-blocks', 'blocks'):
+        return blocks
+    elif format == 'lazy-blocks':
+        return inflate_blocks
+    elif format == 'callable-blocks':
+        # Wrap each buffer in a callable that will inflate it
+        for coord, buf in [*blocks.items()]:
+            f = DVIDNodeService.inflate_labelarray_blocks3D_from_raw
+            blocks[coord] = partial(f, buf, (64,64,64), coord)
+        return blocks
 
 
 def fetch_labelmap_voxels_chunkwise(server, uuid, instance, box_zyx, scale=0, throttle=False, supervoxels=False,
