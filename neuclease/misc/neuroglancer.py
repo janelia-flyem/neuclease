@@ -1,14 +1,15 @@
 """
 neuroglancer-related utility functions
 """
-import os
 import copy
 import json
 import urllib
+import logging
 import numpy as np
 import pandas as pd
 from textwrap import dedent
 
+logger = logging.getLogger(__name__)
 
 def parse_nglink(link):
     url_base, pseudo_json = link.split('#!')
@@ -104,6 +105,8 @@ def point_annotation_layer_json(points_df, name="annotations", color="#ffff00", 
     Args:
         points_df:
             DataFrame with columns ['x', 'y', 'z'] and optionally 'id' and 'description'.
+            If you are providing a linkedSegmentationLayer, your dataframe should contain
+            a 'semgents' column to indicate which segments are associated with each annotation.
     Returns:
         dict (JSON data)
     """
@@ -169,3 +172,102 @@ def _upload_to_bucket(bucket_name, blob_name, blob_contents):
     blob.cache_control = 'public, no-store'
     blob.upload_from_string(blob_contents, content_type='application/json')
     return blob.public_url
+
+
+VALID_PROP_TYPES = ['label', 'description', 'tags', 'string', 'number']
+
+
+def serialize_segment_properties_info(df, prop_types={}, output_path=None):
+    """
+    Construct segment properties JSON info file according to the neuroglancer spec:
+    https://github.com/google/neuroglancer/blob/master/src/neuroglancer/datasource/precomputed/segment_properties.md
+
+    Note:
+        This function doesn't yet support 'tags'.
+
+    Args:
+        df:
+            DataFrame or Series.  Index must be named 'body'.
+            Every column will be interpreted as a segment property.
+
+        prop_types:
+            Dict to specify the neuroglancer property type of each column, e.g. {'instance': 'label'}.
+            For columns not listed in the dict, the property type is inferred from the name of the column
+            (if the name is 'label' or 'description') or the dtype of the column (string vs. number).
+
+        output_path:
+            If provided, export the JSON to a file.
+
+    Returns:
+        JSON data (as a dict)
+    """
+    assert df.index.name == 'body'
+    if isinstance(df, pd.Series):
+        df = df.to_frame()
+    invalid_prop_types = set(prop_types.values()) - set(VALID_PROP_TYPES)
+    assert not invalid_prop_types, \
+        f"Invalid property types: {invalid_prop_types}"
+
+    assert 'tags' not in prop_types.values(), \
+        "Sorry, 'tags' properties aren't yet supported by this function."
+
+    info = {
+        '@type': 'neuroglancer_segment_properties',
+        'inline': {
+            'ids': [*map(str, df.index)],
+            'properties': []
+        }
+    }
+
+    # If there's only one column, assume it's the 'label' property
+    if not prop_types and len(df.columns) == 1:
+        prop_types = {df.columns[0]: 'label'}
+
+    default_prop_types = {
+        'label': 'label',
+        'description': 'description'
+    }
+    prop_types = default_prop_types | prop_types
+
+    for col in df.columns:
+        prop = {}
+        prop['id'] = col
+
+        if np.issubdtype(df[col].dtype, np.number):
+            assert not df[col].dtype in (np.int64, np.uint64), \
+                "Neuroglancer doesn't support 64-bit integer properties.  Use int32 or float64"
+            prop['type'] = 'number'
+            prop['data_type'] = df[col].dtype.name
+            assert not df[col].isnull().any(), \
+                (f"Column {col} contans NaN entries. "
+                 "I'm not sure what to do with NaN values in numeric properties.")
+            prop['values'] = df[col].tolist()
+        else:
+            prop['type'] = prop_types.get(col, 'string')
+            prop['values'] = df[col].fillna("").astype(str).tolist()
+
+        info['inline']['properties'].append(prop)
+
+    _validate_property_type_counts(info)
+
+    if output_path:
+        with open(output_path, 'w') as f:
+            json.dump(info, f, indent=2)
+    return info
+
+
+def _validate_property_type_counts(info):
+    type_counts = (
+        pd.Series([prop['type'] for prop in info['inline']['properties']])
+        .value_counts()
+        .reindex(VALID_PROP_TYPES)
+        .fillna(0)
+        .astype(int)
+    )
+    for t in ['label', 'description', 'tags']:
+        assert type_counts.loc[t] <= 1, \
+            f"Can't have more than one property with type '{t}'"
+
+    if type_counts.loc['label'] == 0 and type_counts.loc['string'] > 0:
+        logger.warning("None of your segment properties are of type 'label', "
+                       "so none will be displayed in the neuroglancer UI.")
