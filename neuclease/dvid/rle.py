@@ -215,6 +215,45 @@ def parse_rle_response(response_bytes, dtype=np.int32, format='coords'):  # @Res
         return dense_coords
 
 
+def upsample_rle_ranges_2x(ranges):
+    """
+    Upsample the given RLE ranges by 2x in all dimensions,
+    effectively changing the 'scale' at which the ranges are defined.
+
+    For example, this is useful for upsampling masks which were
+    generated at scale 6 (from a coarse sparsevol, say) to scale 5 (for ROI uploads).
+
+    Arg:
+        RLEs as ranges, in the form:
+
+            [[Z,Y,X0,X1], [Z,Y,X0,X1], ...]
+
+        Note: By DVID conventions, the interval [X0,X1] is inclusive,
+                i.e. X1 is IN the range -- not one beyond the range,
+                which would normally be the Python convention.
+    Returns:
+        Same format as input, but upsampled by 2x.
+        Max coordinate will be doubled in each dimension.
+        Output array will be 4x the length as the input.
+    """
+    # Double coordinate range and duplicate each
+    # RLE 4x to fill out gaps in the Z,Y dimensions
+    new_ranges = np.concatenate((
+        2 * ranges + [0, 0, 0, 1],
+        2 * ranges + [0, 1, 0, 1],
+        2 * ranges + [1, 0, 0, 1],
+        2 * ranges + [1, 1, 0, 1]
+    ))
+
+    new_ranges = new_ranges.astype(np.int32)
+    new_ranges = (
+        pd.DataFrame(new_ranges, columns=['z', 'y', 'x0', 'x1'])
+        .sort_values(['z', 'y', 'x0', 'x1'])
+        .values
+    )
+    return new_ranges
+
+
 def rle_box_dilation(start_coords, lengths, radius):
     """
     Dilate the given RLEs by some radius, using simple
