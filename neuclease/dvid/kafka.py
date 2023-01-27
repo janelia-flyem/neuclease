@@ -292,7 +292,7 @@ def _filter_records_for_action(records_and_values, action_filter):
     return filter(lambda r_v: r_v[1]["Action"] in action_filter, records_and_values)
 
 
-def kafka_msgs_to_df(msgs, drop_duplicates=False, default_timestamp=DEFAULT_TIMESTAMP, convert_tz="US/Eastern"):
+def kafka_msgs_to_df(msgs, drop_duplicates=False, default_timestamp=DEFAULT_TIMESTAMP, convert_tz="US/Eastern", strip_tz=False):
     """
     Load the messages into a DataFrame with columns for
     timestamp, uuid, mut_id (if present), key (if present), and msg (the complete message).
@@ -354,16 +354,26 @@ def kafka_msgs_to_df(msgs, drop_duplicates=False, default_timestamp=DEFAULT_TIME
 
     for i, msg in enumerate(msgs):
         if 'Timestamp' in msg:
-            timestamps[i] = msg['Timestamp'][:len('2018-01-01 00:00:00.000')]
+            timestamps[i] = msg['Timestamp']
+
+    # DVID uses a weird timezone format that pandas doesn't understand,
+    # "2021-02-14 00:58:02.708146297 -0500 EST m=+9277.848969006"
+    pat = r"(\d\d\d\d-\d\d-\d\d) (\d\d:\d\d:\d\d.\d+) (.\d\d\d\d) .*"
+    timestamps_df = pd.Series(timestamps).str.extract(pat)
+    timestamps_df.columns = ['date', 'time', 'tz_offset']
+    timestamps = timestamps_df['date'] + ' ' + timestamps_df['time'] + timestamps_df['tz_offset']
+    timestamps = pd.to_datetime(timestamps, utc=True).dt.tz_convert('US/Eastern')
+
+    if strip_tz:
+        timestamps = timestamps.dt.tz_localize(None)
 
     msgs_df = pd.DataFrame({'msg': msgs})
     msgs_df['timestamp'] = timestamps
-    msgs_df['timestamp'] = pd.to_datetime(msgs_df['timestamp'])
     msgs_df['uuid'] = [msg['UUID'] for msg in msgs_df['msg']]
     msgs_df['uuid'] = pd.Categorical(msgs_df['uuid'], msgs_df['uuid'].unique(), ordered=True)
 
     if convert_tz:
-        msgs_df['timestamp'] = msgs_df['timestamp'].dt.tz_localize('UTC').dt.tz_convert(convert_tz)
+        msgs_df['timestamp'] = msgs_df['timestamp'].dt.tz_convert(convert_tz)
 
     if any('MutationID' in m for m in msgs):
         msgs_df['mutid'] = [msg.get('MutationID', None) for msg in msgs_df['msg']]
