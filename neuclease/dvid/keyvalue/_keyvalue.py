@@ -621,6 +621,7 @@ DEFAULT_BODY_STATUS_CATEGORIES = [
     'Orphan-artifact',
     'Orphan',
     'Orphan hotknife',
+    'Out of scope',
     'Not examined',
     '',
     '0.5assign',
