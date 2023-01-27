@@ -3328,8 +3328,12 @@ def labelmap_kafka_msgs_to_df(kafka_msgs, default_timestamp=DEFAULT_TIMESTAMP, c
             _mutation_bodies = [target_body, child_cleaved_body]
         elif action in ('merge', 'merge-complete'):
             target_body = msg.get('Target', np.nan)
-            merges = msg.get('Labels', np.nan)
-            _mutation_bodies = [target_body, *merges]
+            merges = msg.get('Labels')
+            if merges:
+                _mutation_bodies = [target_body, *merges]
+            else:
+                _mutation_bodies = [target_body]
+                merges = np.nan
         elif action in ('split', 'split-complete'):
             target_body = msg.get('Target', np.nan)
             _mutation_bodies = [target_body]
