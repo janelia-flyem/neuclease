@@ -74,9 +74,8 @@ def vnc_group_conflict_report(server, uuid, dvid_ann=None, clio_ann=None, format
     We assess the topology of the group memberships and emit a report in HTML form,
     showing schematics of which bodies are tagged with which groups.
     """
-    if dvid_ann is None:
-        with Timer("Fetching DVID annotations", logger):
-            dvid_ann = fetch_sanitized_dvid_annotations(VNC_PROD, uuid)
+    with Timer("Fetching DVID annotations", logger):
+        dvid_ann = fetch_sanitized_dvid_annotations(server, uuid, dvid_ann)
 
     if clio_ann is None:
         with Timer("Fetching Clio annotations", logger):
