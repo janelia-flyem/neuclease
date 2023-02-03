@@ -1821,6 +1821,27 @@ def construct_query_to_convert_bq_ints(table, gcp_project='janelia-flyem', field
     )
 
 
+def display_sql(q):
+    """
+    Display syntax-highlighted SQL in a jupyter notebook using pygments.
+    """
+    from textwrap import dedent
+    q = dedent(q)
+
+    try:
+        from IPython.display import HTML, Code, display
+        from pygments import highlight
+        from pygments.lexers import SqlLexer
+        from pygments.formatters import HtmlFormatter
+    except ImportError:
+        print(q)
+    else:
+        formatter = HtmlFormatter(style='emacs')
+        css = formatter.get_style_defs('.highlight')
+        html = highlight(q, SqlLexer(), formatter)
+        display(HTML(f"<style>{css}</style>{html}"))
+
+
 def find_files(root_dir, file_exts=None, skip_exprs=None, file_exprs=None):
     """
     Utility for finding files that match a pattern within a directory tree,
