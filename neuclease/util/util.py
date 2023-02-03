@@ -1233,6 +1233,60 @@ def fix_df_names(df):
     """
     return df.rename(columns={c: c.lower().replace(' ', '_').replace('-', '_') for c in df.columns})
 
+
+def downgrade_nullable_dtypes(df, null_handling='error'):
+    """
+    Convert all nullable integer columns to use a standard numpy dtype.
+
+    New versions of pandas introduced the concept of nullable integer types,
+    which are not identical to numpy dtypes:
+
+        https://pandas.pydata.org/docs/user_guide/integer_na.html
+
+    This function will just convert them back to regular numpy dtypes.
+    If a column contains null values, the behavior depends on null_handling parameter.
+
+    Args:
+        df:
+            DataFrame, possibly containing column dtypes like 'Int64' (instead of 'int64')
+
+        null_handling:
+            Either 'error', 'skip', or 'makefloat'.
+
+            If 'error':
+                Attempt to convert ALL nullable columns, and let pandas raise an exception
+                if one of your columns contains a null value and therefore can't be
+                downgraded to a numpy integer dtype.
+
+            If 'skip'
+                Downgrade columns which don't contain null values, but skip the ones that do.
+
+            If 'makefloat':
+                Downgrade columns which contain nulls to np.float64, as pandas uses by default.
+    Returns:
+        DataFrame
+    """
+    assert null_handling in ('error', 'skip', 'makefloat')
+    pd_to_np = {'boolean': 'bool'}
+    for sign, size in product(['U', ''], [8, 16, 32, 64]):
+        k = f'{sign}Int{size}'
+        pd_to_np[k] = k.lower()
+
+    new_dtypes = {}
+    for col, dtype in df.dtypes.items():
+        if null_handling == 'skip' and df[col].isnull().any():
+            continue
+        elif null_handling == 'makefloat' and str(dtype) in pd_to_np and df[col].isnull().any():
+            if str(dtype) == "boolean":
+                new_dtypes[col] = object
+            else:
+                new_dtypes[col] = np.float64
+        else:
+            new_dtypes[col] = pd_to_np.get(str(dtype), dtype)
+
+    return df.astype(new_dtypes)
+
+
 def swap_df_cols(df, prefixes=None, swap_rows=None, suffixes=['_a', '_b']):
     """
     Swap selected columns of a dataframe, specified as a list of prefixes and two suffixes.
@@ -1631,10 +1685,37 @@ def fit_ellipsoid(mask):
     return size, center, radii_vec
 
 
-def perform_bigquery(q, client=None, project='janelia-flyem'):
+def perform_bigquery(q, client=None, project='janelia-flyem', downgrade_nullables_via='skip'):
     """
     Send the given SQL query to BigQuery
     and return the results as a DataFrame.
+
+    Args:
+        q:
+            SQL query string
+
+        client:
+            Optional. A bigquery Client object.
+
+        project:
+            GCP Project name
+
+        downgrade_nullables_via:
+            Annoyingly, newer versions of the bigquery Python library
+            make use of the new pandas' nullable integer types[1],
+            even when no null values are present in the results.
+            Those types are not 100% backwards-compatible with the older
+            numpy-based integer dtypes, even when no null values are present.
+            In this function, we automatically "downgrade" nullable dtypes to
+            their numpy integer equivalents when possible.
+            See `downgrade_nullable_dtypes()` for details.
+            To disable downgrading altogether, set `downgrade_nullables_via=False`.
+
+    Returns:
+        pd.DataFrame
+
+    [1]: https://pandas.pydata.org/docs/user_guide/integer_na.html
+
     """
     from google.cloud import bigquery
     assert 'GOOGLE_APPLICATION_CREDENTIALS' in os.environ
@@ -1647,7 +1728,10 @@ def perform_bigquery(q, client=None, project='janelia-flyem'):
     # In theory, there are faster ways to download table data using parquet,
     # but bigquery keeps giving me errors when I try that.
     r = client.query(q).result()
-    return r.to_dataframe()
+    df = r.to_dataframe()
+    if downgrade_nullables_via:
+        df = downgrade_nullable_dtypes(df, downgrade_nullables_via)
+    return df
 
 
 def perform_bigquery_upload(df, full_table_name, client=None):
