@@ -117,6 +117,11 @@ def post_roi(server, uuid, instance, roi_ranges, *, session=None):
     For generating RLE ranges from a list of coordinates, see:
         neuclease.dvid.rle.runlength_encode_to_ranges()
 
+    Note:
+        When you post to an ROI instance, the old ROI contents are completely erased.
+        There is no way to partially write an ROI and then expand it later.
+        You're always overwriting the whole thing.
+
     Args:
         server:
             dvid server, e.g. 'emdata3:8900'
