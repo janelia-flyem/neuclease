@@ -1,5 +1,7 @@
 """
 neuroglancer-related utility functions
+
+See also: neuclease/notebooks/hemibrain-neuroglancer-video-script.txt
 """
 import copy
 import json
