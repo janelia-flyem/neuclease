@@ -149,6 +149,21 @@ def point_annotation_layer_json(points_df, name="annotations", color="#ffff00", 
     return data
 
 
+def upload_ngstates(bucket_dir, states, threads=0, processes=0):
+    assert bucket_dir.startswith('gs://')
+    bucket_dir = bucket_dir[len('gs://'):]
+    bucket = bucket_dir.split('/')[0]
+    dirpath = bucket_dir[1 + len(bucket):]
+
+    blob_names = [dirpath + '/' + name for name in states.keys()]
+    blobs = map(json.dumps, states.values())
+    args = [(bucket, blobname, blob) for blobname, blob in zip(blob_names, blobs)]
+
+    from neuclease.util import compute_parallel
+    urls = compute_parallel(_upload_to_bucket, args, starmap=True, threads=threads, processes=processes)
+    return urls
+
+
 def upload_ngstate(bucket_path, state):
     """
     Upload the given JSON state to a gbucket location.
@@ -163,13 +178,15 @@ def upload_ngstate(bucket_path, state):
     return _upload_to_bucket(bucket, filename, state_string)
 
 
-def _upload_to_bucket(bucket_name, blob_name, blob_contents):
+def _upload_to_bucket(bucket, blob_name, blob_contents):
     """
     Upload a blob of data to the specified google storage bucket.
     """
-    from google.cloud import storage
-    storage_client = storage.Client()
-    bucket = storage_client.get_bucket(bucket_name)
+    if isinstance(bucket, str):
+        from google.cloud import storage
+        storage_client = storage.Client()
+        bucket = storage_client.get_bucket(bucket)
+
     blob = bucket.blob(blob_name)
     blob.cache_control = 'public, no-store'
     blob.upload_from_string(blob_contents, content_type='application/json')
