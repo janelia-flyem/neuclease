@@ -1207,6 +1207,9 @@ def region_features(label_img, grayscale_img=None, features=['Box', 'Count'], ig
     assert label_img.ndim in (2,3)
     axes = 'zyx'[-label_img.ndim:]
 
+    if isinstance(features, str):
+        features = [features]
+
     vfeatures = {*features}
 
     valid_names = {*SEGMENTATION_FEATURE_NAMES, *GRAYSCALE_FEATURE_NAMES}
