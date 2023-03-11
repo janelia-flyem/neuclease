@@ -5,12 +5,14 @@ import copy
 import logging
 import tempfile
 import subprocess
+from functools import partial
 from collections.abc import Mapping
 
 import numpy as np
 import pandas as pd
 
-from neuclease.util import tqdm_proxy as tqdm, dump_json
+from vol2mesh import Mesh
+from neuclease.util import tqdm_proxy as tqdm, dump_json, compute_parallel, region_features, box_to_slicing
 from neuclease.dvid import fetch_combined_roi_volume
 
 logger = logging.getLogger()
@@ -29,7 +31,8 @@ DEFAULT_VOLUME_INFO = {
 
 
 def construct_ng_precomputed_layer_from_rois(server, uuid, rois, bucket_name, bucket_path, scale_0_res=8, decimation=0.01,
-                                             localdir=None, steps={'voxels', 'meshes', 'properties'}, permit_overlaps=False):
+                                             localdir=None, steps={'voxels', 'meshes', 'properties'}, permit_overlaps=False,
+                                             processes=0):
     """
     Given a list of ROIs, generate a neuroglancer precomputed layer for them.
 
@@ -88,7 +91,7 @@ def construct_ng_precomputed_layer_from_rois(server, uuid, rois, bucket_name, bu
         # pad volume to ensure mesh faces on all sides
         roi_vol = np.pad(roi_vol, 1)
         roi_box += [[-1, -1, -1], [1, 1, 1]]
-        create_precomputed_ngmeshes(roi_vol, roi_res * roi_box, roi_names, bucket_name, bucket_path, localdir, decimation)
+        create_precomputed_ngmeshes(roi_vol, roi_res * roi_box, roi_names, bucket_name, bucket_path, localdir, decimation, processes=processes)
 
     if 'properties' in steps:
         logger.info("Adding segment properties (ROI names)")
@@ -98,7 +101,7 @@ def construct_ng_precomputed_layer_from_rois(server, uuid, rois, bucket_name, bu
 
 
 def construct_ng_precomputed_layer_from_roi_seg(roi_vol, roi_names, bucket_name, bucket_path, scale_0_res=8, decimation=0.01,
-                                                localdir=None, steps={'voxels', 'meshes', 'properties'}):
+                                                localdir=None, steps={'voxels', 'meshes', 'properties'}, processes=0):
     """
     Similar to above, but when you have an ROI volume from elsewhere (not ROIs in DVID).
 
@@ -154,7 +157,7 @@ def construct_ng_precomputed_layer_from_roi_seg(roi_vol, roi_names, bucket_name,
         # pad volume to ensure mesh faces on all sides
         roi_vol = np.pad(roi_vol, 1)
         roi_box += [[-1, -1, -1], [1, 1, 1]]
-        create_precomputed_ngmeshes(roi_vol, roi_res * roi_box, roi_names, bucket_name, bucket_path, localdir, decimation)
+        create_precomputed_ngmeshes(roi_vol, roi_res * roi_box, roi_names, bucket_name, bucket_path, localdir, decimation, processes=processes)
 
     if 'properties' in steps:
         logger.info("Adding segment properties (ROI names)")
@@ -217,24 +220,42 @@ def create_precomputed_roi_vol(roi_vol, bucket_name, bucket_path, max_scale=3, r
             store[:] = roi_vol.transpose()[:-2**scale+1:2**scale, :-2**scale+1:2**scale, :-2**scale+1:2**scale, None]
 
 
-def create_precomputed_ngmeshes(vol, vol_fullres_box, names, bucket_name, bucket_path, localdir=None, decimation=0.01, volume_info=None):
+def create_precomputed_ngmeshes(vol, vol_fullres_box, names, bucket_name, bucket_path, localdir=None, decimation=0.01, volume_info=None, processes=0):
     """
-    Create meshes for the given labelvolume and upload them to a google bucket in
+    Create meshes for the given label volume and upload them to a google bucket in
     neuroglancer legacy mesh format (i.e. what flyem calls "ngmesh" format).
 
     Args:
         vol_fullres_box:
             Full resolution box, in NANOMETERS
     """
-    from vol2mesh import Mesh
     logger.info("Generating meshes")
-    meshes = Mesh.from_label_volume(vol, vol_fullres_box, smoothing_rounds=2)
+    num_labels = len(set(pd.unique(vol.reshape(-1))) - {0})
 
-    logger.info("Simplifying meshes")
-    for mesh in tqdm(meshes.values()):
-        mesh.simplify(decimation)
+    feats = region_features(vol)
+    boxes = feats['Box'].loc[(feats['Count'] > 0)]
+
+    def _gen_masks():
+        for label, box in boxes.items():
+            subvol = vol[box_to_slicing(*box)]
+            mask = (subvol == label)
+            res = (vol_fullres_box[1] - vol_fullres_box[0]) / vol.shape
+            yield label, box * res, mask
+
+    fn = partial(_gen_mesh, 2, decimation)
+    meshes = compute_parallel(fn, _gen_masks(), starmap=True, processes=processes, total=num_labels)
+    meshes = dict(meshes)
 
     upload_precompted_ngmeshes(meshes, names, bucket_name, bucket_path, localdir, volume_info)
+
+
+def _gen_mesh(smoothing_rounds, decimation, label, fullres_box, mask):
+    # Apparently the 'ilastik' method isn't process-safe anymore??
+    # mesh = Mesh.from_binary_vol(mask, fullres_box, method='ilastik', ensure_halo=True, smoothing_rounds=smoothing_rounds)
+    mesh = Mesh.from_binary_vol(mask, fullres_box, method='skimage', ensure_halo=True)
+    mesh.laplacian_smooth(smoothing_rounds)
+    mesh.simplify(decimation)
+    return label, mesh
 
 
 def upload_precompted_ngmeshes(meshes, names, bucket_name, bucket_path, localdir=None, volume_info=None):
@@ -265,7 +286,7 @@ def upload_precompted_ngmeshes(meshes, names, bucket_name, bucket_path, localdir
 
     logger.info("Uploading")
     subprocess.run(f"gsutil -h 'Cache-Control:public, no-store' cp {localdir}/info {bucket_name}/{bucket_path}/info", shell=True)
-    subprocess.run(f"gsutil cp -R {localdir}/mesh {bucket_name}/{bucket_path}/mesh", shell=True)
+    subprocess.run(f"gsutil -m cp -R {localdir}/mesh {bucket_name}/{bucket_path}/mesh", shell=True)
 
 
 def create_precomputed_segment_properties(names, bucket_name, bucket_path, localdir=None, volume_info=None):
