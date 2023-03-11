@@ -5,6 +5,7 @@ import copy
 import logging
 import tempfile
 import subprocess
+from collections.abc import Mapping
 
 import numpy as np
 import pandas as pd
@@ -123,6 +124,13 @@ def construct_ng_precomputed_layer_from_roi_seg(roi_vol, roi_names, bucket_name,
     """
     invalid_steps = set(steps) - {'voxels', 'meshes', 'properties'}
     assert not invalid_steps, f"Invalid steps: {steps}"
+
+    if set(steps) & {'meshes', 'properties'}:
+        assert isinstance(roi_names, Mapping)
+        assert all(np.issubdtype(type(k), np.integer) for k in roi_names.keys()), \
+            "roi_names should be dict of {id: name}"
+        assert all(isinstance(v, str) for v in roi_names.values()), \
+            "roi_names should be dict of {id: name}"
 
     if not localdir:
         localdir = tempfile.mkdtemp()
