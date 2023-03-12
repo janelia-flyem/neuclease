@@ -24,13 +24,16 @@ def format_nglink(ng_server, link_json_settings):
     return ng_server + '/#!' + urllib.parse.quote(json.dumps(link_json_settings))
 
 
-def extract_annotations(link, link_index=None, user=None):
+def extract_annotations(link, link_index=None, user=None, visible_only=False):
     if isinstance(link, str):
         link = parse_nglink(link)
     annotation_layers = [layer for layer in link['layers'] if layer['type'] == "annotation"]
 
     data = []
     for layer in annotation_layers:
+        if visible_only and (layer.get('archived', False) or not layer.get('visible', True)):
+            continue
+
         for a in layer['annotations']:
             data.append((layer['name'], *a['point'], a.get('description', '')))
 
@@ -98,7 +101,7 @@ LOCAL_ANNOTATION_JSON = {
 }
 
 
-def point_annotation_layer_json(points_df, name="annotations", color="#ffff00", size=8.0, linkedSegmentationLayer=None):
+def point_annotation_layer_json(points_df, name="annotations", color="#ffff00", size=8.0, linkedSegmentationLayer=None, show_panel=True):
     """
     Construct the JSON data for a neuroglancer local point annotations layer.
     This does not result in a complete neuroglancer link; it results in something
@@ -145,6 +148,9 @@ def point_annotation_layer_json(points_df, name="annotations", color="#ffff00", 
             entry['segments'] = segments
 
         data['annotations'].append(entry)
+
+    if not show_panel:
+        del data['panels']
 
     return data
 
