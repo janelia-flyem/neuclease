@@ -156,6 +156,13 @@ def point_annotation_layer_json(points_df, name="annotations", color="#ffff00", 
 
 
 def upload_ngstates(bucket_dir, states, threads=0, processes=0):
+    """
+    Use multithreading or multiprocessing to upload many files in parallel,
+    similar to `gsutil -m cp []...]`, except that in this case you must choose
+    between multithreading or multiprocessing (not a combination of the two).
+    """
+    from neuclease.util import upload_to_bucket
+
     assert bucket_dir.startswith('gs://')
     bucket_dir = bucket_dir[len('gs://'):]
     bucket = bucket_dir.split('/')[0]
@@ -166,7 +173,7 @@ def upload_ngstates(bucket_dir, states, threads=0, processes=0):
     args = [(bucket, blobname, blob) for blobname, blob in zip(blob_names, blobs)]
 
     from neuclease.util import compute_parallel
-    urls = compute_parallel(_upload_to_bucket, args, starmap=True, threads=threads, processes=processes)
+    urls = compute_parallel(upload_to_bucket, args, starmap=True, threads=threads, processes=processes)
     return urls
 
 
@@ -174,6 +181,8 @@ def upload_ngstate(bucket_path, state):
     """
     Upload the given JSON state to a gbucket location.
     """
+    from neuclease.util import upload_to_bucket
+
     assert bucket_path.startswith('gs://')
     bucket_path = bucket_path[len('gs://'):]
 
@@ -181,10 +190,10 @@ def upload_ngstate(bucket_path, state):
     filename = bucket_path[1 + len(bucket):]
 
     state_string = json.dumps(state, indent=2)
-    return _upload_to_bucket(bucket, filename, state_string)
+    return upload_to_bucket(bucket, filename, state_string)
 
 
-def _upload_to_bucket(bucket, blob_name, blob_contents):
+def upload_to_bucket(bucket, blob_name, blob_contents):
     """
     Upload a blob of data to the specified google storage bucket.
     """
