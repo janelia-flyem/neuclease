@@ -1030,44 +1030,44 @@ def downsample_mask(mask, factor, method='or'):
     return f(v, axis=last_axes)
 
 
-def extract_labels_from_volume(points_df, volume, box_zyx=None, vol_scale=0, label_names=None):
+def extract_labels_from_volume(points_df, volume, box_zyx=None, vol_scale=0, label_names=None, name_col=None):
     """
     Given a list of point coordinates and a label volume, assign a
     label to each point based on its position in the volume.
-    
+
     Extracting values from an array in numpy is simple.
     In the simplest case, this is equivalent to:
-    
+
         coords = points_df[['z', 'y', 'x']].values.transpose()
         points_df['label'] = volume[(*coords,)]
 
     But this function supports extra features:
-    
+
     - Points outside the volume extents are handled gracefully (they remain unlabeled).
     - The volume can be offset from the origin (doesn't start at (0,0,0)).
     - The volume can be provided in downscaled form, in which case the
       given points will be downscaled before sampling is performed.
     - Both label values (ints) and label names are output, if the label names were specified.
-    
+
     Args:
         points_df:
             DataFrame with at least columns ['x', 'y', 'z'].
             The points in this DataFrame should be provided at SCALE-0,
             regardless of vol_scale.
             This function appends two additional columns to the DataFrame, IN-PLACE.
-        
+
         volume:
             3D ndarray of label voxels
-        
+
         box_zyx:
             The (min,max) coordinates in which the volume resides in the point coordinate space.
             It is assumed that this box is provided at the same scale as vol_scale,
             (i.e. it is not necessarily given using scale-0 coordiantes).
-        
+
         vol_scale:
             Specifies the scale at which volume (and box_zyx) were provided.
             The coordinates in points_df will be downscaled accordingly.
-            
+
         label_names:
             Optional.  Specifies how label IDs map to label names.
             If provided, a new column 'label_name' will be appended to
@@ -1078,7 +1078,12 @@ def extract_labels_from_volume(points_df, volume, box_zyx=None, vol_scale=0, lab
               indicating each label ID in the output image, or
             - a list label names in which case the mapping is determined automatically
               by enumerating the labels in the given order (starting at 1).
-    
+
+        name_col:
+            Customize the name of the column which will be used to store the extracted
+            label and label names. Otherwise, the results are stored in the columns
+            'label' and 'label_name'.
+
     Returns:
         None.  Results are appended to the points_df as new column(s).
     """
@@ -1119,7 +1124,7 @@ def extract_labels_from_volume(points_df, volume, box_zyx=None, vol_scale=0, lab
                 label_names = { v:k for k,v in label_names.items() }
         else:
             label_names = dict(enumerate(label_names, start=1))
-        
+
         name_set = ['<unspecified>', *label_names.values()]
         default_names = ['<unspecified>']*len(points_df)
         # FIXME: More than half of the runtime of this function is spent on this line!
@@ -1130,6 +1135,10 @@ def extract_labels_from_volume(points_df, volume, box_zyx=None, vol_scale=0, lab
         for label, name in label_names.items():
             rows = points_df['label'] == label
             points_df.loc[rows, 'label_name'] = name
+
+        if name_col:
+            points_df.drop(columns=[name_col, f'{name_col}_label'], errors='ignore', inplace=True)
+            points_df.rename(inplace=True, columns={'label': f'{name_col}_label', 'label_name': name_col})
 
 
 def compute_merges(orig_vol, agg_vol):

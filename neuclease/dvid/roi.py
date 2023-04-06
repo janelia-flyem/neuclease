@@ -418,7 +418,5 @@ def determine_point_rois(server, uuid, rois, points_df, combined_vol=None, combi
 
     assert combined_box is not None
 
-    extract_labels_from_volume(points_df, combined_vol, combined_box, 5, rois)
-    points_df.drop(columns=['roi', 'roi_label'], errors='ignore', inplace=True)
-    points_df.rename(inplace=True, columns={'label': 'roi_label', 'label_name': 'roi'})
+    extract_labels_from_volume(points_df, combined_vol, combined_box, 5, rois, 'roi')
 
