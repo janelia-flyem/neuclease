@@ -618,6 +618,7 @@ def extend_list_value(server, uuid, instance, key, new_list, *, session=None):
 DEFAULT_BODY_STATUS_CATEGORIES = [
     'Unimportant',
     'Glia',
+    'Hard to trace',
     'Orphan-artifact',
     'Orphan',
     'Orphan hotknife',
@@ -631,7 +632,6 @@ DEFAULT_BODY_STATUS_CATEGORIES = [
     'Cervical Anchor',
     'Soma Anchor',
     'Primary Anchor',
-    'Hard to trace',
     'Partially traced',
     'Leaves',
     'PRT Orphan',
