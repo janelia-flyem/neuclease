@@ -34,7 +34,7 @@ def extract_annotations(link, link_index=None, user=None, visible_only=False):
         if visible_only and (layer.get('archived', False) or not layer.get('visible', True)):
             continue
 
-        for a in layer['annotations']:
+        for a in layer.get('annotations', []):
             data.append((layer['name'], *a['point'], a.get('description', '')))
 
     df = pd.DataFrame(data, columns=['layer', *'xyz', 'description'])
