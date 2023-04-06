@@ -7,11 +7,13 @@ import copy
 import json
 import urllib
 import logging
+from collections.abc import Mapping, Sequence
 import numpy as np
 import pandas as pd
 from textwrap import dedent
 
 logger = logging.getLogger(__name__)
+
 
 def parse_nglink(link):
     url_base, pseudo_json = link.split('#!')
@@ -52,6 +54,8 @@ def extract_annotations(link, link_index=None, user=None, visible_only=False):
     return df[cols]
 
 
+# Tip: Here's a nice repo with lots of colormaps implemented in GLSL.
+# https://github.com/kbinani/colormap-shaders
 SHADER_FMT = dedent("""\
     void main() {{
         setColor(defaultColor());
@@ -101,7 +105,7 @@ LOCAL_ANNOTATION_JSON = {
 }
 
 
-def point_annotation_layer_json(points_df, name="annotations", color="#ffff00", size=8.0, linkedSegmentationLayer=None, show_panel=True):
+def point_annotation_layer_json(points_df, name="annotations", color="#ffff00", size=8.0, linkedSegmentationLayer=None, show_panel=True, properties=[]):
     """
     Construct the JSON data for a neuroglancer local point annotations layer.
     This does not result in a complete neuroglancer link; it results in something
@@ -112,6 +116,47 @@ def point_annotation_layer_json(points_df, name="annotations", color="#ffff00", 
             DataFrame with columns ['x', 'y', 'z'] and optionally 'id' and 'description'.
             If you are providing a linkedSegmentationLayer, your dataframe should contain
             a 'semgents' column to indicate which segments are associated with each annotation.
+
+        name:
+            The name of the annotation layer
+
+        color:
+            The default color for annotations, which can be overridden by the annotation shader.
+
+        size:
+            The annotation size to hard-code into the default annotation shader used by this function.
+
+        linkedSegmentationLayer:
+            If the annotations should be associated with another layer in the view,
+            this specifies the name of that layer.
+            This function sets the 'filterBySegmentation' key to hide annotations from non-selected segments.
+
+        show_panel:
+            If True, the annotation panel will be visible in the side bar by default.
+
+        properties:
+            The names of columns to use as annotation properties.
+            Properties are visible in the selection panel when an annotation is selected,
+            and they can also be used in annotation shaders via a function.
+            For example, for a property named 'confidence', you could write setPointMarkerSize(prop_confidence()).
+
+            This function supports annotation color proprties via strings (e.g. '#ffffff') and also annotation
+            'enum' properties via pandas categoricals.
+
+            By default, the annotation IDs are the same as the column names and the annotation types are inferred.
+            You can override the property 'spec' by supplying a dict-of-dicts here instead of a list of columns:
+
+                properties={
+                    "my_column": {
+                        "id": "my property",
+                        "description": "This is my annotation property.",
+                        "type": "float32",
+                        "enum_values": [0.0, 0.5, 1.0],
+                        "enum_labels": ["nothing", "something", "everything"],
+                    },
+                    "another_column: {...}
+                }
+
     Returns:
         dict (JSON data)
     """
@@ -132,6 +177,16 @@ def point_annotation_layer_json(points_df, name="annotations", color="#ffff00", 
         data['linkedSegmentationLayer'] = linkedSegmentationLayer
         data['filterBySegmentation'] = ['segments']
 
+    prop_specs = _annotation_property_specs(points_df, properties)
+    if prop_specs:
+        data['annotationProperties'] = prop_specs
+
+    # Replace categoricals with their codes.
+    # The corresponding enum_labels are already stored in the property specs
+    for col in properties:
+        if points_df[col].dtype == "category":
+            points_df[col] = points_df[col].cat.codes
+
     for row in points_df.itertuples():
         entry = {}
         entry['type'] = "point"
@@ -147,12 +202,75 @@ def point_annotation_layer_json(points_df, name="annotations", color="#ffff00", 
             segments = [str(s) for s in segments]
             entry['segments'] = segments
 
+        if prop_specs:
+            entry['props'] = [getattr(row, prop) for prop in properties]
+
         data['annotations'].append(entry)
 
     if not show_panel:
         del data['panels']
 
     return data
+
+
+def _annotation_property_specs(points_df, properties):
+    def proptype(col):
+        dtype = points_df[col].dtype
+        if dtype in (np.float64, np.int64, np.uint64):
+            raise Exception('neuroglancer doesnt support 64-bit property types.')
+        if dtype in (np.uint8, np.int8, np.uint16, np.int16, np.uint32, np.int32, np.float32):
+            return str(dtype)
+
+        if dtype == 'category':
+            num_cats = len(dtype.categories)
+            for utype in (np.uint8, np.uint16, np.uint32):
+                if num_cats <= 1 + np.iinfo(utype).max:
+                    return str(np.dtype(utype))
+            raise Exception(f"Column {col} has too many categories")
+
+        if points_df[col].dtype != object:
+            raise Exception(f"Unsupported property dtype: {dtype} for column {col}")
+
+        is_str = points_df[col].map(lambda x: isinstance(x, str)).all()
+        is_color = is_str and points_df[col].str.startswith('#').all()
+        if not is_color:
+            msg = (
+                f"Column {col}: I don't know what to do with object dtype that isn't rbg or rgba.\n"
+                "If you want to create an enum property, then supply a pandas Categorical column."
+            )
+            raise Exception(msg)
+        if (points_df[col].map(len) == len("#rrggbb")).all():
+            return 'rgb'
+        if (points_df[col].map(len) == len("#rrggbbaa")).all():
+            return 'rgba'
+        raise RuntimeError("Not valid RGB or RGBA colors")
+
+    if isinstance(properties, Mapping):
+        property_specs = properties
+    else:
+        assert isinstance(properties, Sequence)
+        property_specs = {col: {} for col in properties}
+
+    default_property_specs = {
+        col: {
+            'id': col,
+            'type': proptype(col),
+        }
+        for col in property_specs
+    }
+
+    for col in default_property_specs.keys():
+        if points_df[col].dtype == "category":
+            cats = points_df[col].cat.categories.tolist()
+            default_property_specs[col]['enum_values'] = [*range(len(cats))]
+            default_property_specs[col]['enum_labels'] = cats
+
+    property_specs = [
+        {**default_property_specs[col], **property_specs[col]}
+        for col in property_specs
+    ]
+
+    return property_specs
 
 
 def upload_ngstates(bucket_dir, states, threads=0, processes=0):
