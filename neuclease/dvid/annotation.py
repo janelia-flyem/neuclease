@@ -142,7 +142,7 @@ def fetch_label(server, uuid, instance, label, relationships=False, *, format='j
             Body ID
 
         relationships:
-            Set to true to return all relationships for each annotation.
+            Set to true to return all relationships for each annotation. Only meaningful for the json format.
 
         format:
             Either 'json' or 'pandas'.
