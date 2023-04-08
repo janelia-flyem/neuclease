@@ -122,6 +122,68 @@ def fetch_tags(server, uuid, instance, *, session=None):
 fetch_annotation_tags = fetch_tags
 
 
+def _fetch_elements(url, params, format, relationships, session):
+    """
+    Helper function for functions which fetch elements.
+
+    Endpoints such as /elements, /blocks, /all-elements, /label, /tag all fetch lists of
+    elements, sometimes returned as a JSON list and sometimes as a JSON dict, keyed by block ID.
+
+    For the return value, the user may want a JSON list, JSON dict, or pandas DataFrame,
+    with or without relationship information as a second DataFrame.
+
+    This function calls the given endpoint, parses the result,
+    and returns the requested format.
+
+    Args:
+        url:
+            The complete url of the DVID endpoint from which annotation elements will be fetched
+        params:
+            Query string parameters, if any.
+        format:
+            Either 'list', 'blocks', or 'pandas'.
+        relationships:
+            If True, pandas format includes two dataframes (one for relationship data).
+        session:
+            requests.Session
+    Returns:
+        JSON list, JSON dict, or pandas DataFrame(s)
+    """
+    assert format in ('list', 'blocks', 'pandas')
+    r = session.get(url, params=params)
+    r.raise_for_status()
+    json_data = r.json()
+
+    # The /elements endpoint returns 'null' instead of
+    # an empty list, on old servers at least.
+    if json_data is None:
+        json_data = []
+
+    if format == 'blocks':
+        if isinstance(json_data, dict):
+            return json_data
+
+        # Convert from element list to block dict.
+        # (This is an unlikely use-case,
+        # but we implement it here for completeness.)
+        assert isinstance(json_data, list)
+        elements = [(*el['Pos'], el) for el in json_data]
+        df = pd.DataFrame(elements, columns=[*'xyz', 'element'])
+        df[[*'xyz']] //= 64
+        df['block'] = df['x'].astype(str) + ',' + df['y'].astype(str) + ',' + df['z'].astype(str)
+        return df.groupby('block')['element'].agg(list).to_dict()
+
+    if isinstance(json_data, dict):
+        # Convert from block dict to element list
+        json_data = [*chain(*json_data.values())]
+
+    assert isinstance(json_data, list)
+    if format == 'list':
+        return json_data
+
+    return load_elements_as_dataframe(json_data, relationships)
+
+
 @dvid_api_wrapper
 def fetch_label(server, uuid, instance, label, relationships=False, *, format='list', session=None):
     """
@@ -152,15 +214,13 @@ def fetch_label(server, uuid, instance, label, relationships=False, *, format='l
     Returns:
         JSON list or pandas DataFrame
     """
-    assert format in ('json', 'list', 'pandas')
+    # 'json' is equivalent to 'list' for backwards compatibility.
+    if format == 'json':
+        format = 'list'
+    url = f'{server}/api/node/{uuid}/{instance}/label/{label}'
     params = { 'relationships': str(bool(relationships)).lower() }
+    return _fetch_elements(url, params, format, relationships, session)
 
-    r = session.get(f'{server}/api/node/{uuid}/{instance}/label/{label}', params=params)
-    r.raise_for_status()
-    if format in ('json', 'list'):
-        return r.json()
-    else:
-        return load_elements_as_dataframe(r.json(), relationships)
 
 # Synonym.  See wrapper_proxies.py
 fetch_annotation_label = fetch_label
@@ -236,11 +296,9 @@ def fetch_tag(server, uuid, instance, tag, relationships=False, *, session=None)
     Returns:
         JSON list
     """
+    url = f'{server}/api/node/{uuid}/{instance}/tag/{tag}'
     params = { 'relationships': str(bool(relationships)).lower() }
-    
-    r = session.get(f'{server}/api/node/{uuid}/{instance}/tag/{tag}', params=params)
-    r.raise_for_status()
-    return r.json()
+    return _fetch_elements(url, params, format, relationships, session)
 
 
 @dvid_api_wrapper
@@ -334,8 +392,9 @@ def fetch_elements(server, uuid, instance, box_zyx, *, relationships=False, form
         JSON list or pandas DataFrame(s), depending on the
         'format' and 'relationships' arguments.
     """
-    # 'list' and 'json' are equivalent.
-    assert format in ('json', 'list', 'pandas')
+    # 'list' and 'json' are equivalent for backwards compatibility.
+    if format == 'json':
+        format = 'list'
     box_zyx = np.asarray(box_zyx)
     shape = box_zyx[1] - box_zyx[0]
 
@@ -343,16 +402,7 @@ def fetch_elements(server, uuid, instance, box_zyx, *, relationships=False, form
     offset_str = '_'.join(map(str, box_zyx[0, ::-1]))
 
     url = f'{server}/api/node/{uuid}/{instance}/elements/{shape_str}/{offset_str}'
-    data = fetch_generic_json(url, session=session)
-
-    # The endpoint returns 'null' instead of an empty list, on old servers at least.
-    # But we always return a list.
-    data = data or []
-
-    if format in ('list', 'json'):
-        return data
-    else:
-        return load_elements_as_dataframe(data, relationships)
+    return _fetch_elements(url, {}, format, relationships, session)
 
 
 def load_elements_as_dataframe(elements, relationships=False):
@@ -379,7 +429,7 @@ def load_elements_as_dataframe(elements, relationships=False):
     df[[*'xyz']] = df['Pos'].tolist()
 
     rels = None
-    if relationships and 'Rels' in df.columns:
+    if relationships and 'Rels' in df.columns and df['Rels'].any():
         rels = df.set_index([*'xyz'])['Rels'].explode()
         rels = pd.json_normalize(rels).set_index(rels.index)
         rels[[f'to_{k}' for k in 'xyz']] = rels['To'].tolist()
@@ -531,19 +581,12 @@ def fetch_all_elements(server, uuid, instance, format='blocks', *, relationships
                 'createdTime', 'user', 'checked', 'comment', 'modifiedTime', 'checkedTime', 'priority']
         todos = todos[cols]
     """
+    # 'json' and 'blocks' are equivalent for backwards compatibility
     assert format in ('pandas', 'json', 'blocks', 'list')
+    if format == 'json':
+        format = 'blocks'
     url = f'{server}/api/node/{uuid}/{instance}/all-elements'
-    json_data = fetch_generic_json(url, session=session)
-
-    if format in ('json', 'blocks'):
-        return json_data
-
-    elements = [*chain(*json_data.values())]
-    if format == 'list':
-        return elements
-
-    assert format == 'pandas'
-    return load_elements_as_dataframe(elements, relationships)
+    return _fetch_elements(url, {}, format, relationships, session)
 
 
 @dvid_api_wrapper
@@ -631,6 +674,10 @@ def fetch_blocks(server, uuid, instance, box_zyx, *, format='blocks', relationsh
         JSON dict, JSON list, or pandas DataFrame(s), depending on the
         'format' and 'relationships' arguments.
     """
+    assert format in ('blocks', 'json', 'pandas')
+    if format == 'json':
+        format = 'blocks'
+
     box_zyx = np.asarray(box_zyx)
     shape = box_zyx[1] - box_zyx[0]
 
@@ -638,17 +685,7 @@ def fetch_blocks(server, uuid, instance, box_zyx, *, format='blocks', relationsh
     offset_str = '_'.join(map(str, box_zyx[0, ::-1]))
 
     url = f'{server}/api/node/{uuid}/{instance}/blocks/{shape_str}/{offset_str}'
-    json_data = fetch_generic_json(url, session=session)
-
-    if format in ('json', 'blocks'):
-        return json_data
-
-    elements = [*chain(*json_data.values())]
-    if format == 'list':
-        return elements
-
-    assert format == 'pandas'
-    return load_elements_as_dataframe(elements, relationships)
+    return _fetch_elements(url, {}, format, relationships, session)
 
 
 @dvid_api_wrapper
