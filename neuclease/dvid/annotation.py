@@ -121,8 +121,9 @@ def fetch_tags(server, uuid, instance, *, session=None):
 
 fetch_annotation_tags = fetch_tags
 
+
 @dvid_api_wrapper
-def fetch_label(server, uuid, instance, label, relationships=False, *, format='json', session=None):
+def fetch_label(server, uuid, instance, label, relationships=False, *, format='list', session=None):
     """
     Returns all point annotations within the given label as an array of elements.
     This endpoint is only available if the annotation data instance is synced with
@@ -143,22 +144,23 @@ def fetch_label(server, uuid, instance, label, relationships=False, *, format='j
 
         relationships:
             Set to true to return all relationships for each annotation.
+            If format='pandas', then two DataFrames are returned instead of one.
 
         format:
-            Either 'json' or 'pandas'.
+            Either 'list' or 'pandas'.
 
     Returns:
         JSON list or pandas DataFrame
     """
-    assert format in ('json', 'pandas')
+    assert format in ('json', 'list', 'pandas')
     params = { 'relationships': str(bool(relationships)).lower() }
 
     r = session.get(f'{server}/api/node/{uuid}/{instance}/label/{label}', params=params)
     r.raise_for_status()
-    if format == 'json':
+    if format in ('json', 'list'):
         return r.json()
     else:
-        return load_elements_as_dataframe(r.json())
+        return load_elements_as_dataframe(r.json(), relationships)
 
 # Synonym.  See wrapper_proxies.py
 fetch_annotation_label = fetch_label
@@ -282,103 +284,129 @@ def fetch_roi(server, uuid, instance, roi, roi_uuid=None, *, session=None):
     r.raise_for_status()
     return r.json()
 
+
 # Synonym to avoid conflicts with roi.fetch_roi()
 fetch_annotation_roi = fetch_roi
 
 
 @dvid_api_wrapper
-def fetch_elements(server, uuid, instance, box_zyx, *, format='json', session=None):  #@ReservedAssignment
+def fetch_elements(server, uuid, instance, box_zyx, *, relationships=False, format='list', session=None):
     """
     Returns all point annotations within the given box.
-    
+
     Note:
         Automatically includes relationships if format=True,
         and automatically discards relationships if format=False.
-    
+
     Note:
         This function is best for fetching relatively
         sparse annotations, to-do annotations.
         For synapse annotations, see ``fetch_synapses_in_batches()``.
-    
+
     Args:
         server:
             dvid server, e.g. 'emdata3:8900'
-        
+
         uuid:
             dvid uuid, e.g. 'abc9'
-        
+
         instance:
             dvid annotations instance name, e.g. 'synapses'
-        
+
         box_zyx:
             The bounds of the subvolume from which to fetch annotation elements.
             Given as a pair of coordinates (start, stop), e.g. [(0,0,0), (10,20,30)],
             in Z,Y,X order.  It need not be block-aligned.
-        
+
         format:
-            Either 'json' or 'pandas'
+            Either 'list' or 'pandas'.
+            If 'list', return the JSON data (a list) exactly as received from DVID.
             If 'pandas', convert the elements into a dataframe
             with separate columns for X,Y,Z and each property.
-            In the pandas case, relationships are discarded.
-        
+
+        relationships:
+            Relationships are always returned for JSON output (format='list'),
+            regardless of this argument.
+            But for 'pandas' output, relationship info is returned as a second
+            dataframe iff this argument is True.
+
     Returns:
-        JSON list
+        JSON list or pandas DataFrame(s), depending on the
+        'format' and 'relationships' arguments.
     """
-    assert format in ('json', 'pandas')
+    # 'list' and 'json' are equivalent.
+    assert format in ('json', 'list', 'pandas')
     box_zyx = np.asarray(box_zyx)
     shape = box_zyx[1] - box_zyx[0]
-    
+
     shape_str = '_'.join(map(str, shape[::-1]))
     offset_str = '_'.join(map(str, box_zyx[0, ::-1]))
 
     url = f'{server}/api/node/{uuid}/{instance}/elements/{shape_str}/{offset_str}'
     data = fetch_generic_json(url, session=session)
-    
-    # The endooint returns 'null' instead of an empty list, on old servers at least.
+
+    # The endpoint returns 'null' instead of an empty list, on old servers at least.
     # But we always return a list.
     data = data or []
-    
-    if format == 'pandas':
-        return load_elements_as_dataframe(data)
-    else:
+
+    if format in ('list', 'json'):
         return data
+    else:
+        return load_elements_as_dataframe(data, relationships)
 
 
-def load_elements_as_dataframe(elements):
+def load_elements_as_dataframe(elements, relationships=False):
     """
-    Convert the given elements from JSON to a pandas DataFrame.
+    Convert the given elements from JSON to pandas DataFrame(s).
+
+    Args:
+        elements:
+            JSON data as returned by
+
+            relationships:
+                If True, parse the relationships information in
+                the given elements and return the relationships as
+                a second DataFrame.
+
+    Returns:
+        One or two pandas DataFrames, depending on whether relationships=True.
 
     Note:
         For synapse annotations in particular,
         see ``load_synapses_as_dataframes()``
     """
-    pos = np.zeros((len(elements), 3), dtype=np.int32)
-    kinds = []
-    tags = []
+    df = pd.DataFrame(elements)
+    df[[*'xyz']] = df['Pos'].tolist()
 
-    prop_arrays = {}
+    rels = None
+    if relationships and 'Rels' in df.columns:
+        rels = df.set_index([*'xyz'])['Rels'].explode()
+        rels = pd.json_normalize(rels).set_index(rels.index)
+        rels[[f'to_{k}' for k in 'xyz']] = rels['To'].tolist()
+        del rels['To']
 
-    for i, e in enumerate(elements):
-        pos[i] = e['Pos']
-        kinds.append(e['Kind'])
-        tags.append(e.get('Tags', None))
+    if 'Tags' not in df.columns:
+        df['Tags'] = None
 
-        if 'Prop' not in e or not e['Prop']:
-            continue
+    if 'Prop' in df.columns:
+        props = pd.json_normalize(df['Prop'])
+        df = pd.concat((df, props), axis=1)
 
-        for k, v in e['Prop'].items():
-            pa = prop_arrays.get(k)
-            if pa is None:
-                pa = prop_arrays[k] = np.empty(len(elements), dtype=object)
-            pa[i] = v
+    df = df.drop(columns=['Pos', 'Prop', 'Rels'], errors='ignore')
+    df.columns = [*map(str.lower, df.columns)]
 
-    df = pd.DataFrame({'x': pos[:, 0], 'y': pos[:, 1], 'z': pos[:, 2],
-                       'kind': kinds, 'tags': tags, **prop_arrays})
+    # Fiddle with the column order.
+    leading_cols = [*'xyz', 'kind', 'tags']
+    other_cols = [c for c in df.columns if c not in leading_cols]
+    df = df[[*leading_cols, *other_cols]]
 
     if 'conf' in df.columns:
         df['conf'] = df['conf'].astype(np.float32)
 
-    return df
+    if relationships:
+        return df, rels
+    else:
+        return df
 
 
 def dataframe_to_elements(df, prop_cols=[]):
@@ -449,15 +477,15 @@ def elements_to_blocks(elements, block_width=64):
     blocks_df = element_df.groupby(['bz', 'by', 'bx'])['element'].agg(list)
     blocks_df = blocks_df.reset_index()
     blocks_df['key'] = (  blocks_df['bx'].astype(str) + ','
-                        + blocks_df['by'].astype(str) + ','
-                        + blocks_df['bz'].astype(str) )
+                        + blocks_df['by'].astype(str) + ','  # noqa
+                        + blocks_df['bz'].astype(str) )      # noqa
 
     blocks_dict = blocks_df.set_index('key')['element'].to_dict()
     return blocks_dict
 
 
 @dvid_api_wrapper
-def fetch_all_elements(server, uuid, instance, format='blocks', *, session=None):
+def fetch_all_elements(server, uuid, instance, format='blocks', *, relationships=False, session=None):
     """
     Returns all point annotations in the entire data instance, which could exceed data
     response sizes (set by server) if too many elements are present.  This should be
@@ -466,11 +494,23 @@ def fetch_all_elements(server, uuid, instance, format='blocks', *, session=None)
     Args:
         server, uuid, instance:
             DVID annotation instsance
+
         format:
-            By default ('blocks'), the returned stream of data is the
-            same as that returned by the /blocks endpoint.
-            If 'list', then return the elements in one big list (rather than a blockwise dict).
-            If 'pandas', load the elements into a DataFrame and return that.
+            By default ('blocks'), the returned stream of JSON data is the
+            same as that returned by the /blocks endpoint: { block_id : element-list }.
+            If 'list', then return the elements in one big list (rather than a blockwise dict),
+            similar to the /elements endpoint.
+            If 'pandas', return the elements (and possibly relationships) into DataFrame(s).
+
+        relationships:
+            Relationships are always returned for JSON outputs (blocks, list),
+            regardless of this argument.
+            But for 'pandas' output, relationship info is returned as a second
+            dataframe iff this argument is True.
+
+    Returns:
+        JSON dict, JSON list, or pandas DataFrame(s), depending on the
+        'format' and 'relationships' arguments.
 
     Example usage for analyzing "todo" items from NeuTu:
 
@@ -503,7 +543,7 @@ def fetch_all_elements(server, uuid, instance, format='blocks', *, session=None)
         return elements
 
     assert format == 'pandas'
-    return load_elements_as_dataframe(elements)
+    return load_elements_as_dataframe(elements, relationships)
 
 
 @dvid_api_wrapper
@@ -550,43 +590,65 @@ def post_elements(server, uuid, instance, elements, kafkalog=True, *, session=No
 
 
 @dvid_api_wrapper
-def fetch_blocks(server, uuid, instance, box_zyx, *, session=None):
+def fetch_blocks(server, uuid, instance, box_zyx, *, format='blocks', relationships=False, session=None):
     """
     Returns all point annotations within all blocks that intersect the given box.
-    
-    This differs from fetch_elements() in the following ways:
-        - All annotations in the intersecting blocks are returned,
-          even annotations that lie outside of the specified box.
-        - The return value is a dict instead of a list.
+
+    This differs from fetch_elements() in that all annotations in the intersecting
+    blocks are returned, even annotations that lie outside of the specified box.
 
     Note: Automatically includes relationships.
-    
+
     Args:
         server:
             dvid server, e.g. 'emdata3:8900'
-        
+
         uuid:
             dvid uuid, e.g. 'abc9'
-        
+
         instance:
             dvid annotations instance name, e.g. 'synapses'
-        
+
         box_zyx:
             The bounds of the subvolume from which to fetch annotation elements.
             Given as a pair of coordinates (start, stop), e.g. [(0,0,0), (10,20,30)],
             in Z,Y,X order.  It need not be block-aligned.
-        
+
+        format:
+            By default ('blocks'), the returned stream of JSON data is the
+            same as that returned by the /blocks endpoint: { block_id : element-list }.
+            If 'list', then return the elements in one big list (rather than a blockwise dict),
+            similar to the /elements endpoint.
+            If 'pandas', return the elements (and possibly relationships) into DataFrame(s).
+
+        relationships:
+            Relationships are always returned for JSON outputs (blocks, list),
+            regardless of this argument.
+            But for 'pandas' output, relationship info is returned as a second
+            dataframe iff this argument is True.
+
     Returns:
-        JSON dict { block_id : element-list }
+        JSON dict, JSON list, or pandas DataFrame(s), depending on the
+        'format' and 'relationships' arguments.
     """
     box_zyx = np.asarray(box_zyx)
     shape = box_zyx[1] - box_zyx[0]
-    
+
     shape_str = '_'.join(map(str, shape[::-1]))
     offset_str = '_'.join(map(str, box_zyx[0, ::-1]))
 
     url = f'{server}/api/node/{uuid}/{instance}/blocks/{shape_str}/{offset_str}'
-    return fetch_generic_json(url, session=session)
+    json_data = fetch_generic_json(url, session=session)
+
+    if format in ('json', 'blocks'):
+        return json_data
+
+    elements = [*chain(*json_data.values())]
+    if format == 'list':
+        return elements
+
+    assert format == 'pandas'
+    return load_elements_as_dataframe(elements, relationships)
 
 
 @dvid_api_wrapper
@@ -601,7 +663,7 @@ def post_blocks(server, uuid, instance, blocks_json, kafkalog=False, *, merge_ex
     This low-level ingestion also does not transmit subscriber events to associated
     synced data (e.g., labelsz).
 
-    The POSTed JSON should be similar to the GET version with the block coordinate as 
+    The POSTed JSON should be similar to the GET version with the block coordinate as
     the key:
 
     {
