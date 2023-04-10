@@ -175,8 +175,9 @@ def _fetch_elements(url, params, format, relationships, session):
         elements = [(*el['Pos'], el) for el in json_data]
         df = pd.DataFrame(elements, columns=[*'xyz', 'element'])
         df[[*'xyz']] //= 64
-        df['block'] = df['x'].astype(str) + ',' + df['y'].astype(str) + ',' + df['z'].astype(str)
-        return df.groupby('block')['element'].agg(list).to_dict()
+        df[[*'xyz']] = df[[*'xyz']].astype(str)
+        df['block'] = df['x'] + ',' + df['y'] + ',' + df['z']
+        return df.groupby('block', sort=False)['element'].agg(list).to_dict()
 
     if isinstance(json_data, dict):
         # Convert from block dict to element list
@@ -413,10 +414,30 @@ def fetch_elements(server, uuid, instance, box_zyx, *, relationships=False, form
 def load_elements_as_dataframe(elements, relationships=False):
     """
     Convert the given elements from JSON to pandas DataFrame(s).
+    Properties are extracted and returned as top-level columns.
+    If requested, relationships are extracted into a separate dataframe.
 
     Args:
         elements:
-            JSON data as returned by
+            JSON data, a list of elements as returned by `/elements`.
+            Each element in the list looks something like this:
+
+            .. code-block:: json
+
+                {
+                    "Pos": [47182, 27901, 32800],
+                    "Kind": "PreSyn",
+                    "Tags": [],
+                    "Prop": {
+                        "conf": "0.931",
+                        "user": "$fpl"
+                    },
+                    "Rels": [
+                        {"Rel": "PreSynTo", "To": [47176, 27887, 32798]},
+                        {"Rel": "PreSynTo", "To": [47173, 27901, 32813]},
+                        {"Rel": "PreSynTo", "To": [47164, 27903, 32798]}
+                    ]
+                }
 
         relationships:
             If True, parse the relationships information in
@@ -433,19 +454,22 @@ def load_elements_as_dataframe(elements, relationships=False):
     df = pd.DataFrame(elements)
     df[[*'xyz']] = df['Pos'].tolist()
 
-    rels = None
-    if relationships and 'Rels' in df.columns and df['Rels'].any():
-        rels = df.set_index([*'xyz'])['Rels'].explode()
-        rels = pd.json_normalize(rels).set_index(rels.index)
-        rels[[f'to_{k}' for k in 'xyz']] = rels['To'].tolist()
-        del rels['To']
-
     if 'Tags' not in df.columns:
         df['Tags'] = None
 
     if 'Prop' in df.columns:
         props = pd.json_normalize(df['Prop'])
         df = pd.concat((df, props), axis=1)
+
+    if 'conf' in df.columns:
+        df['conf'] = df['conf'].astype(np.float32)
+
+    rels = None
+    if relationships and 'Rels' in df.columns and df['Rels'].any():
+        rels = df.set_index([*'xyz'])['Rels'].explode()
+        rels = pd.json_normalize(rels).set_index(rels.index)
+        rels[[f'to_{k}' for k in 'xyz']] = rels['To'].tolist()
+        del rels['To']
 
     df = df.drop(columns=['Pos', 'Prop', 'Rels'], errors='ignore')
     df.columns = [*map(str.lower, df.columns)]
@@ -454,9 +478,6 @@ def load_elements_as_dataframe(elements, relationships=False):
     leading_cols = [*'xyz', 'kind', 'tags']
     other_cols = [c for c in df.columns if c not in leading_cols]
     df = df[[*leading_cols, *other_cols]]
-
-    if 'conf' in df.columns:
-        df['conf'] = df['conf'].astype(np.float32)
 
     if relationships:
         return df, rels
@@ -475,8 +496,8 @@ def dataframe_to_elements(df, prop_cols=[]):
             Must contain at least the following columns:
             ['x', 'y', 'z', 'Kind']
 
-            If a 'Tags' column is provided and it contains only a single string per element,
-            the string elements will be wrapped in a list.
+            If a 'Tags' column is provided and it contains only a single
+            string per element, the string elements will be wrapped in a list.
 
         prop_cols:
             The column names which should be included in
