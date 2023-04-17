@@ -470,6 +470,7 @@ def load_elements_as_dataframe(elements, relationships=False):
         rels = pd.json_normalize(rels).set_index(rels.index)
         rels[[f'to_{k}' for k in 'xyz']] = rels['To'].tolist()
         del rels['To']
+        rels.columns = [*map(str.lower, rels.columns)]
 
     df = df.drop(columns=['Pos', 'Prop', 'Rels'], errors='ignore')
     df.columns = [*map(str.lower, df.columns)]
