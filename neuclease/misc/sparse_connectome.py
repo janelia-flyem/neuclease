@@ -59,7 +59,7 @@ The CSV table(s) can be emitted in one of three possible structures:
 
       Similar to the 'relationships' format, except the results are split into two files.
       All 'PostSynTo' rows are emitted in an 'inputs' file, and 'PreSynTo' rows are emitted
-      in an 'outputs' file.  And the 'rel' column is emitted in both cases.
+      in an 'outputs' file.  And the 'rel' column is omitted in both cases.
 
       Example output columns:
 
@@ -90,8 +90,9 @@ The CSV table(s) can be emitted in one of three possible structures:
 FLATIRON FORMAT
 ---------------
 
-The Flatiron team has a similar tool, whose output format can also be reproduced via this
-tool if the appropriate options are specified:
+This tool was inspired/influenced by a similar tool implemented by Pat Gunn at Flatiron.
+You can get this tool to emit the same output format as the Flatiron tool using
+the right combination of options.  Here's an example:
 
     sparse_connectome \\
         emdata6.int.janelia.org:9000 \\
