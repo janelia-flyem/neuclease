@@ -6,7 +6,7 @@ import ujson
 import numpy as np
 import pandas as pd
 
-from ..util import tqdm_proxy, extract_labels_from_volume, box_shape, extract_subvol, box_intersection, compute_parallel
+from ..util import Timer, tqdm_proxy, extract_labels_from_volume, box_shape, extract_subvol, box_intersection, compute_parallel
 from . import dvid_api_wrapper, fetch_generic_json
 from .rle import runlength_decode_from_ranges, runlength_decode_from_ranges_to_mask, runlength_encode_mask_to_ranges
 
@@ -186,7 +186,7 @@ def _fetch_roi_size(server, uuid, roi, session=None):
 
 
 @dvid_api_wrapper
-def fetch_combined_roi_volume(server, uuid, rois, as_bool=False, box_zyx=None, *, session=None):
+def fetch_combined_roi_volume(server, uuid, rois, as_bool=False, box_zyx=None, *, session=None, processes=0):
     """
     Fetch several ROIs from DVID and combine them into a single label volume or mask.
     The label values in the returned volume correspond to the order in which the ROI
@@ -196,10 +196,10 @@ def fetch_combined_roi_volume(server, uuid, rois, as_bool=False, box_zyx=None, *
     but a list of detected overlapping ROI pairs is included in the results.
 
     Note: All results are returned at SCALE 5, i.e. resolution = 2**5.
-    
+
     Two progress bars are shown: one for downloading the ROI RLEs, and another for
     constructing the output volume.
-    
+
     Caveat for pathological cases:
         Note that if more than 2 ROIs overlap at a common location,
         then some pathological cases can omit pairs of overlaps.
@@ -209,21 +209,21 @@ def fetch_combined_roi_volume(server, uuid, rois, as_bool=False, box_zyx=None, *
     Args:
         server:
             dvid server, e.g. 'emdata3:8900'
-        
+
         uuid:
             dvid uuid, e.g. 'abc9'
-        
+
         rois:
             Either:
             - a mapping of `{ roi_name : label }`, indicating each ROI's
               label ID in the output image, or
             - a list of dvid ROI instance names, e.g. `['PB', 'FB', 'EB', 'NO']`,
               in which case the ROIs will be enumerated in order (starting at 1)
-    
+
         as_bool:
             If True, return a boolean mask instead of a label volume.
             Note: When using is_bool, the `overlapping_pairs` result is undefined.
-        
+
         box_zyx:
             Optional. Specifies the box `[start, stop] == [(z0,y0,x0), (z1,y1,x1)]`
             of the returned result.
@@ -237,21 +237,21 @@ def fetch_combined_roi_volume(server, uuid, rois, as_bool=False, box_zyx=None, *
             For example, `box_zyx=[(0,0,0), None]` can be used to produce an output
             volume whose coordinates are aligned to the underlying data (at scale 5)
             with no offset.
-    
+
     Returns:
         (combined_vol, combined_box, overlap_stats)
         where combined_vol is an image volume (ndarray) (resolution: scale 5),
         combined_box indicates the location of combined_vol (scale 5),
         and overlap_stats indicates which ROIs overlap, and are thus not
         completely represented in the output volume (see caveat above).
-        
-        Unless as_bool is used, combined_vol is a label volume, whose dtype 
+
+        Unless as_bool is used, combined_vol is a label volume, whose dtype
         will be wide enough to allow a unique value for each ROI in the list.
 
     Example:
-    
+
         from neuclease.dvid import fetch_repo_instances, fetch_combined_roi_volume
-        
+
         # Select ROIs of interest
         rois = fetch_repo_instances(*master, 'roi').keys()
         rois = filter(lambda roi: not roi.startswith('(L)'), rois)
@@ -260,27 +260,35 @@ def fetch_combined_roi_volume(server, uuid, rois, as_bool=False, box_zyx=None, *
         # Combine into volume
         roi_vol, box, overlaps = fetch_combined_roi_volume('emdata3:8900', '7f0c', rois, box_zyx=[(0,0,0), None])
     """
+    with Timer(f"Fetching {len(rois)} rois", logger):
+        roi_ranges, roi_boxes = fetch_roi_ranges_and_boxes(
+            server, uuid, rois, session=session, processes=processes)
+
+    with Timer(f"Unpacking {len(rois)} rois", logger):
+        combined_vol, box_zyx, overlap_stats = unpack_roi_ranges_to_combined_volume(
+            rois, roi_ranges, roi_boxes, box_zyx, as_bool)
+
+    return combined_vol, box_zyx, overlap_stats
+
+
+@dvid_api_wrapper
+def fetch_roi_ranges_and_boxes(server, uuid, rois, *, session=None, processes=0):
+    """
+    Helper for fetch_combined_roi_volume().
+    Fetches the RLEs in 'range' format for a list of ROIs,
+    and also computes the bounding box of each ROI.
+    """
     if isinstance(rois, str):
         rois = [rois]
-    
-    # rois is a dict {name : label}
-    if not isinstance(rois, Mapping):
-        rois = { roi : i for i,roi in enumerate(rois, start=1) }
+    rois = list(rois)
 
-    # Create a reverse-lookup {label : name} for reporting overlaps below.
-    reverse_rois = {}
-    for roi, label in rois.items():
-        if label in reverse_rois:
-            # Caller is permitted to map more than one ROI to the same label,
-            # so include both names in the overlap report.
-            reverse_rois[label] = reverse_rois[label] + '+' + roi
-        else:
-            reverse_rois[label] = roi
+    if processes > 0:
+        session = None
 
-    all_rle_ranges = {}
-    for roi in tqdm_proxy(rois.keys(), leave=False):
-        all_rle_ranges[roi] = fetch_roi(server, uuid, roi, format='ranges', session=session)
-    
+    _fetch = partial(fetch_roi, server, uuid, format='ranges', session=session)
+    ranges = compute_parallel(_fetch, rois, processes=processes)
+    all_rle_ranges = dict(zip(rois, ranges))
+
     roi_boxes = {}
     for roi, rle_ranges in all_rle_ranges.items():
         # If roi is completely empty, don't process it at all
@@ -288,53 +296,56 @@ def fetch_combined_roi_volume(server, uuid, rois, as_bool=False, box_zyx=None, *
             del rois[roi]
         else:
             roi_boxes[roi] = np.array([  rle_ranges[:, (0,1,2)].min(axis=0),
-                                       1+rle_ranges[:, (0,1,3)].max(axis=0)])
-    
-    if box_zyx is None:
-        box_zyx = [None, None]
+                                       1+rle_ranges[:, (0,1,3)].max(axis=0)])  # noqa
+    return all_rle_ranges, roi_boxes
 
-    box_zyx = list(box_zyx)
-    assert len(box_zyx) == 2
 
-    roi_box_array = np.array([*roi_boxes.values()])
-    if box_zyx[0] is None:
-        box_zyx[0] = roi_box_array[:,0,:].min(axis=0)
-    if box_zyx[1] is None:
-        box_zyx[1] = roi_box_array[:,1,:].max(axis=0)
-    
-    box_zyx = np.asarray(box_zyx)
-    combined_shape = (box_zyx[1] - box_zyx[0])
-    
-    if as_bool:
-        dtype = np.bool
-    else:
-        # Choose smallest dtype that can hold enough unique values
-        for d in [np.uint8, np.uint16, np.uint32]:
-            if max(rois.values()) <= np.iinfo(d).max:
-                dtype = d
-                break
+def unpack_roi_ranges_to_combined_volume(roi_labels, roi_ranges, roi_boxes, box_zyx=None, as_bool=False):
+    """
+    Helper for fetch_combined_roi_volume().
 
-    overlap_stats = []
-    combined_vol = np.zeros(combined_shape, dtype)
+    Unpacks a list of RLE range-encoded ROIs into a single combined label volume,
+    optionally restricted to a specified bounding box.
+    For details, see the docs for fetch_combined_roi_volume()
+    """
+    if isinstance(roi_labels, str):
+        roi_labels = [roi_labels]
+
+    # roi_labels is a dict {name : label}
+    if not isinstance(roi_labels, Mapping):
+        roi_labels = {roi: i for i, roi in enumerate(roi_labels, start=1)}
+
+    # Create a reverse-lookup {label : name} for reporting overlaps below.
+    reverse_rois = {}
+    for roi, label in roi_labels.items():
+        if label in reverse_rois:
+            # Caller is permitted to map more than one ROI to the same label,
+            # so include both names in the overlap report.
+            reverse_rois[label] = reverse_rois[label] + '+' + roi
+        else:
+            reverse_rois[label] = roi
+
+    combined_vol, box_zyx = _initialize_combined_roi_volume(roi_boxes, box_zyx, roi_labels, as_bool)
 
     # Overlay ROIs one-by-one
-    for roi, label in tqdm_proxy(rois.items(), leave=False):
+    overlap_stats = []
+    for roi, label in tqdm_proxy(roi_labels.items(), leave=False):
         roi_box = box_intersection(roi_boxes[roi], box_zyx)
         assert (roi_box[1] - roi_box[0] > 0).all(), "ROI box does not intersect the full box."
-        roi_mask, _roi_box = runlength_decode_from_ranges_to_mask(all_rle_ranges[roi], roi_box)
+        roi_mask, _roi_box = runlength_decode_from_ranges_to_mask(roi_ranges[roi], roi_box)
         assert (_roi_box == roi_box).all()
-        
+
         # If we're overwriting some areas of a ROI we previously wrote,
         # keep track of the overlapping pairs.
         combined_view = extract_subvol(combined_vol, roi_box - box_zyx[0])
         assert combined_view.base is combined_vol
-        
+
         # Keep track of the overlapping sizes
         prev_labels_overlap_sizes = pd.Series(combined_view[roi_mask]).value_counts()
         for p, size in prev_labels_overlap_sizes.items():
             if p == 0:
                 continue
-            
+
             if p == label:
                 # Note: In the case of combined ROIs, where the user is
                 # mapping more than one ROI to the same label, we
@@ -353,8 +364,40 @@ def fetch_combined_roi_volume(server, uuid, rois, as_bool=False, box_zyx=None, *
     return combined_vol, box_zyx, overlap_stats
 
 
+def _initialize_combined_roi_volume(roi_boxes, box_zyx, roi_labels, as_bool):
+    """
+    Helper for unpack_roi_ranges_to_combined_volume()
+    """
+    if box_zyx is None:
+        box_zyx = [None, None]
+
+    box_zyx = list(box_zyx)
+    assert len(box_zyx) == 2
+
+    roi_box_array = np.array([*roi_boxes.values()])
+    if box_zyx[0] is None:
+        box_zyx[0] = roi_box_array[:,0,:].min(axis=0)
+    if box_zyx[1] is None:
+        box_zyx[1] = roi_box_array[:,1,:].max(axis=0)
+
+    box_zyx = np.asarray(box_zyx)
+    combined_shape = (box_zyx[1] - box_zyx[0])
+
+    if as_bool:
+        dtype = np.bool
+    else:
+        # Choose smallest dtype that can hold enough unique values
+        for d in [np.uint8, np.uint16, np.uint32]:
+            if max(roi_labels.values()) <= np.iinfo(d).max:
+                dtype = d
+                break
+
+    combined_vol = np.zeros(combined_shape, dtype)
+    return combined_vol, box_zyx
+
+
 @dvid_api_wrapper
-def determine_point_rois(server, uuid, rois, points_df, combined_vol=None, combined_box=None, *, session=None):
+def determine_point_rois(server, uuid, rois, points_df, combined_vol=None, combined_box=None, *, processes=0, session=None):
     """
     Convenience function that combines fetch_combined_roi_volume() and extract_labels_from_volume().
     Labels points with their corresponding ROI (if any).
@@ -393,6 +436,9 @@ def determine_point_rois(server, uuid, rois, points_df, combined_vol=None, combi
         combined_box:
             Optionally crop the ROIs according to the given box before using them.
             Must be provided if combined_vol is provided.
+
+        processes:
+            If given, fetch rois in parallel
     
     Returns:
         Nothing.  points_df is modified in-place.4
@@ -411,7 +457,7 @@ def determine_point_rois(server, uuid, rois, points_df, combined_vol=None, combi
         "This function doesn't work if the input DataFrame's index has duplicate values."
 
     if combined_vol is None:
-        combined_vol, combined_box, overlaps = fetch_combined_roi_volume(server, uuid, rois, False, combined_box, session=session)
+        combined_vol, combined_box, overlaps = fetch_combined_roi_volume(server, uuid, rois, False, combined_box, processes=processes, session=session)
         if len(overlaps):
             logger.warning(f"Some ROIs overlap!")
             logger.warning(f"Overlapping pairs:\n{overlaps}")
