@@ -1113,32 +1113,35 @@ def extract_labels_from_volume(points_df, volume, box_zyx=None, vol_scale=0, lab
     points_df['label'] = volume.dtype.type(0)
     points_df.loc[downsampled_coords_zyx.index, 'label'] = volume[tuple(downsampled_coords_zyx.values.transpose())]
 
-    if label_names is not None:
-        if isinstance(label_names, Mapping):
-            # We need a mapping of label_ids -> names.
-            # If the user provided the reverse mapping,
-            # then flip it.
-            (k,v) = next(iter(label_names.items()))
-            if isinstance(k, str):
-                # Reverse the mapping
-                label_names = { v:k for k,v in label_names.items() }
-        else:
-            label_names = dict(enumerate(label_names, start=1))
+    # If no names were supplied, we're done.
+    if label_names is None:
+        return
 
-        name_set = ['<unspecified>', *label_names.values()]
-        default_names = ['<unspecified>']*len(points_df)
-        # FIXME: More than half of the runtime of this function is spent on this line!
-        #        Is there some way to speed this up?
-        points_df['label_name'] = pd.Categorical( default_names,
-                                                  categories=name_set,
-                                                  ordered=False )
-        for label, name in label_names.items():
-            rows = points_df['label'] == label
-            points_df.loc[rows, 'label_name'] = name
+    if isinstance(label_names, Mapping):
+        # We need a mapping of label_ids -> names.
+        # If the user provided the reverse mapping,
+        # then flip it.
+        (k,v) = next(iter(label_names.items()))
+        if isinstance(k, str):
+            # Reverse the mapping
+            label_names = { v:k for k,v in label_names.items() }
+    else:
+        label_names = dict(enumerate(label_names, start=1))
 
-        if name_col:
-            points_df.drop(columns=[name_col, f'{name_col}_label'], errors='ignore', inplace=True)
-            points_df.rename(inplace=True, columns={'label': f'{name_col}_label', 'label_name': name_col})
+    name_set = ['<unspecified>', *label_names.values()]
+    default_names = ['<unspecified>']*len(points_df)
+    # FIXME: More than half of the runtime of this function is spent on this line!
+    #        Is there some way to speed this up?
+    points_df['label_name'] = pd.Categorical( default_names,
+                                              categories=name_set,
+                                              ordered=False )
+    for label, name in label_names.items():
+        rows = points_df['label'] == label
+        points_df.loc[rows, 'label_name'] = name
+
+    if name_col:
+        points_df.drop(columns=[name_col, f'{name_col}_label'], errors='ignore', inplace=True)
+        points_df.rename(inplace=True, columns={'label': f'{name_col}_label', 'label_name': name_col})
 
 
 def compute_merges(orig_vol, agg_vol):
