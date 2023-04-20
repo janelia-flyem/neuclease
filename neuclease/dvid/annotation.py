@@ -1594,7 +1594,9 @@ def fetch_roi_synapses(server, uuid, synapses_instance, rois, fetch_labels=False
 
     # Append a 'roi_name' column to points_df
     logger.info("Labeling ROI for each point")
+    points_df = points_df.reset_index()
     determine_point_rois(server, uuid, rois, points_df, roi_vol_s5, roi_box_s5)
+    points_df = points_df.set_index(points_df.columns[0])
 
     logger.info("Discarding points that don't overlap with the roi")
     rois = {*rois}
