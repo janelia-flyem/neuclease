@@ -1116,7 +1116,7 @@ def _fetch_mapping(server, uuid, instance, supervoxel_ids, *, nolookup=False, se
     return mapping
 
 @dvid_api_wrapper
-def fetch_mappings(server, uuid, instance, as_array=False, *, format=None, session=None):
+def fetch_mappings(server, uuid, instance, as_array=False, *, format=None, consistent=False, session=None):
     """
     Fetch the complete sv-to-label in-memory mapping table
     from DVID and return it as a numpy array or a pandas Series (indexed by sv).
@@ -1140,6 +1140,13 @@ def fetch_mappings(server, uuid, instance, as_array=False, *, format=None, sessi
             and 'binary' is used if possible.  (The 'binary' format saves some time,
             since there is no need to parse CSV.)
 
+        consistent:
+            If True, DVID will lock the labelmap instance to prevent
+            mutations while the mappings request is being served.
+            Otherwise, DVID will permit concurrent writes to the labelmap instance while this
+            request is being served, meaning that you may possibly get an inconsistent view of
+            the data if the requested UUID is not currently committed (locked).
+
     Returns:
         pd.Series(index=sv, data=body), unless as_array is True
     """
@@ -1158,6 +1165,8 @@ def fetch_mappings(server, uuid, instance, as_array=False, *, format=None, sessi
     params = {}
     if format == 'binary':
         params['format'] = 'binary'
+    if consistent:
+        params['consistent'] = 'true'
 
     # This takes ~30 seconds so it's nice to log it.
     uri = f"{server}/api/node/{uuid}/{instance}/mappings"
