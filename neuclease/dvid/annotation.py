@@ -1958,12 +1958,12 @@ def process_partners_and_post_synapse_jsons(server, uuid, instance, full_partner
 
             Example:
 
-                        pre_id          post_id kind_pre kind_post  conf_pre  conf_post
-            0  426611449014890  527766539741771   PreSyn   PostSyn     0.809      0.997
-            1  426611449014890  365038827219560   PreSyn   PostSyn     0.809      1.000
-            2  426611449014890  466193894877814   PreSyn   PostSyn     0.809      1.000
-            3  426611449014890  347446616009294   PreSyn   PostSyn     0.809      1.000
-            4  426611449014890  365038762207814   PreSyn   PostSyn     0.809      0.439
+                            pre_id          post_id  conf_pre  conf_post
+                0  426611449014890  527766539741771     0.809      0.997
+                1  426611449014890  365038827219560     0.809      1.000
+                2  426611449014890  466193894877814     0.809      1.000
+                3  426611449014890  347446616009294     0.809      1.000
+                4  426611449014890  365038762207814     0.809      0.439
 
         processes:
             How many parallel processes to use to construct and post the JSON payloads.
