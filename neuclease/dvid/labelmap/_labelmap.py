@@ -3346,6 +3346,22 @@ def labelmap_kafka_msgs_to_df(kafka_msgs, default_timestamp=DEFAULT_TIMESTAMP, c
         elif action in ('split', 'split-complete'):
             target_body = msg.get('Target', np.nan)
             _mutation_bodies = [target_body]
+            # For deprecated 'split' commands, there are
+            # multiple sv splits listed in a single message.
+            target_sv = []
+            child_split_sv = []
+            child_remain_sv = []
+            for t, sr in msg['SVSplits'].items():
+                target_sv.append(int(t))
+                child_split_sv.append(sr['Split'])
+                child_remain_sv.append(sr['Remain'])
+            if len(target_sv) == 1:
+                # If there's only a single split sv,
+                # it's more convenient not to wrap it in a list.
+                # Callers will likely be using 'explode' anyway.
+                target_sv = target_sv[0]
+                child_split_sv = child_split_sv[0]
+                child_remain_sv = child_remain_sv[0]
         elif action in ('split-supervoxel', 'split-supervoxel-complete'):
             target_body = msg.get('Body', np.nan)
             target_sv = msg.get('Supervoxel', np.nan)
@@ -3367,13 +3383,14 @@ def labelmap_kafka_msgs_to_df(kafka_msgs, default_timestamp=DEFAULT_TIMESTAMP, c
         mutation_bodies.append(_mutation_bodies)
 
     df['target_body'] = target_bodies
-    df['target_sv'] = target_svs
     df['child_cleaved_body'] = child_cleaved_bodies
     df['child_cleaved_svs'] = child_cleaved_svs
-    df['child_split_sv'] = child_split_svs
-    df['child_remain_sv'] = child_remain_svs
     df['merged'] = merged_bodies
     df['mutation_bodies'] = mutation_bodies
+
+    df['target_sv'] = target_svs
+    df['child_split_sv'] = child_split_svs
+    df['child_remain_sv'] = child_remain_svs
 
     # Create completely empty columns if necessary to provide the expected output columns.
     for col in FINAL_COLUMNS:
@@ -3388,11 +3405,21 @@ def labelmap_kafka_msgs_to_df(kafka_msgs, default_timestamp=DEFAULT_TIMESTAMP, c
 
         # Fill ints with zeros and convert to better dtype.
         df['target_body'] = df['target_body'].fillna(0).astype(np.uint64)
-        df['target_sv'] = df['target_sv'].fillna(0).astype(np.uint64)
         df['child_cleaved_body'] = df['child_cleaved_body'].fillna(0).astype(np.uint64)
-        df['child_split_sv'] = df['child_split_sv'].fillna(0).astype(np.uint64)
-        df['child_remain_sv'] = df['child_remain_sv'].fillna(0).astype(np.uint64)
         df['mutid'] = df['mutid'].fillna(-1).astype(int)
+
+        df['target_sv'] = df['target_sv'].fillna(0)
+        df['child_split_sv'] = df['child_split_sv'].fillna(0)
+        df['child_remain_sv'] = df['child_remain_sv'].fillna(0)
+
+        # The 'split' action can result in elements of type 'list',
+        # so we can only convert the dtype of the following columns
+        # if there are no 'split' actions.
+        if not (df['target_sv'].map(type) == list).any():
+            df['target_sv'] = df['target_sv'].astype(np.uint64)
+            df['child_split_sv'] = df['child_split_sv'].astype(np.uint64)
+            df['child_remain_sv'] = df['child_remain_sv'].astype(np.uint64)
+
         return df[FINAL_COLUMNS]
 
     # This logic is somewhat more complex than you might think is necessary,
