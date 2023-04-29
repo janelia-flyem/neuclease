@@ -178,6 +178,19 @@ def parse_rle_response(response_bytes, dtype=np.int32, format='coords'):  # @Res
     assert len(rle_items) == run_count, \
         f"run_count ({run_count}) doesn't match data array length ({len(rle_items)})"
 
+    payload_buf = response_bytes[12:]
+    return parse_rle_response_payload(payload_buf, dtype, format)
+
+
+def parse_rle_response_payload(payload_buf, dtype=np.int32, format='coords'):
+    """
+    This parses the /sparsevol payload, NOT including the 12-byte header.
+
+    In addition to being called by parse_rle_response(),
+    this is useful on its own for parsing the blobs stored in the blobstore by /split-supervoxel.
+    """
+    rle_items = np.frombuffer(payload_buf, np.int32).reshape(-1,4)
+
     rle_starts_xyz = rle_items[:,:3]
     rle_starts_zyx = rle_starts_xyz[:,::-1]
     rle_lengths = rle_items[:,3]
