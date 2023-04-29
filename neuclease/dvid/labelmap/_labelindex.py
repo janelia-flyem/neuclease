@@ -6,6 +6,7 @@ from collections.abc import Iterable, Sequence
 import numpy as np
 import pandas as pd
 from numba import jit
+from requests import HTTPError
 
 from ...util import tqdm_proxy, compute_parallel, iter_batches
 from .. import dvid_api_wrapper
@@ -16,28 +17,28 @@ from . import fetch_mapping
 
 PandasLabelIndex = namedtuple("PandasLabelIndex", "blocks label last_mutid last_mod_time last_mod_user")
 
+
 @dvid_api_wrapper
-def fetch_labelindex(server, uuid, instance, label, format='protobuf', *, session=None): # @ReservedAssignment
+def fetch_labelindex(server, uuid, instance, label, format='protobuf', *, missing='raise', session=None):
     """
     Fetch the LabelIndex for the given label ID from DVID,
     and return it as the native protobuf structure, or as a more-convenient
     structure that encodes all block counts into a single big DataFrame.
     (See convert_labelindex_to_pandas())
-    
-    
+
     Args:
         server:
             dvid server, e.g. 'emdata4:8900'
-        
+
         uuid:
             dvid uuid, e.g. 'abc9'
-        
+
         instance:
             dvid labelmap instance name, e.g. 'segmentation'
-        
+
         label:
             A body ID
-        
+
         format:
             How to return the data. Choices are:
               - ``raw`` (raw bytes of the DVID response, i.e. the raw bytes of the protobuf structure)
@@ -45,14 +46,25 @@ def fetch_labelindex(server, uuid, instance, label, format='protobuf', *, sessio
               - ``pandas`` (See description in ``convert_labelindex_to_pandas()``)
 
             The 'pandas' format is slowest, but is most convenient to analyze.
-    
+
+        missing:
+            What to do if the label doesn't exist.
+            By default, raise an exception, but if 'return-None' is given,
+            then return None instead of raising an error.
+
     Returns:
         See 'format' description.
     """
     assert format in ('protobuf', 'pandas', 'raw')
+    assert missing in ('raise', 'return-None')
 
-    r = session.get(f'{server}/api/node/{uuid}/{instance}/index/{label}')
-    r.raise_for_status()
+    try:
+        r = session.get(f'{server}/api/node/{uuid}/{instance}/index/{label}')
+        r.raise_for_status()
+    except HTTPError as ex:
+        if ex.response.status_code == 404 and missing == 'return-None':
+            return None
+        raise
 
     if format == 'raw':
         return r.content
@@ -64,6 +76,39 @@ def fetch_labelindex(server, uuid, instance, label, format='protobuf', *, sessio
         return labelindex
     elif format == 'pandas':
         return convert_labelindex_to_pandas(labelindex)
+
+
+def fetch_labelindices_parallel(server, uuid, instance, labels, *, format='single-dataframe', processes=16):
+    """
+    Like fetch_labelindices(), but fetches and converts format in parallel.
+
+    Note: The 'single-dataframe' format simply omits any
+    """
+    assert format in ('list-of-protobuf', 'pandas', 'single-dataframe')
+    fmt = format
+    if fmt == 'single-dataframe':
+        fmt = 'pandas'
+
+    _fetch = partial(fetch_labelindex, server, uuid, instance, format=fmt, missing='return-None')
+    indexes = compute_parallel(_fetch, labels, processes=processes)
+
+    missing = [label
+               for (label, index) in zip(labels, indexes)
+               if index is None]
+    if missing:
+        warnings.warn(f"Could not find an index for bodies {missing}")
+
+    indexes = [*filter(None, indexes)]
+    if format != 'single-dataframe':
+        return indexes
+
+    if not indexes:
+        return pd.DataFrame([], columns=[*'zyx', 'sv', 'count', 'label'])
+
+    for li in indexes:
+        li.blocks['label'] = li.label
+
+    return pd.concat([li.blocks for li in indexes], ignore_index=True)
 
 
 @dvid_api_wrapper
