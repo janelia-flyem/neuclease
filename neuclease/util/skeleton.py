@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 
 
-def swc_to_dataframe(swc_text):
+def swc_to_dataframe(swc_text, neuprint_colnames=True):
     """
     Convert the given SWC file text into a pandas DataFrame with columns:
     ['node', 'kind', 'x', 'y', 'z', 'radius', 'parent']
@@ -27,6 +27,12 @@ def swc_to_dataframe(swc_text):
                'parent': np.int32 }
 
     df = pd.read_csv(StringIO(swc_text), sep=' ', names=columns, dtype=dtypes)
+
+    if neuprint_colnames:
+        df = df.rename(columns={
+            'node': 'rowId',
+            'parent': 'link'}).drop(columns=['kind'])
+
     return df
 
 
