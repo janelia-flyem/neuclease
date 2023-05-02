@@ -739,6 +739,11 @@ def _body_annotations_dataframe(values, status_categories=None):
         empty_index = pd.Series([], dtype=int, name='body')
         return pd.DataFrame({'status': [], 'json': []}, dtype=object, index=empty_index)
 
+    orig_value_count = len(values)
+    values = [*filter(lambda v: (b := v.get('bodyid', None)) and str(b).isdigit(), values)]
+    if num_bad_values := orig_value_count - len(values):
+        logger.warn(f"{num_bad_values} annotations have an invalid (or missing) bodyid field. Dropping them.")
+
     df = pd.DataFrame(values)
     df['body'] = df['bodyid'].astype(np.uint64)
     df = df.set_index('body')
@@ -968,6 +973,7 @@ def delete_sphere_annotations(server, uuid, instance, midpoints, user=None, *, s
         delete_key(server, uuid, instance, key, session=session)
 
     return len(to_delete)
+
 
 @dvid_api_wrapper
 def fetch_skeleton(server, uuid, instance, body, format='pandas', *, session=None):
