@@ -745,6 +745,7 @@ def _body_annotations_dataframe(values, status_categories=None):
         logger.warn(f"{num_bad_values} annotations have an invalid (or missing) bodyid field. Dropping them.")
 
     df = pd.DataFrame(values)
+    df['bodyid'] = df['bodyid'].astype(np.uint64)
     df['body'] = df['bodyid'].astype(np.uint64)
     df = df.set_index('body')
 
