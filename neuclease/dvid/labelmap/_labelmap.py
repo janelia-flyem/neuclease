@@ -1004,15 +1004,42 @@ def fetch_bodies_for_many_points(server, uuid, seg_instance, point_df, mutations
 
 
 @dvid_api_wrapper
-def fetch_sparsevol_rles(server, uuid, instance, label, scale=0, supervoxels=False, *, session=None):
+def fetch_sparsevol_rles(server, uuid, instance, label, scale=0, supervoxels=False, *, box_zyx=None, session=None):
     """
     Fetch the sparsevol RLE representation for a given label.
 
+    Args:
+        server, uuid, instance:
+            segmentation instance
+        label:
+            body ID or supervoxel ID
+        scale:
+            Which scale of segmentation blocks DVID should use when extracting the sparsvol mask
+        supervoxels:
+            If True, interpret 'label' as a supervoxel ID, not a body ID
+        box_zyx:
+            If provided, request only a portion of the given sparsevol,
+            limited to the specified bounding box.
+            This DVID feature was only implemented on 2023-04-09.
+            If using a DVID that was built prior to that, using this
+            parameter will result in invalid results.
+
     See also: neuclease.dvid.rle.parse_rle_response()
     """
-    supervoxels = str(bool(supervoxels)).lower()  # to lowercase string
-    url = f'{server}/api/node/{uuid}/{instance}/sparsevol/{label}?scale={scale}&supervoxels={supervoxels}'
-    r = session.get(url)
+    params = {
+        'scale': str(scale)
+    }
+
+    if supervoxels:
+        params['supervoxels'] = str(bool(supervoxels)).lower()
+
+    if box_zyx is not None:
+        box_zyx = box_zyx - [(0,0,0), (1,1,1)]
+        box_keys = ['minz', 'miny', 'minx', 'maxz', 'maxy', 'maxx']
+        params.update(dict(zip(box_keys, box_zyx.flat)))
+
+    url = f'{server}/api/node/{uuid}/{instance}/sparsevol/{label}'
+    r = session.get(url, params=params)
     r.raise_for_status()
     return r.content
 
@@ -1643,10 +1670,9 @@ def fetch_sparsevol(server, uuid, instance, label, scale=0, supervoxels=False,
             See return value details below.
 
         mask_box:
-            Only valid when format='mask'.
-            If provided, specifies the box within which the body mask should
+            If provided, specifies the box within which the body mask (or RLEs/ranges/coords) should
             be returned, in scale-N coordinates where N is the scale you're requesting.
-            Voxels outside the box will be omitted from the returned mask.
+            Voxels outside the box will be omitted from the returned mask (or RLEs/ranges/coords).
 
     Return:
         If format == 'rle', returns the RLE start coordinates and RLE lengths as two arrays:
@@ -1693,7 +1719,7 @@ def fetch_sparsevol(server, uuid, instance, label, scale=0, supervoxels=False,
     assert np.issubdtype(type(scale), np.integer)
     assert format in ('coords', 'rle', 'ranges', 'mask')
 
-    rles = fetch_sparsevol_rles(server, uuid, instance, label, scale, supervoxels, session=session)
+    rles = fetch_sparsevol_rles(server, uuid, instance, label, scale, supervoxels, box_zyx=mask_box, session=session)
 
     if format in ('coords', 'rle', 'ranges'):
         return parse_rle_response(rles, dtype, format)
