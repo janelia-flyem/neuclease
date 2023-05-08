@@ -1,4 +1,3 @@
-from multiprocessing import connection
 import os
 import copy
 import getpass
@@ -110,7 +109,13 @@ def set_default_dvid_session_timeout(conn_timeout, timeout):
     DEFAULT_DVID_SESSION_TEMPLATE.adapters['https://'].timeout = (conn_timeout, timeout)
 
 
-def default_dvid_session(appname=DEFAULT_APPNAME, user=getpass.getuser(), admintoken=None, timeout=None):
+def set_default_dvid_session_template(session):
+    clear_default_dvid_sessions()
+    global DEFAULT_DVID_SESSION_TEMPLATE
+    DEFAULT_DVID_SESSION_TEMPLATE = session
+
+
+def default_dvid_session(appname=None, user=None, admintoken=None, timeout=None):
     """
     Return a default requests.Session() object that automatically appends the
     'u' and 'app' query string parameters to every request.
@@ -135,8 +140,10 @@ def default_dvid_session(appname=DEFAULT_APPNAME, user=getpass.getuser(), admint
         s = DEFAULT_DVID_SESSIONS[(appname, user, admintoken, thread_id, pid)]
     except KeyError:
         s = copy.deepcopy(DEFAULT_DVID_SESSION_TEMPLATE)
-        s.params = { 'u': user, 'app': appname }
-
+        if user:
+            s.params['u'] = user
+        if appname:
+            s.params['app'] = appname
         if admintoken:
             s.params['admintoken'] = admintoken
 
