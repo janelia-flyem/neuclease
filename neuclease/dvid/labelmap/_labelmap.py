@@ -2569,15 +2569,19 @@ def post_labelmap_blocks(server, uuid, instance, corners_zyx, blocks, scale=0, d
     # These options are already false by default, so we'll only include them if we have to.
     opts = { 'downres': downres, 'noindexing': noindexing, 'throttle': throttle }
 
+    if ingestion_mode:
+        endpoint = 'ingest-supervoxels'
+        assert noindexing, "ingestion_mode=True requires noindexing=True"
+        assert not downres, "ingestion_mode=True requires downres=False"
+        del opts['noindexing']
+        del opts['downres']
+    else:
+        endpoint = 'blocks'
+
     params = { 'scale': str(scale) }
     for opt, value in opts.items():
         if value:
             params[opt] = str(bool(value)).lower()
-
-    if ingestion_mode:
-        endpoint = 'ingest-supervoxels'
-    else:
-        endpoint = 'blocks'
 
     r = session.post(f'{server}/api/node/{uuid}/{instance}/{endpoint}', params=params, data=body_data)
     r.raise_for_status()
