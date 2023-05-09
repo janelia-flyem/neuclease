@@ -1,5 +1,6 @@
 import os
 import sys
+import pickle
 import logging
 import warnings
 from itertools import chain
@@ -2214,7 +2215,6 @@ def load_gary_tbars(pkl_path):
     See also:
         post_tbar_jsons()
     """
-    import pickle
     data = pickle.load(open(pkl_path, 'rb'))
 
     df = pd.DataFrame(data['locs'][:, ::-1], columns=['z_pre', 'y_pre', 'x_pre'], dtype=np.int32)
@@ -2238,14 +2238,21 @@ def load_gary_partners(pkl_path):
         post_tbar_jsons(), post_psd_jsons()
 
     """
-    import pickle
     data = pickle.load(open(pkl_path, 'rb'))
-    _table = []
-    for tbar_coord, tbar_conf, psd_coords, psd_confs in tqdm_proxy(zip(data['locs'], data['conf'], data['psds'], data['psds_conf']), total=len(data['locs'])):
-        for psd_coord, psd_conf in zip(psd_coords, psd_confs):
-            _table.append([*(tbar_coord[::-1]), tbar_conf, *(psd_coord[::-1]), psd_conf])
 
-    df = pd.DataFrame(_table, columns=['z_pre', 'y_pre', 'x_pre', 'conf_pre', 'z_post', 'y_post', 'x_post', 'conf_post'])
+    # This is a little tricky because the psds consist of lists-of-arrays.
+    # But explode() rescues us.
+    tbar_coord = pd.DataFrame(data['locs'], columns=['x_pre', 'y_pre', 'z_pre'])
+    tbar_conf = pd.Series(data['conf'], name='conf_pre')
+    psds = pd.Series(data['psds']).explode().rename('p').to_frame()
+    psds[['x_post', 'y_post', 'z_post']] = np.stack(psds['p'])
+    del psds['p']
+    psds_conf = pd.Series(data['psds_conf'], name='conf_post').explode()
+
+    # Thanks to explode() above, this concat will duplicate tbars
+    # to align their indexes with the duplicated psd indexes.
+    # Then we can discard that index after the concat.
+    df = pd.concat((tbar_coord, tbar_conf, psds, psds_conf), axis=1).reset_index(drop=True)
 
     for col in ['z_pre', 'y_pre', 'x_pre', 'z_post', 'y_post', 'x_post']:
         df[col] = df[col].astype(np.int32)
