@@ -129,7 +129,8 @@ def construct_ng_precomputed_layer_from_roi_seg(roi_vol, roi_names, bucket_name,
     assert not invalid_steps, f"Invalid steps: {steps}"
 
     if set(steps) & {'meshes', 'properties'}:
-        assert isinstance(roi_names, Mapping)
+        assert isinstance(roi_names, Mapping), \
+            "roi_names should be dict of {id: name}"
         assert all(np.issubdtype(type(k), np.integer) for k in roi_names.keys()), \
             "roi_names should be dict of {id: name}"
         assert all(isinstance(v, str) for v in roi_names.values()), \
@@ -147,7 +148,7 @@ def construct_ng_precomputed_layer_from_roi_seg(roi_vol, roi_names, bucket_name,
 
     if 'voxels' in steps:
         logger.info("Uploading segmentation volume")
-        create_precomputed_roi_vol(roi_vol, bucket_name, bucket_path)
+        create_precomputed_roi_vol(roi_vol, bucket_name, bucket_path, resolution_nm=scale_0_res*(2**5))
 
     if 'meshes' in steps:
         logger.info("Preparing legacy neuroglancer meshes")
