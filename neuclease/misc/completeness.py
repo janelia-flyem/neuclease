@@ -382,6 +382,9 @@ def plot_connectivity_forecast(conn_df, max_rank=None, plotted_points=20_000, ho
     import hvplot.pandas    # noqa
     from bokeh.plotting import figure, output_file, save as bokeh_save, output_notebook, show  # noqa
 
+    # import holoviews as hv
+    # hv.renderer('bokeh').theme = 'dark_minimal'
+
     assert not export_path or export_path.endswith('.html')
 
     _df = conn_df
