@@ -213,23 +213,50 @@ def post_load(server, uuid, instance, tar, *, session=None):
             assert tar.endswith('.tar'), "Data to .../load must be a .tar file"
 
     if isinstance(tar, dict):
-        tar = _create_tar_from_dict(tar)
+        tar = create_tar_from_dict(tar, 'meshes.tar', in_memory=True)
 
     post_file(url, tar, session=session)
 
 
-def _create_tar_from_dict(d, tar_name='meshes.tar'):
-    tar_stream = BytesIO()
-    with closing(tarfile.open(tar_name, 'w', tar_stream)) as tf:
+def create_tar_from_dict(d, tar_name, in_memory=False):
+    """
+    Given a dictionary in one of the formats described below,
+    create an in-memory tarfile and return its contents as bytes.
+    The tar file with have a flat structure, with no internal
+    directories whatsoever. If you were to open this tarfile with
+    'tar xf foo.tar', it would barf its entire contents into your
+    current working directory, rather than creating a new directory 'foo'.
+
+    d:
+        Either ``{item_name: bytes}`` or ``{item_name: file_path}``.
+        If the latter, the file_path will be read from disk (as bytes)
+        and the contents will be loaded into the tarfile.
+
+    tar_name:
+        The pathname of the tarfile.
+
+    Returns:
+        bytes
+    """
+    if in_memory:
+        tar_stream = BytesIO()
+        _create_tar_from_dict(d, tar_name, tar_stream)
+        return tar_stream.getbuffer()
+
+    with open(tar_name, 'wb') as f:
+        _create_tar_from_dict(d, tar_name, f)
+
+
+def _create_tar_from_dict(d, tar_name, f):
+    with closing(tarfile.open(tar_name, 'w', f)) as tf:
         for (name, data) in d.items():
             f_info = tarfile.TarInfo(name)
             f_info.size = len(data)
-            
+
             if isinstance(data, bytes):
                 tf.addfile(f_info, BytesIO(data))
             elif isinstance(data, str):
                 tf.addfile(f_info, open(data, 'rb'))
-    return tar_stream.getbuffer()
 
 
 @dvid_api_wrapper
