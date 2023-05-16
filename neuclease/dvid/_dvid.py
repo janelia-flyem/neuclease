@@ -9,6 +9,7 @@ from collections import namedtuple
 
 import requests
 import requests.adapters
+from urllib3.util import Timeout
 from urllib3.util.retry import Retry
 
 from libdvid import DVIDNodeService
@@ -38,7 +39,7 @@ DEFAULT_APPNAME = "neuclease"
 
 # Medium timeout for connections, long timeout for data
 # https://docs.python-requests.org/en/latest/user/advanced/#timeouts
-DEFAULT_DVID_TIMEOUT = (3.05, 120.0)
+DEFAULT_DVID_TIMEOUT = Timeout(connect=3.05, read=120.0)
 
 # FIXME: This should be eliminated or at least renamed
 DvidInstanceInfo = namedtuple("DvidInstanceInfo", "server uuid instance")
@@ -103,6 +104,13 @@ def clear_default_dvid_sessions():
 
 
 def set_default_dvid_session_timeout(conn_timeout, timeout):
+    clear_default_dvid_sessions()
+    global DEFAULT_DVID_SESSION_TEMPLATE
+    DEFAULT_DVID_SESSION_TEMPLATE.adapters['http://'].timeout = Timeout(connect=conn_timeout, read=timeout)
+    DEFAULT_DVID_SESSION_TEMPLATE.adapters['https://'].timeout = Timeout(connect=conn_timeout, read=timeout)
+
+
+def set_default_dvid_session_timeout_OLD(conn_timeout, timeout):
     clear_default_dvid_sessions()
     global DEFAULT_DVID_SESSION_TEMPLATE
     DEFAULT_DVID_SESSION_TEMPLATE.adapters['http://'].timeout = (conn_timeout, timeout)
