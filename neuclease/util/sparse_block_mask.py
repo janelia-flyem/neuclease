@@ -62,6 +62,9 @@ class SparseBlockMask:
         sub_box = round_box(sub_box, sbm.resolution, 'out')
 
         new_box = box_intersection(sub_box, sbm.box)
+        if (new_box[0] >= new_box[1]).any():
+            return None  # The sub_box doesn't overlap with the sbm box
+
         new_resolution = sbm.resolution.copy()
         new_lowres_box = new_box // new_resolution
 
