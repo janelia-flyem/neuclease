@@ -1199,11 +1199,6 @@ def region_features(label_img, grayscale_img=None, features=['Box', 'Count'], ig
         dtype=object, and each item in the series is a 2D array.
         TODO: This might be a good place to use Xarray
     """
-    ##
-    ## FIXME: The remapping logic we apply in the uint64 case should probably be applied in most uint32 cases, too.
-    ##        There should be a separate flag to specify whether or not to remap the input to consecutive integers,
-    ##        and it should be True by default.
-    ##
     assert label_img.ndim in (2,3)
     axes = 'zyx'[-label_img.ndim:]
 
@@ -1231,23 +1226,19 @@ def region_features(label_img, grayscale_img=None, features=['Box', 'Count'], ig
 
     assert np.issubdtype(label_img.dtype, np.integer)
 
-    label_ids = None
-    if label_img.dtype == np.uint32:
-        label_img32 = label_img
-    elif label_img.dtype == np.int32:
-        label_img32 = label_img.view(np.uint32)
-    elif label_img.dtype in (np.int64, np.uint64):
+    # LabelMapper requires unsigned dtype
+    if label_img.dtype == np.int32:
+        label_img = label_img.view(np.uint32)
+    if label_img.dtype == np.int64:
         label_img = label_img.view(np.uint64)
-        label_ids = np.sort(pd.unique(label_img.reshape(-1)))
 
-        # Map from uint64 -> uint32
-        label_ids_32 = np.arange(len(label_ids), dtype=np.uint32)
-        mapper = LabelMapper(label_ids, label_ids_32)
-        label_img32 = mapper.apply(label_img)
-        if ignore_label is not None and ignore_label in label_ids:
-            ignore_label = mapper.apply(np.array([ignore_label], np.uint64))[0]
-    else:
-        label_img32 = label_img.astype(np.uint32)
+    # Map from nonconsecutive[u64 or u32] -> consecutive uint32
+    label_ids = np.sort(pd.unique(label_img.reshape(-1)))
+    label_ids_32 = np.arange(len(label_ids), dtype=np.uint32)
+    mapper = LabelMapper(label_ids, label_ids_32)
+    label_img32 = mapper.apply(label_img)
+    if ignore_label is not None and ignore_label in label_ids:
+        ignore_label = mapper.apply(np.array([ignore_label], np.uint64))[0]
 
     assert label_img32.dtype == np.uint32
 
@@ -1301,9 +1292,8 @@ def region_features(label_img, grayscale_img=None, features=['Box', 'Count'], ig
             results[k] = pd.Series(obj_v, name=k)
 
     # Set index to the original uint64 values
-    if label_img.dtype == np.uint64:
-        for v in results.values():
-            v.index = label_ids
+    for v in results.values():
+        v.index = label_ids
 
     # vigra didn't process the ignore_label,
     # but it still appears in the results (with uninitialized values)
@@ -1403,10 +1393,6 @@ def meshes_from_volume(vol, fullres_box_zyx=None, subset_labels=None, *,
 
     max_voxels = max_voxels or np.prod(vol.shape)
 
-    # FIXME: For now, we need to compute region features on the uint64 volume
-    #        because the function above doesn't work ideally for uint32.
-    if vol.dtype == np.uint32:
-        vol = vol.astype(np.uint64)
     feat = region_features(vol, ignore_label=0)
     feat_df = feat['Box'].to_frame()
     feat_df['Count'] = feat['Count']
