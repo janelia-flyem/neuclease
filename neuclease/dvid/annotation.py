@@ -521,14 +521,23 @@ def dataframe_to_elements(df, prop_cols=[]):
             post_elements(server, uuid, 'mypoints', elements)
 
     """
+    if isinstance(prop_cols, str):
+        prop_cols = [prop_cols]
+    df = df.rename(columns={c: c.capitalize() for c in df.columns if c not in prop_cols})
+    df = df.rename(columns={'X':'x', 'Y':'y', 'Z':'z'})
+    assert set(df.columns) >= {*'zyx', 'Kind'}
+
     elements = []
     for row in df.itertuples():
         e = {
             "Pos": [int(row.x), int(row.y), int(row.z)],
             "Kind": row.Kind
         }
-        if 'Tags' in df.columns and not isinstance(row.Tags, list):
-            e['Tags'] = [row.Tags]
+        if 'Tags' in df.columns:
+            if not isinstance(row.Tags, list):
+                e['Tags'] = [row.Tags]
+            else:
+                e['Tags'] = row.Tags
         elements.append(e)
 
     if prop_cols:
@@ -539,6 +548,53 @@ def dataframe_to_elements(df, prop_cols=[]):
                 e['Prop'][col] = str(p)  # properties must be strings
 
     return elements
+
+
+def _dataframe_to_elements_vectorized(df, prop_cols):
+    """
+    Alternative implementation of dataframe_to_elements().
+
+    I intended this to be an optimized replacement of dataframe_to_elements(),
+    but, surprisingly, this is a bit slower than the non-vectorized implementation.
+
+    Apparently DataFrame.to_dict(orient='records') is pretty slow,
+    but even after replacing that with a list comprehension,
+    this function is STILL *slightly* slower than the for-loop
+    version above.
+
+    I'm keeping this function here in the code in case I want to revisit it,
+    but this version isn't the one to use.  Use dataframe_to_elements().
+    """
+    if isinstance(prop_cols, str):
+        prop_cols = [prop_cols]
+    df = df.rename(columns={c: c.capitalize() for c in df.columns if c not in prop_cols})
+    df = df.rename(columns={'X':'x', 'Y':'y', 'Z':'z'})
+    assert set(df.columns) >= {*'zyx', 'Kind'}
+
+    df['Pos'] = df[[*'xyz']].values.tolist()
+
+    cols = ['Pos', 'Kind']
+    if 'Tags' in df.columns:
+        cols += ['Tags']
+        if not isinstance(df['Tags'].iloc[0], list):
+            df['Tags'] = df['Tags'].values[:, None].tolist()
+
+    if prop_cols:
+        cols += ['Prop']
+        df[prop_cols] = df[prop_cols].astype(str)
+        df['Prop'] = [
+            dict(zip(prop_cols, row))
+            for row in df[prop_cols].itertuples(index=False, name=None)
+        ]
+
+    # This is faster than df.to_dict(orient='records'),
+    # since that function handles type conversions, etc.
+    # But we know we've got just integers and strings,
+    # so the naive implementation is fine.
+    return [
+        dict(zip(cols, row))
+        for row in df[cols].itertuples(index=False, name=None)
+    ]
 
 
 def elements_to_blocks(elements, block_width=64):
