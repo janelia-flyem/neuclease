@@ -920,13 +920,6 @@ def load_synapses_as_dataframes(elements, return_both_partner_tables=False):
         [pre_partner_df]:
             Only returned if return_both_partner_tables=True
     """
-    # with warnings.catch_warnings():
-    #     warnings.simplefilter("once", category=SynapseWarning)
-
-    return _load_synapses_as_dataframes(elements, return_both_partner_tables)
-
-
-def _load_synapses_as_dataframes(elements, return_both_partner_tables):
     if not elements:
         point_df = pd.DataFrame([], columns=['x', 'y', 'z', 'kind', 'conf', 'user'])
         partner_df = pd.DataFrame([], columns=['post_id', 'pre_id'], dtype=np.uint64)
@@ -934,6 +927,11 @@ def _load_synapses_as_dataframes(elements, return_both_partner_tables):
             return point_df, partner_df, partner_df
         else:
             return point_df, partner_df
+
+    ##
+    ## FIXME: This ought to use load_elements_as_dataframe(),
+    ##        rather than reimplementing this parsing logic.
+    ##
 
     # Accumulating separate lists for each column ought to be
     # faster than building a list-of-tuples, I think.
