@@ -1,4 +1,4 @@
-import collections
+from collections.abc import Collection
 import numpy as np
 
 from .view_as_blocks import view_as_blocks
@@ -34,10 +34,13 @@ class SparseBlockMask:
         self.box = np.asarray(box)  # full-res
 
         self.resolution = resolution
-        if isinstance(self.resolution, collections.abc.Sequence):
+        if isinstance(self.resolution, Collection):
             self.resolution = np.asarray(resolution)
         else:
             self.resolution = np.array( [resolution]*lowres_mask.ndim )
+
+        assert self.resolution.ndim == 1
+        assert len(self.resolution) == lowres_mask.ndim
 
         assert (((self.box[1] - self.box[0]) // self.resolution) == self.lowres_mask.shape).all(), \
             f"Inconsistent mask shape ({lowres_mask.shape}) and box {self.box.tolist()} for the given resolution ({resolution}).\n"\
@@ -50,7 +53,7 @@ class SparseBlockMask:
 
     @classmethod
     def create_empty(cls, resolution, corner=None):
-        if isinstance(resolution, collections.abc.Sequence):
+        if isinstance(resolution, Collection):
             D = len(resolution)
         else:
             D = 3
@@ -240,7 +243,7 @@ class SparseBlockMask:
             brick_grid = Grid(self.resolution)
 
         if not isinstance(brick_grid, Grid):
-            assert isinstance(brick_grid, collections.abc.Iterable)
+            assert isinstance(brick_grid, Collection)
             brick_grid = Grid(brick_grid)
 
         assert not (halo > 0 and return_logical_boxes), \

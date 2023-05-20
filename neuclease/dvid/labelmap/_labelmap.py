@@ -8,7 +8,7 @@ from itertools import starmap, chain
 from operator import or_
 from multiprocessing.pool import ThreadPool
 from collections import namedtuple
-from collections.abc import Sequence
+from collections.abc import Collection
 
 import numpy as np
 import pandas as pd
@@ -3742,9 +3742,9 @@ def recursive_sv_split_by_grid(server, uuid, instance, sv, init_grid=8192, final
         solely to make it easier to work with unmanagably large supervoxels by chopping
         them up.
     """
-    if not isinstance(init_grid, Sequence):
+    if not isinstance(init_grid, Collection):
         init_grid = 3 * (init_grid,)
-    if not isinstance(final_grid, Sequence):
+    if not isinstance(final_grid, Collection):
         final_grid = 3 * (final_grid,)
 
     init_grid = np.asarray(init_grid, int)

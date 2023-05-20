@@ -7,7 +7,7 @@ import copy
 import json
 import urllib
 import logging
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping, Collection
 import numpy as np
 import pandas as pd
 from textwrap import dedent
@@ -248,7 +248,7 @@ def _annotation_property_specs(points_df, properties):
     if isinstance(properties, Mapping):
         property_specs = properties
     else:
-        assert isinstance(properties, Sequence)
+        assert isinstance(properties, Collection)
         property_specs = {col: {} for col in properties}
 
     default_property_specs = {

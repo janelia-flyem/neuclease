@@ -1,7 +1,7 @@
 import warnings
 from functools import partial
 from collections import namedtuple
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Collection
 
 import numpy as np
 import pandas as pd
@@ -213,21 +213,21 @@ def post_labelindices(server, uuid, instance, indices, *, session=None):
               - A list of pre-serialized LabelIndex objects (as bytes)
               - A single pre-serializsed LabelIndices object (as bytes)
     """
-    if isinstance(indices, Sequence) and len(indices) == 0:
+    if isinstance(indices, Collection) and len(indices) == 0:
         # This can happen when tombstone_mode == 'only'
         # and a label contained only one supervoxel.
         return
 
-    if not isinstance(indices, (LabelIndices, Sequence)):
+    if not isinstance(indices, (LabelIndices, Collection)):
         assert isinstance(indices, Iterable)
         indices = list(indices)
 
     payload = None
     if isinstance(indices, bytes):
         payload = indices
-    elif isinstance(indices, Sequence) and isinstance(indices[0], bytes):
+    elif isinstance(indices, Collection) and isinstance(indices[0], bytes):
         payload = b''.join(indices)
-    elif isinstance(indices, Sequence) and isinstance(indices[0], LabelIndex):
+    elif isinstance(indices, Collection) and isinstance(indices[0], LabelIndex):
         label_indices = LabelIndices()
         label_indices.indices.extend(indices)
         payload = label_indices.SerializeToString()
