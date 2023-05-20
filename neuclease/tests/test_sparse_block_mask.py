@@ -21,7 +21,7 @@ def test_get_fullres_mask():
     assert (extracted == expected).all()
     
 
-def test_sparse_boxes_NO_OFFSET():
+def test_sparse_boxes_NO_MASK_OFFSET():
     block_mask = np.zeros((5,6,7), dtype=bool)
     
     block_mask[0, 0, 0:5] = True
@@ -51,7 +51,7 @@ def test_sparse_boxes_NO_OFFSET():
                                [[0, 10, 30], [10, 20, 40]]]).all()
 
 
-def test_sparse_boxes_WITH_OFFSET():
+def test_sparse_boxes_WITH_MASK_OFFSET():
     block_mask = np.zeros((5,6,7), dtype=bool)
      
     # since mask offset is 20, this spans 3 bricks (physical: 20-70, logical: 0-90)
@@ -72,7 +72,7 @@ def test_sparse_boxes_WITH_OFFSET():
     sparse_block_mask = SparseBlockMask( block_mask, block_mask_box, block_mask_resolution )
     logical_boxes = sparse_block_mask.sparse_boxes(brick_grid, return_logical_boxes=True)
     
-    assert (logical_boxes == [[[0, 10, 0], [10, 20, 30]],
+    assert (logical_boxes == [[[0, 10,  0], [10, 20, 30]],  # noqa
                               [[0, 10, 30], [10, 20, 60]],
                               [[0, 10, 60], [10, 20, 90]],
                               [[0, 20, 30], [10, 30, 60]]]).all()
@@ -82,8 +82,77 @@ def test_sparse_boxes_WITH_OFFSET():
     assert (physical_boxes == [[[0, 10, 20], [10, 20, 30]],
                                [[0, 10, 30], [10, 20, 60]],
                                [[0, 10, 60], [10, 20, 70]],
-                               [[0, 20, 30], [10, 30, 60]]]).all() 
+                               [[0, 20, 30], [10, 30, 60]]]).all()
 
-    
+
+def test_sparse_boxes_WITH_GRID_OFFSET():
+    _ = 0
+    sbm_mask = np.asarray([
+    #    0 1 2 3 4 5 6 7 8 9    # noqa
+        [_,_,_,_,_,_,_,_,_,_],  # 0
+        [_,_,1,1,_,_,_,_,_,_],  # 1
+        [_,_,1,1,_,_,_,_,_,_],  # 2
+        [_,_,1,1,_,_,_,_,_,_],  # 3
+        [_,_,_,_,_,_,1,1,_,_],  # 4
+        [_,_,_,_,_,_,_,_,_,_],  # 5
+    #    0 1 2 3 4 5 6 7 8 9    # noqa
+    ])
+
+    res = 10
+    sbm_box = res * np.array([(0,0), sbm_mask.shape])
+    sbm = SparseBlockMask(sbm_mask, sbm_box, res)
+
+    # NO GRID OFFSET
+    brick_grid = (6*res, 3*res)
+    logical_boxes = sbm.sparse_boxes(brick_grid, return_logical_boxes=True)
+    assert (logical_boxes == [[[0*res, 0*res], [6*res, 3*res]],
+                              [[0*res, 3*res], [6*res, 6*res]],
+                              [[0*res, 6*res], [6*res, 9*res]],
+                              ]).all()
+
+    physical_boxes = sbm.sparse_boxes(brick_grid)
+    assert (physical_boxes == [[[1*res, 2*res], [4*res, 3*res]],
+                               [[1*res, 3*res], [4*res, 4*res]],
+                               [[4*res, 6*res], [5*res, 8*res]]]).all()
+
+    # WITH GRID OFFSET
+    brick_grid = Grid((6*res, 3*res), (1*res, 2*res))
+    logical_boxes = sbm.sparse_boxes(brick_grid, return_logical_boxes=True)
+    assert (logical_boxes == [[[1*res, 2*res], [7*res, 5*res]],
+                              [[1*res, 5*res], [7*res, 8*res]]]).all()
+
+    physical_boxes = sbm.sparse_boxes(brick_grid)
+    assert (physical_boxes == [[[1*res, 2*res], [4*res, 4*res]],
+                               [[4*res, 6*res], [5*res, 8*res]]]).all()
+
+    # Now repeat, but provide a smaller mask -- with mask offset
+    res = 10
+    sbm_mask = sbm_mask[1:, 2:]
+    sbm_box[0] += [1*res, 2*res]
+    sbm = SparseBlockMask(sbm_mask, sbm_box, res)
+
+    # NO GRID OFFSET
+    brick_grid = (6*res, 3*res)
+    logical_boxes = sbm.sparse_boxes(brick_grid, return_logical_boxes=True)
+    assert (logical_boxes == [[[0*res, 0*res], [6*res, 3*res]],
+                              [[0*res, 3*res], [6*res, 6*res]],
+                              [[0*res, 6*res], [6*res, 9*res]],
+                              ]).all()
+
+    physical_boxes = sbm.sparse_boxes(brick_grid)
+    assert (physical_boxes == [[[1*res, 2*res], [4*res, 3*res]],
+                               [[1*res, 3*res], [4*res, 4*res]],
+                               [[4*res, 6*res], [5*res, 8*res]]]).all()
+
+    # WITH GRID OFFSET
+    brick_grid = Grid((6*res, 3*res), (1*res, 2*res))
+    logical_boxes = sbm.sparse_boxes(brick_grid, return_logical_boxes=True)
+    assert (logical_boxes == [[[1*res, 2*res], [7*res, 5*res]],
+                              [[1*res, 5*res], [7*res, 8*res]]]).all()
+
+    physical_boxes = sbm.sparse_boxes(brick_grid)
+    assert (physical_boxes == [[[1*res, 2*res], [4*res, 4*res]],
+                               [[4*res, 6*res], [5*res, 8*res]]]).all()
+
 if __name__ == "__main__":
     pytest.main(['-s', '--tb=native', '--pyargs', 'neuclease.tests.test_sparse_block_mask'])
