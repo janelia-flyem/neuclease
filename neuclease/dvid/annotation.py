@@ -1857,11 +1857,11 @@ def check_synapse_consistency(syn_point_df, pre_partner_df, post_partner_df):
     logger.info(f"Found {len(bad_psd_refs)} references to non-existent TBars")
 
     # Too many refs from a single PSD
-    oversubscribed_post = post_partner_df.loc[post_partner_df.duplicated('post_id')]
-    oversubscribed_pre = pre_nodupes_df.loc[pre_nodupes_df.duplicated('post_id')]
+    oversubscribed_post = post_partner_df.loc[post_partner_df.duplicated('post_id', keep=False)]
+    oversubscribed_pre = pre_nodupes_df.loc[pre_nodupes_df.duplicated('post_id', keep=False)]
 
-    logger.info(f"Found {len(oversubscribed_post)} PSDs that contain more than one relationship")
-    logger.info(f"Found {len(oversubscribed_pre)} PSDs that are referenced by more than one TBar")
+    logger.info(f"Found {oversubscribed_post['post_id'].nunique()} PSDs that contain more than one relationship")
+    logger.info(f"Found {oversubscribed_pre['post_id'].nunique()} PSDs that are referenced by more than one TBar")
 
     return ConsistencyResults( orphan_tbars, orphan_psds,
                                pre_dupes, post_dupes,
