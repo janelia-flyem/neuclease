@@ -2329,17 +2329,22 @@ def partner_table_to_synapse_table(partner_df):
     similar to the one returned by fetch_synapses_in_batches(),
     this function does the conversion.
 
-    Useful for loading Gary's pickle-based format.
+    Useful if you loaded a "full partner dataframe" from Gary's pickle-based
+    format and now you want separate 'point' and 'partner' tables.
+
+    All *_pre and *_post columns will be renamed and consolidated.
+
     See load_gary_partners()
     """
-    # Extract
-    pre_df = partner_df.drop_duplicates('pre_id')[['pre_id', 'z_pre', 'y_pre', 'x_pre', 'conf_pre']]
-    pre_df = pre_df.rename(columns={col: col[:-len('_pre')] for col in pre_df.columns[1:]})
+    cols_pre = [c for c in partner_df.columns if c.endswith('_pre')]
+    pre_df = partner_df.drop_duplicates('pre_id')[['pre_id', *cols_pre]]
+    pre_df = pre_df.rename(columns={col: col[:-len('_pre')] for col in cols_pre})
     pre_df = pre_df.set_index('pre_id').rename_axis('point_id')
     pre_df['kind'] = 'PreSyn'
 
-    post_df = partner_df[['post_id', 'z_post', 'y_post', 'x_post', 'conf_post']]
-    post_df = post_df.rename(columns={col: col[:-len('_post')] for col in post_df.columns[1:]})
+    cols_post = [c for c in partner_df.columns if c.endswith('_post')]
+    post_df = partner_df[['post_id', *cols_post]]
+    post_df = post_df.rename(columns={col: col[:-len('_post')] for col in cols_post})
     post_df = post_df.set_index('post_id').rename_axis('point_id')
     post_df['kind'] = 'PostSyn'
 
