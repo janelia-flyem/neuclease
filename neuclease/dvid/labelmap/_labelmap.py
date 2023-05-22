@@ -23,7 +23,8 @@ from vigra.analysis import labelMultiArrayWithBackground
 from ...util import (Timer, round_box, extract_subvol, DEFAULT_TIMESTAMP, tqdm_proxy, find_root,
                      ndrange, ndrange_array, box_to_slicing, compute_parallel, boxes_from_grid, box_shape,
                      overwrite_subvol, iter_batches, extract_labels_from_volume, box_intersection, lexsort_columns,
-                     toposorted_ancestors, distance_transform, thickest_point_in_mask)
+                     toposorted_ancestors, distance_transform, thickest_point_in_mask, encode_coords_to_uint64,
+                     sort_blockmajor)
 
 from .. import dvid_api_wrapper, fetch_generic_json, fetch_repo_info
 from ..server import fetch_server_info
@@ -846,6 +847,9 @@ def fetch_labels_batched(server, uuid, instance, coordinates_zyx, supervoxels=Fa
             That way, the requests will be better aligned to the native block ordering in
             DVID's database, which helps throughput.
             Does not affect the output result order, which always corresponds to the input data order.
+            DVID natively sorts within each request by block before accessing the data,
+            but presorting is essential when spliting a large list of coordinates across many batches,
+            especially when many coordinates may share blocks.
 
     Returns:
         ndarray of N labels (corresponding to the order you passed in)
@@ -856,28 +860,17 @@ def fetch_labels_batched(server, uuid, instance, coordinates_zyx, supervoxels=Fa
     coords_df['label'] = np.uint64(0)
 
     if presort:
+        # Sort coordinates by their block index,
+        # so each block usually won't appear in multiple batches,
+        # incurring repeated reads of the same block.
         with Timer(f"Pre-sorting {len(coords_df)} coordinates by block index", logger):
-            # Sort coordinates by their block index,
-            # so DVID will be able to service the requests faster.
-            coords_df['bz'] = coords_df['z'] // 64
-            coords_df['by'] = coords_df['y'] // 64
-            coords_df['bx'] = coords_df['x'] // 64
-            coords_df.sort_values(['bz', 'by', 'bx', *'zyx'], inplace=True)
-            del coords_df['bz']
-            del coords_df['by']
-            del coords_df['bx']
-
-    fetch_batch = partial(_fetch_labels_batch, server, uuid, instance, scale, supervoxels)
-
-    batch_dfs = []
-    for batch_start in range(0, len(coords_df), batch_size):
-        batch_stop = min(batch_start+batch_size, len(coords_df))
-        batch_df = coords_df.iloc[batch_start:batch_stop].copy()
-        batch_dfs.append(batch_df)
+            sort_blockmajor(coords_df, inplace=True, ignore_index=True)
 
     with Timer("Fetching labels from DVID", logger):
+        fetch_batch = partial(_fetch_labels_batch, server, uuid, instance, scale, supervoxels)
+        batches = iter_batches(coords_df, batch_size)
         batch_result_dfs = compute_parallel(
-            fetch_batch, batch_dfs, 1, threads, processes, ordered=False,
+            fetch_batch, batches, 1, threads, processes, ordered=False,
             leave_progress=False, show_progress=progress)
 
     return pd.concat(batch_result_dfs).sort_index()['label'].values
