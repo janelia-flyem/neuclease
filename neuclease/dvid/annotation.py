@@ -2420,21 +2420,19 @@ def delete_psds_from_dfs(point_df, partner_df, obsolete_partner_df):
     Delete the PSDs listed in the given obsolete_partner_df.
     If any tbars are left with no partners, delete those tbars, too.
     """
+    assert point_df.index.name == 'point_id'
     obsolete_partner_df = obsolete_partner_df[['pre_id', 'post_id']]
-    obsolete_pre_ids = obsolete_partner_df['pre_id'].values
+    obsolete_pre_ids = obsolete_partner_df['pre_id'].unique()
     obsolete_post_ids = obsolete_partner_df['post_id'].values
-    obsolete_pre_ids, obsolete_post_ids  # for linting
 
     # Drop obsolete PSDs
-    point_df = point_df.query('kind == "PreSyn" or point_id not in @obsolete_post_ids')
+    point_df = point_df.drop(obsolete_post_ids)
     partner_df = partner_df.query('post_id not in @obsolete_post_ids')
 
     # Delete empty tbars
-    remaining_tbar_ids = partner_df['pre_id'].unique()
-    remaining_tbar_ids  # for linting
-    dropped_tbar_ids = obsolete_partner_df.query('pre_id not in @remaining_tbar_ids')['pre_id'].unique()
-    point_df = point_df.query('kind == "PostSyn" or point_id not in @dropped_tbar_ids')
-
+    remaining_tbar_ids = pd.Index(partner_df['pre_id'].unique())
+    dropped_tbar_ids = pd.Index(obsolete_pre_ids).difference(remaining_tbar_ids)
+    point_df = point_df.drop(dropped_tbar_ids)
     return point_df.copy(), partner_df.copy(), dropped_tbar_ids
 
 
@@ -2468,14 +2466,20 @@ def select_redundant_psds(partner_df):
     of them are considered redundant.
     This function returns the less confident PSD entries as redundant.
     """
-    if 'conf_post' in partner_df:
-        partner_df = partner_df.sort_values('conf_post')
-    else:
+    if 'conf_post' not in partner_df:
         logger.warning("DataFrame has no 'conf_post' column.  Discarding redundant PSDs in arbitrary order.")
+        redundant_psd_rows = partner_df.duplicated(['pre_id', 'body_post'], keep='first')
+        return partner_df.loc[redundant_psd_rows]
 
-    dupe_psd_rows = partner_df.duplicated(['pre_id', 'body_post'], keep='last')
-    dupe_partner_df = partner_df.loc[dupe_psd_rows]
-    return dupe_partner_df.copy()
+    # Select dupes, then sort by conf to keep the best of the dupes and return the others.
+    all_dupe_psd_rows = partner_df.duplicated(['pre_id', 'body_post'], keep=False)
+    redundant_psd_rows = (
+        partner_df.loc[all_dupe_psd_rows]
+        .sort_values('conf_post')
+        .duplicated(['pre_id', 'body_post'], keep='last')
+    )
+    redundant_index = redundant_psd_rows[redundant_psd_rows].index
+    return partner_df.loc[redundant_index]
 
 
 def example_purge_bad_psds(server, uuid, syn_instance):
