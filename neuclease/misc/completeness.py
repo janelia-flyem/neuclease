@@ -8,7 +8,7 @@ from neuclease.dvid.annotation import body_synapse_counts
 logger = logging.getLogger(__name__)
 
 
-def completeness_forecast(labeled_point_df, partner_df, syn_counts_df=None,
+def completeness_forecast(labeled_point_df, partner_df, syn_counts_df=None, body_annotations_df=None, *,
                           min_tbar_conf=0.0, min_psd_conf=0.0, roi=None,
                           sort_by='SynWeight', stop_at_rank=None):
     """
@@ -38,8 +38,8 @@ def completeness_forecast(labeled_point_df, partner_df, syn_counts_df=None,
             if you have a pickle file from Gary.
 
         partner_df:
-            DataFrame with columns ['pre_id', 'post_id'].
-            Also obtained via the above-mentioned functions.
+            DataFrame with columns ['pre_id', 'post_id'] and optionally ['body_pre', 'body_post'].
+            If the body columns are provided, they need not be recalculated in this function.
 
         syn_counts_df:
             Optional. DataFrame with columns 'PreSyn', 'PostSyn' and (optionally) 'SynWeight'.
@@ -51,6 +51,12 @@ def completeness_forecast(labeled_point_df, partner_df, syn_counts_df=None,
             Note:
                 It is your responsibility to ensure that this pre-computed input is consistent
                 with any filtering criteria you specified (e.g. roi, min_tbar_conf, min_psd_conf).
+
+        body_annotations_df:
+            Per-body annotation columns to append to the syn_counts_df.
+            Useful for making more columns available to the sort_by argument.
+            If syn_counts_df already contains matching columns, then
+            body_annotations_df columns will override the columns in syn_counts_df.
 
         min_tbar_conf:
             Optional. Filter out tbars that don't meet this confidence threshold.
@@ -85,6 +91,32 @@ def completeness_forecast(labeled_point_df, partner_df, syn_counts_df=None,
 
         sorted_bodies_df is indexed by body ID, sorted by the body 'SynWeight'
     """
+    args = _sanitize_args(
+        labeled_point_df, partner_df, syn_counts_df, body_annotations_df,
+        min_tbar_conf, min_psd_conf, roi, sort_by, stop_at_rank)
+
+    (labeled_point_df, partner_df, syn_counts_df, body_annotations_df,
+        min_tbar_conf, min_psd_conf, roi, sort_by, stop_at_rank) = args
+
+    point_df, partner_df = _filter_synapses(labeled_point_df, partner_df, min_tbar_conf, min_psd_conf, roi)
+    conn_df = _body_conn_df(point_df, partner_df)
+    syn_counts_df = _rank_syn_counts(point_df, conn_df, syn_counts_df, body_annotations_df, sort_by)
+    conn_df = _completeness_forecast(conn_df, syn_counts_df, stop_at_rank)
+    return conn_df, syn_counts_df
+
+
+def _sanitize_args(labeled_point_df, partner_df, syn_counts_df, body_annotations_df,
+                   min_tbar_conf, min_psd_conf, roi,
+                   sort_by, stop_at_rank):
+    """
+    Check all arguments for validity and make minor changes if needed,
+    such as subsetting columns or tweaking types.
+
+    Since completeness_forecast() takes a very long time to run, it's convenient to
+    have all arguments validated as the very first step.
+
+    Returns all arguments, possibly with minor transformations.
+    """
     if (roi or min_tbar_conf or min_psd_conf) and syn_counts_df is not None:
         msg = (
             "\n"
@@ -96,17 +128,49 @@ def completeness_forecast(labeled_point_df, partner_df, syn_counts_df=None,
 
     # Subset columns for labeled_point_df
     assert labeled_point_df.index.name == 'point_id'
-    cols = ['kind', 'conf', 'body']
+    point_cols = ['kind', 'conf', 'body']
     if roi:
         assert 'roi' in labeled_point_df.columns
-        cols = [*cols, 'roi']
-    labeled_point_df = labeled_point_df[cols]
+        point_cols = [*point_cols, 'roi']
+    labeled_point_df = labeled_point_df[point_cols]
 
-    point_df, partner_df = _filter_synapses(labeled_point_df, partner_df, min_tbar_conf, min_psd_conf, roi)
-    conn_df = _body_conn_df(point_df, partner_df)
-    syn_counts_df = _rank_syn_counts(point_df, conn_df, syn_counts_df, sort_by)
-    conn_df = _completeness_forecast(conn_df, syn_counts_df, stop_at_rank)
-    return conn_df, syn_counts_df
+    partner_cols = [c for c in partner_df.columns
+                    if c in ['pre_id', 'post_id', 'body_pre', 'body_post']]
+    partner_df = partner_df[partner_cols]
+
+    assert (
+        syn_counts_df is None or (
+            isinstance(syn_counts_df, pd.DataFrame) and  # noqa
+            syn_counts_df.index.name == 'body'
+        )
+    )
+    assert (
+        body_annotations_df is None or (
+            isinstance(body_annotations_df, pd.DataFrame) and  # noqa
+            body_annotations_df.index.name == 'body'
+        )
+    )
+
+    if isinstance(sort_by, str):
+        sort_by = [sort_by]
+
+    # We can only sort using any columns the user provided,
+    # plus SynWeight, which we can provide below.
+    available_columns = {'PreSyn', 'PostSyn', 'SynWeight'}
+    if body_annotations_df is not None:
+        available_columns |= set(body_annotations_df.columns)
+    if syn_counts_df is not None:
+        available_columns |= set(syn_counts_df.columns)
+        assert {*syn_counts_df.columns} >= {'PreSyn', 'PostSyn'}, \
+            "synapse counts table needs columns for PreSyn and PostSyn"
+
+    assert {*sort_by} <= available_columns, (
+        "If you want to sort using non-standard columns, "
+        "you have to provide them in syn_counts_df or body_annotations_df")
+
+    return (labeled_point_df, partner_df, syn_counts_df, body_annotations_df,
+            min_tbar_conf, min_psd_conf, roi,
+            sort_by, stop_at_rank)
 
 
 def _completeness_forecast(conn_df, syn_counts_df, stop_at_rank, _debug_cols=False):
@@ -219,10 +283,6 @@ def _completeness_forecast(conn_df, syn_counts_df, stop_at_rank, _debug_cols=Fal
     body_max_syn_counts = syn_counts_df.rename(columns={k: f'{k}_max_rank' for k in syn_counts_df.columns})
     conn_df = conn_df.merge(body_max_syn_counts, 'left', left_on='body_max_rank', right_index=True)
 
-    # Special handling for status: Use empty string instead of NaN
-    if 'status_max_rank' in conn_df.columns:
-        conn_df['status_max_rank'] = conn_df['status_max_rank'].astype(object).fillna('')
-
     return conn_df
 
 
@@ -277,14 +337,17 @@ def _filter_synapses(point_df, partner_df, min_tbar_conf=0.0, min_psd_conf=0.0, 
     # Filter partner pairs (even if there were no specified filters),
     # in case the user's point_df and partner_df aren't perfectly matched
     # (e.g. if they did some pre-filtering of point_df.)
-    partner_df = partner_df.merge(point_df[[]], 'inner', left_on='pre_id', right_index=True)
-    partner_df = partner_df.merge(point_df[[]], 'inner', left_on='post_id', right_index=True)
+    logger.info("Filtering partners to exclude unlisted points")
+    valid_pre = partner_df['pre_id'].isin(point_df.index)
+    valid_post = partner_df['post_id'].isin(point_df.index)
+    partner_df = partner_df.loc[valid_pre & valid_post].copy()
 
     # Also filter point list again, to toss out points which had no partner
+    logger.info("Filtering points to exclude orphaned tbars/psds")
     valid_ids = pd.concat((partner_df['pre_id'].drop_duplicates().rename('point_id'),  # noqa
                            partner_df['post_id'].drop_duplicates().rename('point_id')),
                           ignore_index=True)
-    point_df = point_df.query('point_id in @valid_ids')
+    point_df = point_df.loc[point_df.index.isin(valid_ids)]
     return point_df, partner_df
 
 
@@ -310,28 +373,32 @@ def _body_conn_df(point_df, partner_df):
     return conn_df
 
 
-def _rank_syn_counts(point_df, conn_df, syn_counts_df=None, sort_by='SynWeight'):
+def _rank_syn_counts(point_df, conn_df, syn_counts_df=None, body_annotations_df=None, sort_by='SynWeight'):
     """
     - Generate a synapse counts table if one isn't provided.
     - Add a SynWeight column if necessary
     - Sort, and add a rank column
     """
-    if isinstance(sort_by, str):
-        sort_by = [sort_by]
-    if syn_counts_df is None:
-        assert {*sort_by} <= {'PreSyn', 'PostSyn', 'SynWeight'}, \
-            "If you want to sort using non-standard columns, you have to provide your own syn_counts_df"
-    else:
-        # We can only sort using any columns the user provided,
-        # plus SynWeight, which we can provide below.
-        assert {*syn_counts_df.columns} >= {'PreSyn', 'PostSyn'}, \
-            "synapse counts table needs columns for PreSyn and PostSyn"
-        assert {*sort_by} <= {*syn_counts_df.columns, 'SynWeight'}, \
-            "Can't sort by columns that aren't present in the synapse counts table."
-
     if syn_counts_df is None:
         logger.info("Computing per-body synapse table")
         syn_counts_df = body_synapse_counts(point_df)
+
+    if body_annotations_df is not None:
+        assert body_annotations_df.index.name == 'body'
+        syn_counts_df = syn_counts_df.drop(columns=body_annotations_df.columns, errors='ignore')
+        syn_counts_df = syn_counts_df.merge(body_annotations_df, 'left', on='body')
+
+    # For categorical dtypes which include the empty string as a category,
+    # we auto-convert NaN to "".
+    # This way, NaN items inherit the same sort position as "".
+    for col in syn_counts_df.columns:
+        try:
+            cat = syn_counts_df[col].dtype.categories
+        except AttributeError:
+            continue
+        else:
+            if '' in cat:
+                syn_counts_df[col].fillna('', inplace=True)
 
     if 'SynWeight' in sort_by and 'SynWeight' not in syn_counts_df.columns:
         # The user didn't provide a preferred body weighting,
@@ -377,6 +444,10 @@ def plot_connectivity_forecast(conn_df, max_rank=None, plotted_points=20_000, ho
             you want to be shown in total, with this argument.
             You won't notice the difference at all when zoomed out, but if you zoom
             in on the plot you may notice that the X-axis is discontiguous.
+        hover_cols:
+            Columns to display in the hover text.
+            Any '*_max_rank' columns should be referred to by their prefix only.
+            For example, use ``hover_cols=['SynWeight']``, not ``hover_cols=['SynWeight_max_rank']``.
     """
     import holoviews as hv  # noqa
     import hvplot.pandas    # noqa
@@ -387,7 +458,15 @@ def plot_connectivity_forecast(conn_df, max_rank=None, plotted_points=20_000, ho
 
     assert not export_path or export_path.endswith('.html')
 
+    if color_by_col and color_by_col not in hover_cols:
+        hover_cols.append(color_by_col)
+
     _df = conn_df
+
+    # conn_df will contain columns like 'SynWeight_max_rank',
+    # but for simplicity we display that as 'SynWeight' in the hover text.
+    _df = _df.rename(columns={f'{c}_max_rank': c for c in {*hover_cols}})
+
     show_cols = ['traced_tbar_frac',
                  # 'minimally_connected_tbar_frac',
                  'traced_psd_frac',
@@ -456,8 +535,9 @@ def plot_connectivity_forecast(conn_df, max_rank=None, plotted_points=20_000, ho
 
 def plot_categorized_connectivity_forecast(
         conn_df, category_col, max_rank=None, plotted_points=20_000, hover_cols=[],
-        title='connectivity after prioritized merging', export_path=None,
-        selection_link=None):
+        title='connectivity after prioritized merging', export_path=None, selection_link=None,
+        secondary_line='SynWeight', secondary_categories=['Anchor', '0.5assign', ''],
+        secondary_range=[0, 400]):
     """
     Plot the curves of captured tbars, captured PSDs and captured dual-sided
     connections as bodies are traced/merged from large to small.
@@ -489,14 +569,22 @@ def plot_categorized_connectivity_forecast(
             you want to be shown in total, with this argument.
             You won't notice the difference at all when zoomed out, but if you zoom
             in on the plot you may notice that the X-axis is discontiguous.
+        hover_cols:
+            Columns to display in the hover text.
+            Any '*_max_rank' columns should be referred to by their prefix only.
+            For example, use ``hover_cols=['SynWeight']``, not ``hover_cols=['SynWeight_max_rank']``.
     """
     from bokeh.plotting import figure, output_file, save as bokeh_save
-    from bokeh.models import HoverTool
+    from bokeh.models import HoverTool, Range1d, LinearAxis
     from bokeh.palettes import Category20
 
     assert not export_path or export_path.endswith('.html')
 
     _df = conn_df
+
+    # conn_df will contain columns like 'SynWeight_max_rank',
+    # but for simplicity we display that as 'SynWeight' in the hover text.
+    _df = _df.rename(columns={f'{c}_max_rank': c for c in {category_col, *hover_cols}})
 
     # Zoom in on left-hand region
     if max_rank:
@@ -508,13 +596,27 @@ def plot_categorized_connectivity_forecast(
     step = max(1, len(_df) // plotted_points)
     _df = _df.iloc[::step]
 
-    p = figure(align='center', height=500, width=800, title=title)
+    p = figure(align='center', height=500, width=800, title=title, y_range=(0, 1.0))
+    p.title.text_font_size = '14pt'
+    p.xaxis.axis_label = 'body rank'
+    p.yaxis.axis_label = 'fraction of captured tbars, psds, and connectivity'
+    p.yaxis.ticker = np.arange(0.0, 1.1, 0.1)
+
+    if secondary_line:
+        p.extra_y_ranges[secondary_line] = Range1d(*secondary_range)
+        ax2 = LinearAxis(y_range_name=secondary_line, axis_label=secondary_line)
+        ax2.axis_label_text_color = "navy"
+        p.add_layout(ax2, 'right')
 
     dots = []
     for i, (cat, df) in list(enumerate(_df.groupby(category_col, observed=True)))[::-1]:
         p.line('max_rank', 'traced_tbar_frac', legend_label=cat, color=Category20[20][2 * (i % 10)], line_width=5, source=df)
         p.line('max_rank', 'traced_psd_frac', color=Category20[20][2 * (i % 10) + 1], line_width=5, source=df)
         p.line('max_rank', 'traced_conn_frac', color=Category20[20][2 * (i % 10)], line_width=5, source=df)
+
+        if secondary_line and cat in secondary_categories:
+            p.line('max_rank', secondary_line, color="navy", y_range_name=secondary_line, source=df)
+
         # if selection_link:
         #     # https://github.com/bokeh/bokeh/issues/10056#issuecomment-1308510074
         #     d1 = p.dot('max_rank', 'traced_tbar_frac', legend_label=cat, color=Category20[20][2 * (i % 10)], source=df)
@@ -522,7 +624,7 @@ def plot_categorized_connectivity_forecast(
         #     d3 = p.dot('max_rank', 'traced_conn_frac', color=Category20[20][2 * (i % 10)], source=df)
         #     dots.extend([d1, d2, d3])
 
-    p.legend.location = "bottom_right"
+    p.legend.location = "top_right"
 
     hover = HoverTool()
     hover.tooltips = [
