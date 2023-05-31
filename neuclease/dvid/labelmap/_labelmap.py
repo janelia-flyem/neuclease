@@ -856,15 +856,17 @@ def fetch_labels_batched(server, uuid, instance, coordinates_zyx, supervoxels=Fa
     """
     assert not threads or not processes, "Choose either threads or processes (not both)"
     coordinates_zyx = np.asarray(coordinates_zyx)
-    coords_df = pd.DataFrame(coordinates_zyx, columns=['z', 'y', 'x'], dtype=np.int32)
+    coords_df = pd.DataFrame(coordinates_zyx, columns=[*'zyx'], dtype=np.int32)
     coords_df['label'] = np.uint64(0)
 
     if presort:
-        # Sort coordinates by their block index,
-        # so each block usually won't appear in multiple batches,
-        # incurring repeated reads of the same block.
         with Timer(f"Pre-sorting {len(coords_df)} coordinates by block index", logger):
-            sort_blockmajor(coords_df, inplace=True, ignore_index=True)
+            # Sort coordinates by their block index,
+            # so each block usually won't appear in multiple batches,
+            # which would incur repeated reads of the same block.
+            # Here we preserve the index, which will be used to
+            # restore the caller's original point order.
+            sort_blockmajor(coords_df, inplace=True)
 
     with Timer("Fetching labels from DVID", logger):
         fetch_batch = partial(_fetch_labels_batch, server, uuid, instance, scale, supervoxels)
@@ -873,6 +875,7 @@ def fetch_labels_batched(server, uuid, instance, coordinates_zyx, supervoxels=Fa
             fetch_batch, batches, 1, threads, processes, ordered=False,
             leave_progress=False, show_progress=progress)
 
+    # Restore the caller's original point order.
     return pd.concat(batch_result_dfs).sort_index()['label'].values
 
 
@@ -880,6 +883,7 @@ def _fetch_labels_batch(server, uuid, instance, scale, supervoxels, batch_df):
     """
     Helper for fetch_labels_batched(), defined at top-level so it can be pickled.
     """
+    batch_df = batch_df.copy()
     batch_coords = batch_df[['z', 'y', 'x']].values
     # don't pass session: We want a unique session per thread
     batch_df.loc[:, 'label'] = fetch_labels(server, uuid, instance, batch_coords, scale, supervoxels)
