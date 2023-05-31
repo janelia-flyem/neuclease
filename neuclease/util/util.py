@@ -1564,7 +1564,7 @@ def encode_coords_to_blockmajor_uint64(coords, signed=True):
     Args:
         coords:
             ndarray of int32, shape (N,3)
-            All values must be be in range(-2**20, 2**20), unless signed=True,
+            All values must be be in range(-2**20, 2**20), unless signed=False,
             in which case the acceptable range is (0, 2**21).
 
         signed:
@@ -1615,6 +1615,50 @@ def encode_coords_to_blockmajor_uint64(coords, signed=True):
         encoded_coords[i] = np.uint64(encoded)
 
     return encoded_coords
+
+
+@jit(nopython=True, nogil=True)
+def decode_coords_from_blockmajor_uint64(encoded_coords, signed=True):
+    """
+    Reciprocal of encode_coords_to_blockmajor_uint64().
+    Not needed very often, but useful for testing.
+    """
+    N = len(encoded_coords)
+    coords = np.empty((N,3), np.int32)
+
+    for i in range(N):
+        encoded = encoded_coords[i]
+        Bz = encoded >> (15*2 + 6*3) & ((1 << 15) - 1)
+        By = encoded >> (15*1 + 6*3) & ((1 << 15) - 1)
+        Bx = encoded >> (15*0 + 6*3) & ((1 << 15) - 1)
+
+        bz = encoded >> (6*2) & ((1 << 6) - 1)
+        by = encoded >> (6*1) & ((1 << 6) - 1)
+        bx = encoded >> (6*0) & ((1 << 6) - 1)
+
+        z = np.int32((Bz << 6) | bz)
+        y = np.int32((By << 6) | by)
+        x = np.int32((Bx << 6) | bx)
+
+        if signed:
+            # Convert from 'offset binary', i.e. invert the MSB
+            z ^= (1 << 20)
+            y ^= (1 << 20)
+            x ^= (1 << 20)
+
+            # Check sign bits and extend if necessary
+            if z & (1 << 20):
+                z |= np.int32(0xFFFF_FFFF << 21)
+
+            if y & (1 << 20):
+                y |= np.int32(0xFFFF_FFFF << 21)
+
+            if x & (1 << 20):
+                x |= np.int32(0xFFFF_FFFF << 21)
+
+        coords[i] = (z,y,x)
+
+    return coords
 
 
 def sort_blockmajor(df, inplace=False, ignore_index=False, show_blockmajor_id=False):
