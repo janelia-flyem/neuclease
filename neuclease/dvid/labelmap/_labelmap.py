@@ -3566,6 +3566,14 @@ def compute_affected_bodies(kafka_msgs):
             changed_bodies -= labels
             new_bodies -= labels
 
+        # 'renumber' is treated identically to 'merge'
+        if msg['Action'] == 'renumber-complete':
+            changed_bodies.add( msg['NewLabel'] )
+            labels = {msg['OrigLabel']}
+            removed_bodies |= labels
+            changed_bodies -= labels
+            new_bodies -= labels
+
         if msg['Action'] == 'split-complete':
             changed_bodies.add( msg['Target'] )
             new_bodies.add( msg['NewLabel'] )
@@ -3604,11 +3612,15 @@ def compute_merge_hierarchies(msgs):
 
     g = nx.DiGraph()
     for msg in msgs:
-        if msg['Action'] != 'merge-complete':
-            continue
-        target = msg['Target']
-        edges = [(target, label) for label in msg['Labels']]
-        g.add_edges_from(edges)
+        if msg['Action'] == 'merge-complete':
+            target = msg['Target']
+            edges = [(target, label) for label in msg['Labels']]
+            g.add_edges_from(edges)
+        elif msg['Action'] == 'renumber-complete':
+            # 'renumber' is treated the same as 'merge'
+            target = msg['NewLabel']
+            merged = msg['OrigLabel']
+            g.add_edge(target, merged)
     return g
 
 
