@@ -64,8 +64,8 @@ def construct_ng_precomputed_layer_from_rois(server, uuid, rois, bucket_name, bu
     # First, verify that we have permission to edit the bucket.
     with open(f"{localdir}/test-file.txt", 'w') as f:
         f.write("Just testing my bucket access...\n")
-    subprocess.run(f"gsutil cp {localdir}/test-file.txt {bucket_name}/{bucket_path}/test-file.txt", shell=True, check=True)
-    subprocess.run(f"gsutil rm {bucket_name}/{bucket_path}/test-file.txt", shell=True, check=True)
+    subprocess.run(f"gsutil cp '{localdir}/test-file.txt' '{bucket_name}/{bucket_path}/test-file.txt'", shell=True, check=True)
+    subprocess.run(f"gsutil rm '{bucket_name}/{bucket_path}/test-file.txt'", shell=True, check=True)
 
     if isinstance(rois, pd.Series):
         roi_names = dict(rois.items())
@@ -143,8 +143,8 @@ def construct_ng_precomputed_layer_from_roi_seg(roi_vol, roi_names, bucket_name,
     # First, verify that we have permission to edit the bucket.
     with open(f"{localdir}/test-file.txt", 'w') as f:
         f.write("Just testing my bucket access...\n")
-    subprocess.run(f"gsutil cp {localdir}/test-file.txt {bucket_name}/{bucket_path}/test-file.txt", shell=True, check=True)
-    subprocess.run(f"gsutil rm {bucket_name}/{bucket_path}/test-file.txt", shell=True, check=True)
+    subprocess.run(f"gsutil cp '{localdir}/test-file.txt' '{bucket_name}/{bucket_path}/test-file.txt'", shell=True, check=True)
+    subprocess.run(f"gsutil rm '{bucket_name}/{bucket_path}/test-file.txt'", shell=True, check=True)
 
     if 'voxels' in steps:
         logger.info("Uploading segmentation volume")
@@ -278,7 +278,7 @@ def upload_precompted_ngmeshes(meshes, names, bucket_name, bucket_path, localdir
     if volume_info:
         volume_info = copy.deepcopy(volume_info)
     else:
-        subprocess.run(f"gsutil cp {bucket_name}/{bucket_path}/info {localdir}/info", shell=True)
+        subprocess.run(f"gsutil cp '{bucket_name}/{bucket_path}/info' '{localdir}/info'", shell=True)
         with open(f"{localdir}/info", 'r') as f:
             volume_info = json.load(f)
 
@@ -286,8 +286,8 @@ def upload_precompted_ngmeshes(meshes, names, bucket_name, bucket_path, localdir
     dump_json(volume_info, f"{localdir}/info", unsplit_int_lists=True)
 
     logger.info("Uploading")
-    subprocess.run(f"gsutil -h 'Cache-Control:public, no-store' cp {localdir}/info {bucket_name}/{bucket_path}/info", shell=True)
-    subprocess.run(f"gsutil -m cp -R {localdir}/mesh {bucket_name}/{bucket_path}/mesh", shell=True)
+    subprocess.run(f"gsutil -h 'Cache-Control:public, no-store' cp '{localdir}/info' '{bucket_name}/{bucket_path}/info'", shell=True)
+    subprocess.run(f"gsutil -m cp -R '{localdir}/mesh' '{bucket_name}/{bucket_path}/mesh'", shell=True)
 
 
 def create_precomputed_segment_properties(names, bucket_name, bucket_path, localdir=None, volume_info=None):
@@ -326,15 +326,15 @@ def create_precomputed_segment_properties(names, bucket_name, bucket_path, local
     if volume_info is not None:
         volume_info = copy.deepcopy(volume_info)
     else:
-        subprocess.run(f"gsutil cp {bucket_name}/{bucket_path}/info {localdir}/info", shell=True)
+        subprocess.run(f"gsutil cp '{bucket_name}/{bucket_path}/info' '{localdir}/info'", shell=True)
         with open(f"{localdir}/info", 'r') as f:
             volume_info = json.load(f)
 
     volume_info["segment_properties"] = "segment_properties"
     dump_json(volume_info, f"{localdir}/info", unsplit_int_lists=True)
 
-    subprocess.run(f"gsutil -h 'Cache-Control:public, no-store' cp {localdir}/info {bucket_name}/{bucket_path}/info", shell=True)
-    subprocess.run(f"gsutil -h 'Cache-Control:public, no-store' cp -R {localdir}/segment_properties {bucket_name}/{bucket_path}/segment_properties", shell=True)
+    subprocess.run(f"gsutil -h 'Cache-Control:public, no-store' cp '{localdir}/info' '{bucket_name}/{bucket_path}/info'", shell=True)
+    subprocess.run(f"gsutil -h 'Cache-Control:public, no-store' cp -R '{localdir}/segment_properties' '{bucket_name}/{bucket_path}/segment_properties'", shell=True)
 
 
 def create_legacy_mesh_info(mesh_dir, names=None):
