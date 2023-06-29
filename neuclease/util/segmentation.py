@@ -1227,6 +1227,8 @@ def region_features(label_img, grayscale_img=None, features=['Box', 'Count'], ig
     assert np.issubdtype(label_img.dtype, np.integer)
 
     # LabelMapper requires unsigned dtype
+    if label_img.dtype == np.int8:
+        label_img = label_img.view(np.uint8)
     if label_img.dtype == np.int16:
         label_img = label_img.view(np.uint16)
     if label_img.dtype == np.int32:
@@ -1234,8 +1236,8 @@ def region_features(label_img, grayscale_img=None, features=['Box', 'Count'], ig
     if label_img.dtype == np.int64:
         label_img = label_img.view(np.uint64)
 
-    # Oops, labelmapper doesn't support uint16 -> u32
-    if label_img.dtype == np.uint16:
+    # Oops, labelmapper doesn't support uint8 -> u32 nor uint16 -> u32
+    if label_img.dtype in (np.uint8, np.uint16):
         label_img = label_img.astype(np.uint32)
 
     # Map from nonconsecutive[u64 or u32] -> consecutive uint32
