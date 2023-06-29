@@ -1,8 +1,25 @@
+"""
+neuclease setup.py
+"""
 from setuptools import find_packages, setup
+import versioneer
+
+# For now, requirements are only specified in the conda recipe, not here.
+#
+# TODO: Specify them here (or requirements.txt),
+#       and have the conda recipe import them via:
+#
+#    run:
+#      - python
+#       {% for dep in data['install_requires'] %}
+#      - {{ dep.lower() }}
+#      {% endfor %}
+#
 
 setup(
     name='neuclease',
-    version='0.1',
+    version=versioneer.get_version(),
+    cmdclass=versioneer.get_cmdclass(),
     description='Tools for computing interactive "cleaves" of agglomerated neuron fragments from a DVID server.',
     url='https://github.com/janelia-flyem/neuclease',
     packages=find_packages(),

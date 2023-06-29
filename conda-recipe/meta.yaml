@@ -1,12 +1,8 @@
-package:
-    name: neuclease
+{% set data = load_setup_py_data() %}
 
-  # If we're using a non-tagged revision, append '.postN' to the version
-  {% if GIT_DESCRIBE_NUMBER|int != 0 %}
-    version: {{GIT_DESCRIBE_TAG}}.post{{GIT_DESCRIBE_NUMBER}}
-  {% else %}
-    version: {{GIT_DESCRIBE_TAG}}
-  {% endif %}
+package:
+  name: neuclease
+  version: {{ data['version'] }}
 
 source:
   path: ../
@@ -53,7 +49,7 @@ test:
   requires:
     - pytest
     - dvid >=dvid-0.9.17
-    - libdvid-cpp
+    - libdvid-cpp >=0.5
 
   imports:
     - neuclease

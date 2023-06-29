@@ -60,3 +60,6 @@ else:
         See: https://github.com/janelia-flyem/neuclease/issues/3
     """)
     raise AssertionError(msg)
+
+from . import _version
+__version__ = _version.get_versions()['version']
