@@ -1,13 +1,17 @@
 # Install commands:
 #
-#   conda create -n ng -c conda-forge selenium geckodriver pillow numpy requests tornado six google-apitools google-auth atomicwrites ffmpeg
+#   # Note: At the time of this writing (2023-07), neuroglancer does not work with the latest selenium.
+
+#   conda create -n ng -c conda-forge selenium=4.7 geckodriver pillow numpy requests \
+#                         tornado six google-apitools google-auth atomicwrites ffmpeg
 #   conda activate ng
 #   pip install neuroglancer
 #
 # Video commands:
 #
+#   cp hemibrain-neuroglancer-video-script.txt /tmp/
 #   python -m neuroglancer.tool.video_tool render --browser firefox --hide-axis-lines --height=2160 --width=2160 <(grep -v '^#' /tmp/hemibrain-neuroglancer-video-script.txt) /tmp/example-frames
-#   ffmpeg -r 24 -f image2 -s 2160x2160 -i example-frames/%07d.png -vcodec libx264 -crf 25 -pix_fmt yuv420p hemibrain-neuroglancer-video.mp4
+#   ffmpeg -r 24 -f image2 -s 2160x2160 -i /tmp/example-frames/%07d.png -vcodec libx264 -crf 25 -pix_fmt yuv420p hemibrain-neuroglancer-video.mp4
 #
 # Note:
 #    Normally, video scripts like this one should NOT include comments.
