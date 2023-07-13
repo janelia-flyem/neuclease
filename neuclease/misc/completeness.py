@@ -131,11 +131,14 @@ def _sanitize_args(labeled_point_df, partner_df, syn_counts_df, body_annotations
     point_cols = ['kind', 'conf', 'body']
     if roi:
         assert 'roi' in labeled_point_df.columns
+
+    if 'roi' in labeled_point_df.columns:
         point_cols = [*point_cols, 'roi']
+
     labeled_point_df = labeled_point_df[point_cols]
 
     partner_cols = [c for c in partner_df.columns
-                    if c in ['pre_id', 'post_id', 'body_pre', 'body_post']]
+                    if c in ['pre_id', 'post_id', 'body_pre', 'body_post', 'roi']]
     partner_df = partner_df[partner_cols]
 
     assert (
@@ -353,23 +356,46 @@ def _filter_synapses(point_df, partner_df, min_tbar_conf=0.0, min_psd_conf=0.0, 
 
 def _body_conn_df(point_df, partner_df):
     """
+    Produce a point-wise connection table with additional columns for pre/post body IDs.
+    If partner_df already contains the necessary columns, return them as-is.
+    Otherwise, compute them.
+    """
+    body_cols = ['body_pre', 'body_post']
+    if 'roi' in point_df.columns:
+        body_cols = [*body_cols, 'roi']
+
+    # Did the user already provide the {body_pre, body_post, roi} columns?
+    if set(body_cols) <= {*partner_df.columns}:
+        return partner_df[['pre_id', 'post_id', *body_cols]]
+
+    return merge_body_partner_columns(point_df, partner_df)
+
+
+def merge_body_partner_columns(point_df, partner_df):
+    """
+    Produce a point-wise connection table with additional columns for pre/post body IDs.
+
     Onto the given pre-to-post connection table given in partner_df,
-    merge additional columns ['body_pre', 'body_post'],
+    merge additional columns ['body_pre', 'body_post'] (and optionally 'roi'),
     obtained from the given point_df table.
 
     Returns:
-        DataFrame with columns ['pre_id', 'post_id', 'body_pre', 'body_post']
+        DataFrame with columns ['pre_id', 'post_id', 'body_pre', 'body_post', 'roi']
+
+        ('roi' is included iff it is present in point_df)
     """
-    # Did the user already provide the body_pre, body_post columns?
-    if {'body_pre', 'body_post'} <= {*partner_df.columns}:
-        return partner_df[['pre_id', 'post_id', 'body_pre', 'body_post']]
+    post_merge_cols = ['body']
+    if 'roi' in point_df.columns:
+        # If the point_df includes 'roi', then we assign it to each connection according
+        # to the PSD location (not the pre location), which is consistent with our general
+        # conventions, e.g. in neuprint.
+        post_merge_cols = ['body', 'roi']
 
     # Append columns ['body_pre', 'body_post']
     logger.info("Appending body columns")
     conn_df = partner_df[['pre_id', 'post_id']]
     conn_df = conn_df.merge(point_df['body'], 'left', left_on='pre_id', right_index=True)
-    conn_df = conn_df.merge(point_df['body'], 'left', left_on='post_id', right_index=True, suffixes=['_pre', '_post'])
-
+    conn_df = conn_df.merge(point_df[post_merge_cols], 'left', left_on='post_id', right_index=True, suffixes=['_pre', '_post'])
     return conn_df
 
 
@@ -405,11 +431,48 @@ def _rank_syn_counts(point_df, conn_df, syn_counts_df=None, body_annotations_df=
         # so calculate each body's SynWeight as its total inputs and outputs.
         # Each PSD counts as 1, each tbar counts as the number of partners it has.
         logger.info("Computing SynWeight column")
+
+        # FIXME: Would value_counts() be faster than groupby()[].size()
         output_counts = conn_df.groupby('body_pre')['pre_id'].size().rename('OutputPartners').rename_axis('body')
         syn_counts_df = syn_counts_df.merge(output_counts, 'left', left_index=True, right_index=True)
         syn_counts_df['OutputPartners'] = syn_counts_df['OutputPartners'].fillna(0.0).astype(int)
         syn_counts_df['SynWeight'] = syn_counts_df.eval('OutputPartners + PostSyn')
         assert syn_counts_df['SynWeight'].sum() == 2 * syn_counts_df['PostSyn'].sum()
+
+    if 'roi' in conn_df.columns:
+        logger.info("Computing top roi columns")
+
+        # It's much faster and more convenient to use 2-column value_counts()
+        # than it is to use groupby().agg(pd.Series.mode)
+        top_output_roi = (
+            conn_df[['body_pre', 'roi']]
+            .value_counts()
+            .groupby('body_pre')
+            .head(1)
+            .reset_index(1)
+            .rename_axis('body')
+            .rename(columns={
+                'roi': 'top_output_roi',
+                0: 'top_output_roi_weight'
+            })
+        )
+        syn_counts_df = syn_counts_df.merge(top_output_roi, 'left', left_index=True, right_index=True)
+        syn_counts_df['top_output_roi_weight'] = syn_counts_df['top_output_roi_weight'].fillna(0.0).astype(int)
+
+        top_input_roi = (
+            conn_df[['body_post', 'roi']]
+            .value_counts()
+            .groupby('body_post')
+            .head(1)
+            .reset_index(1)
+            .rename_axis('body')
+            .rename(columns={
+                'roi': 'top_input_roi',
+                0: 'top_input_roi_weight'
+            })
+        )
+        syn_counts_df = syn_counts_df.merge(top_input_roi, 'left', left_index=True, right_index=True)
+        syn_counts_df['top_input_roi_weight'] = syn_counts_df['top_input_roi_weight'].fillna(0.0).astype(int)
 
     # Rank the bodies from large to small
     logger.info("Ranking bodies")
