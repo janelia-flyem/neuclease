@@ -2628,6 +2628,7 @@ def encode_labelarray_blocks(corners_zyx, blocks, gzip_level=6, progress=False):
     corners_zyx = np.asarray(corners_zyx, np.int32)
     assert corners_zyx.ndim == 2
     assert corners_zyx.shape[1] == 3
+    assert not (corners_zyx % 64 ).any(), "Expected block corners to be divisible by 64!"
     if hasattr(blocks, '__len__'):
         assert len(blocks) == len(corners_zyx)
 
