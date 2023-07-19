@@ -928,10 +928,10 @@ def load_synapses_as_dataframes(elements, return_both_partner_tables=False):
         else:
             return point_df, partner_df
 
-    ##
-    ## FIXME: This ought to use load_elements_as_dataframe(),
-    ##        rather than reimplementing this parsing logic.
-    ##
+    #
+    # FIXME: This ought to use load_elements_as_dataframe(),
+    #        rather than reimplementing this parsing logic.
+    #
 
     # Accumulating separate lists for each column ought to be
     # faster than building a list-of-tuples, I think.
@@ -1352,7 +1352,7 @@ def load_synapses(path):
     elif ext == '.npy':
         points_df = load_synapses_npy(path)
     elif ext == '.json':
-        points_df, _partner_df = load_synapses_from_json()
+        points_df, _partner_df = load_synapses_from_json(path)
 
     return points_df
 
@@ -1367,9 +1367,9 @@ def load_synapses_from_json(json_path, batch_size=1000):
     point_dfs = []
     partner_dfs = []
     try:
-        with open(json_path, 'r') as f:
+        with open(json_path, 'r', encoding='utf-8') as f:
             for elements in tqdm_proxy( gen_json_objects(f, batch_size) ):
-                point_df, partner_df = load_synapses_as_dataframes(elements)
+                point_df, partner_df = load_synapses_as_dataframes(elements)  # pylint: disable=all
                 point_dfs.append(point_df)
                 partner_dfs.append(partner_df)
 
@@ -1482,7 +1482,7 @@ def load_gary_synapse_json(path, processes=8, batch_size=100_000):
                 associated with exactly 1 T-bar (PreSyn).
     """
     logger.info(f"Loading JSON data from {path}")
-    with open(path, 'r') as f:
+    with open(path, 'r', encoding='utf-8') as f:
         data = ujson.load(f)["data"]
 
     if processes == 0:
@@ -1798,7 +1798,7 @@ def determine_bodies_of_interest(server, uuid, synapses_instance, rois=None, min
     with Timer("Aggregating body-wise synapse counts"):
         body_synapses_df = body_synapse_counts(points_df)
 
-    min_tbars, min_psds  # for linting
+    min_tbars, min_psds  # linting fix for otherwise unused variable # pylint: disable=pointless-statement
     body_synapses_df = body_synapses_df.query('PreSyn >= @min_tbars or PostSyn >= @min_psds')
     return body_synapses_df
 
@@ -1850,9 +1850,9 @@ def check_synapse_consistency(syn_point_df, pre_partner_df, post_partner_df):
     logger.info(f"Found {len(only_in_psd)} non-reciprocal relationships from PSDs")
 
     # Refs to nowhere (Tbar or PSD has a relationship to a point that doesn't exist)
-    point_ids = syn_point_df.index  # noqa
-    bad_tbar_refs = pre_partner_df.query('post_id not in @point_ids')
-    bad_psd_refs = post_partner_df.query('pre_id not in @point_ids')
+    _point_ids = syn_point_df.index  # noqa
+    bad_tbar_refs = pre_partner_df.query('post_id not in @_point_ids')
+    bad_psd_refs = post_partner_df.query('pre_id not in @_point_ids')
     logger.info(f"Found {len(bad_tbar_refs)} references to non-existent PSDs")
     logger.info(f"Found {len(bad_psd_refs)} references to non-existent TBars")
 
