@@ -195,7 +195,7 @@ def split_events_to_graph(events):
                 # (Presumably, it originates from the root UUID, but for old servers the /split-supervoxels
                 # endpoint is not comprehensive all the way to the root node.)
                 g.nodes[old]['uuid'] = '<unknown>'
-                g.nodes[old][mutid] = -1
+                g.nodes[old]['mutid'] = -1
 
             g.nodes[remain]['uuid'] = uuid
             g.nodes[split]['uuid'] = uuid
@@ -204,6 +204,37 @@ def split_events_to_graph(events):
     
     return g
 
+
+def split_df_to_graph(split_df):
+    """
+    Load the split events into an annotated networkx.DiGraph, where each node is a supervoxel ID.
+    The node annotations are: 'uuid' and 'mutid', indicating the uuid and mutation id at
+    the time the supervoxel was CREATED.
+
+    Args:
+        split_df: DataFrame as returned by fetch_supervoxel_splits(..., format='pandas')
+
+    Returns:
+        nx.DiGraph, which will consist of trees (i.e. a forest)
+    """
+    g = nx.DiGraph()
+
+    for row in split_df.itertuples():
+        g.add_edge(row.old, row.remain)
+        g.add_edge(row.old, row.split)
+        if 'uuid' not in g.nodes[row.old]:
+            # If the old ID is not a product of a split event, we don't know when it was created.
+            # (Presumably, it originates from the root UUID, but for old servers the /split-supervoxels
+            # endpoint is not comprehensive all the way to the root node.)
+            g.nodes[row.old]['uuid'] = '<unknown>'
+            g.nodes[row.old]['mutid'] = -1
+
+        g.nodes[row.remain]['uuid'] = row.uuid
+        g.nodes[row.split]['uuid'] = row.uuid
+        g.nodes[row.remain]['mutid'] = row.mutid
+        g.nodes[row.split]['mutid'] = row.mutid
+
+    return g
 
 def split_events_to_dataframe(events, drop_duplicates=True, sort=True):
     """
