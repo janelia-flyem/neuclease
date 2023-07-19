@@ -1891,6 +1891,9 @@ def generate_sample_coordinates(server, uuid, instance, bodies, supervoxels=Fals
             If True, don't raise an exception for bodies whose
             label index is out-of-sync with the scale-0 segmentation.
             Instead, return [-1, -1, -1].
+
+    Returns:
+        DataFrame with coolumns ['z', 'y', 'x'], indexed by body (or supervoxel).
     """
     assert processes > 0
     gen_coord = partial(_generate_sample_coordinate_no404, skip_out_of_sync, server, uuid, instance, supervoxels=supervoxels, interior=interior)
