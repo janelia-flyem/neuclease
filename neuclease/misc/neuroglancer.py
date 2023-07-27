@@ -179,37 +179,9 @@ def annotation_layer_json(df, name="annotations", color="#ffff00", size=8.0, lin
     Returns:
         dict (JSON data)
     """
+    df = _standardize_annotation_dataframe(df)
     if isinstance(properties, str):
         properties = [properties]
-
-    df = df.copy()
-    id_cols = [*'xyz', 'xa', 'ya', 'za', 'xb', 'yb', 'zb', 'rx', 'ry', 'rz', 'type']
-    for col in id_cols:
-        if col not in df.columns:
-            df[col] = np.nan
-
-    if 'id' not in df.columns:
-        ids = [str(hex(abs(hash(tuple(x))))) for x in df[id_cols].values.tolist()]
-        df['id'] = ids
-
-    assert (df['x'].isnull() ^ df['xa'].isnull()).all(), \
-        "You must supply either x,y,z or xa,ya,za,xb,yb,zb for every row."
-
-    df['type'] = df['type'].fillna(
-        df['rx'].isnull().map({
-            True: np.nan,
-            False: 'ellipsoid'
-        })
-    )
-
-    # We have no way of choosing between 'line' and 'axis_aligned_bounding_box'
-    # unless the user provides the 'type' explicitly.  We default to 'axis_aligned_bounding_box'.
-    df['type'] = df['type'].fillna(
-        df['x'].isnull().map({
-            True: 'axis_aligned_bounding_box',
-            False: 'point'
-        })
-    )
 
     data = copy.deepcopy(LOCAL_ANNOTATION_JSON)
     data['name'] = name
@@ -220,16 +192,33 @@ def annotation_layer_json(df, name="annotations", color="#ffff00", size=8.0, lin
         data['linkedSegmentationLayer'] = linkedSegmentationLayer
         data['filterBySegmentation'] = ['segments']
 
+    if not show_panel:
+        del data['panels']
+
     prop_specs = _annotation_property_specs(df, properties)
     if prop_specs:
         data['annotationProperties'] = prop_specs
 
+    data['annotations'] = _annotation_list_json(
+        df, linkedSegmentationLayer, properties
+    )
+    return data
+
+
+def _annotation_list_json(df, linkedSegmentationLayer, properties):
+    """
+    Helper for annotation_layer_json().
+
+    Generate the list of annotations for an annotation layer,
+    assuming the input dataframe has already been pre-conditioned.
+    """
     # Replace categoricals with their integer codes.
     # The corresponding enum_labels are already stored in the property specs
     for col in properties:
         if df[col].dtype == "category":
             df[col] = df[col].cat.codes
 
+    annotations = []
     for row in df.itertuples():
         entry = {}
         entry['type'] = row.type
@@ -255,15 +244,52 @@ def annotation_layer_json(df, name="annotations", color="#ffff00", size=8.0, lin
             segments = [str(s) for s in segments]
             entry['segments'] = segments
 
-        if prop_specs:
+        if properties:
             entry['props'] = [getattr(row, prop) for prop in properties]
 
-        data['annotations'].append(entry)
+        annotations.append(entry)
+    return annotations
 
-    if not show_panel:
-        del data['panels']
 
-    return data
+def _standardize_annotation_dataframe(df):
+    """
+    Helper for annotation_layer_json().
+    Add empty columns as needed until the dataframe
+    has all possible annotation columns.
+
+    Also populate the 'type' column with inferred
+    annotation types based on the columns the user DID provide.
+    """
+    df = df.copy()
+    id_cols = [*'xyz', 'xa', 'ya', 'za', 'xb', 'yb', 'zb', 'rx', 'ry', 'rz', 'type']
+    for col in id_cols:
+        if col not in df.columns:
+            df[col] = np.nan
+
+    if 'id' not in df.columns:
+        ids = [str(hex(abs(hash(tuple(x))))) for x in df[id_cols].values.tolist()]
+        df['id'] = ids
+
+    assert (df['x'].isnull() ^ df['xa'].isnull()).all(), \
+        "You must supply either x,y,z or xa,ya,za,xb,yb,zb for every row."
+
+    df['type'] = df['type'].fillna(
+        df['rx'].isnull().map({
+            True: np.nan,
+            False: 'ellipsoid'
+        })
+    )
+
+    # We have no way of choosing between 'line' and 'axis_aligned_bounding_box'
+    # unless the user provides the 'type' explicitly.
+    # We default to 'axis_aligned_bounding_box'.
+    df['type'] = df['type'].fillna(
+        df['x'].isnull().map({
+            True: 'axis_aligned_bounding_box',
+            False: 'point'
+        })
+    )
+    return df
 
 
 def _default_shader(annotation_types, default_size):
@@ -323,6 +349,28 @@ def _default_shader(annotation_types, default_size):
 
 
 def _annotation_property_specs(df, properties):
+    """
+    Helper for annotation_layer_json().
+
+    Given an input dataframe for annotations and a list of columns
+    from which to generate annotation properties, generate a
+    JSON property type specification for inserting into the layer
+    JSON state in the 'annotationProperties' section.
+
+    The annotation property type is inferred from each column's dtype.
+    Categorical pandas columns result in neuroglancer enum annotation properties.
+
+    Args:
+        df:
+            DataFrame.  The property columns will be inspected to infer
+            the ultimate property types (numeric vs enum vs color).
+        properties:
+            list of column names from which to generate properties,
+            or a dict-of-dicts containing pre-formulated property specs
+            as descrbed in the docstring for annotation_layer_json().
+    Returns:
+        JSON dict
+    """
     def proptype(col):
         dtype = df[col].dtype
         if dtype in (np.float64, np.int64, np.uint64):
