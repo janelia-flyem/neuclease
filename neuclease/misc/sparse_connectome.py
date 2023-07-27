@@ -229,7 +229,7 @@ def main():
     logger.info("DONE")
 
 
-def relationship_weights(server, uuid, synapse_instance, bodies, rois=[], include_nonroi=False,
+def relationship_weights(server, uuid, synapse_instance, bodies, rois=[], include_nonroi=None,
                          aggregate_rois=False, body_fields=['type', 'instance'], processes=0):
     """
     Download all synapse relationships (PreSynTo/PostSynTo) for the given
@@ -247,10 +247,35 @@ def relationship_weights(server, uuid, synapse_instance, bodies, rois=[], includ
         3       10005  PostSynTo       10031  <unspecified>     211  AOTU019  AOTU019_R  AOTU041         AOTU041_R
         4       10005   PreSynTo       10031  <unspecified>       1  AOTU019  AOTU019_R  AOTU041         AOTU041_R
     """
-    from neuclease.dvid import fetch_labels_batched
-
     # Infer the names of the segmentation and body annotation instances
     seg_instance, body_annotation_instance = _find_related_instances(server, uuid, synapse_instance)
+    logger.info(f"Using labelmap: {seg_instance}")
+    logger.info(f"Using body annotations: {body_annotation_instance}")
+
+    rels = labeled_synaptic_partners(
+        server, uuid, synapse_instance, bodies, rois, include_nonroi,
+        processes=processes, seg_instance=seg_instance)
+
+    # Aggregate points -> weights
+    rw = _compute_relationship_weights(rels, aggregate_rois)
+
+    # Append body annotation columns if possible (e.g. type, instance, etc.)
+    rw = _annotate_relationship_weights(
+        server, uuid, body_annotation_instance, body_fields, rw)
+
+    return rw
+
+
+def labeled_synaptic_partners(server, uuid, synapse_instance, bodies, rois=[], include_nonroi=None,
+                              *, processes=0, seg_instance=None):
+    """
+    Find all synapses belonging to the given bodies and also find
+    their pre/post relationship points, and THEIR bodies.
+    """
+    from neuclease.dvid import fetch_labels_batched
+
+    if seg_instance is None:
+        seg_instance, _ = _find_related_instances(server, uuid, synapse_instance)
 
     # Point-to-point relationships
     rels = _fetch_relationship_points(
@@ -265,15 +290,7 @@ def relationship_weights(server, uuid, synapse_instance, bodies, rois=[], includ
         batch_size=1000,
         processes=processes
     )
-
-    # Aggregate points -> weights
-    rw = _compute_relationship_weights(rels, aggregate_rois)
-
-    # Append body annotation columns if possible (e.g. type, instance, etc.)
-    rw = _annotate_relationship_weights(
-        server, uuid, body_annotation_instance, body_fields, rw)
-
-    return rw
+    return rels
 
 
 def _find_related_instances(server, uuid, synapse_instance):
@@ -305,8 +322,6 @@ def _find_related_instances(server, uuid, synapse_instance):
     if repo_instances.get(body_annotation_instance, None) not in ("keyvalue", "neuronjson"):
         body_annotation_instance = None
 
-    logger.info(f"Using labelmap: {seg_instance}")
-    logger.info(f"Using body annotations: {body_annotation_instance}")
     return seg_instance, body_annotation_instance
 
 
@@ -318,6 +333,7 @@ def _fetch_relationship_points(server, uuid, synapse_instance, bodies, rois, inc
     If rois are provided, also determine the ROI each point pair belongs to.
     If include_nonroi is False, then filter out points which fall outside of any of the listed ROIs.
     The results have one row for each 'relationship' (pre,post coordinate pair).
+    If include_nonroi is None, it defaults to False unless no rois were provided.
 
     The DataFrame will include columns for the body which contained
     the synapse and the ROI in which it can be found.
@@ -326,6 +342,9 @@ def _fetch_relationship_points(server, uuid, synapse_instance, bodies, rois, inc
     import pandas as pd
     from neuclease.util import compute_parallel, Timer
     from neuclease.dvid import determine_point_rois
+
+    if include_nonroi is None:
+        include_nonroi = (len(rois) == 0)
 
     with Timer("Fetching synapses", logger):
         # Fetch pointwise relationships, using multiprocessing across bodies.
