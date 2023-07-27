@@ -69,7 +69,6 @@ def round_coord(coord, grid_spacing, how):
 
 
 def round_box(box, grid_spacing, how='out'):
-    # FIXME: Better name would be align_box()
     """
     Expand/shrink the given box (or boxes) out/in to align it to a grid.
 
@@ -78,7 +77,7 @@ def round_box(box, grid_spacing, how='out'):
     how: One of ['out', 'in', 'down', 'up', 'closest'].
          Determines which direction the box corners are moved.
 
-    See also: pad_for_grid
+    See also: pad_for_grid, util.grid.align_box()
     """
     directions = { 'out':  ('down', 'up'),
                    'in':   ('up', 'down'),

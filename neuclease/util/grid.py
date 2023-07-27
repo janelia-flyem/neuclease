@@ -1,3 +1,4 @@
+from collections.abc import Collection
 import numpy as np
 import pandas as pd
 
@@ -56,6 +57,72 @@ class Grid:
 
     def __repr__(self):
         return f"Grid(block_shape={tuple(self.block_shape)}, offset={tuple(self.offset)}, halo={tuple(self.halo_shape)})"
+
+    @classmethod
+    def as_grid(cls, grid, ndim=3):
+        """
+        Convert the argument to a Grid if it isn't already.
+        If it's a tuple/list, assume that's the grid block_shape.
+        """
+        if isinstance(grid, Grid):
+            return grid
+        if isinstance(grid, (int, float, np.number)):
+            grid = (grid,) * len(ndim)
+        if isinstance(grid, Collection):
+            grid = Grid(grid)
+        return grid
+
+
+def align_box(box, grid, how='out'):
+    """
+    Like round_box(), but works for Grids with an offset.
+    (The Grid halo is ignored.)
+    """
+    box = np.asarray(box)
+    assert box.ndim >= 2 and box.shape[-2] == 2
+    grid = Grid.as_grid(grid, box.shape[-1])
+
+    directions = {
+        'out': ('down', 'up'),
+        'in': ('up', 'down'),
+        'down': ('down', 'down'),
+        'up': ('up', 'up')
+    }
+    assert how in directions.keys()
+
+    def _round_coord(coord, grid_spacing, how):
+        coord = np.asarray(coord)
+        assert how in ('down', 'up')
+        if how == 'down':
+            return (coord // grid_spacing) * grid_spacing
+        if how == 'up':
+            return ((coord + grid_spacing - 1) // grid_spacing) * grid_spacing
+
+    box -= grid.offset
+    box0 = _round_coord(box[..., 0, :], grid.block_shape, directions[how][0])[..., None, :]
+    box1 = _round_coord(box[..., 1, :], grid.block_shape, directions[how][1])[..., None, :]
+
+    box0 += grid.offset
+    box1 += grid.offset
+
+    return np.concatenate( (box0, box1), axis=-2 )
+
+
+def pad_for_grid(a, grid, box_zyx=None):
+    """
+    For an array which currently occupies the given box in space,
+    pad the array such that its edges align to the given grid.
+    """
+    if box_zyx is None:
+        box_zyx = [(0,)*a.ndim, a.shape]
+
+    box_zyx = np.asarray(box_zyx)
+    assert ((box_zyx[1] - box_zyx[0]) == a.shape).all()
+    aligned_box = align_box(box_zyx, grid, 'out')
+    box_padding = np.array([box_zyx[0] - aligned_box[0],
+                            aligned_box[1] - box_zyx[1]])
+    padded = np.pad(a, box_padding.T,)
+    return padded, aligned_box
 
 
 def boxes_from_grid(bounding_box, grid, include_halos=True, clipped=False, lazy=False):
