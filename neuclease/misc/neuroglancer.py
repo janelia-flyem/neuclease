@@ -10,7 +10,7 @@ import logging
 from collections.abc import Mapping, Collection
 import numpy as np
 import pandas as pd
-from textwrap import dedent
+from textwrap import indent, dedent
 
 logger = logging.getLogger(__name__)
 
@@ -105,17 +105,34 @@ LOCAL_ANNOTATION_JSON = {
 }
 
 
-def point_annotation_layer_json(points_df, name="annotations", color="#ffff00", size=8.0, linkedSegmentationLayer=None, show_panel=True, properties=[]):
+def annotation_layer_json(df, name="annotations", color="#ffff00", size=8.0, linkedSegmentationLayer=None, show_panel=False, properties=[]):
     """
-    Construct the JSON data for a neuroglancer local point annotations layer.
+    Construct the JSON data for a neuroglancer local annotations layer.
     This does not result in a complete neuroglancer link; it results in something
     that can be added to the layers list in the neuroglancer viewer JSON state.
 
+
     Args:
-        points_df:
-            DataFrame with columns ['x', 'y', 'z'] and optionally 'id' and 'description'.
+        df:
+            DataFrame containing the annotation data.
+            Which columns you must provide depends on which annotation type(s) you want to display.
+
+            - For point annotations, provide ['x', 'y', 'z']
+            - For line annotations or axis_aligned_bounding_box annotations,
+              provide ['xa', 'ya', 'za', 'xb', 'yb', 'zb']
+            - For ellipsoid annotations, provide ['x', 'y', 'z', 'rx', 'ry', 'rz']
+              for the center point and radii.
+
+            You may also provide a column 'type' to explicitly set the annotation type.
+            In some cases, 'type' isn't needed since annotation type can be inferred from the
+            columns you provided. But in the case of line and box annotations, the input
+            columns are the same, so you must provide a 'type' column.
+
             If you are providing a linkedSegmentationLayer, your dataframe should contain
-            a 'semgents' column to indicate which segments are associated with each annotation.
+            a 'segments' column to indicate which segments are associated with each annotation.
+
+            You may also provide additional columns to use as annotation properties,
+            in which case they should be listed in the 'properties' argument. (See below.)
 
         name:
             The name of the annotation layer
@@ -125,6 +142,7 @@ def point_annotation_layer_json(points_df, name="annotations", color="#ffff00", 
 
         size:
             The annotation size to hard-code into the default annotation shader used by this function.
+            (Only used for points and line endpoints.)
 
         linkedSegmentationLayer:
             If the annotations should be associated with another layer in the view,
@@ -132,16 +150,17 @@ def point_annotation_layer_json(points_df, name="annotations", color="#ffff00", 
             This function sets the 'filterBySegmentation' key to hide annotations from non-selected segments.
 
         show_panel:
-            If True, the annotation panel will be visible in the side bar by default.
+            If True, the selection panel will be visible in the side bar by default.
 
         properties:
-            The names of columns to use as annotation properties.
+            The list column names to use as annotation properties.
             Properties are visible in the selection panel when an annotation is selected,
-            and they can also be used in annotation shaders via a function.
-            For example, for a property named 'confidence', you could write setPointMarkerSize(prop_confidence()).
+            and they can also be used in annotation shaders via special functions neuroglancer
+            defines for each property.  For example, for a property named 'confidence',
+            you could write setPointMarkerSize(prop_confidence()) in your annotation shader.
 
-            This function supports annotation color proprties via strings (e.g. '#ffffff') and also annotation
-            'enum' properties via pandas categoricals.
+            This function supports annotation color proprties via strings (e.g. '#ffffff') and
+            also annotation 'enum' properties if you pass them via pandas categorical columns.
 
             By default, the annotation IDs are the same as the column names and the annotation types are inferred.
             You can override the property 'spec' by supplying a dict-of-dicts here instead of a list of columns:
@@ -160,42 +179,76 @@ def point_annotation_layer_json(points_df, name="annotations", color="#ffff00", 
     Returns:
         dict (JSON data)
     """
-    assert {*'xyz'} <= set(points_df.columns), 'x,y,z are required columns'
-    points_df = points_df.copy()
-    points_df = points_df.astype({c: np.int64 for c in 'xyz'})
+    if isinstance(properties, str):
+        properties = [properties]
 
-    if 'id' not in points_df.columns:
-        ids = (points_df['z'].values << 42) | (points_df['y'].values << 21) | (points_df['x'].values)
-        points_df['id'] = [*map(str, ids)]
+    df = df.copy()
+    id_cols = [*'xyz', 'xa', 'ya', 'za', 'xb', 'yb', 'zb', 'rx', 'ry', 'rz', 'type']
+    for col in id_cols:
+        if col not in df.columns:
+            df[col] = np.nan
+
+    if 'id' not in df.columns:
+        ids = [str(hex(abs(hash(tuple(x))))) for x in df[id_cols].values.tolist()]
+        df['id'] = ids
+
+    assert (df['x'].isnull() ^ df['xa'].isnull()).all(), \
+        "You must supply either x,y,z or xa,ya,za,xb,yb,zb for every row."
+
+    df['type'] = df['type'].fillna(
+        df['rx'].isnull().map({
+            True: np.nan,
+            False: 'ellipsoid'
+        })
+    )
+
+    # We have no way of choosing between 'line' and 'axis_aligned_bounding_box'
+    # unless the user provides the 'type' explicitly.  We default to 'axis_aligned_bounding_box'.
+    df['type'] = df['type'].fillna(
+        df['x'].isnull().map({
+            True: 'axis_aligned_bounding_box',
+            False: 'point'
+        })
+    )
 
     data = copy.deepcopy(LOCAL_ANNOTATION_JSON)
     data['name'] = name
     data['annotationColor'] = color
-    data['shader'] = SHADER_FMT.format(size=size)
+    data['shader'] = _default_shader(df['type'].unique(), size)
     data['annotations'].clear()
     if linkedSegmentationLayer:
         data['linkedSegmentationLayer'] = linkedSegmentationLayer
         data['filterBySegmentation'] = ['segments']
 
-    prop_specs = _annotation_property_specs(points_df, properties)
+    prop_specs = _annotation_property_specs(df, properties)
     if prop_specs:
         data['annotationProperties'] = prop_specs
 
-    # Replace categoricals with their codes.
+    # Replace categoricals with their integer codes.
     # The corresponding enum_labels are already stored in the property specs
     for col in properties:
-        if points_df[col].dtype == "category":
-            points_df[col] = points_df[col].cat.codes
+        if df[col].dtype == "category":
+            df[col] = df[col].cat.codes
 
-    for row in points_df.itertuples():
+    for row in df.itertuples():
         entry = {}
-        entry['type'] = "point"
-        entry['point'] = [row.x, row.y, row.z]
+        entry['type'] = row.type
         entry['id'] = row.id
-        if 'description' in points_df.columns:
+        if 'description' in df.columns:
             entry['description'] = row.description
 
-        if linkedSegmentationLayer and 'segments' in points_df.columns:
+        if row.type == 'point':
+            entry['point'] = [row.x, row.y, row.z]
+        elif row.type in ('line', 'axis_aligned_bounding_box'):
+            entry['pointA'] = [row.xa, row.ya, row.za]
+            entry['pointB'] = [row.xb, row.yb, row.zb]
+        elif row.type == 'ellipsoid':
+            entry['point'] = [row.x, row.y, row.z]
+            entry['radii'] = [row.rx, row.ry, row.rz]
+        else:
+            raise RuntimeError(f'Invalid annotation type: {row.type}')
+
+        if linkedSegmentationLayer and 'segments' in df.columns:
             segments = row.segments
             if not hasattr(segments, '__len__'):
                 segments = [segments]
@@ -213,11 +266,67 @@ def point_annotation_layer_json(points_df, name="annotations", color="#ffff00", 
     return data
 
 
-def _annotation_property_specs(points_df, properties):
+def _default_shader(annotation_types, default_size):
+    """
+    Create a default annotation shader that is pre-populated with
+    the annotation API functions so you don't have to look them up.
+    """
+    shader_body = ""
+    if 'point' in annotation_types:
+        shader_body += dedent(f"""\
+            //
+            // Point Marker API
+            //
+            setPointMarkerSize({default_size});
+            setPointMarkerColor(defaultColor());
+            setPointMarkerBorderWidth(1.0);
+            setPointMarkerBorderColor(defaultColor());
+        """)
+
+    if 'line' in annotation_types:
+        shader_body += dedent(f"""\
+            //
+            // Line API
+            //
+            setLineColor(defaultColor());
+            setEndpointMarkerSize({default_size}, {default_size});
+            setEndpointMarkerColor(defaultColor(), defaultColor());
+            setEndpointMarkerBorderWidth(1.0, 1.0);
+            setEndpointMarkerBorderColor(defaultColor(), defaultColor());
+        """)
+
+    if 'axis_aligned_bounding_box' in annotation_types:
+        shader_body += dedent("""\
+            //
+            // Bounding Box API
+            //
+            setBoundingBoxBorderWidth(1.0);
+            setBoundingBoxBorderColor(defaultColor());
+            setBoundingBoxFillColor(vec4(defaultColor(), 0.5));
+        """)
+
+    if 'ellipsoid' in annotation_types:
+        shader_body += dedent("""\
+            //
+            // Ellipsoid API
+            //
+            setEllipsoidFillColor(defaultColor());
+        """)
+
+    shader_main = dedent(f"""\
+        void main() {{
+            {indent(shader_body, ' '*12)[12:]}\
+        }}
+    """)
+
+    return shader_main
+
+
+def _annotation_property_specs(df, properties):
     def proptype(col):
-        dtype = points_df[col].dtype
+        dtype = df[col].dtype
         if dtype in (np.float64, np.int64, np.uint64):
-            raise Exception('neuroglancer doesnt support 64-bit property types.')
+            raise RuntimeError('neuroglancer doesnt support 64-bit property types.')
         if dtype in (np.uint8, np.int8, np.uint16, np.int16, np.uint32, np.int32, np.float32):
             return str(dtype)
 
@@ -226,22 +335,22 @@ def _annotation_property_specs(points_df, properties):
             for utype in (np.uint8, np.uint16, np.uint32):
                 if num_cats <= 1 + np.iinfo(utype).max:
                     return str(np.dtype(utype))
-            raise Exception(f"Column {col} has too many categories")
+            raise RuntimeError(f"Column {col} has too many categories")
 
-        if points_df[col].dtype != object:
-            raise Exception(f"Unsupported property dtype: {dtype} for column {col}")
+        if df[col].dtype != object:
+            raise RuntimeError(f"Unsupported property dtype: {dtype} for column {col}")
 
-        is_str = points_df[col].map(lambda x: isinstance(x, str)).all()
-        is_color = is_str and points_df[col].str.startswith('#').all()
+        is_str = df[col].map(lambda x: isinstance(x, str)).all()
+        is_color = is_str and df[col].str.startswith('#').all()
         if not is_color:
             msg = (
                 f"Column {col}: I don't know what to do with object dtype that isn't rbg or rgba.\n"
                 "If you want to create an enum property, then supply a pandas Categorical column."
             )
-            raise Exception(msg)
-        if (points_df[col].map(len) == len("#rrggbb")).all():
+            raise RuntimeError(msg)
+        if (df[col].map(len) == len("#rrggbb")).all():
             return 'rgb'
-        if (points_df[col].map(len) == len("#rrggbbaa")).all():
+        if (df[col].map(len) == len("#rrggbbaa")).all():
             return 'rgba'
         raise RuntimeError("Not valid RGB or RGBA colors")
 
@@ -260,8 +369,8 @@ def _annotation_property_specs(points_df, properties):
     }
 
     for col in default_property_specs.keys():
-        if points_df[col].dtype == "category":
-            cats = points_df[col].cat.categories.tolist()
+        if df[col].dtype == "category":
+            cats = df[col].cat.categories.tolist()
             default_property_specs[col]['enum_values'] = [*range(len(cats))]
             default_property_specs[col]['enum_labels'] = cats
 
@@ -271,6 +380,10 @@ def _annotation_property_specs(points_df, properties):
     ]
 
     return property_specs
+
+
+# Deprecated name (now supports more than just points)
+point_annotation_layer_json = annotation_layer_json
 
 
 def upload_ngstates(bucket_dir, states, threads=0, processes=0):
