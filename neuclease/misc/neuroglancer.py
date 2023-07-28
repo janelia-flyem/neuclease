@@ -299,12 +299,17 @@ def _default_shader(annotation_types, default_size):
     """
     shader_body = ""
     if 'point' in annotation_types:
+        # Note:
+        #   In older versions of neuroglancer,
+        #   setPointMarkerColor(vec3) doesn't exist yet,
+        #   so we must use vec4.
+        #   https://github.com/google/neuroglancer/pull/475
         shader_body += dedent(f"""\
             //
             // Point Marker API
             //
             setPointMarkerSize({default_size});
-            setPointMarkerColor(defaultColor());
+            setPointMarkerColor(vec4(defaultColor(), 1.0));
             setPointMarkerBorderWidth(1.0);
             setPointMarkerBorderColor(defaultColor());
         """)
