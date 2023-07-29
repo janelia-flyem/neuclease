@@ -200,9 +200,9 @@ class ndrange:
 
     Like np.ndindex, but accepts start/stop/step instead of
     assuming that start is always (0,0,0) and step is (1,1,1).
-    
+
     Example:
-    
+
     >>> for index in ndrange((1,2,3), (10,20,30), step=(5,10,15)):
     ...     print(index)
     (1, 2, 3)
@@ -213,27 +213,30 @@ class ndrange:
     (6, 2, 18)
     (6, 12, 3)
     (6, 12, 18)
-    
+
     See also: ``ndindex_array()``
     """
 
     def __init__(self, start, stop=None, step=None):
         if stop is None:
             stop = start
-            start = (0,)*len(stop)
-    
+            start = (0,) * len(stop)
+
         if step is None:
-            step = (1,)*len(stop)
-    
+            step = (1,) * len(stop)
+
         assert len(start) == len(stop) == len(step), \
             f"tuple lengths don't match: ndrange({start}, {stop}, {step})"
 
         self.start = start
         self.stop = stop
         self.step = step
-    
+
     def __iter__(self):
-        return product(*starmap(range, zip(self.start, self.stop, self.step)))
+        return product(*map(range, self.start, self.stop, self.step))
+
+    def __repr__(self):
+        return f"ndrange({self.start}, {self.stop}, {self.step})"
 
     def __len__(self):
         span = (np.array(self.stop) - self.start)
@@ -247,19 +250,19 @@ def ndrange_array(start, stop=None, step=None):
     assuming that start is always (0,0,0) and step is (1,1,1),
     and returns an array instead of an iterator.
     """
+    start = np.asarray(start)
     if stop is None:
         stop = start
-        start = (0,)*len(stop)
-
-    start, stop = box = np.array((start, stop))
-    aligned_box = box - start
+        start = (0,) * len(stop)
     if step is None:
-        # Step is implicitly 1
-        shape = aligned_box[1]
-        return start + ndindex_array(*shape)
-    else:
-        shape = round_coord(aligned_box[1], step, 'up') // step
-        return start + step * ndindex_array(*shape)
+        step = 1
+
+    def ndindex(shape):
+        """Like np.ndindex, but returns ndarray"""
+        return np.indices(shape).reshape(len(shape), -1).transpose()
+
+    shape = (stop - start + step - 1) // step
+    return start + step * ndindex(shape)
 
 
 def ndindex_array(*shape, dtype=np.int32):
