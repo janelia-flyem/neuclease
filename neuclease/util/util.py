@@ -1983,7 +1983,7 @@ def upload_chunked_table(df, full_table_name, gbucket_dir, gbucket_subdir, local
     project, dataset, table = full_table_name.split('.')
 
     if df is not None:
-        os.makedirs(full_table_name)
+        os.makedirs(f"{local_dir}/{table}")
         pyarrow.parquet.write_table(pyarrow.Table.from_pandas(df), f"{local_dir}/{table}/*.parquet")
 
     subprocess.run(f"gsutil -q cp -r {local_dir}/{table} {gbucket_dir}/{gbucket_subdir}/", shell=True, check=True)
