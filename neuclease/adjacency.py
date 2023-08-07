@@ -120,7 +120,7 @@ def find_missing_adjacencies(server, uuid, instance, body, known_edges, svs=None
         # MIGHT we find if we were to inspect the segmentation?
         block_svs = np.fromiter(sv_counts.counts.keys(), np.uint64)
         block_ccs = cc_mapper.apply(block_svs)
-        possible_cc_adjacencies = set(combinations( set(block_ccs), 2 ))
+        possible_cc_adjacencies = set(combinations( sorted(set(block_ccs)), 2 ))
         
         # We only aim to find (at most) a single link between each CC pair.
         # That is, we don't care about adjacencies between CC that we've already linked so far.
@@ -131,10 +131,7 @@ def find_missing_adjacencies(server, uuid, instance, body, known_edges, svs=None
         searched_block_svs[(*coord_zyx,)] = block_svs
         
         # Not used in the search; only returned for debug purposes.
-        try:
-            block_adj_table = _init_adj_table(coord_zyx, block_svs, cc_mapper)
-        except:
-            raise
+        block_adj_table = _init_adj_table(coord_zyx, block_svs, cc_mapper)
 
         block_vol = fetch_block_vol(server, uuid, instance, coord_zyx, svs_set)
         if search_distance > 0:
