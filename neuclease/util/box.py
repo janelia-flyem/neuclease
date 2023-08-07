@@ -93,23 +93,6 @@ def round_box(box, grid_spacing, how='out'):
     return np.concatenate( (box0, box1), axis=-2 )
 
 
-def pad_for_grid(a, grid_spacing, box_zyx=None):
-    """
-    For an array which currently occupies the given box in space,
-    pad the array such that its edges align to the given grid.
-    """
-    if box_zyx is None:
-        box_zyx = [(0,)*a.ndim, a.shape]
-
-    box_zyx = np.asarray(box_zyx)
-    assert ((box_zyx[1] - box_zyx[0]) == a.shape).all()
-    rounded_box = round_box(box_zyx, grid_spacing, 'out')
-    box_padding = np.array([box_zyx[0] - rounded_box[0],
-                            rounded_box[1] - box_zyx[1]])
-    padded = np.pad(a, box_padding.T,)
-    return padded, rounded_box
-
-
 def choose_pyramid_depth(bounding_box, top_level_max_dim=512):
     """
     If a 3D volume pyramid were generated to encompass the given bounding box,
