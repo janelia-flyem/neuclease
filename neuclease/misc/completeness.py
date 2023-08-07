@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 
 def completeness_forecast(labeled_point_df, partner_df, syn_counts_df=None, body_annotations_df=None, *,
                           min_tbar_conf=0.0, min_psd_conf=0.0, roi=None,
-                          sort_by='SynWeight', stop_at_rank=None):
+                          sort_by='SynWeight', stop_at_rank=None, _syn_counts_only=False):
     """
     Produces a DataFrame listing all pairwise synapse connections,
     ordered according to the size of the smaller body in the pair.
@@ -78,6 +78,9 @@ def completeness_forecast(labeled_point_df, partner_df, syn_counts_df=None, body
             use this parameter to limit the size of the results,
             and also speed up the computation.
 
+        _syn_counts_only:
+            Internal use.
+
     Returns:
         Two DataFrames:
             sorted_connection_df, sorted_bodies_df
@@ -91,6 +94,7 @@ def completeness_forecast(labeled_point_df, partner_df, syn_counts_df=None, body
 
         sorted_bodies_df is indexed by body ID, sorted by the body 'SynWeight'
     """
+    # Validate and standardize arguments
     args = _sanitize_args(
         labeled_point_df, partner_df, syn_counts_df, body_annotations_df,
         min_tbar_conf, min_psd_conf, roi, sort_by, stop_at_rank)
@@ -101,8 +105,35 @@ def completeness_forecast(labeled_point_df, partner_df, syn_counts_df=None, body
     point_df, partner_df = _filter_synapses(labeled_point_df, partner_df, min_tbar_conf, min_psd_conf, roi)
     conn_df = _body_conn_df(point_df, partner_df)
     syn_counts_df = _rank_syn_counts(point_df, conn_df, syn_counts_df, body_annotations_df, sort_by)
+    if _syn_counts_only:
+        return syn_counts_df
+
     conn_df = _completeness_forecast(conn_df, syn_counts_df, stop_at_rank)
     return conn_df, syn_counts_df
+
+
+def ranked_synapse_counts(labeled_point_df, partner_df, *, body_annotations_df=None,
+                          min_tbar_conf=0.0, min_psd_conf=0.0, roi=None,
+                          sort_by='SynWeight'):
+    """
+    Calculate aggregate synapse weights and rankings for
+    the synapses reported in labeled_point_df and partner_df.
+    This is the same procedure as used in completeness_forecast,
+    but without the final forecast ranking step.
+
+    For argument descriptions, see completeness_forecast().
+    """
+    return completeness_forecast(
+        labeled_point_df,
+        partner_df,
+        None,
+        body_annotations_df,
+        min_tbar_conf=min_tbar_conf,
+        min_psd_conf=min_psd_conf,
+        roi=roi,
+        sort_by=sort_by,
+        _syn_counts_only=True
+    )
 
 
 def _sanitize_args(labeled_point_df, partner_df, syn_counts_df, body_annotations_df,
