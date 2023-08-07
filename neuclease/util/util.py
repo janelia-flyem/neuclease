@@ -18,7 +18,7 @@ from functools import partial, lru_cache
 from multiprocessing import get_context
 from multiprocessing.pool import ThreadPool
 from datetime import datetime, timedelta
-from itertools import product, starmap
+from itertools import product
 from collections import OrderedDict
 from collections.abc import Mapping, Iterable, Iterator, Sequence
 
@@ -33,10 +33,10 @@ import pandas as pd
 from numba import jit
 
 from .downsample_with_numba import downsample_binary_3d_suppress_zero
-from .box import box_to_slicing, box_union, extract_subvol, box_intersection, round_coord
+from .box import box_to_slicing, box_union, extract_subvol, box_intersection
 from .view_as_blocks import view_as_blocks
 
-# Disable the monitor thread entirely.
+# Disable the tqdm monitor thread entirely.
 # It is more trouble than it's worth, especially when using tqdm_proxy, below.
 tqdm.monitor_interval = 0
 
@@ -244,18 +244,19 @@ class ndrange:
         return np.prod( (span + step-1) // step )
 
 
-def ndrange_array(start, stop=None, step=None):
+def ndrange_array(start, stop=None, step=1):
     """
     Like np.ndindex, but accepts start/stop/step instead of
     assuming that start is always (0,0,0) and step is (1,1,1),
     and returns an array instead of an iterator.
+
+    Like np.arange, but with tuple arguments.
+    (This implementation only supports integer dtypes, though.)
     """
     start = np.asarray(start)
     if stop is None:
         stop = start
         start = (0,) * len(stop)
-    if step is None:
-        step = 1
 
     def ndindex(shape):
         """Like np.ndindex, but returns ndarray"""
