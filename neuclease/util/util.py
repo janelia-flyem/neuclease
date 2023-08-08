@@ -12,13 +12,12 @@ import inspect
 import copyreg
 import contextlib
 from textwrap import indent
-from itertools import chain
+from itertools import chain, product, islice
 from operator import itemgetter
 from functools import partial, lru_cache
 from multiprocessing import get_context
 from multiprocessing.pool import ThreadPool
 from datetime import datetime, timedelta
-from itertools import product
 from collections import OrderedDict
 from collections.abc import Mapping, Iterable, Iterator, Sequence
 
@@ -610,20 +609,10 @@ class _iter_batches:
                 yield it[batch_start:batch_start+batch_size]
             return
 
-        if not isinstance(it, Iterator):
-            assert isinstance(it, Iterable)
-            it = iter(it)
-
-        while True:
-            batch = []
-            try:
-                for _ in range(batch_size):
-                    batch.append(next(it))
-            except StopIteration:
-                return
-            finally:
-                if batch:
-                    yield batch
+        assert isinstance(it, Iterable)
+        it = iter(it)
+        while batch := [*islice(it, batch_size)]:
+            yield batch
 
 
 class _iter_batches_with_len(_iter_batches):
