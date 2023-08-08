@@ -56,7 +56,7 @@ def export_sparsevol(server, uuid, instance, neurons_df, scale=5, format='tiff',
 
     # How many digits will we need in each slice file name?
     max_z = box_scaled[1, 0]
-    digits = int(np.ceil(np.log10(max_z)))
+    digits = len(str(max_z))
 
     # Export a mask stack for each group.
     groups = neurons_df.groupby('group', sort=False)

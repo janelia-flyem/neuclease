@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 def create_bookmark_files(df, output_dir, prefix='bookmarks-', batch_size=100, default_text=None, grayscale=None, segmentation=None):
     os.makedirs(output_dir)
-    digits = max(1, int(ceil(log10(len(df) / batch_size))))
+    digits = len(str(len(df) // batch_size))
     paths = []
     for i, bdf in enumerate(iter_batches(df, batch_size)):
         path = f"{output_dir}/{prefix}{i:0{digits}d}.json"
@@ -218,7 +218,7 @@ def prepare_bookmark_assignment_setup(df, output_dir, bucket_path, csv_path, pre
 
 def create_cleaving_assignments(bodies, output_dir, prefix='cleaving-', batch_size=20):
     os.makedirs(output_dir)
-    digits = max(1, int(ceil(log10(len(bodies) / batch_size))))
+    digits = len(str(len(bodies) // batch_size))
 
     batch_grouping = []
     for i, batch in enumerate(iter_batches(bodies, batch_size)):
@@ -380,7 +380,7 @@ def create_connection_validation_assignments(df, output_dir, prefix='connection-
             The number of tasks per assignment file.
     """
     os.makedirs(output_dir)
-    digits = max(1, int(ceil(log10(len(df) / batch_size))))
+    digits = len(str(len(df) // batch_size))
     for i, batch_df in enumerate(iter_batches(df, batch_size)):
         path = f"{output_dir}/{prefix}{i:0{digits}d}.json"
         create_connection_validation_assignment(batch_df, path)

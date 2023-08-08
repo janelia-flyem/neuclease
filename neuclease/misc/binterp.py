@@ -206,7 +206,7 @@ def write_slices(vol, out_dir, z_min=None):
         # Hide warnings from scikit-image for empty slices
         warnings.filterwarnings("ignore", message='.*is a low contrast image.*', category=UserWarning)
 
-        digits = int(np.ceil(np.log10(z_max)))
+        digits = len(str(z_max))
         for z, img in enumerate(tqdm(vol), start=z_min):
             skimage.io.imsave(f'{out_dir}/{z:0{digits}d}.png', img)
 
