@@ -257,7 +257,9 @@ def _completeness_forecast(conn_df, syn_counts_df, stop_at_rank, _debug_cols=Fal
     logger.info("Sorting connections by body rank")
     conn_df = conn_df.sort_values(['max_rank', 'min_rank'], ignore_index=True)
 
-    logger.info("Calculating cumulative columns (tbars/psds/connections)")
+    syn_counts_df.columns = [c.lower() for c in syn_counts_df.columns]
+    syncols = [c for c in syn_counts_df.columns if c in ('presyn', 'postsyn', 'synweight')]
+    logger.info(f"Calculating cumulative columns for: {', '.join([*syncols, 'conn'])}")
 
     if _debug_cols:
         # Moving down the list of connection pairs,
@@ -282,27 +284,26 @@ def _completeness_forecast(conn_df, syn_counts_df, stop_at_rank, _debug_cols=Fal
     flattened_bodies = pd.DataFrame({'body': conn_df[['body_pre', 'body_post']].values.reshape(-1)})
     flattened_bodies = flattened_bodies.merge(syn_counts_df, 'left', on='body')
     dupes = flattened_bodies['body'].duplicated()
-    flattened_bodies.loc[dupes, 'PreSyn'] = 0
-    flattened_bodies.loc[dupes, 'PostSyn'] = 0
-    flattened_bodies['traced_tbars'] = flattened_bodies['PreSyn'].cumsum()
-    flattened_bodies['traced_psds'] = flattened_bodies['PostSyn'].cumsum()
+    for c in syncols:
+        flattened_bodies.loc[dupes, c] = 0
+        flattened_bodies[f'traced_{c}'] = flattened_bodies[c].cumsum()
     del dupes
 
     # Reshape the above giant lists of cumulatively traced synapses
     # to fit it back into our connection table.
-    conn_df['cumulative_traced_tbars'] = flattened_bodies['traced_tbars'].values.reshape(-1, 2).max(axis=1)
-    conn_df['cumulative_traced_psds'] = flattened_bodies['traced_psds'].values.reshape(-1, 2).max(axis=1)
+    for c in syncols:
+        conn_df[f'cumulative_traced_{c}'] = flattened_bodies[f'traced_{c}'].values.reshape(-1, 2).max(axis=1)
     del flattened_bodies
 
-    conn_df['traced_tbar_frac'] = conn_df['cumulative_traced_tbars'] / syn_counts_df['PreSyn'].sum()
-    conn_df['traced_psd_frac'] = conn_df['cumulative_traced_psds'] / syn_counts_df['PostSyn'].sum()
+    for c in syncols:
+        conn_df[f'traced_{c}_frac'] = conn_df[f'cumulative_traced_{c}'] / syn_counts_df[c].sum()
 
     # The cumulatively fully-traced connection count (i.e. connections for which both input
     # and output are in traced bodies) is simply the row number, due to the careful sorting
     # of the connection table as explained above.
     # Note: When visualizing, we'll usually want to put this in the Y-axis, not the X-axis.
-    conn_df['traced_conn_count'] = 1 + conn_df.index
-    conn_df['traced_conn_frac'] = conn_df['traced_conn_count'] / full_conn_count
+    conn_df['cumulative_traced_conn'] = 1 + conn_df.index
+    conn_df['traced_conn_frac'] = conn_df['cumulative_traced_conn'] / full_conn_count
 
     # It's useful to provide the max body rank
     logger.info("Adding body_max_rank and associated stats")
@@ -314,7 +315,8 @@ def _completeness_forecast(conn_df, syn_counts_df, stop_at_rank, _debug_cols=Fal
     # It's also useful to see the synapse stats of the body with max rank,
     # since the 'max rank' body is the body that's conceptually being "appended"
     # to the traced set.
-    body_max_syn_counts = syn_counts_df.rename(columns={k: f'{k}_max_rank' for k in syn_counts_df.columns})
+    body_max_syn_counts = syn_counts_df.rename(
+        columns={c: f'{c}_max_rank' for k in syncols})
     conn_df = conn_df.merge(body_max_syn_counts, 'left', left_on='body_max_rank', right_index=True)
 
     return conn_df
@@ -561,10 +563,13 @@ def plot_connectivity_forecast(conn_df, max_rank=None, plotted_points=20_000, ho
     # but for simplicity we display that as 'SynWeight' in the hover text.
     _df = _df.rename(columns={f'{c}_max_rank': c for c in {*hover_cols}})
 
-    show_cols = ['traced_tbar_frac',
+    show_cols = ['traced_presyn_frac',
                  # 'minimally_connected_tbar_frac',
-                 'traced_psd_frac',
+                 'traced_synweight_frac',
+                 'traced_postsyn_frac',
                  'traced_conn_frac']
+
+    show_cols = [c for c in show_cols if c in _df.columns]
 
     # Zoom in on left-hand region
     if max_rank:
@@ -574,11 +579,13 @@ def plot_connectivity_forecast(conn_df, max_rank=None, plotted_points=20_000, ho
 
     renames = {
         'max_rank': 'body priority ranking',
-        'traced_tbar_frac': 'tbars captured',
+        'traced_presyn_frac': 'tbars captured',
         # 'minimally_connected_tbar_frac': 'traced tbars with a traced output',
-        'traced_psd_frac': 'psds captured',
+        'traced_synweight_frac': 'synweight captured',
+        'traced_postsyn_frac': 'psds captured',
         'traced_conn_frac': 'pairwise connections'
     }
+    renames = {k: v for k,v in renames.items() if k in _df.columns}
     _df = _df.rename(columns=renames)
 
     # Avoid plotting too many points
@@ -589,7 +596,7 @@ def plot_connectivity_forecast(conn_df, max_rank=None, plotted_points=20_000, ho
         p = _df.hvplot.scatter(
                 'body priority ranking',  # noqa
                 [renames[k] for k in show_cols],
-                hover_cols=['tbars captured', 'psds captured', 'pairwise connections', *hover_cols],
+                hover_cols=[*renames.values(), *hover_cols],
                 legend='bottom_right',
                 ylabel='fraction',
                 by=color_by_col,
@@ -599,7 +606,7 @@ def plot_connectivity_forecast(conn_df, max_rank=None, plotted_points=20_000, ho
         p = _df.hvplot(
                 'body priority ranking', # noqa
                 [renames[k] for k in show_cols],
-                hover_cols=['tbars captured', 'psds captured', 'pairwise connections', *hover_cols],
+                hover_cols=[*renames.values(), *hover_cols],
                 legend='bottom_right',
                 ylabel='fraction',
                 width=800,
@@ -630,7 +637,7 @@ def plot_connectivity_forecast(conn_df, max_rank=None, plotted_points=20_000, ho
 def plot_categorized_connectivity_forecast(
         conn_df, category_col, max_rank=None, plotted_points=20_000, hover_cols=[],
         title='connectivity after prioritized merging', export_path=None, selection_link=None,
-        secondary_line='SynWeight', secondary_categories=['Anchor', '0.5assign', ''],
+        secondary_line='synweight', secondary_categories=['Anchor', '0.5assign', ''],
         secondary_range=[0, 400]):
     """
     Plot the curves of captured tbars, captured PSDs and captured dual-sided
@@ -693,7 +700,7 @@ def plot_categorized_connectivity_forecast(
     p = figure(align='center', height=500, width=800, title=title, y_range=(0, 1.0))
     p.title.text_font_size = '14pt'
     p.xaxis.axis_label = 'body rank'
-    p.yaxis.axis_label = 'fraction of captured tbars, psds, and connectivity'
+    p.yaxis.axis_label = 'fraction of captured tbars, synweight, psds, and connectivity'
     p.yaxis.ticker = np.arange(0.0, 1.1, 0.1)
 
     if secondary_line:
@@ -704,17 +711,21 @@ def plot_categorized_connectivity_forecast(
 
     dots = []
     for i, (cat, df) in list(enumerate(_df.groupby(category_col, observed=True)))[::-1]:
-        p.line('max_rank', 'traced_tbar_frac', legend_label=cat, color=Category20[20][2 * (i % 10)], line_width=5, source=df)
-        p.line('max_rank', 'traced_psd_frac', color=Category20[20][2 * (i % 10) + 1], line_width=5, source=df)
-        p.line('max_rank', 'traced_conn_frac', color=Category20[20][2 * (i % 10)], line_width=5, source=df)
+        p.line('max_rank', 'traced_presyn_frac', color=Category20[20][2 * (i % 10) + 1], line_width=5, source=df)
+        if 'traced_synweight_frac' in df.columns:
+            p.line('max_rank', 'traced_synweight_frac', color=Category20[20][2 * (i % 10)], line_width=5, source=df)
+        p.line('max_rank', 'traced_postsyn_frac', color=Category20[20][2 * (i % 10) + 1], line_width=5, source=df)
+
+        # Insert legend this time, too.
+        p.line('max_rank', 'traced_conn_frac', color=Category20[20][2 * (i % 10)], line_width=5, source=df, legend_label=cat)
 
         if secondary_line and cat in secondary_categories:
             p.line('max_rank', secondary_line, color="navy", y_range_name=secondary_line, source=df)
 
         # if selection_link:
         #     # https://github.com/bokeh/bokeh/issues/10056#issuecomment-1308510074
-        #     d1 = p.dot('max_rank', 'traced_tbar_frac', legend_label=cat, color=Category20[20][2 * (i % 10)], source=df)
-        #     d2 = p.dot('max_rank', 'traced_psd_frac', color=Category20[20][2 * (i % 10) + 1], source=df)
+        #     d1 = p.dot('max_rank', 'traced_presyn_frac', legend_label=cat, color=Category20[20][2 * (i % 10)], source=df)
+        #     d2 = p.dot('max_rank', 'traced_postsyn_frac', color=Category20[20][2 * (i % 10) + 1], source=df)
         #     d3 = p.dot('max_rank', 'traced_conn_frac', color=Category20[20][2 * (i % 10)], source=df)
         #     dots.extend([d1, d2, d3])
 
@@ -722,14 +733,21 @@ def plot_categorized_connectivity_forecast(
 
     hover = HoverTool()
     hover.tooltips = [
-        (category_col, f"@{category_col}"),
         ("body rank", "@max_rank"),
-        ("body", "@body_max_rank"),
-        ("tbars captured", "@traced_tbar_frac"),
-        ("psds captured", "@traced_psd_frac"),
-        ("connections captured", "@traced_conn_frac"),
-        *[(col, f"@{col}") for col in hover_cols]
+        (category_col, f"@{category_col}"),
+        ("tbars captured", "@traced_presyn_frac"),
     ]
+    if 'traced_synweight_frac' in _df.columns:
+        hover.tooltips.append(
+            ("synweight captured", "@traced_synweight_frac")
+        )
+
+    hover.tooltips += [
+        ("psds captured", "@traced_postsyn_frac"),
+        ("connections captured", "@traced_conn_frac"),
+    ]
+    hover.tooltips += [("body", "@body_max_rank")]
+    hover.tooltips += [(col, f"@{col}") for col in hover_cols]
 
     p.add_tools(hover)
 
