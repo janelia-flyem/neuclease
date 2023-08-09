@@ -6,23 +6,23 @@ import copy
 import time
 import math
 import json
-import vigra
 import logging
 import inspect
 import copyreg
 import contextlib
 from textwrap import indent
-from itertools import chain, product, islice
+from itertools import chain, product, islice, filterfalse
 from operator import itemgetter
 from functools import partial, lru_cache
 from multiprocessing import get_context
 from multiprocessing.pool import ThreadPool
 from datetime import datetime, timedelta
 from collections import OrderedDict
-from collections.abc import Mapping, Iterable, Iterator, Sequence
+from collections.abc import Mapping, Iterable, Sequence
 
 import pytz
 import ujson
+import vigra
 import requests
 from tqdm import tqdm
 
@@ -2214,7 +2214,7 @@ def find_files(root_dir, file_exts=None, skip_exprs=None, file_exprs=None):
         ..code-block:: ipython
 
             In [1]: root_dir = '/nrs/flyem/render/n5/Z0720_07m_BR/render/Sec32'
-               ...: find_files( root_dir, '.json', ['s[0-9]+', 'v1'])
+               ...: find_files(root_dir, '.json', ['s[0-9]+', 'v1'])
             Out[1]:
             ['/nrs/flyem/render/n5/Z0720_07m_BR/render/Sec32/attributes.json',
              '/nrs/flyem/render/n5/Z0720_07m_BR/render/Sec32/v2_acquire_trimmed_sp1_adaptive___20210315_093643/attributes.json',
@@ -2269,13 +2269,13 @@ def find_files(root_dir, file_exts=None, skip_exprs=None, file_exprs=None):
 
         # Matching files
         if file_expr:
-            files = filter(lambda f: file_rgx.fullmatch(f), files)
-        files = map(lambda f: f"{parent_dir}/{f}", files)
+            files = filter(file_rgx.fullmatch, files)
+        files = (f"{parent_dir}/{f}" for f in files)
 
         # Exclude skipped directories
         if skip_expr:
-            subdirs = filter(lambda d: not skip_rgx.fullmatch(d), subdirs)
-        subdirs = map(lambda d: f"{parent_dir}/{d}", subdirs)
+            subdirs = filterfalse(skip_rgx.fullmatch, subdirs)
+        subdirs = (f"{parent_dir}/{d}" for d in subdirs)
 
         # Recurse
         subdir_filesets = map(_find_files, subdirs)
