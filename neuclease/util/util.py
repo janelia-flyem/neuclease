@@ -1980,7 +1980,7 @@ def perform_bigquery_upload(df, full_table_name, client=None):
     return r
 
 
-def upload_chunked_table(df, full_table_name, gbucket_dir, gbucket_subdir, local_dir='/tmp'):
+def upload_chunked_table(df, full_table_name, gbucket_dir, gbucket_subdir, local_dir='/tmp', clustering_fields=None):
     """
     Export the given DataFrame to chunked parquet, upload it to a gbucket,
     and then load it as a table in BigQuery.
@@ -1995,16 +1995,45 @@ def upload_chunked_table(df, full_table_name, gbucket_dir, gbucket_subdir, local
     import subprocess
 
     assert gbucket_dir.startswith('gs://')
-
     project, dataset, table = full_table_name.split('.')
+    os.makedirs(f"{local_dir}/{table}")
 
-    if df is not None:
-        os.makedirs(f"{local_dir}/{table}")
-        pyarrow.parquet.write_table(pyarrow.Table.from_pandas(df), f"{local_dir}/{table}/*.parquet")
+    bytes_per_row = df.memory_usage().iloc[1:].sum() // len(df)
+    chunk_bytes = 200 * (2**20)
+    chunk_rows = chunk_bytes // bytes_per_row
+    chunks = iter_batches(df, chunk_rows)
+    digits = len(str(len(chunks)-1))
+    for i, chunk_df in enumerate(chunks):
+        name = f"{local_dir}/{table}/{i:0{digits}d}.parquet"
+        t = pyarrow.Table.from_pandas(chunk_df)
+        pyarrow.parquet.write_table(t, name)
 
-    subprocess.run(f"gsutil -q cp -r {local_dir}/{table} {gbucket_dir}/{gbucket_subdir}/", shell=True, check=True)
-    subprocess.run(f"gsutil ls -d {gbucket_dir}/{gbucket_subdir}/{table}", shell=True, check=True)
-    subprocess.run(f"bq load --source_format=PARQUET {dataset}.{table} {gbucket_dir}/{gbucket_subdir}/{table}/*.parquet", shell=True, check=True)
+    cp_cmd = f"gsutil -q cp -r {local_dir}/{table} {gbucket_dir}/{gbucket_subdir}/"
+    logger.info(cp_cmd)
+    subprocess.run(cp_cmd, shell=True, check=True)
+
+    ls_cmd = f"gsutil ls -d {gbucket_dir}/{gbucket_subdir}/{table}"
+    logger.info(ls_cmd)
+    subprocess.run(ls_cmd, shell=True, check=True)
+
+    bq_cmd = f"bq load --source_format=PARQUET --project_id={project}"
+
+    # schema_types = {
+    #     object: 'STRING',
+    #     **{np.dtype(dtype): 'FLOAT' for dtype in ('float32', 'float64')},
+    #     **{np.dtype(f'{s}int{w}'): 'INTEGER' for s,w in product(('u', ''), (8,16,32,64))},
+    # }
+    # schema = ",".join(f"{col}:{schema_types[dtype]}" for col, dtype in df.dtypes.items())
+    # bq_cmd = f"{bq_cmd} --schema={schema}"
+
+    if clustering_fields:
+        if isinstance(clustering_fields, str):
+            clustering_fields = [clustering_fields]
+        bq_cmd = f"{bq_cmd} --clustering_fields={','.join(clustering_fields)}"
+    bq_cmd = f"{bq_cmd} {dataset}.{table} {gbucket_dir}/{gbucket_subdir}/{table}/*.parquet"
+
+    logger.info(bq_cmd)
+    subprocess.run(bq_cmd, shell=True, check=True)
 
 
 def perform_bigquery_and_write_table(q, full_table_name, client=None):
