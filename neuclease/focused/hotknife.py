@@ -9,8 +9,8 @@ import vigra
 from dvidutils import LabelMapper
 
 from .favorites import compute_favorites, mark_favorites, extract_favorites
-from ..cleave.logging_setup import PrefixedLogger
 from ..util import Timer, tqdm_proxy, Grid, compute_parallel
+from ..util.logging import PrefixedLogger
 from ..util.box import box_to_slicing, round_box, overwrite_subvol, round_coord
 from ..util.grid import boxes_from_grid
 from ..util.segmentation import contingency_table

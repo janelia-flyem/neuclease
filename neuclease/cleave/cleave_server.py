@@ -15,12 +15,11 @@ import pandas as pd
 import requests
 from flask import Flask, request, abort, redirect, url_for, jsonify, Response, make_response
 
-from .logging_setup import init_logging, log_exceptions, PrefixedLogger
-from .merge_table import MERGE_TABLE_DTYPE
+from .logging_setup import init_logging
 from .merge_graph import LabelmapMergeGraph
 from .cleave import cleave, InvalidCleaveMethodError
 from ..dvid import DvidInstanceInfo, default_dvid_session
-from ..util import Timer
+from ..util import Timer, PrefixedLogger, log_exceptions
 
 
 # Globals
