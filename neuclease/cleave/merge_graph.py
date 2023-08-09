@@ -2,14 +2,16 @@ import os
 import logging
 import threading
 from socket import getfqdn
+from textwrap import dedent
 from collections import defaultdict
 from contextlib import contextmanager
+from abc import ABC, abstractmethod
 
 import numpy as np
 import pandas as pd
 
-from ..util import Timer
-from ..dvid import (fetch_repo_info, find_repo_root, fetch_supervoxels, fetch_labels, fetch_complete_mappings,
+from ..util import Timer, uuids_match, perform_bigquery
+from ..dvid import (fetch_repo_info, find_repo_root, fetch_supervoxels, fetch_labels, fetch_mapping, fetch_complete_mappings,
                     fetch_mutation_id, fetch_supervoxel_splits, fetch_supervoxel_splits_from_kafka)
 from .merge_table import MERGE_TABLE_DTYPE, load_mapping, load_merge_table, normalize_merge_table, apply_mapping_to_mergetable
 from ..focused.ingest import fetch_focused_decisions
@@ -26,8 +28,242 @@ def dummy_lock():
     """
     yield
 
+class LabelmapMergeGraphBase(ABC):
+    def __init__(self):
+        self._edge_cache = {}
 
-class LabelmapMergeGraph:
+        # This lock protects the above cache
+        self._edge_cache_main_lock = threading.Lock()
+
+        # This dict holds a lock for each body, to avoid requesting edges for the same body in parallel,
+        # (but requesting edges for different bodies in parallel is OK).
+        self._edge_cache_key_locks = defaultdict(threading.Lock)
+
+        self.max_cache_len = 100_000
+
+    def get_key_lock(self, repo_uuid, instance, body_id, mutid):
+        """
+        Rather than using a single Lock to protect all bodies at once,
+        we permit fine-grained locking for individual cached bodies.
+        Each body's unique lock is produced by this function.
+        """
+        key = (repo_uuid, instance, body_id, mutid)
+        with self._edge_cache_main_lock:
+            key_lock = self._edge_cache_key_locks[key]
+        return key_lock
+
+    def extract_edges(self, server, uuid, instance, body_id, find_missing=True, *, session=None, logger=None):
+        with Timer("Extracting edges", logger):
+            return self._extract_edges(server, uuid, instance, body_id, find_missing, session=session, logger=logger)
+
+    def _extract_edges(self, server, uuid, instance, body_id, find_missing=True, *, session=None, logger=None):
+        body_id = np.uint64(body_id)
+        if logger is None:
+            logger = _logger
+
+        domain = server.split('://')[-1]
+        server = server[:-len(domain)] + getfqdn(domain)
+        repo_uuid = find_repo_root(server, uuid)
+
+        # Mutation IDs are unique, even across UUIDs,
+        # so we can warm the cache for bodies in ancestor nodes,
+        # even if users are viewing descendent nodes.
+        # If the body hasn't changed in the descendent, the cached version is valid.
+        mutid = fetch_mutation_id(server, uuid, instance, body_id)
+
+        key = (repo_uuid, instance, body_id, mutid)
+        key_lock = self.get_key_lock(*key)
+
+        # Use a lock to avoid requesting the supervoxels from DVID in-parallel,
+        # in case the user sends several requests at once for the same body,
+        # which can happen if they click faster than dvid can respond.
+        with key_lock:
+            if key in self._edge_cache:
+                supervoxels, edges, scores = self._edge_cache[key]
+                logger.info("Returning cached edges")
+                return (mutid, supervoxels, edges, scores)
+
+            logger.info("Edges not found in cache.  Extracting from merge graph.")
+            dvid_supervoxels, subset_df = self._extract_stored_edges(server, uuid, instance, body_id, session, logger)
+
+            if not find_missing:
+                orig_num_cc = 0
+                extra_edges = extra_scores = []
+            else:
+                with Timer() as timer:
+                    known_edges = subset_df[['id_a', 'id_b']].values
+                    extra_edges, orig_num_cc, final_num_cc, block_table = \
+                        find_missing_adjacencies(server, uuid, instance, body_id, known_edges,
+                                                 svs=dvid_supervoxels, search_distance=10, connect_non_adjacent=True)
+                    extra_scores = np.zeros(len(extra_edges), np.float32)
+
+                # TODO (in subclasses)
+                # self.store_extra_edges()
+
+            if orig_num_cc == 1:
+                logger.info("Graph is contiguous")
+            elif find_missing:
+                logger.info(f"Searched {len(block_table)} blocks for missing adjacencies.")
+                if final_num_cc == 1:
+                    logger.info(f"Finding missing adjacencies between {orig_num_cc} disjoint components took {timer.timedelta}")
+                else:
+                    logger.warning("Graph is not contiguous, but some missing adjacencies could not be found.")
+                    logger.warning(f"Reducing {orig_num_cc} disjoint components into {final_num_cc} took {timer.timedelta}")
+            else:
+                logger.warning("Not looking for missing edges (if any)")
+
+            edges = subset_df[['id_a', 'id_b']].values
+            scores = subset_df['score'].values
+
+            if len(extra_edges) > 0:
+                edges = np.concatenate((edges, extra_edges))
+                scores = np.concatenate((scores, extra_scores))
+
+            # Cache before returning
+            with self._edge_cache_main_lock:
+                if key in self._edge_cache:
+                    del self._edge_cache[key]
+                if len(self._edge_cache) == self.max_cache_len:
+                    first_key = next(iter(self._edge_cache.keys()))
+                    del self._edge_cache[first_key]
+                    logger.warning(f"Edge cache is full: Deleted an old entry: {first_key}")
+                logger.warning(f"Caching entry: {key}")
+                self._edge_cache[key] = (dvid_supervoxels, edges, scores)
+
+        return (mutid, dvid_supervoxels, edges, scores)
+
+    @abstractmethod
+    def _extract_stored_edges(self, server, uuid, instance, body_id, session, logger):
+        raise NotImplementedError()
+
+    @classmethod
+    def fetch_focused_merges(cls, server, uuid, focused_decisions_instance):
+        """
+        Read the proofreading focused merge decisions from a keyvalue
+        instance (stored as individual JSON values).
+
+        Args:
+            server, uuid, instance:
+                For example, ('emdata3:8900', 'cc4c', 'segmentation_merged')
+
+        Returns:
+            The focused edges, inferred from the focused proofreading decisions.
+        """
+        repo_info = fetch_repo_info(server, uuid)
+        if focused_decisions_instance not in repo_info["DataInstances"]:
+            return 0
+
+        focused_decisions = fetch_focused_decisions(server, uuid, focused_decisions_instance)
+        if len(focused_decisions) == 0 or 'result' not in focused_decisions.columns:
+            return 0
+
+        focused_merges = focused_decisions.query('result == "merge" or result == "mergeLater"')
+        focused_merges = focused_merges[["sv_a", "sv_b", "xa", "ya", "za", "xb", "yb", "zb"]]
+        focused_merges.rename(inplace=True, columns={'sv_a': 'id_a', 'sv_b': 'id_b'})
+
+        # These are manual merges: Give a great score.
+        focused_merges['score'] = np.float32(0.01)
+
+        # Ensure correct dtypes for concatenation
+        for col, dtype in MERGE_TABLE_DTYPE:
+            focused_merges[col] = focused_merges[col].astype(dtype, copy=False)
+
+        # This reindex isn't necessary, right?
+        # cols = [k for k,v in MERGE_TABLE_DTYPE]
+        # focused_merges = focused_merges.reindex(columns=cols)
+        return focused_merges
+
+
+class LabelmapMergeGraphBigQuery(LabelmapMergeGraphBase):
+    def __init__(self, table=None, primary_uuid=None, debug_export_dir=None):
+        """
+        Constructor.
+
+        Args:
+            table:
+                The name of a table in BigQuery which contains all (or at least most)
+                of the intra-body edges in the segmentation, with at least the following columns:
+
+                    body_a, sv_a, sv_b, xa, ya, za, xb, yb, zb, cost
+
+            primary_uuid:
+                The UUID which takes precedence for caching purposes,
+                when updating body supervoxels in response to a request.
+
+            debug_export_dir:
+                Only used for debugging purposes! Leave as None for normal operation.
+                Exports certain results tables during some operations.
+                Significant performance impact if provided.
+        """
+        super().__init__()
+        self.table = table
+        table_uuid = table.split('-')[-1]
+        if primary_uuid:
+            assert uuids_match(table_uuid, primary_uuid), \
+                f"Server primary_uuid ({primary_uuid}) doesn't match UUID in table name: ({table})"
+        self.primary_uuid = primary_uuid or table_uuid
+        self.debug_export_dir = debug_export_dir
+        if debug_export_dir:
+            os.makedirs(debug_export_dir, exist_ok=True)
+
+    @classmethod
+    def fetch_bq_edges(cls, server, uuid, instance, body_id, snapshot_table, snapshot_uuid, *, session=None, logger=None):
+        curr_seg = (server, uuid, instance)
+        snapshot_seg = (server, snapshot_uuid, instance)
+        dvid_supervoxels = fetch_supervoxels(*curr_seg, body_id, session=session)
+        snapshot_bodies = pd.unique(fetch_mapping(*snapshot_seg, dvid_supervoxels))
+
+        q = dedent(f"""\
+            select sv_a, sv_b, xa, ya, za, xb, yb, zb, cost
+            from `{snapshot_table}`
+            where body_a in ({', '.join(map(str, snapshot_bodies))})
+        """)
+        msg = f"Fetching edges for {len(snapshot_bodies)} body(s) from BigQuery snapshot table"
+        with Timer(msg, logger):
+            df = perform_bigquery(q)
+
+        with Timer(f"Filtering edges for UUID {uuid}", logger):
+            df['body_a'] = fetch_mapping(*curr_seg, df['sv_a'].values)
+            df['body_b'] = fetch_mapping(*curr_seg, df['sv_b'].values)
+
+            retired_a = (df['body_a'] == 0)
+            retired_b = (df['body_b'] == 0)
+
+            if retired_a.sum() > 0:
+                df.loc[retired_a, 'sv_a'] = fetch_labels(*curr_seg, df.loc[retired_a, ['za', 'ya', 'xa']].values)
+                df.loc[retired_a, 'body_a'] = fetch_mapping(*curr_seg, df.loc[retired_a, 'sv_a'].values)
+
+            if retired_b.sum() > 0:
+                df.loc[retired_b, 'sv_b'] = fetch_labels(*curr_seg, df.loc[retired_b, ['zb', 'yb', 'xb']].values)
+                df.loc[retired_b, 'body_b'] = fetch_mapping(*curr_seg, df.loc[retired_b, 'sv_b'].values)
+
+            edges = df.query('body_a == @body_id and body_b == @body_id').copy()
+
+        return dvid_supervoxels, edges
+
+    def _extract_stored_edges(self, server, uuid, instance, body_id, session, logger):
+        dvid_supervoxels, edges = self.fetch_bq_edges(
+            server, uuid, instance, body_id,
+            self.table, self.primary_uuid,
+            session=session, logger=logger
+        )
+        # Revert to the idiosyncratic column names used
+        # by the other cleave server implementation.
+        edges = edges.rename(columns={
+            'sv_a': 'id_a',
+            'sv_b': 'id_b',
+            'cost': 'score',
+            'body_a': 'body'
+        })
+
+        cols = [k for k,v in MERGE_TABLE_DTYPE]
+        cols = [*cols, 'body']
+        coltypes = dict(MERGE_TABLE_DTYPE)
+        coltypes['body'] = np.uint64
+        return dvid_supervoxels, edges[cols].astype(coltypes)
+
+
+class LabelmapMergeGraphLocalTable(LabelmapMergeGraphBase):
     """
     Represents a volume-wide merge graph.
     The set of all possible edges are immutable, and initialized from a immutable merge table,
@@ -58,6 +294,7 @@ class LabelmapMergeGraph:
                 Only used for unit-testing purposes, when no kafka server is available.
                 Disables fetching of split supervoxel information entirely!
         """
+        super().__init__()
         self.primary_uuid = None
         self.set_primary_uuid(primary_uuid)
         self.debug_export_dir = debug_export_dir
@@ -82,22 +319,34 @@ class LabelmapMergeGraph:
         assert isinstance(self.merge_table_df, pd.DataFrame)
         assert list(self.merge_table_df.columns)[:9] == list(dict(MERGE_TABLE_DTYPE).keys())[:9]
 
-        self._mapping_versions = {}
-
-        self._edge_cache = {}
-
-        # This lock protects the above cache
-        self._edge_cache_main_lock = threading.Lock()
-
-        # This dict holds a lock for each body, to avoid requesting edges for the same body in parallel,
-        # (but requesting edges for different bodies in parallel is OK).
-        self._edge_cache_key_locks = defaultdict(lambda: threading.Lock())
-
-        self.max_cache_len = 100_000
-
     def set_primary_uuid(self, primary_uuid):
         _logger.info(f"Changing primary (cached) UUID from {self.primary_uuid} to {primary_uuid}")
         self.primary_uuid = primary_uuid
+
+    def _extract_stored_edges(self, server, uuid, instance, body_id, session, logger):
+        dvid_supervoxels = fetch_supervoxels(server, uuid, instance, body_id, session=session)
+
+        # It's very fast to select rows based on the body_id,
+        # so we prefer that if the mapping is already in sync with DVID.
+        svs_from_mapping = self.mapping[self.mapping == body_id].index
+        mapping_is_in_sync = (set(svs_from_mapping) == set(dvid_supervoxels))
+
+        if mapping_is_in_sync:
+            subset_df = self.extract_premapped_rows(body_id)
+        else:
+            subset_df = self.extract_rows_by_sv(dvid_supervoxels)
+
+        return dvid_supervoxels, subset_df
+
+    def extract_premapped_rows(self, body_id):
+        body_positions_orig = (self.merge_table_df['body'] == body_id).values.nonzero()[0]
+        subset_df = self.merge_table_df.iloc[body_positions_orig]
+        return subset_df.copy()
+
+    def extract_rows_by_sv(self, supervoxels):
+        _sv_set = set(supervoxels)  # noqa
+        subset_df = self.merge_table_df.query('id_a in @_sv_set and id_b in @_sv_set')
+        return subset_df.copy()
 
     def apply_mapping(self, mapping):
         if isinstance(mapping, str):
@@ -125,29 +374,9 @@ class LabelmapMergeGraph:
         Returns:
             The count of appended edges
         """
-        repo_info = fetch_repo_info(server, uuid)
-        if focused_decisions_instance not in repo_info["DataInstances"]:
-            return 0
-
-        focused_decisions = fetch_focused_decisions(server, uuid, focused_decisions_instance)
-        if len(focused_decisions) == 0 or 'result' not in focused_decisions.columns:
-            return 0
-
-        focused_merges = focused_decisions.query('result == "merge" or result == "mergeLater"')
-        focused_merges = focused_merges[["sv_a", "sv_b", "xa", "ya", "za", "xb", "yb", "zb"]]
-        focused_merges.rename(inplace=True, columns={'sv_a': 'id_a', 'sv_b': 'id_b'})
-
-        # These are manual merges: Give a great score.
-        focused_merges['score'] = np.float32(0.01)
-
-        # Ensure correct dtypes for concatenation
-        for col, dtype in MERGE_TABLE_DTYPE:
-            focused_merges[col] = focused_merges[col].astype(dtype, copy=False)
-
-        focused_merges = focused_merges.reindex(columns=self.merge_table_df.columns)
+        focused_merges = self.fetch_focused_merges(server, uuid, focused_decisions_instance)
         self.merge_table_df = pd.concat((self.merge_table_df, focused_merges), ignore_index=True, copy=False)
         return len(focused_merges)
-
 
     def append_edges_for_split_supervoxels(self, instance_info, parent_sv_handling='unmap', read_from='kafka', kafka_msgs=None):
         """
@@ -258,110 +487,3 @@ class LabelmapMergeGraph:
         self.merge_table_df = pd.concat((self.merge_table_df, normalized_update_df), ignore_index=True, copy=False)
 
         return bad_edges
-
-    def extract_edges(self, server, uuid, instance, body_id, find_missing=True, *, session=None, logger=None):
-        with Timer("Extracting edges", logger):
-            return self._extract_edges(server, uuid, instance, body_id, find_missing, session=session, logger=logger)
-
-    def _extract_edges(self, server, uuid, instance, body_id, find_missing=True, *, session=None, logger=None):
-        body_id = np.uint64(body_id)
-        if logger is None:
-            logger = _logger
-
-        domain = server.split('://')[-1]
-        server = server[:-len(domain)] + getfqdn(domain)
-        repo_uuid = find_repo_root(server, uuid)
-
-        # Mutation IDs are unique, even across UUIDs,
-        # so we can warm the cache for bodies in ancestor nodes,
-        # even if users are viewing descendent nodes.
-        # If the body hasn't changed in the descendent, the cached version is valid.
-        mutid = fetch_mutation_id(server, uuid, instance, body_id)
-
-        key = (repo_uuid, instance, body_id, mutid)
-        key_lock = self.get_key_lock(*key)
-
-        # Use a lock to avoid requesting the supervoxels from DVID in-parallel,
-        # in case the user sends several requests at once for the same body,
-        # which can happen if they click faster than dvid can respond.
-        with key_lock:
-            if key in self._edge_cache:
-                supervoxels, edges, scores = self._edge_cache[key]
-                logger.info("Returning cached edges")
-                return (mutid, supervoxels, edges, scores)
-
-            logger.info("Edges not found in cache.  Extracting from merge graph.")
-            dvid_supervoxels = fetch_supervoxels(server, uuid, instance, body_id, session=session)
-
-            # It's very fast to select rows based on the body_id,
-            # so we prefer that if the mapping is already in sync with DVID.
-            svs_from_mapping = self.mapping[self.mapping == body_id].index
-            mapping_is_in_sync = (set(svs_from_mapping) == set(dvid_supervoxels))
-
-            if mapping_is_in_sync:
-                subset_df = self.extract_premapped_rows(body_id)
-            else:
-                subset_df = self.extract_rows_by_sv(dvid_supervoxels)
-
-            orig_num_cc = 0
-            extra_edges = extra_scores = []
-            if find_missing:
-                with Timer() as timer:
-                    known_edges = subset_df[['id_a', 'id_b']].values
-                    extra_edges, orig_num_cc, final_num_cc, block_table = \
-                        find_missing_adjacencies(server, uuid, instance, body_id, known_edges,
-                                                 svs=dvid_supervoxels, search_distance=10, connect_non_adjacent=True)
-                    extra_scores = np.zeros(len(extra_edges), np.float32)
-
-            if orig_num_cc == 1:
-                logger.info("Graph is contiguous")
-            elif find_missing:
-                logger.info(f"Searched {len(block_table)} blocks for missing adjacencies.")
-                if final_num_cc == 1:
-                    logger.info(f"Finding missing adjacencies between {orig_num_cc} disjoint components took {timer.timedelta}")
-                else:
-                    logger.warning(f"Graph is not contiguous, but some missing adjacencies could not be found.")
-                    logger.warning(f"Reducing {orig_num_cc} disjoint components into {final_num_cc} took {timer.timedelta}")
-            else:
-                logger.warning(f"Not looking for missing edges (if any)")
-
-            edges = subset_df[['id_a', 'id_b']].values
-            scores = subset_df['score'].values
-
-            if len(extra_edges) > 0:
-                edges = np.concatenate((edges, extra_edges))
-                scores = np.concatenate((scores, extra_scores))
-
-            # Cache before returning
-            with self._edge_cache_main_lock:
-                if key in self._edge_cache:
-                    del self._edge_cache[key]
-                if len(self._edge_cache) == self.max_cache_len:
-                    first_key = next(iter(self._edge_cache.keys()))
-                    del self._edge_cache[first_key]
-                    logger.warning(f"Edge cache is full: Deleted an old entry: {first_key}")
-                logger.warning(f"Caching entry: {key}")
-                self._edge_cache[key] = (dvid_supervoxels, edges, scores)
-
-        return (mutid, dvid_supervoxels, edges, scores)
-
-    def extract_premapped_rows(self, body_id):
-        body_positions_orig = (self.merge_table_df['body'] == body_id).values.nonzero()[0]
-        subset_df = self.merge_table_df.iloc[body_positions_orig]
-        return subset_df.copy()
-
-    def extract_rows_by_sv(self, supervoxels):
-        _sv_set = set(supervoxels)
-        subset_df = self.merge_table_df.query('id_a in @_sv_set and id_b in @_sv_set')
-        return subset_df.copy()
-
-    def get_key_lock(self, repo_uuid, instance, body_id, mutid):
-        """
-        Rather than using a single Lock to protect all bodies at once,
-        we permit fine-grained locking for individual cached bodies.
-        Each body's unique lock is produced by this function.
-        """
-        key = (repo_uuid, instance, body_id, mutid)
-        with self._edge_cache_main_lock:
-            key_lock = self._edge_cache_key_locks[key]
-        return key_lock

@@ -13,7 +13,14 @@ from io import StringIO
 def init_logging(logger, log_dir, db_path, stdout_logging=False):
     if not os.path.exists(log_dir):
         os.makedirs(log_dir)
-    db_name = os.path.basename(db_path)
+
+    if '/' in db_path:
+        db_name = os.path.basename(db_path)
+    else:
+        db_name = db_path.split('.')[-1]
+        if db_name in ('.npy', '.feather'):
+            db_name = db_path.split('.')[-2]
+
     db_name = db_name.replace(':', '_')  # For OSX, which treats ':' like '/'
     logfile_path = os.path.join(log_dir, os.path.splitext(db_name)[0]) + '.log'
 
