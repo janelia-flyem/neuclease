@@ -19,9 +19,9 @@ from .logging_setup import init_logging, log_exceptions, PrefixedLogger
 from .merge_table import MERGE_TABLE_DTYPE
 from .merge_graph import LabelmapMergeGraph
 from .cleave import cleave, InvalidCleaveMethodError
-from .dvid import DvidInstanceInfo
-from .util import Timer
-from neuclease.dvid._dvid import default_dvid_session
+from ..dvid import DvidInstanceInfo, default_dvid_session
+from ..util import Timer
+
 
 # Globals
 MERGE_GRAPH = None

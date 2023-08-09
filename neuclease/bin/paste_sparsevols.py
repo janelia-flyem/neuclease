@@ -10,7 +10,7 @@ import argparse
 import numpy as np
 import pandas as pd
 
-from neuclease.logging_setup import PrefixedLogger
+from neuclease.cleave.logging_setup import PrefixedLogger
 from neuclease import configure_default_logging
 from neuclease.util import Timer, lexsort_columns, groupby_presorted, SparseBlockMask, NumpyConvertingEncoder
 from neuclease.dvid import fetch_labelarray_voxels, post_labelarray_blocks, fetch_roi, parse_rle_response, fetch_instance_info

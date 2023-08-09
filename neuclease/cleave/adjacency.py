@@ -5,9 +5,10 @@ import pandas as pd
 
 from dvidutils import LabelMapper
 
-from neuclease.dvid.labelmap import fetch_labelindex, fetch_labelarray_voxels, decode_labelindex_blocks
-from neuclease.util.graph import connected_components, connected_components_nonconsecutive
-from neuclease.dvid.labelmap._labelmap import fetch_supervoxels
+from ..dvid.labelmap import fetch_labelindex, fetch_labelarray_voxels, decode_labelindex_blocks
+from ..util.graph import connected_components, connected_components_nonconsecutive
+from ..dvid.labelmap._labelmap import fetch_supervoxels
+
 
 def find_missing_adjacencies(server, uuid, instance, body, known_edges, svs=None, search_distance=1, connect_non_adjacent=False):
     """

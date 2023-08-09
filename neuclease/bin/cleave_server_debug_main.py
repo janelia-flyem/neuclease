@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 import sys
-import neuclease.cleave_server
+import neuclease.cleave.cleave_server
 
 def main():
     debug_mode = False  # flask debug mode
@@ -35,7 +35,7 @@ def main():
 """.split()
     sys.argv += cmd_args
 
-    neuclease.cleave_server.main(debug_mode, stdout_logging)
+    neuclease.cleave.cleave_server.main(debug_mode, stdout_logging)
 
 ## Example requests:
 """

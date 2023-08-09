@@ -8,10 +8,11 @@ from contextlib import contextmanager
 import numpy as np
 import pandas as pd
 
-from .util import Timer
-from .dvid import fetch_repo_info, find_repo_root, fetch_supervoxels, fetch_labels, fetch_complete_mappings, fetch_mutation_id, fetch_supervoxel_splits, fetch_supervoxel_splits_from_kafka
+from ..util import Timer
+from ..dvid import (fetch_repo_info, find_repo_root, fetch_supervoxels, fetch_labels, fetch_complete_mappings,
+                    fetch_mutation_id, fetch_supervoxel_splits, fetch_supervoxel_splits_from_kafka)
 from .merge_table import MERGE_TABLE_DTYPE, load_mapping, load_merge_table, normalize_merge_table, apply_mapping_to_mergetable
-from .focused.ingest import fetch_focused_decisions
+from ..focused.ingest import fetch_focused_decisions
 from .adjacency import find_missing_adjacencies
 
 _logger = logging.getLogger(__name__)
