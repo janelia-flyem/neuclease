@@ -15,13 +15,12 @@ import pandas as pd
 import requests
 from flask import Flask, request, abort, redirect, url_for, jsonify, Response, make_response
 
-from .logging_setup import init_logging, log_exceptions, PrefixedLogger
-from .merge_table import MERGE_TABLE_DTYPE
-from .merge_graph import LabelmapMergeGraph
+from .logging_setup import init_logging
+from .merge_graph import LabelmapMergeGraphLocalTable, LabelmapMergeGraphBigQuery
 from .cleave import cleave, InvalidCleaveMethodError
-from .dvid import DvidInstanceInfo
-from .util import Timer
-from neuclease.dvid._dvid import default_dvid_session
+from ..dvid import DvidInstanceInfo, default_dvid_session
+from ..util import Timer, PrefixedLogger, log_exceptions
+
 
 # Globals
 MERGE_GRAPH = None
@@ -31,32 +30,41 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 
 
-def main(debug_mode=False, stdout_logging=False):
-    global MERGE_GRAPH
-    global LOGFILE
-
-    # Terminate results in normal shutdown
-    signal.signal(signal.SIGTERM, lambda signum, stack_frame: exit(1))
-
+def parse_args():
     parser = argparse.ArgumentParser()
+    parser.add_argument('--merge-table', required=False)
+    parser.add_argument('--bigquery-table', required=False)
+
     parser.add_argument('-p', '--port', default=5555, type=int)
-    parser.add_argument('--merge-table')
     parser.add_argument('--primary-dvid-server', required=True)
+    parser.add_argument('--primary-uuid', required=False,
+                        help="In case of a local merge table, do not update the internal cached "
+                             "merge table mapping except for the given UUID. "
+                             "(Prioritizes speed of the primary UUID over all others.)"
+                             "Also, the merge graph is updated with split supervoxels for the given UUID.")
+    parser.add_argument('--primary-labelmap-instance', required=True)
+    parser.add_argument('--max-cached-bodies', type=int, default=100_000)
 
     parser.add_argument('--log-dir', required=False)
     parser.add_argument('--debug-export-dir', required=False, help="For debugging only. Enables export of certain intermediate results.")
-    parser.add_argument('--mapping-file', required=False)
-    parser.add_argument('--primary-uuid', required=False,
-                        help="Do not update the internal cached merge table mapping except for the given UUID. "
-                             "(Prioritizes speed of the primary UUID over all others.)  Also, the merge graph is updated with split supervoxels for the given UUID.")
-    parser.add_argument('--primary-labelmap-instance', required=False)
     parser.add_argument('--suspend-before-launch', action='store_true',
                         help="After loading the merge graph, suspend the process before launching the server, and await a SIGCONT. "
                              "Allows you to ALMOST hot-swap a running cleave server. (You can load the new merge graph before killing the old server).")
     parser.add_argument('--testing', action='store_true')
 
+    args = parser.parse_args()
+    if bool(args.merge_table) == bool(args.bigquery_table):
+        raise RuntimeError("Please provide either --merge-table or --bigquery-table (not both)")
+
+    if args.merge_table:
+        return _parse_args_local_table(parser)
+    return _parse_args_bigquery_table(parser)
+
+
+def _parse_args_local_table(parser):
+    parser.add_argument('--mapping-file', required=False)
     parser.add_argument('--initialization-dvid-server',
-                            help="Which DVID server to use for initializing the edge table (for splits and focused edges)")
+                        help="Which DVID server to use for initializing the edge table (for splits and focused edges)")
     parser.add_argument('--initialization-uuid')
     parser.add_argument('--initialization-labelmap-instance')
     parser.add_argument('--primary-kafka-log', required=False,
@@ -72,6 +80,26 @@ def main(debug_mode=False, stdout_logging=False):
     args.initialization_uuid = args.initialization_uuid or args.primary_uuid
     args.initialization_labelmap_instance = args.initialization_labelmap_instance or args.primary_labelmap_instance
 
+    return args
+
+
+def _parse_args_bigquery_table(parser):
+    # I may want to implement these features for the BigQuery case,
+    # but I'm not going to bother right now.
+    # parser.add_argument('--skip-focused-merge-update', action='store_true')
+    # parser.add_argument('--skip-split-sv-update', action='store_true')
+    return parser.parse_args()
+
+
+def main(debug_mode=False, stdout_logging=False):
+    global MERGE_GRAPH
+    global LOGFILE
+
+    # Terminate results in normal shutdown
+    signal.signal(signal.SIGTERM, lambda signum, stack_frame: exit(1))
+
+    args = parse_args()
+
     # This check is to ensure that this initialization is only run once,
     # even in the presence of the flask debug 'reloader'.
     if not debug_mode or os.environ.get("WERKZEUG_RUN_MAIN") == "true":
@@ -85,63 +113,90 @@ def main(debug_mode=False, stdout_logging=False):
             args.log_dir = os.path.dirname(args.merge_table)
 
         LOGFILE = init_logging(logger, args.log_dir, args.merge_table or 'no-merge-table', stdout_logging)
-        logger.info("Server started with command: " + ' '.join(sys.argv))
-    
-        ##
-        ## Load merge table
-        ##
-        if args.merge_table and not os.path.exists(args.merge_table):
-            sys.stderr.write(f"Merge table not found: {args.merge_table}\n")
-            sys.exit(-1)
+        logger.info("Server started with command: " + ' '.join(sys.argv))  # noqa
 
-        primary_instance_info = DvidInstanceInfo(args.primary_dvid_server, args.primary_uuid, args.primary_labelmap_instance)
-        initialization_instance_info = DvidInstanceInfo(args.initialization_dvid_server, args.initialization_uuid, args.initialization_labelmap_instance)
-
-        kafka_msgs = None
-        if args.primary_kafka_log:
-            assert args.primary_kafka_log.endswith('.jsonl'), \
-                "Supply the kafka log in .jsonl format"
-            kafka_msgs = []
-            for line in open(args.primary_kafka_log, 'r'):
-                kafka_msgs.append(ujson.loads(line))
-
-        print("Loading merge table...")
-        with Timer(f"Loading merge table from: {args.merge_table or 'NONE'}", logger):
-            MERGE_GRAPH = LabelmapMergeGraph(args.merge_table, primary_instance_info.uuid, args.debug_export_dir, no_kafka=args.testing)
-
-        if not args.skip_focused_merge_update:
-            with Timer(f"Loading focused merge decisions", logger):
-                num_focused_merges = MERGE_GRAPH.append_edges_for_focused_merges(*initialization_instance_info[:2], 'segmentation_merged')
-            logger.info(f"Loaded {num_focused_merges} merge decisions.")
-
-        # Apply splits first
-        if all(primary_instance_info) and not args.skip_split_sv_update:
-            with Timer(f"Appending split supervoxel edges for supervoxels in", logger):
-                bad_edges = MERGE_GRAPH.append_edges_for_split_supervoxels( initialization_instance_info, read_from='dvid', kafka_msgs=kafka_msgs )
-
-                if len(bad_edges) > 0:
-                    bad_edges_name = f'BAD-SPLIT-EDGES-{args.primary_uuid[:4]}.csv'
-                    bad_edges_filepath = args.log_dir + '/' + bad_edges_name
-                    bad_edges.to_csv(bad_edges_filepath, index=False, header=True)
-                    logger.error(f"Some edges belonging to split supervoxels could not be preserved, due to {len(bad_edges)} bad representative points.")
-                    logger.error(f"See {bad_edges_filepath}")
-
-        # Apply mapping (after splits), either from file or from DVID.
-        if args.mapping_file:
-            MERGE_GRAPH.apply_mapping(args.mapping_file)
-        elif all(primary_instance_info):
-            MERGE_GRAPH.fetch_and_apply_mapping(*primary_instance_info, kafka_msgs)
+        MERGE_GRAPH = _init_merge_graph(args)
 
         if args.suspend_before_launch:
             pid = os.getpid()
             print(f"Suspending process.  Please use 'kill -CONT {pid}' to resume app startup.")
             sys.stdout.flush()
             os.kill(pid, signal.SIGSTOP)
-            print(f"Process resumed.")
+            print("Process resumed.")
 
     logger.info("Merge graph loaded. Starting server.")
     print("Merge graph loaded. Starting server.")
     app.run(host='0.0.0.0', port=args.port, debug=debug_mode, threaded=not debug_mode, use_reloader=debug_mode)
+
+
+def _init_merge_graph(args):
+    if args.merge_table:
+        return _init_local_merge_graph(args)
+    else:
+        return _init_bigquery_merge_graph(args)
+
+
+def _init_local_merge_graph(args):
+    if args.merge_table and not os.path.exists(args.merge_table):
+        sys.stderr.write(f"Merge table not found: {args.merge_table}\n")
+        sys.exit(-1)
+
+    primary_instance_info = DvidInstanceInfo(args.primary_dvid_server, args.primary_uuid, args.primary_labelmap_instance)
+    initialization_instance_info = DvidInstanceInfo(args.initialization_dvid_server, args.initialization_uuid, args.initialization_labelmap_instance)
+
+    kafka_msgs = None
+    if args.primary_kafka_log:
+        assert args.primary_kafka_log.endswith('.jsonl'), \
+            "Supply the kafka log in .jsonl format"
+        kafka_msgs = []
+        for line in open(args.primary_kafka_log, 'r'):
+            kafka_msgs.append(ujson.loads(line))
+
+    print("Loading merge table...")
+    with Timer(f"Loading merge table from: {args.merge_table or 'NONE'}", logger):
+        merge_graph = LabelmapMergeGraphLocalTable(
+            args.merge_table,
+            primary_instance_info.uuid,
+            args.max_cached_bodies,
+            args.debug_export_dir,
+            no_kafka=args.testing
+        )
+
+    if not args.skip_focused_merge_update:
+        with Timer("Loading focused merge decisions", logger):
+            num_focused_merges = merge_graph.append_edges_for_focused_merges(*initialization_instance_info[:2], 'segmentation_merged')
+        logger.info(f"Loaded {num_focused_merges} merge decisions.")
+
+    # Apply splits first
+    if all(primary_instance_info) and not args.skip_split_sv_update:
+        with Timer("Appending split supervoxel edges for supervoxels in", logger):
+            bad_edges = merge_graph.append_edges_for_split_supervoxels( initialization_instance_info, read_from='dvid', kafka_msgs=kafka_msgs )
+
+            if len(bad_edges) > 0:
+                bad_edges_name = f'BAD-SPLIT-EDGES-{args.primary_uuid[:4]}.csv'
+                bad_edges_filepath = args.log_dir + '/' + bad_edges_name
+                bad_edges.to_csv(bad_edges_filepath, index=False, header=True)
+                logger.error(f"Some edges belonging to split supervoxels could not be preserved, due to {len(bad_edges)} bad representative points.")
+                logger.error(f"See {bad_edges_filepath}")
+
+    # Apply mapping (after splits), either from file or from DVID.
+    if args.mapping_file:
+        merge_graph.apply_mapping(args.mapping_file)
+    elif all(primary_instance_info):
+        merge_graph.fetch_and_apply_mapping(*primary_instance_info, kafka_msgs)
+
+    return merge_graph
+
+
+def _init_bigquery_merge_graph(args):
+    logger.info(f"Using BigQuery table: {args.bigquery_table}")
+    merge_graph = LabelmapMergeGraphBigQuery(
+        args.bigquery_table,
+        args.primary_uuid,
+        args.max_cached_bodies,
+        args.debug_export_dir
+    )
+    return merge_graph
 
 
 @app.route('/')

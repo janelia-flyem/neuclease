@@ -5,15 +5,14 @@ import logging
 from tqdm import tqdm
 
 import h5py
-import ujson
 import numpy as np
 import pandas as pd
 
 from dvidutils import LabelMapper
 
-from .util import Timer, read_csv_header, tqdm_proxy
-from .dvid import (fetch_complete_mappings, fetch_split_supervoxel_sizes, read_kafka_messages,
-                   fetch_supervoxel_splits, split_events_to_mapping, fetch_label)
+from ..util import Timer, read_csv_header, tqdm_proxy
+from ..dvid import (fetch_complete_mappings, fetch_split_supervoxel_sizes, read_kafka_messages,
+                    fetch_supervoxel_splits, split_events_to_mapping, fetch_label)
 
 logger = logging.getLogger(__name__)
 

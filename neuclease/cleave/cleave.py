@@ -7,7 +7,7 @@ import networkx as nx
 
 from dvidutils import LabelMapper
 
-from neuclease.util import Timer, connected_components, graph_tool_available
+from ..util import Timer, connected_components, graph_tool_available
 
 logger = logging.getLogger(__name__)
 

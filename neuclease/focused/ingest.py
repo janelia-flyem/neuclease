@@ -13,7 +13,7 @@ from dvidutils import LabelMapper
 
 from ..util import read_csv_header, Timer, swap_df_cols, compute_parallel, dump_json, tqdm_proxy
 from ..util.csv import read_csv_col
-from ..merge_table import load_all_supervoxel_sizes, compute_body_sizes
+from ..cleave.merge_table import load_all_supervoxel_sizes, compute_body_sizes
 from ..dvid import (fetch_keys, post_keyvalues, fetch_complete_mappings, fetch_keyvalues,
                     fetch_labels_batched, fetch_mapping, find_master, fetch_body_annotations)
 from ..dvid.annotation import load_synapses, body_synapse_counts

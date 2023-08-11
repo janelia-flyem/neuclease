@@ -15,6 +15,7 @@ import pandas as pd
 
 import neuclease
 
+from neuclease.cleave.util import fetch_body_edge_table
 from neuclease.tests.conftest import TEST_DATA_DIR
 
 logger = logging.getLogger(__name__)
@@ -134,27 +135,6 @@ def test_set_primary_uuid(cleave_server_setup):
     r.raise_for_status()
     assert r.json()["uuid"] == "abc123"
     
-
-def fetch_body_edge_table(cleave_server, dvid_server, uuid, instance, body):
-    dvid_server, dvid_port = dvid_server.split(':')
-
-    if not cleave_server.startswith('http'):
-        cleave_server = 'http://' + cleave_server
-
-    data = { "body-id": body,
-             "port": dvid_port,
-             "server": dvid_server,
-             "uuid": uuid,
-             "segmentation-instance": instance,
-             "user": getpass.getuser() }
-
-    r = requests.post(f'{cleave_server}/body-edge-table', json=data)
-    r.raise_for_status()
-
-    df = pd.read_csv(BytesIO(r.content), header=0)
-    df = df.astype({'id_a': np.uint64, 'id_b': np.uint64, 'score': np.float32})
-    return df
-
 
 @show_request_exceptions
 def test_body_edge_table(cleave_server_setup):

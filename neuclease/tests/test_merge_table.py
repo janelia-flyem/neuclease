@@ -3,7 +3,7 @@ import pytest
 import numpy as np
 import pandas as pd
 
-from neuclease.merge_table import compute_body_sizes
+from neuclease.cleave.merge_table import compute_body_sizes
 
 def test_compute_body_sizes():
     sv_sizes = [(1,10),
