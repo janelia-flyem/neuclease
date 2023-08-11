@@ -3,6 +3,7 @@ import logging
 import threading
 from socket import getfqdn
 from textwrap import dedent
+from functools import partial
 from collections import defaultdict
 from contextlib import contextmanager
 from abc import ABC, abstractmethod
@@ -10,11 +11,11 @@ from abc import ABC, abstractmethod
 import numpy as np
 import pandas as pd
 
-from ..util import Timer, uuids_match, perform_bigquery
+from ..util import Timer, uuids_match, perform_bigquery, compute_parallel
 from ..dvid import (fetch_repo_info, find_repo_root, fetch_supervoxels, fetch_labels, fetch_mapping, fetch_complete_mappings,
                     fetch_mutation_id, fetch_supervoxel_splits, fetch_supervoxel_splits_from_kafka)
-from .merge_table import MERGE_TABLE_DTYPE, load_mapping, load_merge_table, normalize_merge_table, apply_mapping_to_mergetable
 from ..focused.ingest import fetch_focused_decisions
+from .merge_table import MERGE_TABLE_DTYPE, load_mapping, load_merge_table, normalize_merge_table, apply_mapping_to_mergetable
 from .adjacency import find_missing_adjacencies
 
 _logger = logging.getLogger(__name__)
@@ -92,9 +93,23 @@ class LabelmapMergeGraphBase(ABC):
             else:
                 with Timer() as timer:
                     known_edges = subset_df[['id_a', 'id_b']].values
+                    # We run this in a subprocess because otherwise the GIL seems to
+                    # prevent parallel requests, perhaps in pd.Series.isin()
+                    # Here, compute_parallel is just used to obtain a 1-process pool.
+                    # If you're debugging, you'll want to set processes=0.
                     extra_edges, orig_num_cc, final_num_cc, block_table = \
-                        find_missing_adjacencies(server, uuid, instance, body_id, known_edges,
-                                                 svs=dvid_supervoxels, search_distance=10, connect_non_adjacent=True)
+                        compute_parallel(
+                            find_missing_adjacencies,
+                            [(
+                                server, uuid, instance, body_id,
+                                known_edges,
+                                dvid_supervoxels,
+                                10,
+                                True
+                            )],
+                            starmap=True,
+                            processes=1
+                        )[0]
                     extra_scores = np.zeros(len(extra_edges), np.float32)
 
                 # TODO (in subclasses)
