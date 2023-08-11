@@ -108,8 +108,6 @@ def find_missing_adjacencies(server, uuid, instance, body, known_edges, svs=None
     coords_zyx = decode_labelindex_blocks(encoded_block_coords)
 
     cc_mapper = LabelMapper(svs, cc)
-    svs_set = set(svs)
-
     sv_adj_found = []
     cc_adj_found = set()
     block_tables = {}
@@ -230,14 +228,8 @@ def fetch_block_vol(server, uuid, instance, coord_zyx, svs_set=None):
 
     if svs_set is None:
         return block_vol
-    return filter_vol(block_vol, svs_set)
 
-def filter_vol(block_vol, svs_set):
-    # Drop supervoxels that don't belong to this body
-    block_flat = block_vol.reshape(-1)
-    in_body = pd.Series(block_vol.reshape(-1)).isin(svs_set)
-    block_flat[(~in_body).values] = 0
-    block_vol = block_flat.reshape((64,64,64))
+    apply_mask_for_labels(block_vol, svs_set, inplace=True)
     return block_vol
 
 
@@ -291,9 +283,8 @@ def export_debug_volumes(server, uuid, instance, body, block_table, outdir='/tmp
     import os
     from tqdm import tqdm
     svs = fetch_supervoxels(server, uuid, instance, body)
-    svs_set = set(svs)
     for coord_zyx, df in tqdm(block_table.groupby(['z', 'y', 'x'])):
-        block_vol = fetch_block_vol(server, uuid, instance, coord_zyx, svs_set)
+        block_vol = fetch_block_vol(server, uuid, instance, coord_zyx, svs)
         
         first_index = df.index[0]
         z, y, x = coord_zyx
@@ -302,7 +293,7 @@ def export_debug_volumes(server, uuid, instance, body, block_table, outdir='/tmp
         
         np.save(f'{block_dir}/block.npy', block_vol)
         for row in df.itertuples():
-            filtered_vol = filter_vol(block_vol, {row.sv_a, row.sv_b})
+            filtered_vol = apply_mask_for_labels(block_vol, {row.sv_a, row.sv_b})
             np.save(f'{block_dir}/filtered-{row.Index}.npy', filtered_vol)
         
 

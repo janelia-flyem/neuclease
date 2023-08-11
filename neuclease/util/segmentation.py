@@ -85,8 +85,8 @@ def mask_for_labels(volume, label_ids):
         label = next(iter(label_ids))
         return (volume == label)
 
-    valid_positions = pd.DataFrame(flatvol, columns=['label']).eval('label in @label_ids')
-    return valid_positions.values.reshape(volume.shape)
+    valid_positions = pd.Series(flatvol).isin(label_ids).values
+    return valid_positions.reshape(volume.shape)
 
 
 def apply_mask_for_labels(volume, label_ids, inplace=False):
@@ -95,8 +95,7 @@ def apply_mask_for_labels(volume, label_ids, inplace=False):
     mask out all voxels that do not fall on the given label_ids
     (i.e. set them to 0).
     """
-    if not isinstance(label_ids, (set, pd.Index)):
-        label_ids = set(label_ids)
+    label_ids = np.fromiter(label_ids, dtype=volume.dtype)
 
     # Fast path for the single label case
     if len(label_ids) == 1:
@@ -104,7 +103,7 @@ def apply_mask_for_labels(volume, label_ids, inplace=False):
             ret = volume
         else:
             ret = np.empty_like(volume)
-        label = next(iter(label_ids))
+        label = label_ids[0]
         ret[:] = np.where(volume != label, 0, label)
         return ret
 
@@ -114,8 +113,8 @@ def apply_mask_for_labels(volume, label_ids, inplace=False):
     else:
         flatvol = volume.copy('C').reshape(-1)
 
-    erase_positions = pd.DataFrame(flatvol, columns=['label']).eval('label not in @label_ids')
-    flatvol[erase_positions.values] = 0
+    keep = pd.Series(flatvol).isin(label_ids).values
+    flatvol[~keep] = 0
     return flatvol.reshape(volume.shape)
 
 
