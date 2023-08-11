@@ -29,18 +29,35 @@ def dummy_lock():
     """
     yield
 
-class LabelmapMergeGraphBase(ABC):
-    def __init__(self):
-        self._edge_cache = {}
 
-        # This lock protects the above cache
+class LabelmapMergeGraphBase(ABC):
+    def __init__(self, max_perbody_cache_len=100_000):
+        # This stores the most recently extracted edge table for each body that's been accessed.
+        # The body's current mutation ID is part of the cache key,
+        # so it won't be used if the edge table is no longer valid for the body.
+        self._perbody_edge_cache = {}
+
+        # The maximum number of per-body edge tables to cache.
+        # Cache is FIFO.
+        self.max_perbody_cache_len = max_perbody_cache_len
+
+        # This stores the 'missing' edges we found as a single table for ALL bodies.
+        # Notes:
+        #   - It is assumed that the total number of 'extra' edges will be relatively small.
+        #   - We assume they're good, since they are usually the result of explicit merges,
+        #     so we give them a very good score (cost 0.0).
+        #   - In the current implementation, we don't obtain coordinates for these edges,
+        #     so they can't be updated to handle supervoxel splits.
+        #     In the case of missing supervoxels, we simply rely on find_missing_adjacencies()
+        #     to re-locate the edge.
+        self._extra_edge_cache = pd.DataFrame([], columns=['sv_a', 'sv_b'], dtype=np.uint64)
+
+        # This lock protects the above caches
         self._edge_cache_main_lock = threading.Lock()
 
         # This dict holds a lock for each body, to avoid requesting edges for the same body in parallel,
         # (but requesting edges for different bodies in parallel is OK).
         self._edge_cache_key_locks = defaultdict(threading.Lock)
-
-        self.max_cache_len = 100_000
 
     def get_key_lock(self, repo_uuid, instance, body_id, mutid):
         """
@@ -79,20 +96,30 @@ class LabelmapMergeGraphBase(ABC):
         # in case the user sends several requests at once for the same body,
         # which can happen if they click faster than dvid can respond.
         with key_lock:
-            if key in self._edge_cache:
-                supervoxels, edges, scores = self._edge_cache[key]
+            if key in self._perbody_edge_cache:
+                supervoxels, edges, scores = self._perbody_edge_cache[key]
                 logger.info("Returning cached edges")
                 return (mutid, supervoxels, edges, scores)
 
             logger.info("Edges not found in cache.  Extracting from merge graph.")
             dvid_supervoxels, subset_df = self._extract_stored_edges(server, uuid, instance, body_id, session, logger)
 
+            cached_extra_edges = (
+                self._extra_edge_cache.query(
+                    'sv_a in @dvid_supervoxels and sv_b in @dvid_supervoxels'
+                ).values
+            )
+
             if not find_missing:
                 orig_num_cc = 0
-                extra_edges = extra_scores = []
+                extra_edges = np.zeros((0,2), dtype=np.uint64)
             else:
                 with Timer() as timer:
-                    known_edges = subset_df[['id_a', 'id_b']].values
+                    known_edges = np.concatenate(
+                        (subset_df[['id_a', 'id_b']].values,
+                         cached_extra_edges),
+                        axis=0
+                    )
                     # We run this in a subprocess because otherwise the GIL seems to
                     # prevent parallel requests, perhaps in pd.Series.isin()
                     # Here, compute_parallel is just used to obtain a 1-process pool.
@@ -110,10 +137,8 @@ class LabelmapMergeGraphBase(ABC):
                             starmap=True,
                             processes=1
                         )[0]
-                    extra_scores = np.zeros(len(extra_edges), np.float32)
 
-                # TODO (in subclasses)
-                # self.store_extra_edges()
+                self._store_extra_edges(extra_edges)
 
             if orig_num_cc == 1:
                 logger.info("Graph is contiguous")
@@ -127,25 +152,39 @@ class LabelmapMergeGraphBase(ABC):
             else:
                 logger.warning("Not looking for missing edges (if any)")
 
-            edges = subset_df[['id_a', 'id_b']].values
-            scores = subset_df['score'].values
+            extra_edges = np.concatenate((cached_extra_edges, extra_edges))
+            extra_scores = np.zeros(len(extra_edges), np.float32)
 
-            if len(extra_edges) > 0:
-                edges = np.concatenate((edges, extra_edges))
-                scores = np.concatenate((scores, extra_scores))
+            edges = np.concatenate((subset_df[['id_a', 'id_b']].values, extra_edges))
+            scores = np.concatenate((subset_df['score'].values, extra_scores))
 
-            # Cache before returning
-            with self._edge_cache_main_lock:
-                if key in self._edge_cache:
-                    del self._edge_cache[key]
-                if len(self._edge_cache) == self.max_cache_len:
-                    first_key = next(iter(self._edge_cache.keys()))
-                    del self._edge_cache[first_key]
-                    logger.warning(f"Edge cache is full: Deleted an old entry: {first_key}")
-                logger.warning(f"Caching entry: {key}")
-                self._edge_cache[key] = (dvid_supervoxels, edges, scores)
-
+            # Cache before releasing key_lock, to ensure
+            # that any waiting requests see the cached result.
+            self._store_body_edges(key, dvid_supervoxels, edges, scores, logger)
         return (mutid, dvid_supervoxels, edges, scores)
+
+    def _store_body_edges(self, key, dvid_supervoxels, edges, scores, logger):
+        if self.max_perbody_cache_len == 0:
+            return
+
+        with self._edge_cache_main_lock:
+            if key in self._perbody_edge_cache:
+                del self._perbody_edge_cache[key]
+            if len(self._perbody_edge_cache) == self.max_perbody_cache_len:
+                first_key = next(iter(self._perbody_edge_cache.keys()))
+                del self._perbody_edge_cache[first_key]
+                logger.warning(f"Edge cache is full: Deleted an old entry: {first_key}")
+            logger.warning(f"Caching entry: {key}")
+            self._perbody_edge_cache[key] = (dvid_supervoxels, edges, scores)
+
+    def _store_extra_edges(self, extra_edges):
+        assert extra_edges.dtype == np.uint64
+        extra_edges = pd.DataFrame(extra_edges, columns=['sv_a', 'sv_b'])
+        with self._edge_cache_main_lock:
+            self._extra_edge_cache = pd.concat(
+                (self._extra_edge_cache, extra_edges),
+                ignore_index=True
+            )
 
     @abstractmethod
     def _extract_stored_edges(self, server, uuid, instance, body_id, session, logger):
@@ -190,7 +229,7 @@ class LabelmapMergeGraphBase(ABC):
 
 
 class LabelmapMergeGraphBigQuery(LabelmapMergeGraphBase):
-    def __init__(self, table=None, primary_uuid=None, debug_export_dir=None):
+    def __init__(self, table=None, primary_uuid=None, max_perbody_cache_len=100_000, debug_export_dir=None):
         """
         Constructor.
 
@@ -210,7 +249,7 @@ class LabelmapMergeGraphBigQuery(LabelmapMergeGraphBase):
                 Exports certain results tables during some operations.
                 Significant performance impact if provided.
         """
-        super().__init__()
+        super().__init__(max_perbody_cache_len)
         self.table = table
         table_uuid = table.split('-')[-1]
         if primary_uuid:
@@ -286,7 +325,7 @@ class LabelmapMergeGraphLocalTable(LabelmapMergeGraphBase):
     dynamically-queried supervoxel members.
     """
 
-    def __init__(self, table=None, primary_uuid=None, debug_export_dir=None, no_kafka=False):
+    def __init__(self, table=None, primary_uuid=None, max_perbody_cache_len=100_000, debug_export_dir=None, no_kafka=False):
         """
         Constructor.
 

@@ -215,7 +215,11 @@ def find_missing_adjacencies(server, uuid, instance, body, known_edges, svs=None
         block_table = pd.concat(block_tables.values(), sort=False).reset_index()
         block_table = block_table[BLOCK_TABLE_COLS]
 
-    new_edges = np.array(sv_adj_found, np.uint64)
+    if sv_adj_found:
+        new_edges = np.array(sv_adj_found, np.uint64)
+    else:
+        new_edges = np.zeros((0,2), dtype=np.uint64)
+
     return new_edges, int(orig_num_cc), int(final_num_cc), block_table
 
 

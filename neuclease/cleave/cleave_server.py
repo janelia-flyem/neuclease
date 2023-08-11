@@ -43,6 +43,7 @@ def parse_args():
                              "(Prioritizes speed of the primary UUID over all others.)"
                              "Also, the merge graph is updated with split supervoxels for the given UUID.")
     parser.add_argument('--primary-labelmap-instance', required=True)
+    parser.add_argument('--max-cached-bodies', type=int, default=100_000)
 
     parser.add_argument('--log-dir', required=False)
     parser.add_argument('--debug-export-dir', required=False, help="For debugging only. Enables export of certain intermediate results.")
@@ -52,7 +53,7 @@ def parse_args():
     parser.add_argument('--testing', action='store_true')
 
     args = parser.parse_args()
-    if  bool(args.merge_table) == bool(args.bigquery_table):
+    if bool(args.merge_table) == bool(args.bigquery_table):
         raise RuntimeError("Please provide either --merge-table or --bigquery-table (not both)")
 
     if args.merge_table:
@@ -153,7 +154,13 @@ def _init_local_merge_graph(args):
 
     print("Loading merge table...")
     with Timer(f"Loading merge table from: {args.merge_table or 'NONE'}", logger):
-        merge_graph = LabelmapMergeGraphLocalTable(args.merge_table, primary_instance_info.uuid, args.debug_export_dir, no_kafka=args.testing)
+        merge_graph = LabelmapMergeGraphLocalTable(
+            args.merge_table,
+            primary_instance_info.uuid,
+            args.max_cached_bodies,
+            args.debug_export_dir,
+            no_kafka=args.testing
+        )
 
     if not args.skip_focused_merge_update:
         with Timer("Loading focused merge decisions", logger):
@@ -183,7 +190,12 @@ def _init_local_merge_graph(args):
 
 def _init_bigquery_merge_graph(args):
     logger.info(f"Using BigQuery table: {args.bigquery_table}")
-    merge_graph = LabelmapMergeGraphBigQuery(args.bigquery_table, args.primary_uuid, args.debug_export_dir)
+    merge_graph = LabelmapMergeGraphBigQuery(
+        args.bigquery_table,
+        args.primary_uuid,
+        args.max_cached_bodies,
+        args.debug_export_dir
+    )
     return merge_graph
 
 
