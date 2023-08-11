@@ -134,7 +134,7 @@ def find_missing_adjacencies(server, uuid, instance, body, known_edges, svs=None
         # Not used in the search; only returned for debug purposes.
         block_adj_table = _init_adj_table(coord_zyx, block_svs, cc_mapper)
 
-        block_vol = fetch_block_vol(server, uuid, instance, coord_zyx, svs_set)
+        block_vol = fetch_block_vol(server, uuid, instance, coord_zyx, block_svs)
         if search_distance > 0:
             # It would be nice to do a proper spherical dilation,
             # but apparently dilation() is special-cased to be WAY
