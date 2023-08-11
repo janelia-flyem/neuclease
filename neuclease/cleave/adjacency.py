@@ -152,28 +152,28 @@ def find_missing_adjacencies(server, uuid, instance, body, known_edges, svs=None
         sv_adjacencies = compute_label_adjacencies(block_vol)
         sv_adjacencies['cc_a'] = cc_mapper.apply( sv_adjacencies['sv_a'].values )
         sv_adjacencies['cc_b'] = cc_mapper.apply( sv_adjacencies['sv_b'].values )
-        
+
+        # Normalize
+        # Note: This could swap only cc (or sv) without swapping sv (or cc),
+        #       but that doesn't matter here.
+        swap_cc = sv_adjacencies.eval('cc_a > cc_b')
+        swap_sv = sv_adjacencies.eval('sv_a > sv_b')
+        sv_adjacencies.loc[swap_cc, ['cc_a', 'cc_b']] = sv_adjacencies.loc[swap_cc, ['cc_b', 'cc_a']]
+        sv_adjacencies.loc[swap_sv, ['sv_a', 'sv_b']] = sv_adjacencies.loc[swap_sv, ['sv_b', 'sv_a']]
+
         found_new_adj = False
-        for row in sv_adjacencies.itertuples(index=False):
-            if (row.cc_a != row.cc_b):
-                sv_adj = (row.sv_a, row.sv_b)
-                cc_adj = (row.cc_a, row.cc_b)
-                
-                # Normalize
-                if row.cc_a > row.cc_b:
-                    cc_adj = (row.cc_b, row.cc_a)
+        for row in sv_adjacencies.query('cc_a != cc_b').itertuples(index=False):
+            sv_adj = (row.sv_a, row.sv_b)
+            cc_adj = (row.cc_a, row.cc_b)
 
-                if row.sv_a > row.sv_b:
-                    sv_adj = (row.sv_b, row.sv_a)
+            block_adj_table.loc[sv_adj, 'detected'] = True
+            if cc_adj in cc_adj_found:
+                continue
 
-                block_adj_table.loc[sv_adj, 'detected'] = True
-                    
-                if cc_adj not in cc_adj_found:
-                    found_new_adj = True
-                    cc_adj_found.add( cc_adj )
-                    sv_adj_found.append( sv_adj )
-                    
-                    block_adj_table.loc[sv_adj, 'applied'] = True
+            found_new_adj = True
+            cc_adj_found.add( cc_adj )
+            sv_adj_found.append( sv_adj )
+            block_adj_table.loc[sv_adj, 'applied'] = True
 
         block_tables[(*coord_zyx,)] = block_adj_table
 
