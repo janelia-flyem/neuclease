@@ -398,8 +398,7 @@ class LabelmapMergeGraphLocalTable(LabelmapMergeGraphBase):
         return subset_df.copy()
 
     def extract_rows_by_sv(self, supervoxels):
-        _sv_set = set(supervoxels)  # noqa
-        subset_df = self.merge_table_df.query('id_a in @_sv_set and id_b in @_sv_set')
+        subset_df = self.merge_table_df.query('id_a in @supervoxels and id_b in @supervoxels')
         return subset_df.copy()
 
     def apply_mapping(self, mapping):
@@ -488,7 +487,7 @@ class LabelmapMergeGraphLocalTable(LabelmapMergeGraphBase):
         split_ids = all_split_events[:, 3]
 
         # First extract relevant rows for faster queries below
-        _parents = set(old_ids)
+        _parents = old_ids
         children = set(remain_ids) | set(split_ids)
         parent_rows_df = self.merge_table_df.query('id_a in @_parents or id_b in @_parents').copy()
         assert parent_rows_df.columns[:2].tolist() == ['id_a', 'id_b']
