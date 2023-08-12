@@ -2,16 +2,21 @@ from itertools import combinations
 
 import numpy as np
 import pandas as pd
+from skimage.morphology import dilation
 
 from dvidutils import LabelMapper
 
 from ..dvid.labelmap import fetch_labelindex, fetch_labelarray_voxels, decode_labelindex_blocks
-from ..util.graph import connected_components, connected_components_nonconsecutive
+from ..util.graph import graph_tool_available, connected_components, connected_components_nonconsecutive
 from ..dvid.labelmap._labelmap import fetch_supervoxels
 from ..util.segmentation import apply_mask_for_labels
 
+# We definitely prefer graph-tool here; and importing it now saves
+# time if find_missing_adjacencies() is called via compute_parallel()
+graph_tool_available()
 
-def find_missing_adjacencies(server, uuid, instance, body, known_edges, svs=None, search_distance=1, connect_non_adjacent=False):
+
+def find_missing_adjacencies(server, uuid, instance, body, known_edges=None, cc=None, svs=None, search_distance=1, connect_non_adjacent=False):
     """
     Given a body and an intra-body merge graph defined by the given
     list of "known" supervoxel-to-supervoxel edges within that body,
@@ -53,7 +58,12 @@ def find_missing_adjacencies(server, uuid, instance, body, known_edges, svs=None
 
         known_edges:
             ndarray (N,2), array of supervoxel pairs;
-            known edges of the intra-body merge graph
+            known edges of the intra-body merge graph.
+            Optional if you provide cc instead.
+
+        cc:
+            The pre-computed connected components labels.
+            Optional if you provide known_edges instead.
 
         svs:
             Optional. The complete list of supervoxels
@@ -89,18 +99,21 @@ def find_missing_adjacencies(server, uuid, instance, body, known_edges, svs=None
         Ideally, final_num_cc == 1, but in some cases the body's supervoxels may not be
         directly adjacent, or the adjacencies were not detected.  (See notes above.)
     """
-    from skimage.morphology import dilation
-
     BLOCK_TABLE_COLS = ['z', 'y', 'x', 'sv_a', 'sv_b', 'cc_a', 'cc_b', 'detected', 'applied']
-    known_edges = np.asarray(known_edges, np.uint64)
+
+    assert (known_edges is None) != (cc is None), \
+        "Provide known_edges or cc (not both)"
+
     if svs is None:
         # We could compute the supervoxel list ourselves from
         # the labelindex, but dvid can do it faster.
         svs = fetch_supervoxels(server, uuid, instance, body)
 
-    cc = connected_components_nonconsecutive(known_edges, svs)
-    orig_num_cc = final_num_cc = cc.max()+1
+    if cc is None:
+        known_edges = np.asarray(known_edges, np.uint64)
+        cc = connected_components_nonconsecutive(known_edges, svs)
 
+    orig_num_cc = final_num_cc = cc.max()+1
     if orig_num_cc == 1:
         return np.zeros((0,2), np.uint64), orig_num_cc, final_num_cc, pd.DataFrame(columns=BLOCK_TABLE_COLS)
 
@@ -112,7 +125,6 @@ def find_missing_adjacencies(server, uuid, instance, body, known_edges, svs=None
     sv_adj_found = []
     cc_adj_found = set()
     block_tables = {}
-
     searched_block_svs = {}
 
     for coord_zyx, sv_counts in zip(coords_zyx, labelindex.blocks.values()):

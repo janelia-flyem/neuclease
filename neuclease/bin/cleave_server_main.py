@@ -17,7 +17,7 @@ if __name__ == "__main__":
     # BIGQUERY_TABLE = 'janelia-flyem.cns_uploads.intrabody-edges-2023-07-30-41d6ec'
 
     # import os
-    # os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = ''
+    # os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = '/tmp/janelia-flyem-0523020aea5e.json'
 
     # args = f"""\
     #     --bigquery-table {BIGQUERY_TABLE}
@@ -27,6 +27,7 @@ if __name__ == "__main__":
     #     --primary-uuid {PRIMARY_UUID}
     #     --primary-labelmap-instance segmentation
     #     --max-cached-bodies=0
+    #     --disable-extra-edge-cache
     # """.split()
 
     # import sys

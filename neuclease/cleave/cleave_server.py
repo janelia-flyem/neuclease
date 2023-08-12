@@ -44,7 +44,7 @@ def parse_args():
                              "Also, the merge graph is updated with split supervoxels for the given UUID.")
     parser.add_argument('--primary-labelmap-instance', required=True)
     parser.add_argument('--max-cached-bodies', type=int, default=100_000)
-
+    parser.add_argument('--disable-extra-edge-cache', action='store_true', help='For debugging, it can be useful to disable the "extra edge" cache')
     parser.add_argument('--log-dir', required=False)
     parser.add_argument('--debug-export-dir', required=False, help="For debugging only. Enables export of certain intermediate results.")
     parser.add_argument('--suspend-before-launch', action='store_true',
@@ -158,6 +158,7 @@ def _init_local_merge_graph(args):
             args.merge_table,
             primary_instance_info.uuid,
             args.max_cached_bodies,
+            args.disable_extra_edge_cache,
             args.debug_export_dir,
             no_kafka=args.testing
         )
@@ -194,6 +195,7 @@ def _init_bigquery_merge_graph(args):
         args.bigquery_table,
         args.primary_uuid,
         args.max_cached_bodies,
+        args.disable_extra_edge_cache,
         args.debug_export_dir
     )
     return merge_graph
