@@ -103,16 +103,13 @@ def main(debug_mode=False, stdout_logging=False):
     # This check is to ensure that this initialization is only run once,
     # even in the presence of the flask debug 'reloader'.
     if not debug_mode or os.environ.get("WERKZEUG_RUN_MAIN") == "true":
-        ##
-        ## Configure logging
-        ##
         print("Configuring logging...")
         if not args.log_dir:
             assert args.merge_table, \
                 "If you don't supply a merge-table, please provide an explicit --log-dir"
             args.log_dir = os.path.dirname(args.merge_table)
 
-        LOGFILE = init_logging(logger, args.log_dir, args.merge_table or 'no-merge-table', stdout_logging)
+        LOGFILE = init_logging(logger, args.log_dir, args.merge_table or args.bigquery_table, stdout_logging)
         logger.info("Server started with command: " + ' '.join(sys.argv))  # noqa
 
         MERGE_GRAPH = _init_merge_graph(args)
