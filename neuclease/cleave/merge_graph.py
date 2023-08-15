@@ -205,10 +205,10 @@ class LabelmapMergeGraphBase(ABC):
             if final_num_cc == 1:
                 logger.info(f"Finding missing adjacencies between {orig_num_cc} disjoint components took {timer.timedelta}.")
             else:
-                logger.warning("Graph is not contiguous, but some missing adjacencies could not be found.")
-                logger.warning(f"Reducing {orig_num_cc} disjoint components into {final_num_cc} took {timer.timedelta}.")
+                logger.info("Graph is not contiguous, but some missing adjacencies could not be found.")
+                logger.info(f"Reducing {orig_num_cc} disjoint components into {final_num_cc} took {timer.timedelta}.")
         else:
-            logger.warning("Not looking for missing edges (if any)")
+            logger.info("Not looking for missing edges (if any)")
 
         extra_edges = np.concatenate((cached_extra_edges, extra_edges))
         extra_scores = np.zeros(len(extra_edges), np.float32)
@@ -224,8 +224,8 @@ class LabelmapMergeGraphBase(ABC):
             if len(self._perbody_edge_cache) == self.max_perbody_cache_len:
                 first_key = next(iter(self._perbody_edge_cache.keys()))
                 del self._perbody_edge_cache[first_key]
-                logger.warning(f"Edge cache is full: Deleted an old entry: {first_key}")
-            logger.warning(f"Caching entry: {key}")
+                logger.info(f"Edge cache is full: Deleted an old entry: {first_key}")
+            logger.info(f"Caching entry: {key}")
             self._perbody_edge_cache[key] = (dvid_supervoxels, edges, scores)
 
     def _store_extra_edges(self, extra_edges):
