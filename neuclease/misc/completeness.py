@@ -769,10 +769,10 @@ def _add_link_taptool(bokeh_plot, template_link, dots):
     # Start with a generic link, then overwrite some settings.
     link_data = parse_nglink(template_link)
 
+    # Note: In the template link, the segmentation layer MUST be the currently selected layer.
     selected_layer = link_data['selectedLayer']['layer']
     sel_i = [i for i, l in enumerate(link_data['layers']) if l['name'] == selected_layer][0]
 
-    # Note: In the template link, I know layer [1] is the segmentation layer.
     link_data['layers'][sel_i]['segmentQuery'] = "999999999"
     link_data['layers'][sel_i]['segments'] = ["9191919191"]
     template_link = format_nglink('https://clio-ng.janelia.org', link_data)
