@@ -1,6 +1,7 @@
 from collections.abc import Iterable
 from functools import lru_cache
 
+from requests import HTTPError
 import pandas as pd
 import networkx as nx
 from asciitree import LeftAligned
@@ -809,6 +810,9 @@ def resolve_ref(server, ref, expand=False):
     return the UUID it refers to, i.e. return the UUID
     itself OR return the last UUID of the branch.
 
+    We also reproduce DVID's logic for resolving branch
+    refs like ``:master~1`` ("master branch, 1 up one from head").
+
     Examples:
 
         >>> resolve_ref('emdata4:8900', 'abc123')
@@ -820,12 +824,24 @@ def resolve_ref(server, ref, expand=False):
     try:
         # Is it a uuid?
         expanded = expand_uuid(server, ref)
-    except Exception:
-        pass  # See below
+    except HTTPError:
+        pass
+    except RuntimeError as ex:
+        if 'No matching uuid' in str(ex):
+            pass
     else:
         if expand:
             return expanded
         return ref
+
+    if ref.startswith(':'):
+        ref = ref[1:]
+
+    if '~' in ref:
+        ref, offset = ref.split('~')
+        offset = int(offset)
+    else:
+        offset = 0
 
     if ref == "master":
         ref = ""
@@ -834,11 +850,12 @@ def resolve_ref(server, ref, expand=False):
     try:
         branch_nodes = find_branch_nodes(server, branch=ref)
         if branch_nodes:
-            return branch_nodes[-1]
+            return branch_nodes[len(branch_nodes) - offset - 1]
         raise RuntimeError(f"Could not resolve reference '{ref}'.  It is neither a UUID or a branch name.")
     except Exception as ex:
         if 'more than one repo' in ex.args[0]:
-            raise RuntimeError("resolve_ref() does not support servers that contain multiple repos.")
+            msg = "resolve_ref() does not support servers that contain multiple repos."
+            raise RuntimeError(msg) from ex
         raise
 
 
@@ -850,3 +867,38 @@ def is_locked(server, uuid):
     repo_info = fetch_repo_info(server, uuid)
     uuid = expand_uuid(server, uuid, repo_info=repo_info)
     return repo_info['DAG']['Nodes'][uuid]['Locked']
+
+
+def infer_lock_date(server, uuid):
+    """
+    Infer the date of a UUID snapshot.
+    DVID records two timestamps for each UUID: 'Created' and 'Updated.
+    We would like to just use 'Updated', but that timestamp changes if
+    we post ANYTHING to the node, even after it was locked.
+    Since it's not uncommon to write denormalizations (meshes, skeletons)
+    to locked nodes, then the Updated date might not be the correct date to return.
+
+    Here, we check the 'Created' dates of any child nodes in the DAG,
+    and return the earliest date we find (including the UUID's own 'Updated' date).
+
+    Returns:
+        str
+    """
+    dag = fetch_repo_dag(server, uuid)
+    if uuid not in dag.nodes:
+        uuid = resolve_ref(server, uuid, expand=True)
+
+    updated = dag.nodes[uuid]['Updated']
+    children_created = []
+    for child in dag.adj[uuid]:
+        t = dag.nodes[child]['Created']
+        children_created.append(t)
+
+    print(updated)
+    print(children_created)
+    lock_date = min((updated, *children_created))
+    return lock_date[:len('0000-00-00')]
+
+
+def is_full_uuid(uuid):
+    return len(uuid) == 32 and {*uuid} <= {*'0123456789abcdef'}
