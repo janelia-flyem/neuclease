@@ -1267,6 +1267,12 @@ def fetch_complete_mappings(server, uuid, instance, mutations=None, sort=None, *
     # Fetch base mapping
     base_mapping = fetch_mappings(server, uuid, instance, session=session)
 
+    # Now determine the set of 'retired' supervoxels (which must map to body 0).
+    # Note:
+    #   We do this by reading the supervoxel splits and mutation log
+    #   (for cleaves and renumbers) from DVID, but in theory newer versions
+    #   of DVID do this for us automatically:
+    #   https://github.com/janelia-flyem/dvid/issues/361
     cleave_labels = [m['CleavedLabel'] for m in mutations.query('action == "cleave-complete"')['msg']]
     cleave_labels = np.asarray(cleave_labels, np.uint64)
     split_df = fetch_supervoxel_splits_from_dvid(server, uuid, instance, format='pandas')
