@@ -831,3 +831,142 @@ def _add_link_taptool(bokeh_plot, template_link, dots):
     #             console.error("Couldn't write body list to clipboard:", err)
     #         }
     # """.replace("TEMPLATE_LINK", template_link)))
+
+
+def variable_width_hbar(df, bar_name, bar_width, value, color=None, stackcolors=None, *,
+                        title=None, pad=0.005, width=800, height=800, vlim=None, vticker=None,
+                        legend='bottom_right', flip_yaxis=False):
+    """
+    Create a horizontal bar chart whose bars have variable bases (widths).
+
+    Args:
+        df:
+            DataFrame
+        bar_name:
+            Name of the column which contains the names of each bar
+        bar_width:
+            Name of the column which specifies the width of each bar, in arbitrary units.
+        value:
+            Name or names of the column(s) which specify the length of each bar, in arbitrary units.
+            If a list of value columns is given, then a stacked bar chart will be created.
+            The second value will be stacked on top of the first, etc.
+        color:
+            A column which contains the a list of colors to apply to each bar.
+            Only used in non-stacked mode (when there is only one value column.)
+        stackcolors:
+            A column which contains the list of colors to apply to each stacked portion of every bar.
+            That is, if you specified three value columns, then specify three stackcolors.
+            Every stacked bar will be colored with the same stackcolors.
+        title:
+            Plot title.
+        pad:
+            Padding constant.  Expressed as a fraction of the figure's
+            vertical span BEFORE the padding is inserted.
+        width:
+            Plot width, in screen units.
+        height:
+            Plot height, in screen units.
+        vlim:
+            The range of the value axis, i.e. the x-axis (since this is an HBar chart).
+        vticker:
+            Optionally provide explicit major tick locations.
+        legend:
+            Optionally specify the placement of the legend.
+            (Only stacked bars will have a legend.)
+
+    Returns:
+        Bokeh figure
+
+    Note:
+        This is sometimes referred to as a cascade chart,
+        although that seems to be a confusing term:
+        https://stats.stackexchange.com/questions/159163
+
+    TODO:
+        This function doesn't have much to do with the rest of this file.
+        It should be moved elsewhere.
+    """
+    from bokeh.palettes import Category10
+    from bokeh.plotting import figure
+    from bokeh.models import HoverTool
+    # This is an HBar, so names will go on y-axis, values in x direction.
+    df = df.copy()
+    df['bar_name'] = df[bar_name]
+
+    if isinstance(value, str):
+        value = [value]
+
+    if stackcolors is None:
+        stackcolors = Category10[10] * ((len(value) + 9) // 10)
+
+    if len(value) > 1:
+        assert len(stackcolors) >= len(value)
+        stackcolors = stackcolors[:len(value)]
+
+    df['x0'] = 0
+    for i, v in enumerate(value, start=1):
+        df[f'x{i}'] = df[f'x{i-1}'] + df[value[i-1]]
+
+    df['bar_width'] = df[bar_width]
+
+    # For some reason, overriding the ticker with gigantic numbers doesn't work well,
+    # so we scale the widths down to the 0-1 range.
+    df['scaled_bar_width'] = df[bar_width] / df[bar_width].sum()
+
+    df['pad'] = pad
+    df['padsum'] = df['pad'].cumsum().shift(1).fillna(0.0)
+
+    df['y0'] = df['scaled_bar_width'].cumsum().shift(1).fillna(0.0) + df['padsum']
+    df['y1'] = df['scaled_bar_width'].cumsum() + df['padsum']
+    df['y'] = df.eval('(y0 + y1) / 2')
+
+    if color is None:
+        color = Category10[10] * ((len(value) + 9) // 10)
+
+    if isinstance(color, str):
+        df['_color'] = color
+    else:
+        df['_color'] = (list(color) * ((len(df) + len(color) - 1) // len(color)))[:len(df)]
+
+    p = figure(
+        title=title,
+        width=width,
+        height=height,
+        tools="ypan,ybox_zoom,ywheel_pan,reset",
+        active_drag='ybox_zoom',
+        active_scroll='ywheel_pan',
+    )
+    if len(value) == 1:
+        p.quad('x0', 'x1', 'y0', 'y1', color='_color', source=df)
+    else:
+        for i, (c, v) in enumerate(zip(stackcolors, value)):
+            p.quad(f'x{i}', f'x{i+1}', 'y0', 'y1', color=c, source=df, legend_label=v)
+        p.legend.location = legend
+
+    hover = HoverTool()
+    hover.tooltips = [
+        (bar_name, "@bar_name"),
+        (bar_width, "@bar_width"),
+    ]
+    for v in value:
+        hover.tooltips.append((v, f"@{v}"))
+
+    p.add_tools(hover)
+
+    if vlim is not None:
+        p.x_range.start = vlim[0]
+        p.x_range.end = vlim[1]
+
+    if vticker is not None:
+        p.xaxis.ticker = [0, 0.25, 0.5, 0.75, 1.0]
+
+    p.yaxis.ticker = df['y']
+    p.yaxis.major_label_overrides = dict(zip(df['y'], df[bar_name]))
+    p.ygrid.grid_line_color = None
+    p.y_range.start = df['y0'].min()
+    p.y_range.end = df['y1'].max()
+
+    if flip_yaxis:
+        p.y_range.start, p.y_range.end = p.y_range.end, p.y_range.start
+
+    return p
