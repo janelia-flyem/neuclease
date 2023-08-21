@@ -177,14 +177,16 @@ def load_df(npy_path):
 
 
 @contextlib.contextmanager
-def switch_cwd(d, create=False):
+def switch_cwd(d='', create=False):
     """
     Context manager.
     chdir into the given directory (creating it first if desired),
     and exit back to the original CWD after the context manager exits.
+    If d is the empty string, then this context manager has no effect.
     """
-    if create:
+    if d and create:
         os.makedirs(d, exist_ok=True)
+    d = d or '.'
     old_dir = os.getcwd()
     os.chdir(d)
     try:
