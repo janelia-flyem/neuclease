@@ -7,10 +7,11 @@ import traceback
 import functools
 from io import StringIO
 
-
 class PrefixedLogger(logging.Logger):
     """
     Logger subclass that prepends a pre-configured string to every log message.
+
+    DEPRECATED.  Use neuclease.PrefixFilter instead.
     """
     def __init__(self, base_logger, msg_prefix):
         super().__init__(base_logger.name, base_logger.level)

@@ -9,6 +9,8 @@ import threading
 import traceback
 from io import StringIO
 
+from neuclease import PrefixFilter
+
 
 def init_logging(logger, log_dir, db_path, stdout_logging=False):
     if not os.path.exists(log_dir):
@@ -36,6 +38,7 @@ def init_logging(logger, log_dir, db_path, stdout_logging=False):
     formatter = logging.Formatter('%(levelname)s [%(asctime)s] %(message)s')
     handler = logging.handlers.RotatingFileHandler(logfile_path, maxBytes=int(10e6), backupCount=1000)
     handler.setFormatter(formatter)
+    handler.addFilter(PrefixFilter())
     logger.setLevel(logging.INFO)
 
     rootLogger.setLevel(logging.INFO)
