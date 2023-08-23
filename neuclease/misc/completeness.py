@@ -1,3 +1,4 @@
+import re
 import logging
 
 import numpy as np
@@ -896,6 +897,11 @@ def variable_width_hbar(df, bar_name, bar_width, value, color=None, stackcolors=
     if isinstance(value, str):
         value = [value]
 
+    def fix_name(col):
+        return re.sub(r'[^0-9A-Za-z]', '_', col)
+    normalized_value_cols = {v: fix_name(v) for v in value}
+    df[[*normalized_value_cols.values()]] = df[[*normalized_value_cols.keys()]]
+
     if stackcolors is None:
         stackcolors = Category10[10] * ((len(value) + 9) // 10)
 
@@ -948,8 +954,8 @@ def variable_width_hbar(df, bar_name, bar_width, value, color=None, stackcolors=
         (bar_name, "@bar_name"),
         (bar_width, "@bar_width"),
     ]
-    for v in value:
-        hover.tooltips.append((v, f"@{v}"))
+    for v, n in normalized_value_cols.items():
+        hover.tooltips.append((v, f"@{n}"))
 
     p.add_tools(hover)
 
