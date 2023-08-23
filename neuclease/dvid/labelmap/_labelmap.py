@@ -606,7 +606,7 @@ def fetch_listlabels_all(server, uuid, instance, sizes=False, *, start=0, stop=N
 
 
 @dvid_api_wrapper
-def compute_roi_distributions(server, uuid, labelmap_instance, label_ids, rois, *, session=None, batch_size=None, processes=1):
+def compute_roi_distributions(server, uuid, labelmap_instance, label_ids, rois, *, session=None, batch_size=None, processes=0):
     """
     For a list of bodies and a list of ROIs, determine the voxel
     distribution of each body within all of the ROIs.
@@ -649,8 +649,6 @@ def compute_roi_distributions(server, uuid, labelmap_instance, label_ids, rois, 
     """
     from ..roi import fetch_combined_roi_volume
     from . import fetch_labelindices  # late import to avoid recursive import
-
-    assert processes, "Must use at least one process."
 
     label_ids = np.asarray(label_ids)
     rois = sorted(rois)
@@ -1901,7 +1899,6 @@ def generate_sample_coordinates(server, uuid, instance, bodies, supervoxels=Fals
     Returns:
         DataFrame with coolumns ['z', 'y', 'x'], indexed by body (or supervoxel).
     """
-    assert processes > 0
     gen_coord = partial(_generate_sample_coordinate_no404, skip_out_of_sync, server, uuid, instance, supervoxels=supervoxels, interior=interior)
     coords = compute_parallel(gen_coord, bodies, processes=processes)
     label_type = {False: 'body', True: 'supervoxel'}[supervoxels]
