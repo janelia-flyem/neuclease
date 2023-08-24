@@ -230,6 +230,8 @@ def _compute_nonzero_box_numba(mask):
     for i, val in np.ndenumerate(mask):
         if val != 0:
             c[:] = i
+            # Edit: I now know that calling np.minimum and np.maximum is SLOW in numba.
+            #       Would be good to rewrite this without calling those functions.
             box[0] = np.minimum(c, box[0])
             box[1] = np.maximum(c, box[1])
     box[1] += 1
@@ -1163,6 +1165,52 @@ GRAYSCALE_FEATURE_NAMES = [
 ]
 
 
+@njit
+def region_boxes(vol):
+    """
+    Determine the bounding boxes of all label regions (segments) in a label volume.
+
+    Note:
+        Since the result is indexed by segment ID, this function is only
+        suitable for volumes in which the maximum label ID is relatively low.
+        For instance, if the volume contains labels [1,2,3, int(1e9)],
+        then the result will have length 1e9.
+
+    Args:
+        vol:
+            ndarray, integer dtype and arbitrary dimensionality D
+    Returns:
+        ndarray, shape (N, 2, D)
+        where N is the number of unique label values in the array (including label 0).
+        The min box coordinate for label i is given in entry [i, 0, :] and the max in entry [i, 1, :].
+
+        Note:
+            If the input array contains non-consecutive label IDs,
+            (i.e., some labels are not present), then the results in those
+            entries will be intentionally nonsensical: the 'min' will
+            be GREATER than the 'max'.
+
+    See Also:
+        ``neuclease.util.segmentation.region_features()``,
+        which computes more than just bounding boxes and handles arbitrarily large label IDs.
+    """
+    N = vol.max()
+
+    # Initialize box min (and max) coords with extreme max (and min)
+    # values so that any encountered coordinate overrides the initial value.
+    boxes = np.empty((N+1, 2, vol.ndim), np.int32)
+    boxes[:, 0, :] = np.array(vol.shape)
+    boxes[:, 1, :] = 0
+
+    for idx in np.ndindex(*vol.shape):
+        label = vol[idx]
+        for axis, i in enumerate(idx):
+            boxes[label, 0, axis] = min(i, boxes[label, 0, axis])
+            boxes[label, 1, axis] = max(i, boxes[label, 1, axis])
+    boxes[:, 1, :] += 1
+    return boxes
+
+
 def region_features(label_img, grayscale_img=None, features=['Box', 'Count'], ignore_label=0):
     """
     Wrapper around vigra.analysis.extractRegionFeatures() that supports uint64 and
@@ -1174,6 +1222,11 @@ def region_features(label_img, grayscale_img=None, features=['Box', 'Count'], ig
     See vigra docs regarding the supported features:
         - http://ukoethe.github.io/vigra/doc-release/vigranumpy/index.html#vigra.analysis.extractRegionFeatures
         - http://ukoethe.github.io/vigra/doc-release/vigra/group__FeatureAccumulators.html
+
+
+    See Also:
+        region_boxes(), which only computes bounding boxes on consecutively labeled regions,
+        but is much faster for that one use case than this function.
 
     Args:
         label_img:
