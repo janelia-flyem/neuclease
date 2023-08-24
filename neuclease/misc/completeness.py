@@ -835,7 +835,7 @@ def _add_link_taptool(bokeh_plot, template_link, dots):
 
 
 def variable_width_hbar(df, bar_name, bar_width, value, color=None, stackcolors=None, *,
-                        title=None, pad=0.005, width=800, height=800, vlim=None, vticker=None,
+                        title=None, pad=None, width=800, height=800, vlim=None, vticker=None,
                         legend='bottom_right', flip_yaxis=False):
     """
     Create a horizontal bar chart whose bars have variable bases (widths).
@@ -919,7 +919,11 @@ def variable_width_hbar(df, bar_name, bar_width, value, color=None, stackcolors=
     # so we scale the widths down to the 0-1 range.
     df['scaled_bar_width'] = df[bar_width] / df[bar_width].sum()
 
-    df['pad'] = pad
+    if pad is None:
+        df['pad'] = min(0.005, df['scaled_bar_width'].min())
+    else:
+        df['pad'] = pad
+
     df['padsum'] = df['pad'].cumsum().shift(1).fillna(0.0)
 
     df['y0'] = df['scaled_bar_width'].cumsum().shift(1).fillna(0.0) + df['padsum']
