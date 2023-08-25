@@ -52,7 +52,7 @@ def parse_args():
                              "Allows you to ALMOST hot-swap a running cleave server. (You can load the new merge graph before killing the old server).")
     parser.add_argument('--testing', action='store_true')
 
-    args = parser.parse_args()
+    args ,_ = parser.parse_known_args()
     if bool(args.merge_table) == bool(args.bigquery_table):
         raise RuntimeError("Please provide either --merge-table or --bigquery-table (not both)")
 
