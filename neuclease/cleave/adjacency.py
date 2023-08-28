@@ -166,7 +166,7 @@ def find_missing_adjacencies(server, uuid, instance, body, known_edges=None, cc=
         sv_adjacencies['cc_b'] = cc_mapper.apply( sv_adjacencies['sv_b'].values )
 
         # Normalize
-        # Note: This could swap only cc (or sv) without swapping sv (or cc),
+        # Note: This might swap only cc (or sv) without swapping sv (or cc),
         #       but that doesn't matter here.
         swap_cc = sv_adjacencies.eval('cc_a > cc_b')
         swap_sv = sv_adjacencies.eval('sv_a > sv_b')
