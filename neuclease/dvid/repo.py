@@ -869,6 +869,32 @@ def is_locked(server, uuid):
     return repo_info['DAG']['Nodes'][uuid]['Locked']
 
 
+def resolve_snapshot_tag(server, uuid, instance):
+    """
+    Resolve the full UUID and devise a 'snapshot tag' from the UUID,
+    its modification date, and whether or not it is currently a locked UUID.
+    """
+    # Replace shorthand UUID with full UUID.
+    uuid = resolve_ref(
+        server,
+        uuid,
+        expand=True
+    )
+    dvid_node = (server, uuid)
+    dvid_seg = (*dvid_node, instance)
+
+    if is_locked(*dvid_node):
+        suffix = ''
+    else:
+        suffix = '-unlocked'
+
+    recent_muts = fetch_mutations(*dvid_seg, dag_filter='leaf-only')
+    snapshot_date = recent_muts['timestamp'].dt.date.iloc[-1].strftime('%Y-%m-%d')
+    snapshot_tag = f"{snapshot_date}-{uuid[:6]}{suffix}"
+
+    return uuid, snapshot_tag
+
+
 def infer_lock_date(server, uuid):
     """
     Infer the date of a UUID snapshot.
