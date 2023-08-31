@@ -28,7 +28,7 @@ from ...util import (Timer, round_box, extract_subvol, DEFAULT_TIMESTAMP, tqdm_p
 
 from .. import dvid_api_wrapper, fetch_generic_json, fetch_repo_info
 from ..server import fetch_server_info
-from ..repo import create_voxel_instance, fetch_repo_dag, resolve_ref, expand_uuid, find_repo_root
+from ..repo import create_voxel_instance, fetch_repo_dag, is_locked, resolve_ref, expand_uuid, find_repo_root
 from ..kafka import read_kafka_messages, kafka_msgs_to_df
 from ..rle import parse_rle_response, runlength_decode_from_ranges_to_mask, rle_ranges_box, construct_rle_payload_from_ranges, split_ranges_for_grid
 
@@ -3094,6 +3094,34 @@ def post_merge(server, uuid, instance, main_label, other_labels, *, session=None
 
     r = session.post(f'{server}/api/node/{uuid}/{instance}/merge', json=content)
     r.raise_for_status()
+
+
+def resolve_snapshot_tag(server, uuid, instance, *, session=None):
+    """
+    Resolve the full UUID and devise a 'snapshot tag' from the UUID,
+    the labelmap modification date, and whether or not the UUID
+    is currently locked.
+    """
+    # Replace shorthand UUID with full UUID.
+    uuid = resolve_ref(
+        server,
+        uuid,
+        expand=True,
+        session=session
+    )
+    dvid_node = (server, uuid)
+    dvid_seg = (*dvid_node, instance)
+
+    if is_locked(*dvid_node, session=session):
+        suffix = ''
+    else:
+        suffix = '-unlocked'
+
+    recent_muts = fetch_mutations(*dvid_seg, dag_filter='leaf-only', session=session)
+    snapshot_date = recent_muts['timestamp'].dt.date.iloc[-1].strftime('%Y-%m-%d')
+    snapshot_tag = f"{snapshot_date}-{uuid[:6]}{suffix}"
+
+    return uuid, snapshot_tag
 
 
 @dvid_api_wrapper
