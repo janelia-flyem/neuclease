@@ -13,7 +13,7 @@ import contextlib
 from textwrap import indent
 from itertools import chain, product, islice, filterfalse
 from operator import itemgetter
-from functools import partial, lru_cache
+from functools import partial, lru_cache, wraps
 from multiprocessing import get_context
 from multiprocessing.pool import ThreadPool
 from datetime import datetime, timedelta
@@ -63,7 +63,10 @@ def Timer(msg=None, logger=None, level=logging.INFO, log_start=True):
     """
     result = _TimerResult()
     if msg:
-        logger = logger or logging.getLogger(__name__)
+        if logger is None:
+            logger = logging.getLogger(__name__)
+        if isinstance(logger, str):
+            logger = logging.getLogger(logger)
         if log_start:
             logger.log(level, msg + '...')
     try:
@@ -97,6 +100,75 @@ class _TimerResult(object):
     @property
     def timedelta(self):
         return timedelta(seconds=self.seconds)
+
+
+def timed(msg=None, logger=None, level=logging.INFO, log_start=True):
+    """
+    Decorator to automatically call a function within a Timer context.
+
+    Args:
+        msg:
+            A log message to pass to Timer().
+            Will be emitted before and after the function executes.
+            By default, the function name is used.
+            To avoid logging, pass an empty string.
+        logger:
+            A logger object or the name of a logger.
+
+            Note:
+                If you supply a logger object explicitly, then the
+                decorated function won't be pickleable and thus can't
+                be used with multiprocessing.
+
+        level:
+            Logging level for the timing log messages.
+
+        log_start:
+            If False, only emit the final log message (containing the timing),
+            not the starting log message.
+
+    Example:
+
+        ..code-block: ipython
+
+            In [34]: @timed('Doing my thing')
+                ...: def myfunc(a,b,c):
+                ...:     print(a,b,c)
+                ...:
+
+            In [35]: myfunc(1,2,3)
+            [2023-08-31 10:27:25,039] INFO Doing my thing...
+            1 2 3
+            [2023-08-31 10:27:25,040] INFO Doing my thing took 0:00:00.000217
+
+            In [37]: @timed
+                ...: def myfunc(a,b,c):
+                ...:     print(a,b,c)
+                ...:
+
+            In [38]: myfunc(1,2,3)
+            [2023-08-31 10:29:15,866] INFO myfunc...
+            1 2 3
+            [2023-08-31 10:29:15,866] INFO myfunc took 0:00:00.000114
+    """
+    def decorator(f):
+        _msg = msg
+        if _msg is None:
+            _msg = f.__name__
+
+        @wraps(f)
+        def wrapped(*args, **kwargs):
+            with Timer(_msg, logger, level, log_start) as timer:
+                wrapped.last_timer = timer
+                return f(*args, **kwargs)
+        return wrapped
+
+    if callable(msg):
+        # Supports using @timed instead of @timed()
+        f = msg
+        msg = None
+        return decorator(f)
+    return decorator
 
 
 def uuids_match(uuid1, uuid2):
