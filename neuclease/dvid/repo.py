@@ -780,7 +780,7 @@ def find_parent(server, uuids, dag=None):
 
 
 @lru_cache()
-def find_repo_root(server, uuid=None):
+def find_repo_root(server, uuid=None, *, session=None):
     """
     Return the repo root uuid for the given dvid node.
     The result of this function is memoized.
@@ -794,17 +794,17 @@ def find_repo_root(server, uuid=None):
         (str) the repo uuid
     """
     try:
-        repo_info = fetch_repo_info(server, uuid)
+        repo_info = fetch_repo_info(server, uuid, session=session)
     except Exception:
         if uuid is None:
             raise
         uuid = resolve_ref(server, uuid)
-        repo_info = fetch_repo_info(server, uuid)
+        repo_info = fetch_repo_info(server, uuid, session=session)
 
     return repo_info['Root']
 
 
-def resolve_ref(server, ref, expand=False):
+def resolve_ref(server, ref, expand=False, *, session=None):
     """
     Given a ref that is either a UUID or a branch name,
     return the UUID it refers to, i.e. return the UUID
@@ -823,7 +823,7 @@ def resolve_ref(server, ref, expand=False):
     """
     try:
         # Is it a uuid?
-        expanded = expand_uuid(server, ref)
+        expanded = expand_uuid(server, ref, session=session)
     except HTTPError:
         pass
     except RuntimeError as ex:
@@ -848,7 +848,7 @@ def resolve_ref(server, ref, expand=False):
 
     # Not a valid UUID.  Maybe it's a branch.
     try:
-        branch_nodes = find_branch_nodes(server, branch=ref)
+        branch_nodes = find_branch_nodes(server, branch=ref, session=session)
         if branch_nodes:
             return branch_nodes[len(branch_nodes) - offset - 1]
         raise RuntimeError(f"Could not resolve reference '{ref}'.  It is neither a UUID or a branch name.")
@@ -859,13 +859,13 @@ def resolve_ref(server, ref, expand=False):
         raise
 
 
-def is_locked(server, uuid):
+def is_locked(server, uuid, *, session=None):
     """
     Determine whether or not the given UUID
     is locked (via fetching the repo info).
     """
-    repo_info = fetch_repo_info(server, uuid)
-    uuid = expand_uuid(server, uuid, repo_info=repo_info)
+    repo_info = fetch_repo_info(server, uuid, session=session)
+    uuid = expand_uuid(server, uuid, repo_info=repo_info, session=session)
     return repo_info['DAG']['Nodes'][uuid]['Locked']
 
 
