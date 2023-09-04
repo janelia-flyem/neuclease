@@ -280,7 +280,10 @@ def fetch_roi_ranges_and_boxes(server, uuid, rois, *, session=None, processes=0)
     """
     if isinstance(rois, str):
         rois = [rois]
+    if isinstance(rois, Mapping):
+        rois = rois.keys()
     rois = list(rois)
+    assert all(isinstance(roi, str) for roi in rois)
 
     if processes > 0:
         session = None
@@ -459,7 +462,7 @@ def determine_point_rois(server, uuid, rois, points_df, combined_vol=None, combi
     if combined_vol is None:
         combined_vol, combined_box, overlaps = fetch_combined_roi_volume(server, uuid, rois, False, combined_box, processes=processes, session=session)
         if len(overlaps):
-            logger.warning(f"Some ROIs overlap!")
+            logger.warning("Some ROIs overlap!")
             logger.warning(f"Overlapping pairs:\n{overlaps}")
 
     assert combined_box is not None
