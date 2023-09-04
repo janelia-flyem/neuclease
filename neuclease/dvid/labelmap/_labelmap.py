@@ -28,7 +28,7 @@ from ...util import (Timer, round_box, extract_subvol, DEFAULT_TIMESTAMP, tqdm_p
 
 from .. import dvid_api_wrapper, fetch_generic_json, fetch_repo_info
 from ..server import fetch_server_info
-from ..repo import create_voxel_instance, fetch_repo_dag, is_locked, resolve_ref, expand_uuid, find_repo_root
+from ..repo import create_voxel_instance, fetch_repo_dag, is_locked, resolve_ref, expand_uuid, find_repo_root, resolve_ref_range
 from ..kafka import read_kafka_messages, kafka_msgs_to_df
 from ..rle import parse_rle_response, runlength_decode_from_ranges_to_mask, rle_ranges_box, construct_rle_payload_from_ranges, split_ranges_for_grid
 
@@ -3135,6 +3135,10 @@ def fetch_mutations(server, uuid, instance, userid=None, *, action_filter=None, 
     of the DVID REST API. To emulate the bare-bones /mutations results,
     use dag_filter='leaf-only'.
 
+    As an additional convenience, a range of UUIDs can be specified in
+    the ``uuid`` argument, by passing a string with special syntax as
+    supported by ``resolve_ref_range()``.
+
     Note:
         By default, the dag_filter setting is 'leaf-and-parents'.
         So unlike the default behavior of the /mutations endpoint in the DVID REST API,
@@ -3142,8 +3146,17 @@ def fetch_mutations(server, uuid, instance, userid=None, *, action_filter=None, 
         (To achieve this, it calls the /mutations multiple times -- once per ancestor UUID.)
 
     Args:
-        server, uuid, instance:
-            A labelmap instance for which a kafka log exists.
+        server:
+            DVID server
+
+        uuid:
+            The 'leaf' UUID for which mutations should be fetched.
+            Alternatively, pass a string containing (start,end) uuids
+            using the syntax supported by ``resolve_ref_range()``.
+            (See that function for details.)
+
+         instance:
+            A labelmap instance name.
 
         userid:
             If given, limit the query to only include mutations
@@ -3163,6 +3176,7 @@ def fetch_mutations(server, uuid, instance, userid=None, *, action_filter=None, 
             relative to the specified ``uuid``.
             (This is not part of the DVID API.  It's implemented in this
             python function by calling the /mutations endpoint for multiple UUIDs.)
+            This argument is ignored if ``uuid`` already specifies a reference range.
 
             One of:
             - 'leaf-only' (only messages whose uuid matches the one provided),
@@ -3181,23 +3195,20 @@ def fetch_mutations(server, uuid, instance, userid=None, *, action_filter=None, 
     # json-values is a synonym, for compatibility with read_kafka_messages
     assert format in ('pandas', 'json', 'json-values')
 
-    uuid = resolve_ref(server, uuid, expand=True)
+    if ',' in uuid:
+        uuids = resolve_ref_range(server, uuid, session=session)
+    elif dag_filter is None:
+        dag = fetch_repo_dag(server, uuid, session=session)
+        uuids = nx.topological_sort(dag.nodes())
+    elif dag_filter == 'leaf-only':
+        uuids = [resolve_ref(server, uuid, session=session)]
+    elif dag_filter == 'leaf-and-parents':
+        uuids = resolve_ref_range(server, f"[root, {uuid}]", session=session)
 
     if userid:
         params = {'userid': userid}
     else:
         params = {}
-
-    if dag_filter == 'leaf-only':
-        uuids = [uuid]
-    else:
-        dag = fetch_repo_dag(server, uuid, session=session)
-        if dag_filter == 'leaf-and-parents':
-            uuids = {uuid} | nx.ancestors(dag, uuid)
-        else:
-            assert dag_filter is None
-            uuids = dag.nodes()
-        uuids = nx.topological_sort(dag.subgraph(uuids))
 
     msgs = []
     for uuid in uuids:

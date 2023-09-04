@@ -1,3 +1,4 @@
+import re
 from collections.abc import Iterable
 from functools import lru_cache
 
@@ -585,7 +586,7 @@ def fetch_branches(server, repo_uuid=None, format='list', *, session=None):
         return LeftAligned()(d)
 
 
-def find_branch_nodes(server, repo_uuid=None, branch="", include_ancestors=False, *, full_info=False, session=None):
+def find_branch_nodes(server, repo_uuid=None, branch="", include_ancestors=True, include_descendants=False, *, full_info=False, session=None):
     """
     Find all nodes in the repo which belong to the given branch.
 
@@ -597,8 +598,8 @@ def find_branch_nodes(server, repo_uuid=None, branch="", include_ancestors=False
         That is, when a branch is first created from a parent node,
         that parent node is not considered part of the new branch,
         nor are any of the other ancestors of the branch nodes.
-        If you're interested in the all nodes that contributed to
-        the history of a branch, see the ``include_ancestors`` argument.
+        However, by default this function nonetheless returns the
+        branch AND its ancestors.  See the ``include_ancestors`` arg.
 
     Args:
         server:
@@ -613,6 +614,8 @@ def find_branch_nodes(server, repo_uuid=None, branch="", include_ancestors=False
         branch:
             Branch name to filter for.
             By default, filters for the master branch (i.e. an empty branch name).
+            Instead of a branch, you can also supply a UUID or a reference,
+            in which case the branch name will be determined
 
         full_info:
             If True, return a DataFrame with columns for node attributes
@@ -621,6 +624,14 @@ def find_branch_nodes(server, repo_uuid=None, branch="", include_ancestors=False
             If True, then return all nodes in the history of the branch,
             tracing all the way back to the root node.  (See note above
             regarding DVID branch conventions.)
+
+        include_descendants:
+            If a UUID reference was supplied instead of a branch name,
+            then by default only the node and its ancestors are included
+            in the results. Set this to True to obtain all branch nodes.
+            But note that descendant side-branches are not included. Only
+            descendant nodes whose branch explicitly matches the requested
+            branch are included.
 
     Returns:
         list of UUIDs, sorted chronologically from first to last,
@@ -643,13 +654,28 @@ def find_branch_nodes(server, repo_uuid=None, branch="", include_ancestors=False
 
     repo_info = fetch_repo_info(server, repo_uuid, session=session)
     dag = fetch_repo_dag(server, repo_uuid, repo_info=repo_info, session=session)
-    branch_uuids = nx.topological_sort(dag)
+    branch_uuids = list(nx.topological_sort(dag))
     nodes = list(filter(lambda uuid: dag.nodes()[uuid]['Branch'] == branch, branch_uuids))
+
+    uuid = None
+    if not nodes:
+        # Didn't find a matching branch.
+        # Maybe the user supplied a UUID?
+        try:
+            uuid = resolve_ref(server, branch, expand=True, uuid_only=True)
+        except RuntimeError as ex:
+            raise RuntimeError(f"'{branch}' is neither a branch name nor a valid UUID reference.") from ex
+
+        branch = dag.nodes()[uuid]['Branch']
+        nodes = list(filter(lambda uuid: dag.nodes()[uuid]['Branch'] == branch, branch_uuids))
 
     if include_ancestors:
         leaf_node = max(nodes, key=lambda u: dag.nodes[u]['VersionID'])
         nodes = nx.ancestors(dag, leaf_node) | {leaf_node}
         nodes = sorted(nodes, key=lambda u: dag.nodes[u]['VersionID'])
+
+    if uuid and not include_descendants:
+        nodes = nodes[:nodes.index(uuid)+1]
 
     if not full_info:
         return nodes
@@ -712,7 +738,7 @@ def find_branch(server, repo_uuid=None, branch="", locked_only=False):
     if locked_only and not is_locked(server, branch_nodes[-1]):
         if len(branch_nodes) == 1:
             assert branch == "", \
-                "Only the master branch is capable of having fewer than 2 nodes."
+                "Only the master branch is capable of having no parent node."
             raise RuntimeError(
                 "Can't find a locked master node. "
                 "There's only one node, and it's uncommitted.")
@@ -743,6 +769,7 @@ def find_master(server, repo_uuid=None, locked_only=False):
         uuid of the most recent master branch node
     """
     return find_branch(server, repo_uuid, "", locked_only)
+
 
 def find_parent(server, uuids, dag=None):
     """
@@ -804,7 +831,7 @@ def find_repo_root(server, uuid=None, *, session=None):
     return repo_info['Root']
 
 
-def resolve_ref(server, ref, expand=False, *, session=None):
+def resolve_ref(server, ref, expand=False, *, uuid_only=False, session=None):
     """
     Given a ref that is either a UUID or a branch name,
     return the UUID it refers to, i.e. return the UUID
@@ -834,6 +861,9 @@ def resolve_ref(server, ref, expand=False, *, session=None):
             return expanded
         return ref
 
+    if uuid_only:
+        raise RuntimeError(f'"{ref}" is not a known uuid')
+
     if ref.startswith(':'):
         ref = ref[1:]
 
@@ -857,6 +887,90 @@ def resolve_ref(server, ref, expand=False, *, session=None):
             msg = "resolve_ref() does not support servers that contain multiple repos."
             raise RuntimeError(msg) from ex
         raise
+
+
+def resolve_ref_range(server, ref_range, *, session=None):
+    """
+    Determine the list of UUIDs in the given range along a branch in DVID.
+    The range is specified using a string with special syntax as described below.
+
+    Args:
+        server:
+            DVID server
+
+        ref_range:
+            A string in the form of '[uuid1, uuid2]', e.g. '[abc123, def456]'.
+            Use parentheses instead of square brackets to indicate that the
+            range should EXCLUDE the start/end UUID.  See examples.
+
+    Returns:
+        list of UUIDs.
+
+    Examples:
+
+        In [32]: # A list of consecutive UUIDs from which the end UUID is descended.
+            ...: resolve_ref_range(brain_prod, '[f3969d, 326fdb5]')
+            ...:
+        Out[32]:
+        ['f3969dc575d74e4f922a8966709958c8',
+        '138069aba8e94612b37d119778a89a1c',
+        'd26e15af06784aedbfcac1ff82684b51',
+        '845a827882ea42fc941faa01c1b1de45',
+        '326fdb57c6454e42aa9f79ba1c961098']
+
+        In [33]: # 'root' is understood as a special keyword.
+            ...: resolve_ref_range(brain_prod, '[root, 326fdb5]')
+        Out[33]:
+        ['f3969dc575d74e4f922a8966709958c8',
+        '138069aba8e94612b37d119778a89a1c',
+        'd26e15af06784aedbfcac1ff82684b51',
+        '845a827882ea42fc941faa01c1b1de45',
+        '326fdb57c6454e42aa9f79ba1c961098']
+
+        In [34]: # Use one parenthesis to exclude the first UUID in the branch.
+            ...: resolve_ref_range(brain_prod, '(root, 326fdb5]')
+        Out[34]:
+        ['138069aba8e94612b37d119778a89a1c',
+        'd26e15af06784aedbfcac1ff82684b51',
+        '845a827882ea42fc941faa01c1b1de45',
+        '326fdb57c6454e42aa9f79ba1c961098']
+
+        In [35]: # Or exclude the last UUID
+            ...: resolve_ref_range(brain_prod, '[root, 326fdb5)')
+        Out[35]:
+        ['f3969dc575d74e4f922a8966709958c8',
+        '138069aba8e94612b37d119778a89a1c',
+        'd26e15af06784aedbfcac1ff82684b51',
+        '845a827882ea42fc941faa01c1b1de45']
+
+        In [36]: # Or exclude both first and last
+            ...: resolve_ref_range(brain_prod, '(root, 326fdb5)')
+        Out[36]:
+        ['138069aba8e94612b37d119778a89a1c',
+        'd26e15af06784aedbfcac1ff82684b51',
+        '845a827882ea42fc941faa01c1b1de45']
+    """
+    if ',' not in ref_range:
+        return resolve_ref(server, ref_range, expand=True)
+
+    if not (m := re.match(r'^(\(|\[) *([^, \(\)\[\]]+) *, *([^, \(\)\[\]]+) *(\)|\])$', ref_range)):
+        raise ValueError(f"Invalid ref_range: '{ref_range}'")
+
+    start_bracket, start_ref, end_ref, end_bracket = m.groups()
+    end_uuid = resolve_ref(server, end_ref, expand=True, session=session)
+
+    if start_ref == 'root':
+        start_uuid = find_repo_root(server, end_uuid, session=session)
+    else:
+        start_uuid = resolve_ref(server, start_ref, expand=True, session=session)
+
+    nodes = find_branch_nodes(server, end_uuid, end_uuid, session=session)
+    nodes = nodes[nodes.index(start_uuid):nodes.index(end_uuid)+1]
+    if start_bracket == '(':
+        nodes = nodes[1:]
+    if end_bracket == ')':
+        nodes = nodes[:-1]
+    return nodes
 
 
 def is_locked(server, uuid, *, session=None):
