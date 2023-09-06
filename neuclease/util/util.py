@@ -1134,7 +1134,7 @@ def downsample_mask(mask, factor, method='or'):
     return f(v, axis=last_axes)
 
 
-def extract_labels_from_volume(points_df, volume, box_zyx=None, vol_scale=0, label_names=None, name_col=None):
+def extract_labels_from_volume(points_df, volume, box_zyx=None, vol_scale=0, label_names=None, name_col=None, *, skip_index_check=False):
     """
     Given a list of point coordinates and a label volume, assign a
     label to each point based on its position in the volume.
@@ -1174,19 +1174,29 @@ def extract_labels_from_volume(points_df, volume, box_zyx=None, vol_scale=0, lab
 
         label_names:
             Optional.  Specifies how label IDs map to label names.
-            If provided, a new column 'label_name' will be appended to
-            points_df in addition to the 'label' column.
+            If provided, a new Categorical column 'label_name' will be
+            appended to points_df in addition to the 'label' column.
+            The given IDs need not be consecutive, but if they aren't,
+            the Categorical's codes will not match your IDs.
+
+            The list (or mapping) MUST include all label IDs present in the volume,
+            except for ID 0, which, if omitted, will be given the name "<unspecified>".
 
             Must be either:
             - a mapping of `{ label_id: name }` (or `{ name : label_id }`),
               indicating each label ID in the output image, or
             - a list label names in which case the mapping is determined automatically
               by enumerating the labels in the given order (starting at 1).
+              Label ID 0 will be automatically named "<unspecified>".
 
         name_col:
             Customize the name of the column which will be used to store the extracted
             label and label names. Otherwise, the results are stored in the columns
             'label' and 'label_name'.
+
+        skip_index_check:
+            This function requires that the DataFrame's index has no duplicate values.
+            It usually has an assertion to check this before proceedin, but
 
     Returns:
         None.  Results are appended to the points_df as new column(s).
@@ -1194,20 +1204,21 @@ def extract_labels_from_volume(points_df, volume, box_zyx=None, vol_scale=0, lab
     if box_zyx is None:
         box_zyx = np.array(([0]*volume.ndim, volume.shape))
 
-    assert ((box_zyx[1] - box_zyx[0]) == volume.shape).all() 
+    assert ((box_zyx[1] - box_zyx[0]) == volume.shape).all()
 
-    assert points_df.index.duplicated().sum() == 0, \
-        "This function doesn't work if the input DataFrame's index has duplicate values."
+    if not skip_index_check:
+        assert points_df.index.is_unique, \
+            "This function doesn't work if the input DataFrame's index has duplicate values."
 
     downsampled_coords_zyx = (points_df[['z', 'y', 'x']] // (2**vol_scale)).astype(np.int32)
 
     # Drop everything outside the combined_box
-    min_z, min_y, min_x = box_zyx[0] #@UnusedVariable
-    max_z, max_y, max_x = box_zyx[1] #@UnusedVariable
+    min_z, min_y, min_x = box_zyx[0]
+    max_z, max_y, max_x = box_zyx[1]
     dc = downsampled_coords_zyx
     downsampled_coords_zyx = dc.loc[   (dc['z'] >= min_z) & (dc['z'] < max_z)
-                                     & (dc['y'] >= min_y) & (dc['y'] < max_y)
-                                     & (dc['x'] >= min_x) & (dc['x'] < max_x) ]
+                                     & (dc['y'] >= min_y) & (dc['y'] < max_y)    # noqa
+                                     & (dc['x'] >= min_x) & (dc['x'] < max_x) ]  # noqa
     del dc
 
     logger.info(f"Extracting labels from volume at {len(downsampled_coords_zyx)} points")
@@ -1232,16 +1243,30 @@ def extract_labels_from_volume(points_df, volume, box_zyx=None, vol_scale=0, lab
     else:
         label_names = dict(enumerate(label_names, start=1))
 
-    name_set = ['<unspecified>', *label_names.values()]
-    default_names = ['<unspecified>']*len(points_df)
-    # FIXME: More than half of the runtime of this function is spent on this line!
-    #        Is there some way to speed this up?
-    points_df['label_name'] = pd.Categorical( default_names,
-                                              categories=name_set,
-                                              ordered=False )
-    for label, name in label_names.items():
-        rows = points_df['label'] == label
-        points_df.loc[rows, 'label_name'] = name
+    label_names.setdefault(0, '<unspecified>')
+    label_names = {k: label_names[k] for k in sorted(label_names.keys())}
+
+    # Since the IDs in label_names might not be consecutive,
+    # we can't necessarily create a Categorical directly.
+    # Here we construct a mapping from the user's values to Categorical codes.
+    label_codes = pd.DataFrame(
+        enumerate(label_names.values()),
+        columns=['code', 'name'],
+        index=label_names.keys()
+    )
+
+    if (label_codes['code'] == label_codes.index).all():
+        # The user's values are consecutive, so we can use them as Categorical codes.
+        point_codes = points_df['label'].values
+    else:
+        # Map from the user's values to consecutive Categorical codes.
+        point_codes = points_df['label'].map(label_codes['code']).values
+
+    points_df['label_name'] = pd.Categorical.from_codes(
+        point_codes,
+        label_codes['name'].values,
+        ordered=True
+    )
 
     if name_col:
         points_df.drop(columns=[name_col, f'{name_col}_label'], errors='ignore', inplace=True)
