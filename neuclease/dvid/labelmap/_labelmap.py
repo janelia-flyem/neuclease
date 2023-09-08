@@ -23,12 +23,12 @@ from vigra.analysis import labelMultiArrayWithBackground
 from ...util import (Timer, round_box, extract_subvol, DEFAULT_TIMESTAMP, tqdm_proxy, find_root,
                      ndrange, ndrange_array, box_to_slicing, compute_parallel, boxes_from_grid, box_shape,
                      overwrite_subvol, iter_batches, extract_labels_from_volume, box_intersection, lexsort_columns,
-                     toposorted_ancestors, distance_transform, thickest_point_in_mask, encode_coords_to_uint64,
+                     toposorted_ancestors, distance_transform, thickest_point_in_mask,
                      sort_blockmajor)
 
 from .. import dvid_api_wrapper, fetch_generic_json, fetch_repo_info
 from ..server import fetch_server_info
-from ..repo import create_voxel_instance, fetch_repo_dag, is_locked, resolve_ref, expand_uuid, find_repo_root, resolve_ref_range
+from ..repo import create_voxel_instance, fetch_repo_dag, is_locked, resolve_ref, expand_uuid, find_repo_root, resolve_ref_range, find_parent
 from ..kafka import read_kafka_messages, kafka_msgs_to_df
 from ..rle import parse_rle_response, runlength_decode_from_ranges_to_mask, rle_ranges_box, construct_rle_payload_from_ranges, split_ranges_for_grid
 
@@ -3118,9 +3118,13 @@ def resolve_snapshot_tag(server, uuid, instance, *, session=None):
         suffix = '-unlocked'
 
     recent_muts = fetch_mutations(*dvid_seg, dag_filter='leaf-only', session=session)
+    while len(recent_muts) == 0:
+        parent = find_parent(*dvid_node)
+        dvid_node = (server, parent)
+        recent_muts = fetch_mutations(*dvid_node, instance, dag_filter='leaf-only', session=session)
+
     snapshot_date = recent_muts['timestamp'].dt.date.iloc[-1].strftime('%Y-%m-%d')
     snapshot_tag = f"{snapshot_date}-{uuid[:6]}{suffix}"
-
     return uuid, snapshot_tag
 
 
