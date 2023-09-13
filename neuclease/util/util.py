@@ -1833,6 +1833,21 @@ def sort_blockmajor(df, inplace=False, ignore_index=False, show_blockmajor_id=Fa
         return df
 
 
+def narrowest_dtype(max_int, signed=True):
+    """
+    Return the narrowest integer dtype that can
+    still hold values up to the given max_int.
+    """
+    if signed:
+        dtypes = [np.int8, np.int16, np.int32, np.int64]
+    else:
+        dtypes = [np.uint8, np.uint16, np.uint32, np.uint64]
+
+    for dtype in dtypes:
+        if max_int <= np.iinfo(dtype).max:
+            return dtype
+
+
 def mask_centroid(mask, as_int=False):
     """
     Compute the centroid of an ND mask.
