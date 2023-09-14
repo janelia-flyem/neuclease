@@ -953,11 +953,11 @@ def parse_timestamp(ts, default=DEFAULT_TIMESTAMP, default_timezone="US/Eastern"
     return ts
 
 
-def snakecase_to_camelcase(name):
+def snakecase_to_camelcase(name, check_input=True):
     """
     Convert a snake_case name to camelCase.
     """
-    if name != name.lower():
+    if check_input and name != name.lower():
         raise ValueError(f"name is not snake_case: '{name}'")
     head, *tail = name.split('_')
     tail = (s[0].upper() + s[1:] for s in tail)
