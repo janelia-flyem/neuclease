@@ -2411,30 +2411,36 @@ def find_files(root_dir, file_exts=None, skip_exprs=None, file_exprs=None):
     return list(_find_files(root_dir))
 
 
-def convert_nested_ordered_dict(x):
+def convert_nested_custom_dict(x, custom_cls=None):
     """
     Perform a deep copy of the given object, but convert
-    all internal OrderedDicts to plain dicts along the way.
+    all internal custom dicts (e.g. OrderedDict) to plain dicts along the way.
 
     Args:
         x: Any pickleable object
 
     Returns:
-        A copy of the input, in which all OrderedDicts contained
+        A copy of the input, in which all of the custom dicts contained
         anywhere in the input (as iterable items or attributes, etc.)
         have been converted to plain dicts.
     """
+    if custom_cls is None and isinstance(x, Mapping):
+        custom_cls = type(custom_cls)
+
+    assert custom_cls is not None, \
+        "Please provide the explicit type of the dict class to replace"
+
     # Temporarily install a custom pickling function
-    # (used by deepcopy) to convert OrderedDict to dict.
-    orig_pickler = copyreg.dispatch_table.get(OrderedDict, None)
+    # (used by deepcopy) to convert custom_cls to dict.
+    orig_pickler = copyreg.dispatch_table.get(custom_cls, None)
     copyreg.pickle(
-        OrderedDict,
+        custom_cls,
         lambda d: (dict, ([*d.items()],))
     )
     try:
         return copy.deepcopy(x)
     finally:
-        # Restore the original OrderedDict pickling function (if any)
-        del copyreg.dispatch_table[OrderedDict]
+        # Restore the original custom_cls pickling function (if any)
+        del copyreg.dispatch_table[custom_cls]
         if orig_pickler:
-            copyreg.dispatch_table[OrderedDict] = orig_pickler
+            copyreg.dispatch_table[custom_cls] = orig_pickler
