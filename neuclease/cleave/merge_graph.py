@@ -254,15 +254,16 @@ class LabelmapMergeGraphBase(ABC):
                 For example, ('emdata3:8900', 'cc4c', 'segmentation_merged')
 
         Returns:
-            The focused edges, inferred from the focused proofreading decisions.
+            The focused edges, inferred from the focused proofreading decisions,
+            unless there were none to be found, in which case, we return None
         """
         repo_info = fetch_repo_info(server, uuid)
         if focused_decisions_instance not in repo_info["DataInstances"]:
-            return 0
+            return None
 
         focused_decisions = fetch_focused_decisions(server, uuid, focused_decisions_instance)
         if len(focused_decisions) == 0 or 'result' not in focused_decisions.columns:
-            return 0
+            return None
 
         focused_merges = focused_decisions.query('result == "merge" or result == "mergeLater"')
         focused_merges = focused_merges[["sv_a", "sv_b", "xa", "ya", "za", "xb", "yb", "zb"]]
@@ -524,6 +525,8 @@ class LabelmapMergeGraphLocalTable(LabelmapMergeGraphBase):
             The count of appended edges
         """
         focused_merges = self.fetch_focused_merges(server, uuid, focused_decisions_instance)
+        if not focused_merges:
+            return 0
         self.merge_table_df = pd.concat((self.merge_table_df, focused_merges), ignore_index=True, copy=False)
         return len(focused_merges)
 
