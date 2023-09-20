@@ -36,7 +36,7 @@ def fetch_all(*args, **kwargs):
 
 @wraps(_fetch_query)
 def fetch_query(server, uuid, instance='segmentation_annotations', query=None, **kwargs):
-    return _fetch_query(server, uuid, instance, query, **kwargs)
+    return _fetch_query(server, uuid, instance, query, endpoint='query', **kwargs)
 
 
 @dvid_api_wrapper
