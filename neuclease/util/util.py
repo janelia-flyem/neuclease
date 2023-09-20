@@ -369,6 +369,8 @@ class NumpyConvertingEncoder(json.JSONEncoder):
     """
     Encoder that converts numpy arrays and scalars
     into their pure-python counterparts.
+
+    Also converts pd.Timestamp to str
     
     (No attempt is made to preserve bit-width information.)
     
@@ -381,6 +383,8 @@ class NumpyConvertingEncoder(json.JSONEncoder):
     def default(self, o):
         if isinstance(o, (np.ndarray, np.number, np.bool_)):
             return o.tolist()
+        if isinstance(o, pd.Timestamp):
+            return str(o)
         return super().default(o)
 
 
