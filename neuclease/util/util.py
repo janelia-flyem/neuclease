@@ -1842,7 +1842,14 @@ def narrowest_dtype(max_int, signed=True):
     Return the narrowest integer dtype that can
     still hold values up to the given max_int.
     """
-    if signed:
+    if signed is None:
+        dtypes = [
+            np.int8, np.uint8,
+            np.int16, np.uint16,
+            np.int32, np.uint32,
+            np.int64, np.uint64
+        ]
+    elif signed:
         dtypes = [np.int8, np.int16, np.int32, np.int64]
     else:
         dtypes = [np.uint8, np.uint16, np.uint32, np.uint64]
