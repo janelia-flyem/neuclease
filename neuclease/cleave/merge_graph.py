@@ -180,7 +180,11 @@ class LabelmapMergeGraphBase(ABC):
         orig_num_cc = cc.max()+1
         extra_edges = np.zeros((0,2), dtype=np.uint64)
 
-        if find_missing and orig_num_cc > 1:
+        if orig_num_cc == 1:
+            logger.info("Graph is already contiguous.")
+        elif not find_missing:
+            logger.info("Not looking for missing edges (if any)")
+        else:
             logger.info(f"Searching for missing adjacencies among {len(dvid_supervoxels)} "
                         f"supervoxels with {len(known_edges)} known edges")
             with Timer() as timer:
@@ -195,20 +199,13 @@ class LabelmapMergeGraphBase(ABC):
                             10, True
                         )
                     )
-
             self._store_extra_edges(extra_edges)
-
-        if orig_num_cc == 1:
-            logger.info("Graph is already contiguous.")
-        elif find_missing:
             logger.info(f"Searched {len(block_table)} blocks for missing adjacencies.")
             if final_num_cc == 1:
                 logger.info(f"Finding missing adjacencies between {orig_num_cc} disjoint components took {timer.timedelta}.")
             else:
                 logger.info("Graph is not contiguous, but some missing adjacencies could not be found.")
                 logger.info(f"Reducing {orig_num_cc} disjoint components into {final_num_cc} took {timer.timedelta}.")
-        else:
-            logger.info("Not looking for missing edges (if any)")
 
         extra_edges = np.concatenate((cached_extra_edges, extra_edges))
         extra_scores = np.zeros(len(extra_edges), np.float32)
