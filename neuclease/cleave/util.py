@@ -7,6 +7,10 @@ import requests
 
 
 def fetch_body_edge_table(cleave_server, dvid_server, uuid, instance, body, timeout=60.0):
+    """
+    Note:
+        If you give a body that doesn't exist, the server returns a 404 error.
+    """
     dvid_server, dvid_port = dvid_server.split(':')
 
     if not cleave_server.startswith('http'):
