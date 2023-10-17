@@ -2024,7 +2024,7 @@ def fit_ellipsoid(mask):
     return size, center, radii_vec
 
 
-def upload_to_bucket(bucket, blob_name, blob_contents):
+def upload_to_bucket(bucket, blob_name, blob_contents, content_type='application/json', disable_cache=False):
     """
     Upload a blob of data to the specified google storage bucket.
     """
@@ -2034,8 +2034,9 @@ def upload_to_bucket(bucket, blob_name, blob_contents):
         bucket = storage_client.get_bucket(bucket)
 
     blob = bucket.blob(blob_name)
-    blob.cache_control = 'public, no-store'
-    blob.upload_from_string(blob_contents, content_type='application/json')
+    if disable_cache:
+        blob.cache_control = 'public, no-store'
+    blob.upload_from_string(blob_contents, content_type)
     return blob.public_url
 
 

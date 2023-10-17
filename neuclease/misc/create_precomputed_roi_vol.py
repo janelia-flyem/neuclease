@@ -169,7 +169,7 @@ def construct_ng_precomputed_layer_from_roi_seg(roi_vol, roi_names, bucket_name,
 
 def create_precomputed_roi_vol(roi_vol, bucket_name, bucket_path, max_scale=3, resolution_nm=8*(2**5)):
     """
-    Upload the given ROI volume (which must be a scale-5 volume, i.e. 256nm resolution)
+    Upload the given ROI volume (which shoud usually be a scale-5 volume, i.e. 256nm resolution)
     as a neuroglancer precomputed volume.
 
     An example of such a volume can be found here:

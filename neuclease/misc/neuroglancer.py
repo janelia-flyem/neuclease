@@ -26,6 +26,25 @@ def format_nglink(ng_server, link_json_settings):
     return ng_server + '/#!' + urllib.parse.quote(json.dumps(link_json_settings))
 
 
+def download_ngstate(link):
+    import requests
+    if link.startswith('gs://'):
+        url = f'https://storage.googleapis.com/{link[len("gs://"):]}'
+        return requests.get(url, timeout=10).json()
+
+    if not link.startswith('http'):
+        raise ValueError(f"Don't understand state link: {link}")
+
+    if link.count('://') == 1:
+        return requests.get(link, timeout=10).json()
+
+    if link.count('://') == 2:
+        url = f'https://storage.googleapis.com/{link.split("://")[1]}'
+        return requests.get(url, timeout=10).json()
+
+    raise ValueError(f"Don't understand state link: {link}")
+
+
 def extract_annotations(link, link_index=None, user=None, visible_only=False):
     if isinstance(link, str):
         link = parse_nglink(link)
@@ -128,9 +147,6 @@ def annotation_layer_json(df, name="annotations", color="#ffff00", size=8.0, lin
             columns you provided. But in the case of line and box annotations, the input
             columns are the same, so you must provide a 'type' column.
 
-            If you are providing a linkedSegmentationLayer, your dataframe should contain
-            a 'segments' column to indicate which segments are associated with each annotation.
-
             You may also provide additional columns to use as annotation properties,
             in which case they should be listed in the 'properties' argument. (See below.)
 
@@ -148,6 +164,8 @@ def annotation_layer_json(df, name="annotations", color="#ffff00", size=8.0, lin
             If the annotations should be associated with another layer in the view,
             this specifies the name of that layer.
             This function sets the 'filterBySegmentation' key to hide annotations from non-selected segments.
+            If you are providing a linkedSegmentationLayer, your dataframe should contain
+            a 'segments' column to indicate which segments are associated with each annotation.
 
         show_panel:
             If True, the selection panel will be visible in the side bar by default.
