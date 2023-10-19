@@ -7,6 +7,13 @@ from . import clio_api_wrapper
 
 
 @clio_api_wrapper
+def fetch_datasets(*, base=None, session=None):
+    r = session.get(f'{base}/v2/datasets')
+    r.raise_for_status()
+    return r.json()
+
+
+@clio_api_wrapper
 def fetch_annotations(dataset, user=None, format='pandas', *, base=None, session=None):
     assert format in ('json', 'pandas')
     if user:
