@@ -17,13 +17,25 @@ logger = logging.getLogger(__name__)
 
 def create_bookmark_files(df, output_dir, prefix='bookmarks-', batch_size=100, default_text=None, grayscale=None, segmentation=None):
     os.makedirs(output_dir)
-    digits = len(str(len(df) // batch_size))
+    batch_ids = []
     paths = []
-    for i, bdf in enumerate(iter_batches(df, batch_size)):
+    counts = []
+
+    if isinstance(batch_size, str):
+        # Batch by column(s)
+        batch_ids, batches = zip(*df.groupby(batch_size, sort=False))
+        digits = len(str(df[batch_size].nunique()-1))
+    else:
+        batches = iter_batches(df, batch_size)
+        batch_ids = np.arange(len(batches))
+        digits = len(str(len(df) // batch_size))
+
+    for i, bdf in enumerate(batches):
         path = f"{output_dir}/{prefix}{i:0{digits}d}.json"
         paths.append(path)
+        counts.append(len(bdf))
         create_bookmark_file(bdf, path, default_text, grayscale, segmentation)
-    return paths
+    return batch_ids, counts, paths
 
 
 def create_bookmark_file(df, output_path=None, default_text=None, grayscale=None, segmentation=None):
@@ -185,15 +197,14 @@ def prepare_bookmark_assignment_setup(df, output_dir, bucket_path, csv_path, pre
         raise RuntimeError(f"Can't access gs://{bucket_path}") from ex
 
     if not isinstance(df, pd.DataFrame):
-        raise NotImplemented
-        # Assume we've got a body list
-        assert np.array(df).ndim == 1
-        bodies = df
-        df = generate_sample_coordinates(server, uuid, instance, bodies, interior=True).reset_index()
+        raise NotImplementedError
 
-    output_paths = create_bookmark_files(df, output_dir, prefix, batch_size, default_text, grayscale, segmentation)
-    tracking_df = pd.DataFrame(list(enumerate(output_paths)), columns=['assignment', 'file'])
-
+    batch_ids, counts, output_paths = create_bookmark_files(df, output_dir, prefix, batch_size, default_text, grayscale, segmentation)
+    tracking_df = pd.DataFrame({
+        'assignment': batch_ids,
+        'body_count': counts,
+        'file': output_paths,
+    })
     logger.info("Uploading bookmark files")
 
     # Explicitly *unset* content type, to trigger browsers to download the file, not display it as JSON.
