@@ -124,7 +124,7 @@ LOCAL_ANNOTATION_JSON = {
 }
 
 
-def annotation_layer_json(df, name="annotations", color="#ffff00", size=8.0, linkedSegmentationLayer=None, show_panel=False, properties=[], shader=None):
+def annotation_layer_json(df, name="annotations", color="#ffff00", size=8.0, linkedSegmentationLayer=None, show_panel=False, properties=[], shader=None, res_nm_xyz=(8,8,8)):
     """
     Construct the JSON data for a neuroglancer local annotations layer.
     This does not result in a complete neuroglancer link; it results in something
@@ -202,6 +202,9 @@ def annotation_layer_json(df, name="annotations", color="#ffff00", size=8.0, lin
         properties = [properties]
 
     data = copy.deepcopy(LOCAL_ANNOTATION_JSON)
+    res_m = (np.array(res_nm_xyz) * 1e-9).tolist()
+    output_dim = {k: [r, 'm'] for k,r in zip('xyz', res_m)}
+    data['source']['transform']['outputDimensions'] = output_dim
     data['name'] = name
     data['annotationColor'] = color
 
