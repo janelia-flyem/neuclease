@@ -1098,10 +1098,12 @@ def upsample(orig_data, upsample_factor):
     Upsample the given array by duplicating every
     voxel into the corresponding upsampled voxels.
     """
+    if not hasattr(upsample_factor, '__len__'):
+        upsample_factor = orig_data.ndim * (upsample_factor,)
     orig_shape = np.array(orig_data.shape)
     upsampled_data = np.empty( orig_shape * upsample_factor, dtype=orig_data.dtype )
-    v = view_as_blocks(upsampled_data, orig_data.ndim*(upsample_factor,))
-    
+    v = view_as_blocks(upsampled_data, tuple(upsample_factor))
+
     slicing = (Ellipsis,) + (None,)*orig_data.ndim
     v[:] = orig_data[slicing]
     return upsampled_data
