@@ -418,6 +418,9 @@ def load_elements_as_dataframe(elements, relationships=False):
     Properties are extracted and returned as top-level columns.
     If requested, relationships are extracted into a separate dataframe.
 
+    Note:
+        All column names will be converted to lowercase.
+
     Args:
         elements:
             JSON data, a list of elements as returned by `/elements`.
