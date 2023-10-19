@@ -1211,6 +1211,49 @@ def region_boxes(vol):
     return boxes
 
 
+@njit
+def region_boxes_dict(vol):
+    """
+    FIXME:
+        This has much worse performance than region_boxes(),
+        for unknown reasons.
+
+    Determine the bounding boxes of all label regions (segments) in a label volume.
+    Unlike region_boxes() above, this function works for segmentations with
+    non-consective, arbitrarily high-valued segment IDs.
+
+    Args:
+        vol:
+            ndarray, integer dtype and arbitrary dimensionality D
+    Returns:
+        dict of {segment_id: box}
+
+    See Also:
+        - ``neuclease.util.segmentation.region_boxes()``
+        - ``neuclease.util.segmentation.region_features()``
+    """
+    boxes = dict()
+
+    for idx in np.ndindex(*vol.shape):
+        label = vol[idx]
+        if label not in boxes:
+            box = np.empty((2, vol.ndim), np.int32)
+            boxes[label] = box
+            # Initialize box min (and max) coords with extreme max (and min)
+            # values so that any encountered coordinate overrides the initial value.
+            box[0, :] = np.array(vol.shape)
+            box[1, :] = 0
+
+        box = boxes[label]
+        for axis, i in enumerate(idx):
+            box[0, axis] = min(i, box[0, axis])
+            box[1, axis] = max(i, box[1, axis])
+
+    for box in boxes.values():
+        box[1, :] += 1
+    return boxes
+
+
 def region_features(label_img, grayscale_img=None, features=['Box', 'Count'], ignore_label=0):
     """
     Wrapper around vigra.analysis.extractRegionFeatures() that supports uint64 and
