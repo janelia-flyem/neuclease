@@ -3,10 +3,13 @@ neuroglancer-related utility functions
 
 See also: neuclease/notebooks/hemibrain-neuroglancer-video-script.txt
 """
+import sys
 import copy
 import json
 import urllib
 import logging
+import tempfile
+import subprocess
 from collections.abc import Mapping, Collection
 import numpy as np
 import pandas as pd
@@ -615,3 +618,24 @@ def _validate_property_type_counts(info):
     if type_counts.loc['label'] == 0 and type_counts.loc['string'] > 0:
         logger.warning("None of your segment properties are of type 'label', "
                        "so none will be displayed in the neuroglancer UI.")
+
+
+def make_bucket_public(bucket=None):
+    if bucket is None:
+        bucket = sys.argv[1]
+    if bucket.startswith('gs://'):
+        bucket = bucket[len('gs://'):]
+    subprocess.run(f'gsutil iam ch allUsers:objectViewer gs://{bucket}', shell=True, check=True)
+
+    with tempfile.NamedTemporaryFile('w') as f:
+        cors_settings = [{
+            "maxAgeSeconds": 3600,
+            "method": ["GET"],
+            "origin": ["*"],
+            "responseHeader": ["Content-Type", "Range"]
+        }]
+        json.dump(cors_settings, f)
+        f.flush()
+        subprocess.run(f'gsutil cors set {f.name} gs://{bucket}', shell=True, check=True)
+
+    print(f"Configured bucket for public neuroglancer access: gs://{bucket}")

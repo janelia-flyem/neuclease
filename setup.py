@@ -39,6 +39,7 @@ setup(
             'prepare_user_branches = neuclease.misc.prepare_user_branches:main',
             'supervoxel_meshes_for_body = neuclease.misc.supervoxel_meshes_for_body:main',
             'sparse_connectome = neuclease.misc.sparse_connectome:main',
+            'make_bucket_public = neuclease.misc.neuroglancer:make_bucket_public'
         ]
     }
 )
