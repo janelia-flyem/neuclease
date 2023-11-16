@@ -1029,7 +1029,7 @@ def fetch_sparsevol_rles(server, uuid, instance, label, scale=0, supervoxels=Fal
         params['supervoxels'] = str(bool(supervoxels)).lower()
 
     if box_zyx is not None:
-        box_zyx = box_zyx - [(0,0,0), (1,1,1)]
+        box_zyx = np.asarray(box_zyx) - [(0,0,0), (1,1,1)]
         box_keys = ['minz', 'miny', 'minx', 'maxz', 'maxy', 'maxx']
         params.update(dict(zip(box_keys, box_zyx.flat)))
 
