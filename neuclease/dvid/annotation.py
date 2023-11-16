@@ -1590,13 +1590,17 @@ def body_synapse_counts(synapse_samples):
                "no label (label 0). ***")
         logger.warning(msg)
 
-    kinds = list(synapse_samples['kind'].unique())
-    for kind in kinds:
-        synapse_counts[kind] = synapse_counts[kind].astype(np.int32)
-
     # Convert columns from categorical index to normal index,
     # so the caller can easily append their own columns if they want.
     synapse_counts.columns = synapse_counts.columns.tolist()
+
+    kinds = ({'PostSyn', 'PreSyn', *synapse_samples['kind'].unique()})
+    for kind in kinds:
+        if kind in synapse_counts.columns:
+            synapse_counts[kind] = synapse_counts[kind].astype(np.int32)
+        else:
+            synapse_counts[kind] = 0
+
     return synapse_counts[sorted(kinds)[::-1]]
 
 
