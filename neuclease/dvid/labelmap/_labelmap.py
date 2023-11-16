@@ -3101,6 +3101,14 @@ def resolve_snapshot_tag(server, uuid, instance, *, session=None):
     Resolve the full UUID and devise a 'snapshot tag' from the UUID,
     the labelmap modification date, and whether or not the UUID
     is currently locked.
+
+    Returns:
+        uuid, snapshot_tag
+
+    Example snapshot tags:
+
+        - 2023-11-03-abc123
+        - 2023-11-04-def456-unlocked
     """
     # Replace shorthand UUID with full UUID.
     uuid = resolve_ref(
