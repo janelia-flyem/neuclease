@@ -875,6 +875,23 @@ def delete_element(server, uuid, instance, coord_zyx, kafkalog=True, *, session=
     r.raise_for_status()
 
 
+@dvid_api_wrapper
+def post_move(server, uuid, instance, from_zyx, to_zyx, kafkalog=True, *, session=None):
+    """
+    Move a point annotation from one location to another.
+    """
+    assert len(from_zyx) == len(to_zyx) == 3
+    from_str = '_'.join(map(str, from_zyx[::-1]))
+    to_str = '_'.join(map(str, to_zyx[::-1]))
+
+    params = {}
+    if not kafkalog:
+        params['kafkalog'] = 'off'
+
+    r = session.post(f'{server}/api/node/{uuid}/{instance}/move/{from_str}/{to_str}', params=params)
+    r.raise_for_status()
+
+
 class SynapseWarning(UserWarning):
     pass
 
