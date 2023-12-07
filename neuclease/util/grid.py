@@ -67,7 +67,7 @@ class Grid:
         if isinstance(grid, Grid):
             return grid
         if isinstance(grid, (int, float, np.number)):
-            grid = (grid,) * len(ndim)
+            grid = (grid,) * ndim
         if isinstance(grid, Collection):
             grid = Grid(grid)
         return grid
