@@ -2,6 +2,7 @@ import os
 import json
 import logging
 import getpass
+import platform
 import datetime
 import subprocess
 from math import ceil, log10
@@ -207,11 +208,7 @@ def prepare_bookmark_assignment_setup(df, output_dir, bucket_path, csv_path, pre
     })
     logger.info("Uploading bookmark files")
 
-    # Explicitly *unset* content type, to trigger browsers to download the file, not display it as JSON.
-    # Also, forbid caching.
-    cmd = f"gsutil -m -h 'Cache-Control:public, no-store' -h 'Content-Type' cp -r {output_dir} gs://{bucket_path}/"
-    _ = subprocess.run(cmd, shell=True, check=True, capture_output=True)
-
+    upload_assignment_files(output_dir, bucket_path)
     tracking_df['file'] = f'https://storage.googleapis.com/{bucket_path}/' + tracking_df['file']
 
     # Delete redundant file paths -- keep only the first row in each assignment group.
@@ -328,11 +325,7 @@ def prepare_cleaving_assignment_setup(bodies, output_dir, bucket_path, csv_path,
         df = create_cleaving_assignments(bodies, output_dir, prefix, batch_size)
 
     logger.info("Uploading assignment files")
-
-    # Explicitly *unset* content type, to trigger browsers to download the file, not display it as JSON.
-    # Also, forbid caching.
-    cmd = f"gsutil -m -h 'Cache-Control:public, no-store' -h 'Content-Type' cp -r {output_dir} gs://{bucket_path}/"
-    _ = subprocess.run(cmd, shell=True, check=True, capture_output=True)
+    upload_assignment_files(output_dir, bucket_path)
 
     df['file'] = f'https://storage.googleapis.com/{bucket_path}/' + df['file']
 
@@ -395,3 +388,26 @@ def create_connection_validation_assignments(df, output_dir, prefix='connection-
     for i, batch_df in enumerate(iter_batches(df, batch_size)):
         path = f"{output_dir}/{prefix}{i:0{digits}d}.json"
         create_connection_validation_assignment(batch_df, path)
+
+
+def upload_assignment_files(local_dir, bucket_path):
+    # Explicitly *unset* content type, to trigger browsers to download the file, not display it as JSON.
+    # Also, forbid caching.
+    opts = [
+        "-h 'Cache-Control:public, no-store'",
+        "-h 'Content-Type'",
+    ]
+    if platform.system() == 'Darwin':
+        # gsutil gives the following warning:
+        #
+        #   If you experience problems with multiprocessing on MacOS,
+        #   they might be related to https://bugs.python.org/issue33725.
+        #   You can disable multiprocessing by editing your .boto config or
+        #   by adding the following flag to your command: `-o "GSUtil:parallel_process_count=1"`.
+        #   Note that multithreading is still available even if you disable multiprocessing.
+        opts += [
+            "-o GSUtil:parallel_process_count=1",
+            "-o GSUtil:parallel_thread_count=8",
+        ]
+    cmd = f"gsutil -m {' '.join(opts)} cp -r {local_dir} gs://{bucket_path}/"
+    _ = subprocess.run(cmd, shell=True, check=True, capture_output=True)
