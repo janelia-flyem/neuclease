@@ -111,7 +111,18 @@ def align_box(box, grid, how='out'):
 def pad_for_grid(a, grid, box_zyx=None):
     """
     For an array which currently occupies the given box in space,
-    pad the array such that its edges align to the given grid.
+    pad the array (with zeros) such that its edges align to the given grid.
+
+    Args:
+        a:
+            ndarray
+        grid:
+            Grid or grid shape (or a single int, for isometric grids)
+        box_zyx:
+            The box which the array inhabits
+
+    Returns:
+        padded_array, aligned_box
     """
     if box_zyx is None:
         box_zyx = [(0,)*a.ndim, a.shape]
@@ -121,8 +132,11 @@ def pad_for_grid(a, grid, box_zyx=None):
     aligned_box = align_box(box_zyx, grid, 'out')
     box_padding = np.array([box_zyx[0] - aligned_box[0],
                             aligned_box[1] - box_zyx[1]])
-    padded = np.pad(a, box_padding.T,)
-    return padded, aligned_box
+    if box_padding.any():
+        padded = np.pad(a, box_padding.T,)
+        return padded, aligned_box
+    else:
+        return a, box_zyx
 
 
 def boxes_from_grid(bounding_box, grid, include_halos=True, clipped=False, lazy=False):
