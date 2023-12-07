@@ -1,4 +1,5 @@
 import os
+import re
 import glob
 import json
 import copy
@@ -288,6 +289,31 @@ def upload_precomputed_ngmeshes(meshes, names, bucket_name, bucket_path, localdi
     logger.info("Uploading")
     subprocess.run(f"gsutil -h 'Cache-Control:public, no-store' cp '{localdir}/info' '{bucket_name}/{bucket_path}/info'", shell=True)
     subprocess.run(f"gsutil -m cp -R '{localdir}/mesh' '{bucket_name}/{bucket_path}/mesh'", shell=True)
+
+
+def upload_precomputed_ngmesh_files(mesh_dir, names, bucket_name, bucket_path):
+    if not bucket_name.startswith('gs://'):
+        bucket_name = 'gs://' + bucket_name
+
+    dump_json({"@type": "neuroglancer_legacy_mesh"}, f"{mesh_dir}/info")
+
+    logger.info("Writing fragment index files")
+    names = names or {}
+    revnames = {v:k for k,v in names.items()}
+    for p in tqdm_proxy(sorted(glob.glob(f"{mesh_dir}/*.ngmesh"))):
+        if (m := re.match(mesh_dir + r"/(\d+).ngmesh", p)):
+            label = m.groups()[0]
+            name = names.get(label, str(label))
+        elif (m := re.match(mesh_dir + r"/(.+).ngmesh", p)):
+            name = m.groups()[0]
+            label = names.get(name, None) or revnames.get(name, None)
+            if not label:
+                raise RuntimeError(f"Couldn't determine label for mesh '{name}'")
+
+        dump_json({"fragments": [f"{name}.ngmesh"]}, f"{mesh_dir}/{label}:0")
+
+    logger.info("Uploading")
+    subprocess.run(f"gsutil -m cp -R {mesh_dir} '{bucket_name}/{bucket_path}'", shell=True, check=True)
 
 
 def create_precomputed_segment_properties(names, bucket_name, bucket_path, localdir=None, volume_info=None):
