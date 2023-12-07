@@ -247,7 +247,7 @@ def create_precomputed_ngmeshes(vol, vol_fullres_box, names, bucket_name, bucket
     meshes = compute_parallel(fn, _gen_masks(), starmap=True, processes=processes, total=num_labels)
     meshes = dict(meshes)
 
-    upload_precompted_ngmeshes(meshes, names, bucket_name, bucket_path, localdir, volume_info)
+    upload_precomputed_ngmeshes(meshes, names, bucket_name, bucket_path, localdir, volume_info)
 
 
 def _gen_mesh(smoothing_rounds, decimation, label, fullres_box, mask):
@@ -259,7 +259,7 @@ def _gen_mesh(smoothing_rounds, decimation, label, fullres_box, mask):
     return label, mesh
 
 
-def upload_precompted_ngmeshes(meshes, names, bucket_name, bucket_path, localdir=None, volume_info=None):
+def upload_precomputed_ngmeshes(meshes, names, bucket_name, bucket_path, localdir=None, volume_info=None):
     if not bucket_name.startswith('gs://'):
         bucket_name = 'gs://' + bucket_name
 
