@@ -1106,6 +1106,14 @@ def fetch_mapping(server, uuid, instance, supervoxel_ids, *, session=None, noloo
         If as_series=True, return pd.Series, with index named 'sv' and values named 'body'.
         Otherwise, return the bodies as an array, in the same order in which the supervoxels were given.
     """
+    if len(supervoxel_ids) == 0:
+        empty = np.zeros((0,), np.uint64)
+        mapping = pd.Series(empty, index=empty, name='body').rename_axis('sv')
+        if as_series:
+            return mapping
+        else:
+            return mapping.values
+
     batch_size = batch_size or len(supervoxel_ids)
     if processes > 0:
         # Don't pass the session to child processes.
@@ -1120,6 +1128,7 @@ def fetch_mapping(server, uuid, instance, supervoxel_ids, *, session=None, noloo
         return mapping
     else:
         return mapping.values
+
 
 @dvid_api_wrapper
 def _fetch_mapping(server, uuid, instance, supervoxel_ids, *, nolookup=False, session=None):
@@ -1136,6 +1145,7 @@ def _fetch_mapping(server, uuid, instance, supervoxel_ids, *, nolookup=False, se
     mapping = pd.Series(body_ids, index=np.asarray(supervoxel_ids, np.uint64), dtype=np.uint64, name='body')
     mapping.index.name = 'sv'
     return mapping
+
 
 @dvid_api_wrapper
 def fetch_mappings(server, uuid, instance, as_array=False, *, format=None, consistent=False, session=None):
