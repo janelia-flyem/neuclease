@@ -363,6 +363,18 @@ class LabelmapMergeGraphBigQuery(LabelmapMergeGraphBase):
         msg = f"Fetching edges for {len(snapshot_bodies)} body(s) from BigQuery snapshot"
         with Timer(msg, logger):
             df = perform_bigquery(q)
+            if len(df) == 0:
+                df = df.astype({
+                    'sv_a': np.int64,
+                    'sv_b': np.int64,
+                    'xa': np.int64,
+                    'ya': np.int64,
+                    'za': np.int64,
+                    'xb': np.int64,
+                    'yb': np.int64,
+                    'zb': np.int64,
+                    'cost': np.float64,
+                })
 
         # Now update the supervoxel IDs and bodies for
         # those edges according to the current UUID.
