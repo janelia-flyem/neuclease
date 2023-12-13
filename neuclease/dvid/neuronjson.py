@@ -24,7 +24,10 @@ def _fetch_query(server, uuid, instance='segmentation_annotations', query=None, 
     values = r.json() or []
 
     if format == 'pandas':
-        return _body_annotations_dataframe(values, status_categories)
+        ann = _body_annotations_dataframe(values, status_categories)
+        if fields and 'status' not in fields:
+            ann = ann.drop(columns=['status'], errors='ignore')
+        return ann
     else:
         return sorted(values, key=lambda d: d['bodyid'])
 
