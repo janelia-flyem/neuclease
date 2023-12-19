@@ -1211,6 +1211,48 @@ def region_boxes(vol):
     return boxes
 
 
+def region_boxes_numpy(vol):
+    """
+    Same as region_boxes(), but 100x slower.
+    However, this version requries no JIT.
+    """
+    Z, Y, X = vol.shape
+    grid = np.ogrid[:Z, :Y, :X]
+
+    boxes = np.zeros((vol.max()+1, 2, 3), dtype=int)
+    boxes[:, 0, :] = vol.shape
+
+    for axis in (0,1,2):
+        np.minimum.at(boxes[:, 0, axis], vol, grid[axis])
+        np.maximum.at(boxes[:, 1, axis], vol, grid[axis])
+
+    boxes[:, 1, :] += 1
+    return boxes
+
+
+def region_boxes_numpy_mgrid(vol):
+    """
+    Alternative implementation of region_boxes_numpy().
+    Slightly slower, so, still much slower than region_boxes().
+    This version is here only for study.
+    It passes over the volume 2x instead of 6x, but it requires
+    a "fleshed out" and transposed mgrid instead of the tiny ogrid.
+    Apparently the tradeoff isn't worth it.
+    """
+    Z, Y, X = vol.shape
+    grid = np.empty((*vol.shape, 3), int)
+    grid[..., 0], grid[..., 1], grid[..., 2] = np.ogrid[:Z, :Y, :X]
+
+    boxes = np.zeros((vol.max()+1, 2, 3), dtype=int)
+    boxes[:, 0, :] = vol.shape
+
+    np.minimum.at(boxes[:, 0], vol, grid)
+    np.maximum.at(boxes[:, 1], vol, grid)
+
+    boxes[:, 1, :] += 1
+    return boxes
+
+
 @njit
 def region_boxes_dict(vol):
     """
