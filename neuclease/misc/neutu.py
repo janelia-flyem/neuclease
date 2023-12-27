@@ -21,6 +21,7 @@ def create_bookmark_files(df, output_dir, prefix='bookmarks-', batch_size=100, d
     batch_ids = []
     paths = []
     counts = []
+    batch_dfs = []
 
     if isinstance(batch_size, str):
         # Batch by column(s)
@@ -35,8 +36,9 @@ def create_bookmark_files(df, output_dir, prefix='bookmarks-', batch_size=100, d
         path = f"{output_dir}/{prefix}{i:0{digits}d}.json"
         paths.append(path)
         counts.append(len(bdf))
+        batch_dfs.append(bdf.assign(assignment=i))
         create_bookmark_file(bdf, path, default_text, grayscale, segmentation)
-    return batch_ids, counts, paths
+    return batch_ids, counts, paths, batch_dfs
 
 
 def create_bookmark_file(df, output_path=None, default_text=None, grayscale=None, segmentation=None):
@@ -129,7 +131,7 @@ def read_bookmark_points(path):
     del df['location']
     return df
 
-def prepare_bookmark_assignment_setup(df, output_dir, bucket_path, csv_path, prefix='bookmarks-', batch_size=50, default_text=None, grayscale=None, segmentation=None):
+def prepare_bookmark_assignment_setup(df, output_dir, bucket_path, csv_path, prefix='bookmarks-', batch_size=50, default_text=None, grayscale=None, segmentation=None, *, include_bodylist=False):
     """
     This function will help prepare a set of orphan-link (bookmark) assignments.
     Unlike the analogous cleaving setup (below), the resulting spreadsheet
@@ -200,7 +202,7 @@ def prepare_bookmark_assignment_setup(df, output_dir, bucket_path, csv_path, pre
     if not isinstance(df, pd.DataFrame):
         raise NotImplementedError
 
-    batch_ids, counts, output_paths = create_bookmark_files(df, output_dir, prefix, batch_size, default_text, grayscale, segmentation)
+    batch_ids, counts, output_paths, batch_dfs = create_bookmark_files(df, output_dir, prefix, batch_size, default_text, grayscale, segmentation)
     tracking_df = pd.DataFrame({
         'assignment': batch_ids,
         'body_count': counts,
@@ -219,6 +221,12 @@ def prepare_bookmark_assignment_setup(df, output_dir, bucket_path, csv_path, pre
     tracking_df['date started'] = ''
     tracking_df['date completed'] = ''
     tracking_df['notes'] = ''
+
+    if include_bodylist:
+        batch_df = pd.concat(batch_dfs)
+        if batch_df.index.name == 'body':
+            batch_df['body'] = batch_df.index
+        tracking_df['bodies'] = batch_df.groupby('assignment')['body'].agg(list)
 
     tracking_df.to_csv(csv_path, index=False, header=True)
     return tracking_df
