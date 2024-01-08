@@ -251,6 +251,25 @@ def has_nonzero_exterior(mask):
     return False
 
 
+def volume_face_ids(vol, thickness=1):
+    """
+    Determine the set of segment IDs (including ID 0)
+    that lie on any of the faces of a volume,
+    e.g. the 6 faces of a 3D volume, or the 4 edges
+    of a 2D rectangle, etc.
+    """
+    thickness = np.broadcast_to(thickness, (2, vol.ndim))
+    ids = []
+    for axis in range(vol.ndim):
+        v = np.rollaxis(vol, axis, 0)
+        t0, t1 = thickness[:, axis]
+        u0 = pd.unique(v[:t0].reshape(-1))
+        u1 = pd.unique(v[-t1:].reshape(-1))
+        ids += [u0, u1]
+    ids = np.concatenate(ids)
+    return np.sort(pd.unique(ids))
+
+
 def edge_mask(label_img, mode='before', mark_volume_edges=False):
     """
     Find all boundaries between labels in the given ND volume,
