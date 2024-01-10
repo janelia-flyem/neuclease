@@ -11,3 +11,15 @@ logs
 .test-data
 *.egg-info
 .vscode/
+zzz-oneoff/
+
+*.csv
+*.ngmesh
+*.obj
+*.npy
+
+*Untitled*
+
+*.bz2
+
+.ipynb_checkpoints/
