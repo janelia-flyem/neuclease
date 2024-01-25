@@ -296,10 +296,10 @@ def fetch_roi_ranges_and_boxes(server, uuid, rois, *, session=None, processes=0)
     for roi, rle_ranges in all_rle_ranges.items():
         # If roi is completely empty, don't process it at all
         if len(rle_ranges) == 0:
-            del rois[roi]
-        else:
-            roi_boxes[roi] = np.array([  rle_ranges[:, (0,1,2)].min(axis=0),
-                                       1+rle_ranges[:, (0,1,3)].max(axis=0)])  # noqa
+            continue
+
+        roi_boxes[roi] = np.array([  rle_ranges[:, (0,1,2)].min(axis=0),
+                                    1+rle_ranges[:, (0,1,3)].max(axis=0)])  # noqa
     return all_rle_ranges, roi_boxes
 
 
@@ -333,6 +333,8 @@ def unpack_roi_ranges_to_combined_volume(roi_labels, roi_ranges, roi_boxes, box_
     # Overlay ROIs one-by-one
     overlap_stats = []
     for roi, label in tqdm_proxy(roi_labels.items(), leave=False):
+        if roi not in roi_boxes:
+            continue
         roi_box = box_intersection(roi_boxes[roi], box_zyx)
         assert (roi_box[1] - roi_box[0] > 0).all(), "ROI box does not intersect the full box."
         roi_mask, _roi_box = runlength_decode_from_ranges_to_mask(roi_ranges[roi], roi_box)
