@@ -10,7 +10,9 @@ from skimage.util import view_as_blocks
 
 from dvidutils import LabelMapper
 
-from . import Timer, Grid, boxes_from_grid, box_intersection, box_to_slicing, extract_subvol, downsample_mask, upsample, tqdm_proxy
+from .util import Timer, tqdm_proxy, downsample_mask, upsample
+from .grid import Grid, boxes_from_grid, box_intersection
+from .box import extract_subvol, box_to_slicing
 
 logger = logging.getLogger(__name__)
 
