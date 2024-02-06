@@ -982,6 +982,10 @@ def fetch_skeleton(server, uuid, instance, body, format='pandas', *, session=Non
     Convenience function.
     Fetch the skeleton for a given body from a keyvalue instance.
     Assumes the keys for skeletons are named using NeuTu conventions, e.g. "1234_swc".
+
+    Args:
+        format:
+            Either 'pandas' or 'swc'
     """
     assert format in ('pandas', 'swc')
     swc_text = fetch_key(server, uuid, instance, f"{body}_swc", session=session).decode('utf-8')
