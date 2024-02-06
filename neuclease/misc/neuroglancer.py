@@ -3,6 +3,7 @@ neuroglancer-related utility functions
 
 See also: neuclease/notebooks/hemibrain-neuroglancer-video-script.txt
 """
+import re
 import sys
 import copy
 import json
@@ -42,10 +43,24 @@ def download_ngstate(link):
         return requests.get(link, timeout=10).json()
 
     if link.count('://') == 2:
-        url = f'https://storage.googleapis.com/{link.split("://")[1]}'
+        url = f'https://storage.googleapis.com/{link.split("://")[2]}'
         return requests.get(url, timeout=10).json()
 
     raise ValueError(f"Don't understand state link: {link}")
+
+
+def layer_dict(state):
+    return {layer['name']: layer for layer in state['layers']}
+
+
+def layer_state(state, name):
+    matches = []
+    for layer in state['layers']:
+        if re.match(name, layer['name']):
+            matches.append(layer)
+    if len(matches) > 1:
+        raise RuntimeError(f"Found more than one layer matching to the regex '{name}'")
+    return layer
 
 
 def extract_annotations(link, link_index=None, user=None, visible_only=False):
@@ -492,7 +507,8 @@ def upload_ngstates(bucket_dir, states, threads=0, processes=0):
 
 def upload_ngstate(bucket_path, state):
     """
-    Upload the given JSON state to a gbucket location.
+    Upload the given JSON state to a gbucket location,
+    such as 'gs://flyem-user-links/short/foobar.json'
     """
     from neuclease.util import upload_to_bucket
 
