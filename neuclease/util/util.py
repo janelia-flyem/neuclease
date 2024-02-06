@@ -17,8 +17,8 @@ from functools import partial, lru_cache, wraps
 from multiprocessing import get_context
 from multiprocessing.pool import ThreadPool
 from datetime import datetime, timedelta
-from collections import OrderedDict
 from collections.abc import Mapping, Iterable, Sequence
+from pandas import DataFrame
 
 import pytz
 import ujson
