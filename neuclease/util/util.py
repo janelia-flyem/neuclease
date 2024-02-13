@@ -18,7 +18,6 @@ from multiprocessing import get_context
 from multiprocessing.pool import ThreadPool
 from datetime import datetime, timedelta
 from collections.abc import Mapping, Iterable, Sequence
-from pandas import DataFrame
 
 import pytz
 import ujson
