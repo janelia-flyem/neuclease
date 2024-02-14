@@ -968,7 +968,7 @@ def variable_width_hbar(df, bar_name, bar_width, value, color=None, stackcolors=
         p.x_range.end = vlim[1]
 
     if vticker is not None:
-        p.xaxis.ticker = [0, 0.25, 0.5, 0.75, 1.0]
+        p.xaxis.ticker = vticker
 
     p.yaxis.ticker = df['y']
     p.yaxis.major_label_overrides = dict(zip(df['y'], df[bar_name]))
