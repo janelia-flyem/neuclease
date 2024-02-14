@@ -100,4 +100,4 @@ def view_edges_for_body(edges, body, initial_ngstate, seg_layer_name='.*', link_
     bucket_dir = '/'.join(bucket_dir)
     bucket_path = f'{bucket_dir}/body-{body}.json'
     upload_to_bucket(bucket, bucket_path, dump_json(state), disable_cache=True)
-    return f'https://clio-ng.janelia.org/#!gs://flyem-user-links/{bucket_path}'
+    return f'https://clio-ng.janelia.org/#!gs://{bucket}/{bucket_path}'
