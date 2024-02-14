@@ -5,13 +5,11 @@ import getpass
 import platform
 import datetime
 import subprocess
-from math import ceil, log10
 
 import numpy as np
 import pandas as pd
 
 from neuclease.util import dump_json, iter_batches
-from neuclease.dvid import generate_sample_coordinates
 
 logger = logging.getLogger(__name__)
 
