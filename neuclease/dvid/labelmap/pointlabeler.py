@@ -2,7 +2,9 @@ import logging
 from collections import namedtuple
 
 from ...util import Timer
-from ._labelmap import fetch_mapping, fetch_mappings, fetch_mutations, fetch_labels_batched, fetch_bodies_for_many_points
+from .. import fetch_branch_nodes
+from ._labelmap import (fetch_mapping, fetch_mappings, fetch_mutations,
+                        fetch_labels_batched, fetch_bodies_for_many_points)
 
 logger = logging.getLogger(__name__)
 DvidSeg = namedtuple('DvidSeg', 'server uuid instance')
@@ -19,6 +21,7 @@ class PointLabeler:
         self.dvidseg = DvidSeg(server, uuid, instance)
         self._mutations = mutations
         self._mapping = mapping
+        self._last_mutation = None
 
     def update_bodies_for_points(self, point_df, batch_size=10_000, threads=0, processes=0):
         """
@@ -52,3 +55,20 @@ class PointLabeler:
             with Timer(f"Fetching full mutation log for {self.dvidseg.instance} from {self.dvidseg.uuid} and ancestors", logger):
                 self._mutations = fetch_mutations(*self.dvidseg)
         return self._mutations
+
+    @property
+    def last_mutation(self):
+        if self._last_mutation:
+            return self._last_mutation
+
+        # Look for the last mutation, searching backwards in the DAG until a non-empty UUID is found.
+        last_mutation = {}
+        branch_nodes = fetch_branch_nodes(self.dvidseg.server, self.dvidseg.uuid)
+        for uuid in branch_nodes[::-1]:
+            muts = fetch_mutations(self.dvidseg.server, uuid, self.dvidseg.instance, dag_filter='leaf-only')
+            if len(muts):
+                last_mutation = muts.iloc[-1].to_dict()
+                break
+
+        self._last_mutation = last_mutation
+        return last_mutation
