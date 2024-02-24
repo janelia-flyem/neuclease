@@ -897,6 +897,8 @@ def variable_width_hbar(df, bar_name, bar_width, value, color=None, stackcolors=
     if isinstance(value, str):
         value = [value]
 
+    value = list(value)
+
     def fix_name(col):
         return re.sub(r'[^0-9A-Za-z]', '_', col)
     normalized_value_cols = {v: fix_name(v) for v in value}
