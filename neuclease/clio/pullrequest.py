@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 ASSESSMENT_CATEGORIES = [
     'target',
     'old_target',
+    'already_absorbed_target',
     'mergeable',
     'already_merged',
     'merged_elsewhere',
@@ -104,6 +105,12 @@ def assess_merges(dvid_server, uuid, instance, merges, mutations=None):
         already_merged:
             The merge fragment doesn't exist any more, but it already
             belongs to the caller's intended target body (or updated target body).
+        already_absorbed_target:
+            The fragment still exists, but the target was already merged into it,
+            i.e. in the opposite direction as the requested merge.
+            Similar to 'already_merged', there is nothing to do with this fragment,
+            but it may still end up being the destination (updated target) for other
+            fragments in the mergeset.
         merged_elsewhere:
             The merge fragment doesn't exist any more, and it has
             already been merged to a DIFFERENT body than the caller's
@@ -193,7 +200,7 @@ def assess_merges(dvid_server, uuid, instance, merges, mutations=None):
     def determine_owner(b):
         """
         Use the merge history graph which was obtained from the mutations log (above),
-        to determine the new "owner" of a given body, if it no longer exists.
+        to determine the new "owner" of a given body, if the given body no longer exists.
         """
         if body_df.loc[b, 'exists']:
             g.nodes[b]['owner'] = b
@@ -217,6 +224,7 @@ def assess_merges(dvid_server, uuid, instance, merges, mutations=None):
     for root in merge_roots:
         root_owner = g.nodes[root]['owner']
         if root_owner == root:
+            # Overwrite the assessmemnt IFF it doesn't have one yet.
             # If it has an assessment already (as a fragment in a different merge),
             # then it can't be a target.
             g.nodes[root].setdefault('assessment', 'target')
@@ -228,10 +236,12 @@ def assess_merges(dvid_server, uuid, instance, merges, mutations=None):
             frag_owner = g.nodes[fragment]['owner']
             if root_owner == 0:
                 g.nodes[fragment]['assessment'] = 'unassessed'
-            elif frag_owner == fragment:
-                g.nodes[fragment]['assessment'] = 'mergeable'
+            elif frag_owner == root_owner == fragment:
+                g.nodes[fragment]['assessment'] = 'already_absorbed_target'
             elif frag_owner == root_owner:
                 g.nodes[fragment]['assessment'] = 'already_merged'
+            elif frag_owner == fragment:
+                g.nodes[fragment]['assessment'] = 'mergeable'
             else:
                 # The fragment no longer exists, but its current owner
                 # is not the same as the caller's intended owner.
