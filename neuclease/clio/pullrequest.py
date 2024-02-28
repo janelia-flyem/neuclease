@@ -174,10 +174,15 @@ def assess_merges(dvid_server, uuid, instance, merges, mutations=None):
 
     logger.info("Fetching body annotations")
     ann_df = fetch_body_annotations(dvid_server, uuid, f'{instance}_annotations', all_bodies)
+    for c in ['type', 'instance', 'class']:
+        if c not in ann_df:
+            ann_df[c] = np.nan
+            ann_df[c] = np.nan
+        ann_df.loc[ann_df[c] == "", c] = np.nan
 
     logger.info("Fetching body sizes")
     body_df = fetch_sizes(dvid_server, uuid, instance, all_bodies, processes=16).to_frame()
-    body_df = body_df.merge(ann_df['status'], 'left', left_index=True, right_index=True)
+    body_df = body_df.merge(ann_df[['type', 'instance', 'class', 'status']], 'left', left_index=True, right_index=True)
     body_df['status'] = body_df['status'].fillna('')
     body_df['exists'] = (body_df['size'] != 0)
 
@@ -378,8 +383,29 @@ def extract_and_coerce_mergeable_groups(body_df):
     body_df['status'] = pd.Categorical(body_df['status'], DEFAULT_BODY_STATUS_CATEGORIES, ordered=True)
 
     mergeable_assessments = ('target', 'old_target', 'mergeable')  # noqa
-    mergeable_df = body_df.query('mergeset != -1 and assessment in @mergeable_assessments')
-    mergeable_df = mergeable_df.sort_values(['mergeset', 'status', 'assessment'], ascending=[True, False, True])
+    mergeable_df = body_df.query('mergeset != -1 and assessment in @mergeable_assessments').copy()
+
+    # For the purposes of determining merge direction, we only prioritize
+    # between "good" statuses, not bad ones.
+    assert mergeable_df['status'].dtype == "category"
+    mergeable_df.loc[mergeable_df['status'] < '', 'status'] = ""
+
+    # Sort by: [has_type, has_instance, has_class, status, assessment]
+    sortby = [
+        ('mergeset', True),
+    ]
+    for c in ['type', 'instance', 'class']:
+        if c in mergeable_df.columns:
+            mergeable_df[f'has_{c}'] = mergeable_df[c].notnull()
+            sortby.append((f'has_{c}', False))
+
+    sortby += [
+        ('status', False),
+        ('assessment', True)
+    ]
+    [*by], [*ascending] = zip(*sortby)
+    mergeable_df = mergeable_df.sort_values(by, ascending=ascending)
+    mergeable_df = mergeable_df.drop(columns=['has_type', 'has_instance', 'has_class'], errors='ignore')
 
     mergeable_df['coerced_assessment'] = 'fragment'
     target_rows = mergeable_df.groupby('mergeset').head(1).index
