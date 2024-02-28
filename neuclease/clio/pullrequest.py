@@ -432,10 +432,13 @@ def extract_and_coerce_mergeable_groups(body_df):
     return mergeable_df
 
 
-def apply_merges(dvid_server, uuid, seg_instance, mergeable_df, user):
+def apply_merges_to_owners(dvid_server, uuid, seg_instance, mergeable_df, user):
     """
     Given the output of extract_and_coerce_mergeable_groups(),
     group the bodies by the 'mergeset' column and actually apply the merges to DVID.
+
+    The actual body IDs used in the merge command are taken from the 'owner' column.
+
     Also, delete the entries from the DVID's segmentation_annotations
     instance for all bodies which were merged into something else (and therefore no longer exist).
 
