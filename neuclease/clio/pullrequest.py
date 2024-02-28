@@ -197,6 +197,22 @@ def assess_merges(dvid_server, uuid, instance, merges, mutations=None):
     for target, fragments in merges.items():
         g.add_edges_from((target, f) for f in fragments)
 
+    def break_cycles(g):
+        """
+        Break cycles in a graph by removing an arbitrary edged
+        from each cycle in the graph until no cycles remain.
+
+        Works in-place.
+        """
+        while True:
+            try:
+                cycle = nx.find_cycle(g)
+                g.remove_edge(*cycle[0])
+            except nx.NetworkXNoCycle:
+                break
+
+    break_cycles(g)
+
     double_merged = [n for n, d in g.in_degree() if d > 1]
     assert not double_merged, \
         "Nonsensical input: Some fragments are listed multiple "\
