@@ -586,7 +586,7 @@ def fetch_branches(server, repo_uuid=None, format='list', *, session=None):
         return LeftAligned()(d)
 
 
-def find_branch_nodes(server, repo_uuid=None, branch="", include_ancestors=True, include_descendants=False, *, full_info=False, session=None):
+def find_branch_nodes(server, repo_uuid=None, branch=None, include_ancestors=True, include_descendants=False, *, full_info=False, session=None):
     """
     Find all nodes in the repo which belong to the given branch.
 
@@ -648,6 +648,8 @@ def find_branch_nodes(server, repo_uuid=None, branch="", include_ancestors=True,
         ['Branch', 'Note', 'Log', 'UUID', 'VersionID', 'Locked', 'Parents', 'Children', 'Created', 'Updated']
 
     """
+    assert branch is not None, "You must supply a branch or uuid"
+
     assert branch != "master", \
         ("Don't supply 'master' as the branch name.\n"
          "In DVID, the 'master' branch is identified via an empty string ('').")

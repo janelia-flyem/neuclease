@@ -63,7 +63,8 @@ class PointLabeler:
 
         # Look for the last mutation, searching backwards in the DAG until a non-empty UUID is found.
         last_mutation = {}
-        branch_nodes = fetch_branch_nodes(self.dvidseg.server, self.dvidseg.uuid)
+
+        branch_nodes = fetch_branch_nodes(self.dvidseg.server, self.dvidseg.uuid, self.dvidseg.uuid)
         for uuid in branch_nodes[::-1]:
             muts = fetch_mutations(self.dvidseg.server, uuid, self.dvidseg.instance, dag_filter='leaf-only')
             if len(muts):
