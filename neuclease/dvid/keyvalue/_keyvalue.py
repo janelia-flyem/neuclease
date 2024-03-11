@@ -977,7 +977,7 @@ def delete_sphere_annotations(server, uuid, instance, midpoints, user=None, *, s
 
 
 @dvid_api_wrapper
-def fetch_skeleton(server, uuid, instance, body, format='pandas', *, session=None):
+def fetch_skeleton(server, uuid, instance, body, format='neuprint', *, session=None):
     """
     Convenience function.
     Fetch the skeleton for a given body from a keyvalue instance.
@@ -985,14 +985,16 @@ def fetch_skeleton(server, uuid, instance, body, format='pandas', *, session=Non
 
     Args:
         format:
-            Either 'pandas' or 'swc'
+            Either 'swc', 'pandas', or 'neuprint' (for pandas format with neuprint-style column names)
     """
     assert format in ('pandas', 'swc')
     swc_text = fetch_key(server, uuid, instance, f"{body}_swc", session=session).decode('utf-8')
     if format == 'swc':
         return swc_text
     if format == 'pandas':
-        df = swc_to_dataframe(swc_text)
+        df = swc_to_dataframe(swc_text, neuprint_colnames=False)
+    if format == 'neuprint':
+        df = swc_to_dataframe(swc_text, neuprint_colnames=True)
     return df
 
 
