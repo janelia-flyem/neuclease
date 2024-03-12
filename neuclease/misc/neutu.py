@@ -14,7 +14,7 @@ from neuclease.util import dump_json, iter_batches
 logger = logging.getLogger(__name__)
 
 
-def create_bookmark_files(df, output_dir, prefix='bookmarks-', batch_size=100, default_text=None, grayscale=None, segmentation=None):
+def create_bookmark_files(df, output_dir, prefix='bookmarks-', batch_size=100, default_text=None, grayscale=None, segmentation=None, dvid_src=None, dataset=None, layers=None):
     os.makedirs(output_dir)
     batch_ids = []
     paths = []
@@ -35,11 +35,11 @@ def create_bookmark_files(df, output_dir, prefix='bookmarks-', batch_size=100, d
         paths.append(path)
         counts.append(len(bdf))
         batch_dfs.append(bdf.assign(assignment=i))
-        create_bookmark_file(bdf, path, default_text, grayscale, segmentation)
+        create_bookmark_file(bdf, path, default_text, grayscale, segmentation, dvid_src, dataset, layers)
     return batch_ids, counts, paths, batch_dfs
 
 
-def create_bookmark_file(df, output_path=None, default_text=None, grayscale=None, segmentation=None):
+def create_bookmark_file(df, output_path=None, default_text=None, grayscale=None, segmentation=None, dvid_src=None, dataset=None, layers=None):
     """
     Create a NeuTu bookmark file from a set of points.
 
@@ -111,6 +111,24 @@ def create_bookmark_file(df, output_path=None, default_text=None, grayscale=None
             **contents
         }
 
+    if dvid_src:
+        contents = {
+            "DVID source": dvid_src,
+            **contents
+        }
+
+    if dataset:
+        contents = {
+            "dataset": dataset,
+            **contents
+        }
+
+    if layers:
+        contents = {
+            "layers": layers,
+            **contents
+        }
+
     if output_path:
         dump_json(contents, output_path, unsplit_int_lists=True)
 
@@ -129,7 +147,7 @@ def read_bookmark_points(path):
     del df['location']
     return df
 
-def prepare_bookmark_assignment_setup(df, output_dir, bucket_path, csv_path, prefix='bookmarks-', batch_size=50, default_text=None, grayscale=None, segmentation=None, *, include_bodylist=False):
+def prepare_bookmark_assignment_setup(df, output_dir, bucket_path, csv_path, prefix='bookmarks-', batch_size=50, default_text=None, grayscale=None, segmentation=None, dvid_src=None, dataset=None, layers=None, *, include_bodylist=False):
     """
     This function will help prepare a set of orphan-link (bookmark) assignments.
     Unlike the analogous cleaving setup (below), the resulting spreadsheet
@@ -200,7 +218,7 @@ def prepare_bookmark_assignment_setup(df, output_dir, bucket_path, csv_path, pre
     if not isinstance(df, pd.DataFrame):
         raise NotImplementedError
 
-    batch_ids, counts, output_paths, batch_dfs = create_bookmark_files(df, output_dir, prefix, batch_size, default_text, grayscale, segmentation)
+    batch_ids, counts, output_paths, batch_dfs = create_bookmark_files(df, output_dir, prefix, batch_size, default_text, grayscale, segmentation, dvid_src, dataset, layers)
     tracking_df = pd.DataFrame({
         'assignment': batch_ids,
         'body_count': counts,
