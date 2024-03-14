@@ -967,6 +967,26 @@ def snakecase_to_camelcase(name, check_input=True):
     return ''.join([head, *tail])
 
 
+def camelcase_to_snakecase(name):
+    """
+    Convert a camelCase name to snake_case.
+    Underscores are treated as separators.
+    Numbers are grouped with their preceding letters.
+
+        >>> camelcase_to_snakecase('oneTwo3FourFIVE_SIX_seven_8_nine10Eleven')
+        'one_two3_four_five_six_seven_8_nine10'
+    """
+    word_pattern = (
+        r'[A-Z]*'            # 0 or more consecutive capital
+        r'[^A-Z_]*'          # 0 or more consecutive non-capital, non-underscore
+        r'(?:(?=[A-Z_])|$)'  # followed by either a capital, underscore, or EOS (but don't consume that character).
+    )
+    words = re.findall(word_pattern, name)
+    words = [s.replace('_', '') for s in words]
+    words = filter(None, words)
+    return '_'.join(words).lower()
+
+
 def closest_approach(sv_vol, id_a, id_b, check_present=True):
     """
     Given a segmentation volume and two label IDs which it contains,
