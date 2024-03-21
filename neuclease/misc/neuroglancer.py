@@ -20,7 +20,9 @@ logger = logging.getLogger(__name__)
 
 
 def parse_nglink(link):
-    url_base, pseudo_json = link.split('#!')
+    _, pseudo_json = link.split('#!')
+    if pseudo_json.endswith('.json'):
+        return download_ngstate(pseudo_json)
     pseudo_json = urllib.parse.unquote(pseudo_json)
     data = json.loads(pseudo_json)
     return data
