@@ -1,3 +1,4 @@
+import re
 import os
 import logging
 import threading
@@ -7,6 +8,7 @@ from collections import defaultdict
 from contextlib import contextmanager
 from abc import ABC, abstractmethod
 from multiprocessing import Pool
+from functools import cache
 
 import numpy as np
 import pandas as pd
@@ -29,6 +31,20 @@ def dummy_lock():
     Useful for code that expects a lock, but you don't actually need a lock.
     """
     yield
+
+
+@cache
+def standardize_servername(server):
+    """
+    Given a server name such as 'http://emdata6.int.janelia.org:9000',
+    replace the domain with the fqdn: 'http://e06u33.int.janelia.org:9000'
+    """
+    m = re.match(r'(?P<protocol>https?://)?(?P<domain>[^:]+)(?P<port>:[0-9]+)?', server)
+    protocol = m.group('protocol') or ''
+    domain = m.group('domain') or ''
+    port = m.group('port') or ''
+    fqdn = getfqdn(domain)
+    return f"{protocol}{fqdn}{port}"
 
 
 class LabelmapMergeGraphBase(ABC):
@@ -120,8 +136,7 @@ class LabelmapMergeGraphBase(ABC):
         if logger is None:
             logger = _logger
 
-        domain = server.split('://')[-1]
-        server = server[:-len(domain)] + getfqdn(domain)
+        server = standardize_servername(server)
         repo_uuid = find_repo_root(server, uuid)
 
         # Mutation IDs are unique, even across UUIDs,
