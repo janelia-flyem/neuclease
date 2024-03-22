@@ -131,11 +131,14 @@ class LabelmapMergeGraphBase(ABC):
         mutid = fetch_mutation_id(server, uuid, instance, body_id)
 
         key = (repo_uuid, instance, body_id, mutid)
+
+        logger.info(f"Locking main lock to find key lock: {key}")
         key_lock = self.get_key_lock(*key)
 
         # Use a lock to avoid requesting the supervoxels from DVID in-parallel,
         # in case the user sends several requests at once for the same body,
         # which can happen if they click faster than dvid can respond.
+        logger.info(f"Locking key lock: {key}")
         with key_lock:
             if key in self._perbody_edge_cache:
                 supervoxels, edges, scores = self._perbody_edge_cache[key]
