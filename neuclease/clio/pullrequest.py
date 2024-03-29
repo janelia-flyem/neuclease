@@ -404,20 +404,24 @@ def extract_and_coerce_mergeable_groups(body_df):
     # For the purposes of determining merge direction, we only prioritize
     # between "good" statuses, not bad ones.
     assert mergeable_df['status'].dtype == "category"
-    mergeable_df.loc[mergeable_df['status'] < '', 'status'] = ""
+    mergeable_df.loc[mergeable_df['status'] <= "", 'status'] = np.nan
+
+    # Similarly, we consider the special class 'vnc_tbc' to be equivalent to no class at all.
+    # https://flyem-cns.slack.com/archives/C02QFC68HPX/p1711620475295349?thread_ts=1710953883.337249&cid=C02QFC68HPX
+    mergeable_df.loc[mergeable_df['class'] == 'vnc_tbc', 'class'] = np.nan
 
     # Sort by: [has_type, has_instance, has_class, status, assessment]
     sortby = [
         ('mergeset', True),
     ]
-    for c in ['type', 'instance', 'class']:
+    for c in ['type', 'instance', 'group', 'manc_group', 'class']:
         if c in mergeable_df.columns:
             mergeable_df[f'has_{c}'] = mergeable_df[c].notnull()
             sortby.append((f'has_{c}', False))
 
     sortby += [
         ('status', False),
-        ('assessment', True)
+        ('body', True)
     ]
     [*by], [*ascending] = zip(*sortby)
     mergeable_df = mergeable_df.sort_values(by, ascending=ascending)
