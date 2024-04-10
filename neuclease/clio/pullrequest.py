@@ -333,7 +333,8 @@ def extract_and_coerce_mergeable_groups(body_df):
     in a merge command, and which should be the corresponding fragments.
 
     FIXME:
-        - Why do these example results include bodies which no longer exist?
+        - This example output is outdated. Nowadays this function can't return
+          non-existent fragments in the results.
         - Right now, this ensures that the "best" status is kept, but this
           function should probably just reject merges between traced bodies.
 
@@ -430,6 +431,10 @@ def extract_and_coerce_mergeable_groups(body_df):
     mergeable_df['coerced_assessment'] = 'fragment'
     target_rows = mergeable_df.groupby('mergeset').head(1).index
     mergeable_df.loc[target_rows, 'coerced_assessment'] = 'target'
+
+    # Bodies that don't exist should not be used (unless they were the target, in which case their owner may still exist).
+    mergeable_df = mergeable_df.query('exists or coerced_assessment == "target"')
+    mergeable_df = mergeable_df.loc[mergeable_df.groupby('mergeset').transform('size') > 1].copy()
 
     # Only one target per mergeset
     assert not mergeable_df.query('coerced_assessment == "target"')['mergeset'].duplicated().any()
