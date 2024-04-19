@@ -636,6 +636,7 @@ DEFAULT_BODY_STATUS_CATEGORIES = [
     'Leaves',
     'PRT Orphan',
     'Prelim Roughly traced',
+    'RT Hard to trace',
     'RT Orphan',
     'Roughly traced',
     'Traced in ROI',
