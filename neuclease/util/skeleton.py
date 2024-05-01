@@ -6,8 +6,24 @@ import pandas as pd
 
 def swc_to_dataframe(swc_text, neuprint_colnames=True):
     """
-    Convert the given SWC file text into a pandas DataFrame with columns:
-    ['node', 'kind', 'x', 'y', 'z', 'radius', 'parent']
+    Convert the given SWC file text into a pandas DataFrame.
+
+    Args:
+        swc_text:
+            String or bytes containing the contents of an SWC file.
+
+        neuprint_colnames:
+            If True, emit the same column names used by neuprint-python.
+            Note that the 'kind' column is NOT included in this case:
+
+                ['rowId', 'x', 'y', 'z', 'radius', 'link']
+
+            Otherwise emit the following columns:
+
+                ['node', 'kind', 'x', 'y', 'z', 'radius', 'parent']
+
+    Returns:
+        DataFrame
     """
     if isinstance(swc_text, bytes):
         swc_text = swc_text.decode('utf-8')
@@ -74,6 +90,7 @@ def skeleton_to_neuroglancer(skeleton_df, orig_resolution_nm=8, output_path=None
     as described here:
     https://github.com/google/neuroglancer/blob/master/src/neuroglancer/datasource/precomputed/skeletons.md#encoded-skeleton-file-format
     """
+    skeleton_df = skeleton_df.rename(columns={'rowId': 'node', 'link': 'parent'})
     normalize_skeleton(skeleton_df)
     num_vertices = len(skeleton_df)
     num_edges = skeleton_df.eval('parent != -1').sum()
