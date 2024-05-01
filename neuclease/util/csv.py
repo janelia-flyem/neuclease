@@ -29,7 +29,7 @@ def read_csv_header(csv_path):
             try:
                 int(first_line)
                 has_header = False
-            except:
+            except Exception:
                 has_header = True
         else:
             first_three_lines = ''.join(csv_file.readline() for _ in range(3))

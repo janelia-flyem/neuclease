@@ -19,7 +19,7 @@ def overwrite_subvol(array, box, subarray):
     assert all(b <= s for b,s in zip(box[1], array.shape))
     try:
         array[box_to_slicing(*box)] = subarray
-    except:
+    except Exception:
         assert (subarray.shape == box[1] - box[0]).all(), \
             f"subarray is the wrong shape {subarray.shape} for the given box {box}"
         raise
