@@ -1,10 +1,12 @@
 import re
 import copy
 import getpass
+from functools import partial
 
 import numpy as np
+import pandas as pd
 
-from neuclease.util import upload_to_bucket, dump_json
+from neuclease.util import upload_to_bucket, dump_json, compute_parallel
 from neuclease.util.graph import euclidean_mst
 from neuclease.dvid.labelmap import fetch_sparsevol_coarse
 from neuclease.misc.neuroglancer import download_ngstate, annotation_layer_json
@@ -22,6 +24,14 @@ void main() {
     //setEndpointMarkerBorderColor(defaultColor(), defaultColor());
 }
 """
+
+
+def maxgap_for_bodies(server, uuid, instance, bodies, processes=8):
+    fn = partial(maxgap_for_body, server, uuid, instance)
+    maxgaps = compute_parallel(fn, bodies, processes=processes)
+    bodies = pd.Index(bodies, name='body')
+    maxgaps = pd.Series(index=bodies, data=maxgaps, name='maxgap')
+    return maxgaps
 
 
 def maxgap_for_body(server, uuid, instance, body):
