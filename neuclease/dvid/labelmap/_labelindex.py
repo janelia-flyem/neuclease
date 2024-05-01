@@ -19,7 +19,7 @@ PandasLabelIndex = namedtuple("PandasLabelIndex", "blocks label last_mutid last_
 
 
 @dvid_api_wrapper
-def fetch_labelindex(server, uuid, instance, label, format='protobuf', *, missing='raise', session=None):
+def fetch_labelindex(server, uuid, instance, label, format='protobuf', *, mutid=None, missing='raise', session=None):
     """
     Fetch the LabelIndex for the given label ID from DVID,
     and return it as the native protobuf structure, or as a more-convenient
@@ -47,6 +47,11 @@ def fetch_labelindex(server, uuid, instance, label, format='protobuf', *, missin
 
             The 'pandas' format is slowest, but is most convenient to analyze.
 
+        mutid:
+            If provided, DVID returns the label index prior to completing the given mutation id in the current branch. If
+		    no cached label index is found prior to the given mutation id in the branch of the specified UUID,
+		    a 404 not found is returned.
+
         missing:
             What to do if the label doesn't exist.
             By default, raise an exception, but if 'return-None' is given,
@@ -58,8 +63,13 @@ def fetch_labelindex(server, uuid, instance, label, format='protobuf', *, missin
     assert format in ('protobuf', 'pandas', 'raw')
     assert missing in ('raise', 'return-None')
 
+    if mutid is None:
+        params = None
+    else:
+        params = {'mutid': int(mutid)}
+
     try:
-        r = session.get(f'{server}/api/node/{uuid}/{instance}/index/{label}')
+        r = session.get(f'{server}/api/node/{uuid}/{instance}/index/{label}', params=params)
         r.raise_for_status()
     except HTTPError as ex:
         if ex.response.status_code == 404 and missing == 'return-None':
@@ -351,6 +361,7 @@ def _convert_labelindex_to_pandas(labelindex):
         with the following columns: ['z', 'y', 'x', 'sv', 'count'].
         Note that the block coordinates are given in VOXEL units.
         That is, all coordinates in the table are multiples of 64.
+        (Even though DVID returns scale-6, we multiply by 64 in decode_labelindex_block().)
     """
     encoded_block_coords = np.fromiter(labelindex.blocks.keys(), np.uint64, len(labelindex.blocks))
     coords_zyx = decode_labelindex_blocks(encoded_block_coords)
