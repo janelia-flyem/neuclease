@@ -320,6 +320,19 @@ def create_precomputed_segment_properties(names, bucket_name, bucket_path, local
     """
     Write the "segment properties" for a neuroglancer precomputed volume,
     i.e. the segment names.
+
+    Args:
+        names:
+            dict {label: name}
+        bucket_name:
+            destination bucket
+        bucket_path:
+            Location within bucket
+        localdir:
+            Where to store the files locally
+        volume_info:
+            A copy of the original segmentation's /info file.
+            If not given, it will be fetched.
     """
     if not bucket_name.startswith('gs://'):
         bucket_name = 'gs://' + bucket_name
@@ -386,6 +399,8 @@ def create_legacy_mesh_info(mesh_dir, names=None):
         labels = {int(name): name for name in names}
     else:
         labels = {name: label for name, label in names.items()}
+
+    dump_json({"@type": "neuroglancer_legacy_mesh"}, f"{mesh_dir}/info")
 
     for path in tqdm(sorted(paths)):
         name = os.path.splitext(path)[0].split('/')[-1]
