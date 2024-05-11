@@ -15,7 +15,7 @@ from .. import dvid_api_wrapper
 from .labelops_pb2 import LabelIndex, LabelIndices
 from . import fetch_mapping
 
-PandasLabelIndex = namedtuple("PandasLabelIndex", "blocks label last_mutid last_mod_time last_mod_user")
+PandasLabelIndex = namedtuple("PandasLabelIndex", "blocks label last_mutid last_mod_time last_mod_user surface_mutids")
 
 
 @dvid_api_wrapper
@@ -371,9 +371,11 @@ def _convert_labelindex_to_pandas(labelindex):
     block_coords = []
 
     # Convert each block's data into arrays
+    surface_mutids = []
     for coord_zyx, sv_counts in zip(coords_zyx, labelindex.blocks.values()):
         svs = np.fromiter(sv_counts.counts.keys(), np.uint64, count=len(sv_counts.counts))
         counts = np.fromiter(sv_counts.counts.values(), np.int64, count=len(sv_counts.counts))
+        surface_mutids.append((*coord_zyx, sv_counts.surface_mutid))
 
         coord_zyx = np.array(coord_zyx, np.int32)
         coords = np.repeat(coord_zyx[None], len(svs), axis=0)
@@ -383,6 +385,8 @@ def _convert_labelindex_to_pandas(labelindex):
         block_svs.append(svs)
         block_counts.append(counts)
         block_coords.append(coords)
+
+    surface_mutids = pd.DataFrame(surface_mutids, columns=[*'zyx', 'surface_mutid'], dtype=np.int32)
 
     if len(block_coords) == 0:
         # Before editing this message, see filterwarnings, above.
@@ -403,46 +407,72 @@ def _convert_labelindex_to_pandas(labelindex):
                              labelindex.label,
                              labelindex.last_mutid,
                              labelindex.last_mod_time,
-                             labelindex.last_mod_user )
+                             labelindex.last_mod_user,
+                             surface_mutids )
 
 
 def create_labelindex(pandas_labelindex):
     """
     Create a protobuf LabelIndex structure from a PandasLabelIndex tuple.
-    
-    In the PandasLabelIndex tuple, the ``blocks`` member is a pd.DataFrame 
+
+    In the PandasLabelIndex tuple, the ``blocks`` member is a pd.DataFrame
     with the following columns: ['z', 'y', 'x', 'sv', 'count'].
-    
+
     Note that the block coordinates are given in VOXEL units.
     That is, all coordinates in the table are multiples of 64.
     (The coordinates will be converted to DVID block coordinates here
     when they are encoded into the LabelIndex protobuf structure.)
-    
+
     Args:
         pandas_labelindex:
             Instance of PandasLabelIndex (a namedtuple)
-        
+
     Returns:
         neuclease.dvid.labelmap.labelops_pb2.LabelIndex
         (a protobuf structure), suitable for ``post_labelindex()``
     """
     pli = pandas_labelindex
     assert isinstance(pli, PandasLabelIndex)
+    assert pli.blocks.columns.tolist() == [*'zyx', 'sv', 'count']
+    assert pli.surface_mutids is None or pli.surface_mutids.columns.tolist() == [*'zyx', 'surface_mutid']
+
     labelindex = LabelIndex()
     labelindex.label = pli.label
     labelindex.last_mutid = pli.last_mutid
     labelindex.last_mod_time = pli.last_mod_time
     labelindex.last_mod_user = pli.last_mod_user
-    
-    assert (pli.blocks.columns == ['z', 'y', 'x', 'sv', 'count']).all()
 
-    block_ids = encode_block_coords(pli.blocks[['z', 'y', 'x']].values)
-    pli.blocks['block_id'] = block_ids
-    
-    for block_id, df in pli.blocks.groupby('block_id'):
-        labelindex.blocks[block_id].counts.update( zip(df['sv'].values, df['count'].values) )
-    
-    del pli.blocks['block_id']
+    # Create a DataFrame with one row per block,
+    # aggregating svs and counts into lists.
+    block_ids = encode_block_coords(pli.blocks[[*'zyx']].values)
+    blocks_df = (
+        pli.blocks
+        .assign(block_id=block_ids)
+        .groupby('block_id')
+        [['sv', 'count']]
+        .agg(list)
+        .sort_index()
+    )
+
+    # Merge surface_mutids onto the block_df
+    if (sm := pli.surface_mutids) is None:
+        blocks_df['surface_mutid'] = 0
+    else:
+        assert sm.columns.tolist() == [*'zyx', 'surface_mutid']
+        sm = (
+            sm
+            .assign(block_id=encode_block_coords(sm[[*'zyx']].values))
+            .set_index('block_id')
+            .sort_index()
+            ['surface_mutid']
+        )
+        blocks_df = blocks_df.merge(sm, 'left', on='block_id')
+
+    # Populate every block into the protobuf structure.
+    for t in blocks_df.reset_index().itertuples():
+        labelindex.blocks[t.block_id].counts.update(zip(t.sv, t.count))
+        labelindex.blocks[t.block_id].surface_mutid = t.surface_mutid
+
     return labelindex
 
 

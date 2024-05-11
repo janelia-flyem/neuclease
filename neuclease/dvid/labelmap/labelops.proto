@@ -1,10 +1,25 @@
 syntax = "proto3";
 package proto;
 
+option go_package = "github.com/janelia-flyem/dvid/datatype/common/proto";
+
+message RenumberOp {
+	uint64 mutid = 1;
+	uint64 target = 2;
+	uint64 newlabel = 3;
+}
+
 message MergeOp {
-    uint64 mutid = 1;
-    uint64 target = 2;
-    repeated uint64 merged = 3;
+	uint64 mutid = 1;
+	uint64 target = 2;
+	repeated uint64 merged = 3;
+}
+
+message CleaveOp {
+	uint64 mutid = 1;
+	uint64 target = 2;
+	uint64 cleavedlabel = 3;
+	repeated uint64 cleaved = 4;
 }
 
 message MappingOp {
@@ -14,7 +29,7 @@ message MappingOp {
 }
 
 message MappingOps {
-    repeated MappingOp mappings = 1;
+	repeated MappingOp mappings = 1;
 }
 
 message SplitOp {
@@ -23,6 +38,19 @@ message SplitOp {
     uint64 newlabel = 3;
     bool coarse = 4;  // true if rles are block coords (coarse split), not voxels
     bytes rles = 5;
+	map<uint64, SVSplit> svsplits = 6;
+}
+
+message SVSplit {
+	uint64 splitlabel = 1;
+	uint64 remainlabel = 2;
+}
+
+message SupervoxelSplitOp {
+	uint64 mutid = 1;
+	uint64 supervoxel = 2;
+	uint64 splitlabel = 3;
+	uint64 remainlabel = 4;
 }
 
 message OpCompleted {
@@ -31,32 +59,34 @@ message OpCompleted {
 }
 
 message Affinity {
-    uint64 label1 = 1;
-    uint64 label2 = 2;
-    float value = 3;
+	uint64 label1 = 1;
+	uint64 label2 = 2;
+	float value = 3;
 }
 
 message Affinities {
-    repeated uint64 labels = 1;
-    repeated float affinities = 2;
+	repeated uint64 labels = 1;
+	repeated float affinities = 2;
 }
 
 message AffinityTable {
-    map<uint64, Affinities> table = 1;
+	map<uint64, Affinities> table = 1;
 }
 
 message SVCount {
-    map<uint64, uint32> counts = 1;
+	map<uint64, uint32> counts = 1;
+	uint64 surface_mutid = 2; // mutation id for last surface changes that affect mesh
 }
 
 message LabelIndex {
-    map<uint64, SVCount> blocks = 1;  // key is encoded block coord ZYX (packed little-endian 21-bit numbers where MSB is sign flag)
-    uint64 label = 2;
-    uint64 last_mutid = 3;
-    string last_mod_time = 4;  // string is time in RFC 3339 format
-    string last_mod_user = 5;
+	map<uint64, SVCount> blocks = 1;  // key is encoded block coord ZYX (packed little-endian 21-bit numbers where MSB is sign flag)
+	uint64 label = 2;
+	uint64 last_mutid = 3;
+	string last_mod_time = 4;  // string is time in RFC 3339 format
+	string last_mod_user = 5;
+	string last_mod_app = 6;
 }
 
 message LabelIndices {
-    repeated LabelIndex indices = 1;
+	repeated LabelIndex indices = 1;
 }
