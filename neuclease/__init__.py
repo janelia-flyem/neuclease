@@ -10,6 +10,7 @@ except Exception:
 import inspect
 import logging
 import warnings
+import string
 from functools import wraps
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -57,7 +58,7 @@ class PrefixFilter(logging.Filter):
         from neuclease import PrefixFilter
 
         @PrefixFilter.with_context('howdy_{name}')
-        def howdy(*, name):
+        def howdy(name):
             logger.info(f'howdy {name}')
 
         logger.info("Good Morning!")
@@ -99,24 +100,34 @@ class PrefixFilter(logging.Filter):
             cls.pop()
 
     @classmethod
-    def with_context(cls, s):
+    def with_context(cls, prefix):
         def _decorator(f):
-            argspec = inspect.getfullargspec(f)
-            testargs = {arg: '' for arg in argspec.kwonlyargs}
-            try:
-                s.format(**testargs)
-            except KeyError as ex:
-                msg = (
-                    f"Can't use logging context decorator with prefix '{s}' because "
-                    "it contains a format string identifier which isn't "
-                    "named in the function signature as a keyword-only argument!"
-                )
-                raise RuntimeError(msg) from ex
+            parsed_fmt = string.Formatter().parse(prefix)
+            fmt_fields = {p[1] for p in parsed_fmt if p[1] is not None}
+            has_format_fields = bool(fmt_fields)
+            if has_format_fields:
+                named_fields = {f for f in fmt_fields if f}
+                sig = inspect.signature(f)
+                if (unknown_fields := named_fields - set(sig.parameters)):
+                    msg = (
+                        f"Can't initialize logging context decorator for function '{f.__name__}' "
+                        f"with prefix '{prefix}' because it contains format field(s) which "
+                        f"aren't named in the function signature: {unknown_fields}"
+                    )
+                    raise RuntimeError(msg)
 
             @wraps(f)
             def _f(*args, **kwargs):
-                with PrefixFilter.context(s.format(**kwargs)):
+                if not has_format_fields:
+                    with PrefixFilter.context(prefix):
+                        return f(*args, **kwargs)
+
+                bound = sig.bind(*args, **kwargs)
+                bound.apply_defaults()
+                _prefix = prefix.format(**bound.arguments)
+                with PrefixFilter.context(_prefix):
                     return f(*args, **kwargs)
+
             return _f
         return _decorator
 
