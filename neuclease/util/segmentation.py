@@ -1232,6 +1232,40 @@ def region_boxes(vol):
     return boxes
 
 
+@njit
+def region_centroids(vol):
+    """
+    Return the centroid and size of each object in vol.
+
+    Note:
+        Since the result is indexed by segment ID, this function is only
+        suitable for volumes in which the maximum label ID is relatively low.
+        For instance, if the volume contains labels [1,2,3, int(1e9)],
+        then the result will have length 1e9.
+
+    Args:
+        vol:
+            ndarray, integer dtype and arbitrary dimensionality D
+    Returns:
+        centroids [shape: (N, D)]
+        sizes [shape (N,)]
+        where N is the number of unique label values in the array (including label 0).
+    """
+    N = vol.max()
+
+    sizes = np.zeros(N+1, np.int32)
+    centroids = np.zeros((N+1, vol.ndim), np.float32)
+
+    for idx in np.ndindex(*vol.shape):
+        label = vol[idx]
+        sizes[label] += 1
+        for axis, i in enumerate(idx):
+            centroids[label, axis] += i
+
+    centroids.T[:] /= sizes
+    return centroids, sizes
+
+
 def region_boxes_numpy(vol):
     """
     Same as region_boxes(), but 100x slower.
