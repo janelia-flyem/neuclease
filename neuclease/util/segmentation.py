@@ -529,7 +529,6 @@ def _compute_adjacencies(label_vol, include_zero=False):
     df = pd.DataFrame(all_label_pairs, columns=['label_a', 'label_b'])
     areas = df.groupby(['label_a', 'label_b']).size().rename('edge_area')
     return areas
-    
 
 
 def contingency_table(left_vol, right_vol):
@@ -537,19 +536,30 @@ def contingency_table(left_vol, right_vol):
     Overlay left_vol and right_vol and compute the table of
     overlapping label pairs, along with the size of each overlapping
     region.
-    
+
+    Voxels which are 0 in both images are handled via a special case
+    to optimize the performance of this function when both images
+    are mostly empty.
+
     Args:
         left_vol, right_vol:
             np.ndarrays of equal shape
-    
+
     Returns:
         pd.Series of sizes with a multi-level index (left,right),
         named 'voxel_count'.
     """
     assert left_vol.shape == right_vol.shape
-    df = pd.DataFrame( {"left": left_vol.reshape(-1),
-                        "right": right_vol.reshape(-1)})
-    sizes = df.groupby(['left', 'right'], sort=False).size()
+    mask = np.logical_or(left_vol, right_vol)
+    df = pd.DataFrame( {"left": left_vol[mask],
+                        "right": right_vol[mask]} )
+    sizes = df.value_counts()
+
+    if (both_zero := left_vol.size - mask.sum()):
+        index = pd.MultiIndex.from_tuples([(0,0)], names=['left', 'right'])
+        zero_count = pd.Series([both_zero], index)
+        sizes = pd.concat((zero_count, sizes))
+
     sizes.name = 'voxel_count'
     return sizes
 
