@@ -51,12 +51,13 @@ ASSIGNMENT_EXAMPLE = """\
           "maxvoxel": [3263, 11647, 24191]
         }
       },
+      "extra body IDs": [14152592, 19285647]
     ]
 }
 """
 
 
-def edges_to_assignment(df, gray_source, seg_source, sv_as_body=False, output_path=None, shuffle=False, description=""):
+def edges_to_assignment(df, gray_source, seg_source, sv_as_body=False, output_path=None, shuffle=False, description="", task_type='body merge', dvid_src=None):
     if isinstance(df, str):
         df = pd.read_csv(df)
 
@@ -77,6 +78,9 @@ def edges_to_assignment(df, gray_source, seg_source, sv_as_body=False, output_pa
         if col in df:
             df[col] = df[col].astype(int)
 
+    if 'extra_body_ids' not in df:
+        df['extra_body_ids'] = None
+
     tasks = []
     for row in df.fillna(0.0).itertuples():
 
@@ -90,8 +94,8 @@ def edges_to_assignment(df, gray_source, seg_source, sv_as_body=False, output_pa
             box_a = np.asarray(box_a)
             box_b = np.asarray(box_b)
         except AttributeError:
-            box_a = np.empty((2, 3), dtype=np.float)
-            box_b = np.empty((2, 3), dtype=np.float)
+            box_a = np.empty((2, 3), dtype=np.float32)
+            box_b = np.empty((2, 3), dtype=np.float32)
             box_a[:] = np.nan
             box_b[:] = np.nan
 
@@ -103,8 +107,8 @@ def edges_to_assignment(df, gray_source, seg_source, sv_as_body=False, output_pa
             sv_box_a = np.asarray(sv_box_a)
             sv_box_b = np.asarray(sv_box_b)
         except AttributeError:
-            sv_box_a = np.empty((2, 3), dtype=np.float)
-            sv_box_b = np.empty((2, 3), dtype=np.float)
+            sv_box_a = np.empty((2, 3), dtype=np.float32)
+            sv_box_b = np.empty((2, 3), dtype=np.float32)
             sv_box_a[:] = np.nan
             sv_box_b[:] = np.nan
 
@@ -120,7 +124,7 @@ def edges_to_assignment(df, gray_source, seg_source, sv_as_body=False, output_pa
                 edge_info[col] = df.loc[row.Index, col]
 
         task = {
-            "task type": "body merge",
+            "task type": task_type,
 
             "supervoxel ID 1": row.sv_a,
             "supervoxel ID 2": row.sv_b,
@@ -139,6 +143,9 @@ def edges_to_assignment(df, gray_source, seg_source, sv_as_body=False, output_pa
             "edge_info": edge_info
         }
 
+        if row.extra_body_ids:
+            task['extra body IDs'] = row.extra_body_ids
+
         # Only add the bounding box keys if the box is legit
         # (Apparently the export contains NaNs sometimes and I'm not sure why...)
         if not np.isnan(box_a).any():
@@ -156,11 +163,12 @@ def edges_to_assignment(df, gray_source, seg_source, sv_as_body=False, output_pa
         "file version": 1,
         "grayscale source": gray_source,
         "segmentation source": seg_source,
-        "task list": tasks
     }
-
+    if dvid_src:
+        assignment['DVID source'] = dvid_src
     if description:
         assignment["task set description"] = description
+    assignment['task list'] = tasks
 
     assignment = convert_nans(assignment)
     if output_path:
@@ -169,7 +177,7 @@ def edges_to_assignment(df, gray_source, seg_source, sv_as_body=False, output_pa
     return assignment
 
 
-def edges_to_assignments(df, gray_source, seg_source, sv_as_body=False, batch_size=100, output_path=None, *, shuffle=False, description=""):
+def edges_to_assignments(df, gray_source, seg_source, sv_as_body=False, batch_size=100, output_path=None, *, shuffle=False, description="", task_type='body merge', dvid_src=None):
     if isinstance(df, str):
         df = pd.read_csv(df)
     assert isinstance(df, pd.DataFrame)
@@ -194,7 +202,7 @@ def edges_to_assignments(df, gray_source, seg_source, sv_as_body=False, batch_si
         else:
             batch_path = None
 
-        a = edges_to_assignment(batch_df, gray_source, seg_source, sv_as_body, batch_path, description=description)
+        a = edges_to_assignment(batch_df, gray_source, seg_source, sv_as_body, batch_path, description=description, task_type=task_type, dvid_src=dvid_src)
         assignments.append(a)
 
 
