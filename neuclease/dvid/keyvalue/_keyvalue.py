@@ -362,6 +362,7 @@ def fetch_keyvalues(server, uuid, instance, keys, *, as_json=False, batch_size=N
     assert not check or serialization == 'json', \
         "The 'check' parameter applies only to the 'json' serialization mechanism"
 
+    keys = list(keys)
     keyvalues = {}
     batch_size = batch_size or max(len(keys), 1)
     for start in tqdm_proxy(range(0, len(keys), batch_size), leave=False, disable=(batch_size >= len(keys))):
