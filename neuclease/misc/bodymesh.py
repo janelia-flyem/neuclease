@@ -25,8 +25,9 @@ from neuclease.dvid.rle import blockwise_masks_from_ranges
 
 logger = logging.getLogger(__name__)
 
-SV_MESH_SCALE = 1
+SV_MESH_SCALE = 2
 SV_MESH_GRID_S0 = 512
+SV_MESH_DECIMATION_S0 = 0.004
 
 # from collections import namedtuple
 # MeshInstances = namedtuple('MeshInstances', 'body_meshes sv_meshes chunk_meshes mesh_info ')
@@ -44,36 +45,56 @@ BodyMeshParametersSchema = {
     "default": {},
     "additionalProperties": False,
     "properties": {
-        "smoothing": {
-            "description": "How many iterations of smoothing to apply to each mesh before decimation.",
-            "type": "integer",
-            "default": 0
-        },
-        "decimation": {
-            "description":
-                "Additional decimation to apply to the mesh once it has been assembled\n"
-                "from component meshes (either supervoxel meshes or chunk meshes).\n"
-                "To forego additional decimation, use 1.0 -- but see the 'max-vertices' setting.\n",
-            "type": "number",
-            "exclusiveMinimum": 0.0,
-            "maximum": 1.0,  # 1.0 == disable
-            "default": 1.0
-        },
-        "max-vertices": {
-            "description":
-                "If necessary, decimate the mesh even further to avoid "
-                "exceeding this maximum vertex count.\n",
-            "type": "number",
-            "minimum": 0,
-            "default": 0  # no max
-        },
         "source-method": {
             "description":
                 "Body meshes can be constructed by assembling supervoxel meshes or chunk meshes.\n"
                 "This setting specifies which method to use for generating/retrieving the component meshes.\n",
             "type": "string",
             "default": ""
-        }
+        },
+        "smoothing": {
+            "description": "How many iterations of smoothing to apply to each mesh before decimation.",
+            "type": "integer",
+            "default": 0
+        },
+        "small-body-overall-decimation-s0": {
+            "description": "Small-enough bodies will be decimated with this setting.",
+            "type": "number",
+            "exclusiveMinimum": 0.0,
+            "maximum": 1.0,
+            "default": 0.01
+        },
+        "small-body-cutoff-vertices-s0": {
+            "description":
+                "Defines what counts as a 'small' body, according to the (approximate)\n"
+                "vertex count bodies would have if they were meshed at scale 0.\n"
+                "Bodies smaller than this will always be decimated at the least severe decimation setting,\n"
+                "as specified via small-body-overall-decimation-s0, while bodies larger than this will\n"
+                "be decimated more severely.",
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "default": 20e6
+        },
+        "large-body-overall-decimation-s0": {
+            "description":
+                "Large bodies will be decimated with this setting.\n"
+                "This is the most severe decimation we are willing to apply to any body,\n"
+                "even though very large bodies could end up with heavy mesh files.\n",
+            "type": "number",
+            "exclusiveMinimum": 0.0,
+            "maximum": 1.0,
+            "default": 0.0005
+        },
+        "large-body-cutoff-vertices-s0": {
+            "description":
+                "Defines what counts as a 'large' body, according to the (approximate)\n"
+                "vertex count bodies would have if they were meshed at scale 0.\n"
+                "Bodies smaller than this will be less severely decimated.\n"
+                "Bodies larger than this will be decimated at the maximum allowed level, as configured in large-body-overall-decimation-s0\n",
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "default": 200e6
+        },
     }
 }
 
@@ -267,7 +288,7 @@ def create_and_upload_missing_supervoxel_meshes(server, uuid, seg_instance, body
 
     logger.info(f"Creating supervoxel meshes for {len(missing)} missing supervoxel(s).")
     for sv in missing:
-        mesh = create_supervoxel_mesh(server, uuid, seg, sv)
+        mesh = create_supervoxel_mesh(server, uuid, seg, sv, decimation_s0=SV_MESH_DECIMATION_S0)
         if mesh is None:
             # By our convention, objects that were too small to
             # create meshes for are given an empty file in DVID.
@@ -309,7 +330,7 @@ def create_supervoxel_mesh(server, uuid, seg_instance, sv, smoothing=3, decimati
 
 
 @PrefixFilter.with_context("Body {body}")
-def update_body_mesh_from_supervoxels(server, uuid, seg_instance, body, mesh_params):
+def update_body_mesh_from_supervoxels(server, uuid, seg_instance, body, body_mesh_config):
     seg = seg_instance
     uuid = resolve_ref(server, uuid, True)
     lastmod = fetch_lastmod(server, uuid, seg, body)['mutation id']
@@ -325,34 +346,38 @@ def update_body_mesh_from_supervoxels(server, uuid, seg_instance, body, mesh_par
     rescale = fetch_resolution_zyx(server, uuid, seg)
     mesh.vertices_zyx *= rescale
 
-    fraction = mesh_params['decimation']
-    max_vertices = mesh_params['max-vertices']
-    fraction = min(fraction, max_vertices / len(mesh.vertices_zyx))
+    orig_vertices = len(mesh.vertices_zyx)
+    decimation_s0, decimation = select_body_decimation(
+        SV_MESH_DECIMATION_S0,
+        orig_vertices,
+        body_mesh_config
+    )
 
     mesh_mb = mesh.uncompressed_size() / 1e6
-    orig_vertices = len(mesh.vertices_zyx)
     logger.info(f"Original mesh has {orig_vertices} vertices and {len(mesh.faces)} faces ({mesh_mb:.1f} MB)")
 
-    fraction = min(fraction, max_vertices / len(mesh.vertices_zyx))
-    with Timer(f"Decimating at {fraction}", logger):
-        mesh.simplify_openmesh(fraction)
+    with Timer(f"Decimating at {decimation}", logger) as dec_timer:
+        mesh.simplify_openmesh(decimation)
 
     mesh_mb = mesh.uncompressed_size() / 1e6
     logger.info(f"Final mesh has {len(mesh.vertices_zyx)} vertices and {len(mesh.faces)} faces ({mesh_mb:.1f} MB)")
 
     with Timer("Uploading mesh", logger):
-        post_key(server, uuid, f"{seg}_meshes", f"{body}.ngmesh", mesh.serialize(fmt='ngmesh'))
+        mesh_bytes = mesh.serialize(fmt='ngmesh')
+        post_key(server, uuid, f"{seg}_meshes", f"{body}.ngmesh", mesh_bytes)
 
     mesh_info = {
         "body": int(body),
         "uuid": uuid,
         "lastmod": lastmod,
-        "mesh-timestamp": str(datetime.datetime.now(ZoneInfo("US/Eastern"))),
         "method": "concatenated-supervoxels",
-        "extra-decimation": fraction,
-        "vertices": len(mesh.vertices_zyx),
-        "max-vertices": max_vertices,
-        "vertex-count": len(mesh.vertices_zyx)
+        "mesh-timestamp": str(datetime.datetime.now(ZoneInfo("US/Eastern"))),
+        "mesh-bytes": len(mesh_bytes),
+        "supervoxel-vertex-total": orig_vertices,
+        "target-body-decimation-s0": decimation_s0,
+        "applied-body-decimation": decimation,
+        "applied-body-decimation-seconds": dec_timer.seconds,
+        "final-body-vertex-count": len(mesh.vertices_zyx)
     }
     post_key(server, uuid, f"{seg}_mesh_info", body, json=mesh_info)
 
@@ -360,6 +385,30 @@ def update_body_mesh_from_supervoxels(server, uuid, seg_instance, body, mesh_par
 @cache
 def fetch_resolution_zyx(server, uuid, seg_instance):
     return fetch_instance_info(server, uuid, seg_instance)['Extended']['VoxelSize'][::-1]
+
+
+def select_body_decimation(chunk_decimation_s0, chunk_total_vertices, body_mesh_config):
+    s0_vertices = chunk_total_vertices / chunk_decimation_s0
+
+    small_cutoff_vertices = body_mesh_config['small-body-cutoff-vertices-s0']
+    small_decimation = body_mesh_config['small-body-overall-decimation-s0']
+    large_cutoff_vertices = body_mesh_config['large-body-cutoff-vertices-s0']
+    large_decimation = body_mesh_config['large-body-overall-decimation-s0']
+
+    # Determine how much decimation to aim for by interpolating between small/large mesh decimation settings.
+    target_decimation_s0 = np.interp(
+        s0_vertices,
+        [small_cutoff_vertices, large_cutoff_vertices],
+        [small_decimation, large_decimation]
+    )
+
+    # We're aiming for that level of decimation overall, but some of that decimation
+    # has already been achieved due to the chunks being fetched at low resolution
+    # and then pre-decimated somewhat.  How much further decimation do we need to
+    # apply to hit our target?
+    remaining_needed_decimation = (target_decimation_s0 / chunk_decimation_s0)
+    remaining_needed_decimation = min(1.0, remaining_needed_decimation)
+    return target_decimation_s0, remaining_needed_decimation
 
 
 CHUNK_KEY_FMT = "{config_name}-{body}-{chunk_id}-{mesh_mutid}-{quality}"
@@ -382,8 +431,8 @@ def update_body_mesh_from_chunks(server, uuid, seg_instance, body, body_mesh_con
     chunk_df = pli.surface_mutids.copy()
     chunk_df[[*'zyx']] //= chunk_shape_s0
     chunk_df[[*'zyx']] *= chunk_shape_s0
-    chunk_mutids = chunk_df.groupby([*'zyx'])['surface_mutid'].max()
-    if (chunk_mutids == 0).any():
+    chunk_df = chunk_df.groupby([*'zyx'])['surface_mutid'].max().reset_index()
+    if (chunk_df['surface_mutid'] == 0).any():
         # Any missing surface_mutids will be replaced with the lastmod in the BASE uuid.
         # It is assumed that any chunks that ARE present in the chunk store are at least
         # up-to-date with the base uuid.
@@ -391,26 +440,30 @@ def update_body_mesh_from_chunks(server, uuid, seg_instance, body, body_mesh_con
         # it was turned on immediately after locking the base_uuid, so all mutations
         # since then are captured by surface_mutid.
         base_mutid = fetch_lastmod(server, base_uuid, seg, body)['mutation id']
-        chunk_mutids[chunk_mutids == 0] = base_mutid
+        chunk_df.loc[chunk_df['surface_mutid'] == 0, 'surface_mutid'] = base_mutid
 
-    # Fetch all chunk meshes this body has
     config_name = chunk_config['config-name']
+
+    # Fetch all chunk mesh keys this body has
     key_df = fetch_stored_chunk_keys(server, uuid, seg_instance, config_name, body)
 
-    recent_key_df = key_df.sort_values('mesh_mutid').drop_duplicates([*'xyz'], keep='last')
-    recent_chunk_df = chunk_mutids.reset_index().merge(recent_key_df, 'left', on=[*'xyz'])
-    recent_chunk_df['mesh_mutid'] = recent_chunk_df['mesh_mutid'].fillna(0).astype(int)
+    # Drop all but the most recent key for each chunk
+    key_df = key_df.sort_values('mesh_mutid').drop_duplicates([*'xyz'], keep='last')
 
-    quality_names = [qc['name'] for qc in chunk_config['quality-configs']]
-    for quality in quality_names:
+    # Append mesh_mutid column
+    chunk_df = chunk_df.merge(key_df, 'left', on=[*'xyz'])
+    chunk_df['mesh_mutid'] = chunk_df['mesh_mutid'].fillna(0).astype(int)
+
+    quality_configs = {qc['name']: qc for qc in chunk_config['quality-configs']}
+    for quality, quality_config in quality_configs.items():
         # TODO: What, if anything, will I do with the other chunk qualities?
         if body_mesh_config['source-method'] != f"concatenated-chunks-{config_name}-{quality}":
             continue
 
         # Select chunks which are out-of-date or not of the desired quality.
-        missing = recent_chunk_df.eval('mesh_mutid < surface_mutid or quality != @quality')
-        missing_chunk_df = recent_chunk_df.loc[missing]
-        stored_chunk_df = recent_chunk_df.loc[~missing]
+        missing = chunk_df.eval('mesh_mutid < surface_mutid or quality != @quality')
+        missing_chunk_df = chunk_df.loc[missing]
+        stored_chunk_df = chunk_df.loc[~missing]
 
         fn = partial(mesh_for_chunk, server, uuid, seg, body, lastmod, chunk_config, quality, True)
         with Timer(f"Generating {len(missing_chunk_df)} missing chunks", logger):
@@ -425,7 +478,8 @@ def update_body_mesh_from_chunks(server, uuid, seg_instance, body, body_mesh_con
             body_mesh = Mesh.concatenate_meshes(chain(new_chunk_meshes, stored_chunk_meshes))
 
         mesh_mb = body_mesh.uncompressed_size() / 1e6
-        logger.info(f"Original mesh has {len(body_mesh.vertices_zyx)} vertices and {len(body_mesh.faces)} faces ({mesh_mb:.1f} MB)")
+        orig_vertices = len(body_mesh.vertices_zyx)
+        logger.info(f"Original mesh has {orig_vertices} vertices and {len(body_mesh.faces)} faces ({mesh_mb:.1f} MB)")
 
         if (smoothing := body_mesh_config['smoothing']):
             with Timer(f"Smoothing body mesh with {smoothing} iterations", logger):
@@ -435,26 +489,34 @@ def update_body_mesh_from_chunks(server, uuid, seg_instance, body, body_mesh_con
         rescale = fetch_resolution_zyx(server, uuid, seg)
         body_mesh.vertices_zyx *= rescale
 
-        fraction = body_mesh_config['decimation']
-        max_vertices = body_mesh_config['max-vertices']
-        fraction = min(fraction, max_vertices / len(body_mesh.vertices_zyx))
-        if fraction <= 1.0:
-            with Timer(f"Decimating body mesh with {fraction}", logger):
-                body_mesh.simplify_openmesh(fraction)
+        target_decimation_s0, decimation = select_body_decimation(
+            quality_config['decimation-s0'],
+            orig_vertices,
+            body_mesh_config
+        )
+
+        if decimation <= 1.0:
+            with Timer(f"Decimating body mesh with {decimation}", logger) as dec_timer:
+                body_mesh.simplify_openmesh(decimation)
 
         with Timer(f"Storing body mesh: {body}.ngmesh", logger):
-            post_key(server, uuid, f"{seg}_meshes", f"{body}.ngmesh", body_mesh.serialize(fmt='ngmesh'))
+            mesh_bytes = body_mesh.serialize(fmt='ngmesh')
+            post_key(server, uuid, f"{seg}_meshes", f"{body}.ngmesh", mesh_bytes)
 
         mesh_info = {
             "body": int(body),
             "uuid": uuid,
             "lastmod": lastmod,
-            "mesh-timestamp": str(datetime.datetime.now(ZoneInfo("US/Eastern"))),
             "method": f"concatenated-chunks-{config_name}-{quality}",
-            "vertices": len(body_mesh.vertices_zyx),
-            "max-vertices": max_vertices,
-            "body-decimation": fraction,
-            "vertex-count": len(body_mesh.vertices_zyx)
+            "mesh-timestamp": str(datetime.datetime.now(ZoneInfo("US/Eastern"))),
+            "mesh-bytes": len(mesh_bytes),
+            "chunk-quality": quality,
+            "chunk-count": len(chunk_df),
+            "chunk-vertex-total": orig_vertices,
+            "target-body-decimation-s0": target_decimation_s0,
+            "applied-body-decimation": decimation,
+            "applied-body-decimation-seconds": dec_timer.seconds,
+            "final-body-vertex-count": len(body_mesh.vertices_zyx),
         }
         post_key(server, uuid, f"{seg}_mesh_info", body, json=mesh_info)
 
@@ -561,10 +623,12 @@ def main_debug():
     init_mesh_instances(*cns_test_seg)
 
     body_mesh_config = {
+        "source-method": "concatenated-chunks-1k_7020-dec005_from_s2",
         "smoothing": 0,
-        "decimation": 0.25,  # 4x beyond the chunk 0.02 == 0.005 overall decimation
-        "max-vertices": 200e3,
-        "source-method": "concatenated-chunks-1k_7020-dec02_from_s2"
+        "small-body-overall-decimation-s0": 0.01,
+        "large-body-overall-decimation-s0": 0.001,
+        "small-body-cutoff-vertices-s0": 10e6,
+        "large-body-cutoff-vertices-s0": 100e6,
     }
 
     chunk_config = {
@@ -574,16 +638,16 @@ def main_debug():
         "chunk-halo": 2,
         "quality-configs": [
             {
-                "name": "dec02_from_s2",
+                "name": "dec005_from_s2",
                 "source-scale": 2,
                 "smoothing": 3,
-                "decimation-s0": 0.02,
+                "decimation-s0": 0.005,
             }
         ]
     }
 
     body = 11005
-    update_body_mesh(*cns_test_seg, body, body_mesh_config, chunk_config, force=True, processes=0)
+    update_body_mesh(*cns_test_seg, body, body_mesh_config, chunk_config, force=True, processes=8)
 
 
 if __name__ == "__main__":
