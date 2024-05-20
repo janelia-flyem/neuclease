@@ -90,7 +90,8 @@ BodyMeshParametersSchema = {
                 "Defines what counts as a 'large' body, according to the (approximate)\n"
                 "vertex count bodies would have if they were meshed at scale 0.\n"
                 "Bodies smaller than this will be less severely decimated.\n"
-                "Bodies larger than this will be decimated at the maximum allowed level, as configured in large-body-overall-decimation-s0\n",
+                "Bodies larger than this will be decimated at the maximum allowed level,\n"
+                "as configured in large-body-overall-decimation-s0\n",
             "type": "number",
             "exclusiveMinimum": 0,
             "default": 200e6
@@ -210,9 +211,6 @@ def init_mesh_instances(server, uuid, seg_instance):
 
 
 def update_body_mesh(server, uuid, seg_instance, body, body_mesh_config, chunk_config, force=False, processes=0):
-    """
-    FIXME: This should give an option for how (from supervoxels or from chunks).
-    """
     seg = seg_instance
     uuid = resolve_ref(server, uuid, True)
     validate(body_mesh_config, BodyMeshParametersSchema, inject_defaults=True)
@@ -420,18 +418,50 @@ def update_body_mesh_from_chunks(server, uuid, seg_instance, body, body_mesh_con
     if '-' in (name := chunk_config['config-name']) or name == "":
         raise RuntimeError(f"Invalid chunk config-name name: {name}")
 
+    seg = seg_instance
+    uuid = resolve_ref(server, uuid, True)
+    chunk_df = _chunk_table(server, uuid, seg_instance, body, chunk_config)
+    config_name = chunk_config['config-name']
+
+    quality_names = {qc['name'] for qc in chunk_config['quality-configs']}
+    for quality in quality_names:
+        if body_mesh_config['source-method'] != f"concatenated-chunks-{config_name}-{quality}":
+            # TODO: What, if anything, will I do with the other chunk qualities?
+            continue
+
+        mesh_bytes, mesh_info = _generate_body_mesh(
+            server, uuid, seg_instance,
+            body,
+            chunk_df,
+            body_mesh_config,
+            chunk_config,
+            quality,
+            processes
+        )
+
+        with Timer(f"Storing body mesh: {body}.ngmesh", logger):
+            post_key(server, uuid, f"{seg}_meshes", f"{body}.ngmesh", mesh_bytes)
+            post_key(server, uuid, f"{seg}_mesh_info", body, json=mesh_info)
+
+
+def _chunk_table(server, uuid, seg_instance, body, chunk_config):
+    """
+    Return a table with a row for each chunk in the given body.
+    For chunks with a stored mesh in DVID, their properties are included as columns.
+    (Only the most recent stored mesh for each chunk in the UUID listed, ignoring older ones.)
+    For chunks in the body which lack a stored mesh, those property columns are NaN.
+
+    Returns:
+        DataFrame
+    """
     chunk_shape_s0 = chunk_config['chunk-shape-s0']
     base_uuid = resolve_ref(server, chunk_config['base-uuid'], True)
 
-    seg = seg_instance
-    uuid = resolve_ref(server, uuid, True)
-    lastmod = fetch_lastmod(server, uuid, seg, body)['mutation id']
-
-    pli = fetch_labelindex(server, uuid, seg, body, format='pandas')
+    pli = fetch_labelindex(server, uuid, seg_instance, body, format='pandas')
     chunk_df = pli.surface_mutids.copy()
-    chunk_df[[*'zyx']] //= chunk_shape_s0
-    chunk_df[[*'zyx']] *= chunk_shape_s0
-    chunk_df = chunk_df.groupby([*'zyx'])['surface_mutid'].max().reset_index()
+    chunk_df[[*'xyz']] //= chunk_shape_s0
+    chunk_df[[*'xyz']] *= chunk_shape_s0
+    chunk_df = chunk_df.groupby([*'xyz'])['surface_mutid'].max().reset_index()
     if (chunk_df['surface_mutid'] == 0).any():
         # Any missing surface_mutids will be replaced with the lastmod in the BASE uuid.
         # It is assumed that any chunks that ARE present in the chunk store are at least
@@ -439,13 +469,11 @@ def update_body_mesh_from_chunks(server, uuid, seg_instance, body, body_mesh_con
         # And although we did not enable the surface_mutid feature until recently,
         # it was turned on immediately after locking the base_uuid, so all mutations
         # since then are captured by surface_mutid.
-        base_mutid = fetch_lastmod(server, base_uuid, seg, body)['mutation id']
+        base_mutid = fetch_lastmod(server, base_uuid, seg_instance, body)['mutation id']
         chunk_df.loc[chunk_df['surface_mutid'] == 0, 'surface_mutid'] = base_mutid
 
-    config_name = chunk_config['config-name']
-
     # Fetch all chunk mesh keys this body has
-    key_df = fetch_stored_chunk_keys(server, uuid, seg_instance, config_name, body)
+    key_df = fetch_stored_chunk_keys(server, uuid, seg_instance, chunk_config['config-name'], body)
 
     # Drop all but the most recent key for each chunk
     key_df = key_df.sort_values('mesh_mutid').drop_duplicates([*'xyz'], keep='last')
@@ -453,75 +481,21 @@ def update_body_mesh_from_chunks(server, uuid, seg_instance, body, body_mesh_con
     # Append mesh_mutid column
     chunk_df = chunk_df.merge(key_df, 'left', on=[*'xyz'])
     chunk_df['mesh_mutid'] = chunk_df['mesh_mutid'].fillna(0).astype(int)
-
-    quality_configs = {qc['name']: qc for qc in chunk_config['quality-configs']}
-    for quality, quality_config in quality_configs.items():
-        # TODO: What, if anything, will I do with the other chunk qualities?
-        if body_mesh_config['source-method'] != f"concatenated-chunks-{config_name}-{quality}":
-            continue
-
-        # Select chunks which are out-of-date or not of the desired quality.
-        missing = chunk_df.eval('mesh_mutid < surface_mutid or quality != @quality')
-        missing_chunk_df = chunk_df.loc[missing]
-        stored_chunk_df = chunk_df.loc[~missing]
-
-        fn = partial(mesh_for_chunk, server, uuid, seg, body, lastmod, chunk_config, quality, True)
-        with Timer(f"Generating {len(missing_chunk_df)} missing chunks", logger):
-            new_chunk_meshes = compute_parallel(
-                fn, missing_chunk_df[[*'zyx']].values, processes=processes)
-
-        with Timer(f"Fetching {len(stored_chunk_df)} stored chunks", logger):
-            stored_chunk_mesh_bytes = fetch_keyvalues(server, uuid, f"{seg}_chunk_meshes", stored_chunk_df['key'].values, batch_size=10)
-
-        with Timer("Combining chunks...", logger):
-            stored_chunk_meshes = (Mesh.from_buffer(b, 'ngmesh') for b in stored_chunk_mesh_bytes.values())
-            body_mesh = Mesh.concatenate_meshes(chain(new_chunk_meshes, stored_chunk_meshes))
-
-        mesh_mb = body_mesh.uncompressed_size() / 1e6
-        orig_vertices = len(body_mesh.vertices_zyx)
-        logger.info(f"Original mesh has {orig_vertices} vertices and {len(body_mesh.faces)} faces ({mesh_mb:.1f} MB)")
-
-        if (smoothing := body_mesh_config['smoothing']):
-            with Timer(f"Smoothing body mesh with {smoothing} iterations", logger):
-                body_mesh.laplacian_smooth(smoothing)
-
-        # neuroglancer meshes must be written in nanometer units.
-        rescale = fetch_resolution_zyx(server, uuid, seg)
-        body_mesh.vertices_zyx *= rescale
-
-        target_decimation_s0, decimation = select_body_decimation(
-            quality_config['decimation-s0'],
-            orig_vertices,
-            body_mesh_config
-        )
-
-        if decimation <= 1.0:
-            with Timer(f"Decimating body mesh with {decimation}", logger) as dec_timer:
-                body_mesh.simplify_openmesh(decimation)
-
-        with Timer(f"Storing body mesh: {body}.ngmesh", logger):
-            mesh_bytes = body_mesh.serialize(fmt='ngmesh')
-            post_key(server, uuid, f"{seg}_meshes", f"{body}.ngmesh", mesh_bytes)
-
-        mesh_info = {
-            "body": int(body),
-            "uuid": uuid,
-            "lastmod": lastmod,
-            "method": f"concatenated-chunks-{config_name}-{quality}",
-            "mesh-timestamp": str(datetime.datetime.now(ZoneInfo("US/Eastern"))),
-            "mesh-bytes": len(mesh_bytes),
-            "chunk-quality": quality,
-            "chunk-count": len(chunk_df),
-            "chunk-vertex-total": orig_vertices,
-            "target-body-decimation-s0": target_decimation_s0,
-            "applied-body-decimation": decimation,
-            "applied-body-decimation-seconds": dec_timer.seconds,
-            "final-body-vertex-count": len(body_mesh.vertices_zyx),
-        }
-        post_key(server, uuid, f"{seg}_mesh_info", body, json=mesh_info)
+    return chunk_df
 
 
 def fetch_stored_chunk_keys(server, uuid, seg_instance, config_name=None, body=None):
+    """
+    Fetch the list of all mesh chunk keys in the database for the given segmentation,
+    optionally limited to particular chunk configuration prefix, or further limited
+    to a specific body under that prefix.
+
+    The keys are parsed into their components (config_name, body, chunk_id, mesh_mutid, quality),
+    and the chunk_id is parsed into x,y,z columns.
+
+    Returns:
+        DataFrame
+    """
     seg = seg_instance
     if seg.endswith('_chunk_meshes'):
         seg = seg[:-len('_chunk_meshes')]
@@ -548,6 +522,72 @@ def fetch_stored_chunk_keys(server, uuid, seg_instance, config_name=None, body=N
     key_df = key_df.astype({'body': np.uint64, 'mesh_mutid': int})
     key_df[[*'zyx']] = parse_chunk_ids(key_df['chunk_id'])
     return key_df
+
+
+def _generate_body_mesh(server, uuid, seg_instance, body, chunk_df, body_mesh_config, chunk_config, quality, processes):
+    seg = seg_instance
+    lastmod = fetch_lastmod(server, uuid, seg, body)['mutation id']
+
+    quality_configs = {qc['name']: qc for qc in chunk_config['quality-configs']}
+    quality_config = quality_configs[quality]
+
+    # Select chunks which are out-of-date or not of the desired quality.
+    missing = chunk_df.eval('mesh_mutid < surface_mutid or quality != @quality')
+    missing_chunk_df = chunk_df.loc[missing]
+    stored_chunk_df = chunk_df.loc[~missing]
+
+    with Timer(f"Generating {len(missing_chunk_df)} missing chunks", logger):
+        fn = partial(mesh_for_chunk, server, uuid, seg, body, lastmod, chunk_config, quality, True)
+        new_chunk_meshes = compute_parallel(fn, missing_chunk_df[[*'zyx']].values, processes=processes)
+
+    with Timer(f"Fetching {len(stored_chunk_df)} stored chunks", logger):
+        stored_chunk_mesh_bytes = fetch_keyvalues(server, uuid, f"{seg}_chunk_meshes", stored_chunk_df['key'].values, batch_size=10)
+
+    with Timer("Combining chunks...", logger):
+        stored_chunk_meshes = (Mesh.from_buffer(b, 'ngmesh') for b in stored_chunk_mesh_bytes.values())
+        body_mesh = Mesh.concatenate_meshes(chain(new_chunk_meshes, stored_chunk_meshes), keep_normals=False)
+
+    if (smoothing := body_mesh_config['smoothing']):
+        with Timer(f"Smoothing body mesh with {smoothing} iterations", logger):
+            body_mesh.laplacian_smooth(smoothing)
+
+    # neuroglancer meshes must be written in nanometer units.
+    rescale = fetch_resolution_zyx(server, uuid, seg)
+    body_mesh.vertices_zyx *= rescale
+
+    mesh_mb = body_mesh.uncompressed_size() / 1e6
+    orig_vertices = len(body_mesh.vertices_zyx)
+    logger.info(f"Original mesh has {orig_vertices} vertices and {len(body_mesh.faces)} faces ({mesh_mb:.1f} MB)")
+
+    target_decimation_s0, decimation = select_body_decimation(
+        quality_config['decimation-s0'],
+        orig_vertices,
+        body_mesh_config,
+    )
+
+    if decimation <= 1.0:
+        with Timer(f"Decimating body mesh with {decimation}", logger) as dec_timer:
+            body_mesh.simplify_openmesh(decimation)
+
+    mesh_bytes = body_mesh.serialize(fmt='ngmesh')
+    config_name = chunk_config['config-name']
+
+    mesh_info = {
+        "body": int(body),
+        "uuid": uuid,
+        "lastmod": lastmod,
+        "method": f"concatenated-chunks-{config_name}-{quality}",
+        "mesh-timestamp": str(datetime.datetime.now(ZoneInfo("US/Eastern"))),
+        "mesh-bytes": len(mesh_bytes),
+        "chunk-quality": quality,
+        "chunk-count": len(chunk_df),
+        "chunk-vertex-total": orig_vertices,
+        "target-body-decimation-s0": target_decimation_s0,
+        "applied-body-decimation": decimation,
+        "applied-body-decimation-seconds": dec_timer.seconds,
+        "final-body-vertex-count": len(body_mesh.vertices_zyx),
+    }
+    return mesh_bytes, mesh_info
 
 
 def mesh_for_chunk(server, uuid, seg_instance, body, lastmod, chunk_config, quality, store, chunk_zyx):
