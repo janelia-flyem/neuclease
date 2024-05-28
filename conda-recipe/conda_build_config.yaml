@@ -5,7 +5,7 @@
 # https://docs.conda.io/projects/conda-build/en/latest/resources/variants.html
 
 python:
-  - 3.10
+  - 3.12
 
 pin_run_as_build:
   python: x.x
