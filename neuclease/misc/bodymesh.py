@@ -188,26 +188,26 @@ MeshChunkConfigSchema = {
 }
 
 
-def init_mesh_instances(server, uuid, seg_instance):
+def init_mesh_instances(server, uuid, seg_instance, body=True, chunks=True, sv=True):
     uuid = resolve_ref(server, uuid, True)
     seg = seg_instance
     repo_instances = fetch_repo_instances(server, uuid)
 
-    if f"{seg}_meshes" not in repo_instances:
+    if body and f"{seg}_meshes" not in repo_instances:
         logger.info(f"Creating DVID instance: {seg}_meshes")
         create_instance(server, uuid, f"{seg}_meshes", 'keyvalue', {'type': 'meshes'})
 
-    if f"{seg}_mesh_info" not in repo_instances:
+    if body and f"{seg}_mesh_info" not in repo_instances:
         logger.info(f"Creating DVID instance: {seg}_mesh_info")
         create_instance(server, uuid, f"{seg}_mesh_info", 'keyvalue')
 
-    if f"{seg}_sv_meshes" not in repo_instances:
-        logger.info(f"Creating DVID instance: {seg}_sv_meshes")
-        create_tarsupervoxel_instance(server, uuid, f"{seg}_sv_meshes", seg, 'drc', {'type': 'meshes'})
-
-    if f"{seg}_chunk_meshes" not in repo_instances:
+    if chunks and f"{seg}_chunk_meshes" not in repo_instances:
         logger.info(f"Creating DVID instance: {seg}_chunk_meshes")
         create_instance(server, uuid, f"{seg}_chunk_meshes", 'keyvalue', {'type': 'meshes'})
+
+    if sv and f"{seg}_sv_meshes" not in repo_instances:
+        logger.info(f"Creating DVID instance: {seg}_sv_meshes")
+        create_tarsupervoxel_instance(server, uuid, f"{seg}_sv_meshes", seg, 'drc', {'type': 'meshes'})
 
 
 def update_body_mesh(server, uuid, seg_instance, body, body_mesh_config, chunk_config, force=False, processes=0):
