@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd
 
 from vol2mesh import Mesh
-from neuclease.util import tqdm_proxy as tqdm, dump_json, compute_parallel, region_features, box_to_slicing
+from neuclease.util import tqdm_proxy as tqdm, dump_json, compute_parallel, region_features, box_to_slicing, compute_nonzero_box
 from neuclease.dvid import fetch_combined_roi_volume
 
 logger = logging.getLogger()
@@ -216,10 +216,14 @@ def create_precomputed_roi_vol(roi_vol, bucket_name, bucket_path, max_scale=3, r
             }
         }).result()
         if scale == 0:
-            store[:] = roi_vol.transpose()[..., None]
+            v = roi_vol.transpose()[..., None]
+            nzbox = compute_nonzero_box(v)
+            store[box_to_slicing(*nzbox)] = v[box_to_slicing(*nzbox)]
         else:
             # Subsample
-            store[:] = roi_vol.transpose()[:-2**scale+1:2**scale, :-2**scale+1:2**scale, :-2**scale+1:2**scale, None]
+            v = roi_vol.transpose()[:-2**scale+1:2**scale, :-2**scale+1:2**scale, :-2**scale+1:2**scale, None]
+            nzbox = compute_nonzero_box(v)
+            store[box_to_slicing(*nzbox)] = v[box_to_slicing(*nzbox)]
 
 
 def create_precomputed_ngmeshes(vol, vol_fullres_box, names, bucket_name, bucket_path, localdir=None, decimation=0.01, volume_info=None, processes=0):
