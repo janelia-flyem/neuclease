@@ -57,7 +57,7 @@ ASSIGNMENT_EXAMPLE = """\
 """
 
 
-def edges_to_assignment(df, gray_source, seg_source, sv_as_body=False, output_path=None, shuffle=False, description="", task_type='body merge', dvid_src=None):
+def edges_to_assignment(df, gray_source, seg_source, sv_as_body=False, output_path=None, shuffle=False, description="", task_type='body merge', result_labels=None, dvid_src=None):
     if isinstance(df, str):
         df = pd.read_csv(df)
 
@@ -168,6 +168,8 @@ def edges_to_assignment(df, gray_source, seg_source, sv_as_body=False, output_pa
         assignment['DVID source'] = dvid_src
     if description:
         assignment["task set description"] = description
+    if result_labels:
+        assignment["result labels"] = result_labels
     assignment['task list'] = tasks
 
     assignment = convert_nans(assignment)
@@ -177,7 +179,7 @@ def edges_to_assignment(df, gray_source, seg_source, sv_as_body=False, output_pa
     return assignment
 
 
-def edges_to_assignments(df, gray_source, seg_source, sv_as_body=False, batch_size=100, output_path=None, *, shuffle=False, description="", task_type='body merge', dvid_src=None):
+def edges_to_assignments(df, gray_source, seg_source, sv_as_body=False, batch_size=100, output_path=None, *, shuffle=False, description="", task_type='body merge', result_labels=None, dvid_src=None):
     if isinstance(df, str):
         df = pd.read_csv(df)
     assert isinstance(df, pd.DataFrame)
@@ -202,7 +204,7 @@ def edges_to_assignments(df, gray_source, seg_source, sv_as_body=False, batch_si
         else:
             batch_path = None
 
-        a = edges_to_assignment(batch_df, gray_source, seg_source, sv_as_body, batch_path, description=description, task_type=task_type, dvid_src=dvid_src)
+        a = edges_to_assignment(batch_df, gray_source, seg_source, sv_as_body, batch_path, description=description, task_type=task_type, result_labels=result_labels, dvid_src=dvid_src)
         assignments.append(a)
 
 
