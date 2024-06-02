@@ -1,8 +1,9 @@
 import logging
 import datetime
+from contextlib import contextmanager
 from string import Formatter
 from itertools import chain
-from functools import cache, partial
+from functools import cache, partial, wraps
 from zoneinfo import ZoneInfo
 
 import numpy as np
@@ -210,13 +211,36 @@ def init_mesh_instances(server, uuid, seg_instance, body=True, chunks=True, sv=T
         create_tarsupervoxel_instance(server, uuid, f"{seg}_sv_meshes", seg, 'drc', {'type': 'meshes'})
 
 
-def update_body_mesh(server, uuid, seg_instance, body, body_mesh_config, chunk_config, force=False, processes=0):
+class DummyResourceMgr:
+
+    @contextmanager
+    def access_context(self, *args, **kwargs):
+        yield
+
+    @classmethod
+    def overwrite_none_kwarg(cls, f):
+        @wraps(f)
+        def wrapper(*args, **kwargs):
+            if kwargs.get('resource_mgr', None) is None:
+                kwargs['resource_mgr'] = DummyResourceMgr()
+            return f(*args, **kwargs)
+        return wrapper
+
+
+@DummyResourceMgr.overwrite_none_kwarg
+def update_body_mesh(server, uuid, seg_instance, body, body_mesh_config, chunk_config, force=False, processes=0, *, resource_mgr=None):
+    """
+    FIXME: Too many parameters -- server, uuid, seg_instance, and resource_mgr should be rolled into one.
+    FIXME: I should switch to parallelizing via task with worker_client() rather
+           than compute_parallel (or at least give an option).
+    """
     seg = seg_instance
     uuid = resolve_ref(server, uuid, True)
     validate(body_mesh_config, BodyMeshParametersSchema, inject_defaults=True)
 
     try:
-        lastmod = fetch_lastmod(server, uuid, seg, body)['mutation id']
+        with resource_mgr.access_context(server, True, 1, 0):
+            lastmod = fetch_lastmod(server, uuid, seg, body)['mutation id']
     except HTTPError as ex:
         # Note: If the instance name can't be found, DVID returns 400.
         # DVID only returns 404 if we are looking at a valid keyvalue
@@ -239,7 +263,7 @@ def update_body_mesh(server, uuid, seg_instance, body, body_mesh_config, chunk_c
         return
 
     if requested_method == 'concatenated-supervoxels':
-        update_body_mesh_from_supervoxels(server, uuid, seg, body, body_mesh_config)
+        update_body_mesh_from_supervoxels(server, uuid, seg, body, body_mesh_config, resource_mgr=resource_mgr)
         return
 
     method_parts = requested_method.split('-')
@@ -252,7 +276,7 @@ def update_body_mesh(server, uuid, seg_instance, body, body_mesh_config, chunk_c
     if quality not in available_qualities:
         raise RuntimeError(f"Body mesh config requests a chunk quality which isn't listed in the chunk config: {quality}")
 
-    update_body_mesh_from_chunks(server, uuid, seg, body, body_mesh_config, chunk_config, processes=processes)
+    update_body_mesh_from_chunks(server, uuid, seg, body, body_mesh_config, chunk_config, processes=processes, resource_mgr=resource_mgr)
 
 
 @PrefixFilter.with_context("Body {body}")
@@ -278,15 +302,16 @@ def delete_body_mesh(server, uuid, seg_instance, body):
     post_key(server, uuid, f"{seg}_mesh_info", body, json=mesh_info)
 
 
-def create_and_upload_missing_supervoxel_meshes(server, uuid, seg_instance, body):
+def create_and_upload_missing_supervoxel_meshes(server, uuid, seg_instance, body, resource_mgr):
     seg = seg_instance
-    missing = fetch_missing(server, uuid, f"{seg}_sv_meshes", body)
+    with resource_mgr.access_context(server, True, 1, 0):
+        missing = fetch_missing(server, uuid, f"{seg}_sv_meshes", body)
     if len(missing) == 0:
         return
 
     logger.info(f"Creating supervoxel meshes for {len(missing)} missing supervoxel(s).")
     for sv in missing:
-        mesh = create_supervoxel_mesh(server, uuid, seg, sv, decimation_s0=SV_MESH_DECIMATION_S0)
+        mesh = create_supervoxel_mesh(server, uuid, seg, sv, decimation_s0=SV_MESH_DECIMATION_S0, resource_mgr=resource_mgr)
         if mesh is None:
             # By our convention, objects that were too small to
             # create meshes for are given an empty file in DVID.
@@ -297,7 +322,7 @@ def create_and_upload_missing_supervoxel_meshes(server, uuid, seg_instance, body
         post_supervoxel(server, uuid, f"{seg}_sv_meshes", sv, mesh_bytes)
 
 
-def create_supervoxel_mesh(server, uuid, seg_instance, sv, smoothing=3, decimation_s0=0.005):
+def create_supervoxel_mesh(server, uuid, seg_instance, sv, smoothing=3, decimation_s0=0.005, resource_mgr=None):
     """
     Args:
         decimation_s0:
@@ -309,7 +334,8 @@ def create_supervoxel_mesh(server, uuid, seg_instance, sv, smoothing=3, decimati
             vertices than those created from scale-0 voxels, then we need not
             decimate then as severely -- we increase the decimation fraction by 4x.
     """
-    rng = fetch_sparsevol(server, uuid, seg_instance, sv, scale=SV_MESH_SCALE, format='ranges')
+    with resource_mgr.access_context(server, True, 1, 0):
+        rng = fetch_sparsevol(server, uuid, seg_instance, sv, scale=SV_MESH_SCALE, format='ranges')
     if len(rng) == 0:
         # Supervoxels that are VERY small might have no voxels at all at low scales.
         # We return None in that case.
@@ -328,13 +354,16 @@ def create_supervoxel_mesh(server, uuid, seg_instance, sv, smoothing=3, decimati
 
 
 @PrefixFilter.with_context("Body {body}")
-def update_body_mesh_from_supervoxels(server, uuid, seg_instance, body, body_mesh_config):
+def update_body_mesh_from_supervoxels(server, uuid, seg_instance, body, body_mesh_config, resource_mgr):
     seg = seg_instance
     uuid = resolve_ref(server, uuid, True)
     lastmod = fetch_lastmod(server, uuid, seg, body)['mutation id']
-    create_and_upload_missing_supervoxel_meshes(server, uuid, seg, body)
+    create_and_upload_missing_supervoxel_meshes(server, uuid, seg, body, resource_mgr)
 
-    with Timer("Fetching supervoxel tarfile", logger):
+    with (
+        Timer("Fetching supervoxel tarfile", logger),
+        resource_mgr.access_context(server, True, 1, 0)
+    ):
         tar_bytes = fetch_tarfile(server, uuid, f"{seg}_sv_meshes", body)
 
     with Timer("Constructing Mesh", logger):
@@ -360,8 +389,13 @@ def update_body_mesh_from_supervoxels(server, uuid, seg_instance, body, body_mes
     mesh_mb = mesh.uncompressed_size() / 1e6
     logger.info(f"Final mesh has {len(mesh.vertices_zyx)} vertices and {len(mesh.faces)} faces ({mesh_mb:.1f} MB)")
 
-    with Timer("Uploading mesh", logger):
+    with Timer("Serializing mesh", logger):
         mesh_bytes = mesh.serialize(fmt='ngmesh')
+
+    with (
+        Timer("Uploading mesh", logger),
+        resource_mgr.access_context(server, False, 1, len(mesh_bytes))
+    ):
         post_key(server, uuid, f"{seg}_meshes", f"{body}.ngmesh", mesh_bytes)
 
     mesh_info = {
@@ -413,14 +447,14 @@ CHUNK_KEY_FMT = "{config_name}-{body}-{chunk_id}-{mesh_mutid}-{quality}"
 
 
 @PrefixFilter.with_context("Body {body}")
-def update_body_mesh_from_chunks(server, uuid, seg_instance, body, body_mesh_config, chunk_config, processes=0):
+def update_body_mesh_from_chunks(server, uuid, seg_instance, body, body_mesh_config, chunk_config, processes=0, resource_mgr=None):
     validate(chunk_config, MeshChunkConfigSchema, inject_defaults=True)
     if '-' in (name := chunk_config['config-name']) or name == "":
         raise RuntimeError(f"Invalid chunk config-name name: {name}")
 
     seg = seg_instance
     uuid = resolve_ref(server, uuid, True)
-    chunk_df = _chunk_table(server, uuid, seg_instance, body, chunk_config)
+    chunk_df = _chunk_table(server, uuid, seg_instance, body, chunk_config, resource_mgr)
     config_name = chunk_config['config-name']
 
     quality_names = {qc['name'] for qc in chunk_config['quality-configs']}
@@ -436,7 +470,8 @@ def update_body_mesh_from_chunks(server, uuid, seg_instance, body, body_mesh_con
             body_mesh_config,
             chunk_config,
             quality,
-            processes
+            processes,
+            resource_mgr
         )
 
         with Timer(f"Storing body mesh: {body}.ngmesh", logger):
@@ -444,7 +479,7 @@ def update_body_mesh_from_chunks(server, uuid, seg_instance, body, body_mesh_con
             post_key(server, uuid, f"{seg}_mesh_info", body, json=mesh_info)
 
 
-def _chunk_table(server, uuid, seg_instance, body, chunk_config):
+def _chunk_table(server, uuid, seg_instance, body, chunk_config, resource_mgr):
     """
     Return a table with a row for each chunk in the given body.
     For chunks with a stored mesh in DVID, their properties are included as columns.
@@ -457,7 +492,9 @@ def _chunk_table(server, uuid, seg_instance, body, chunk_config):
     chunk_shape_s0 = chunk_config['chunk-shape-s0']
     base_uuid = resolve_ref(server, chunk_config['base-uuid'], True)
 
-    pli = fetch_labelindex(server, uuid, seg_instance, body, format='pandas')
+    with resource_mgr.access_context(server, False, True, 0):
+        pli = fetch_labelindex(server, uuid, seg_instance, body, format='pandas')
+
     chunk_df = pli.surface_mutids.copy()
     chunk_df[[*'xyz']] //= chunk_shape_s0
     chunk_df[[*'xyz']] *= chunk_shape_s0
@@ -469,7 +506,8 @@ def _chunk_table(server, uuid, seg_instance, body, chunk_config):
         # And although we did not enable the surface_mutid feature until recently,
         # it was turned on immediately after locking the base_uuid, so all mutations
         # since then are captured by surface_mutid.
-        base_mutid = fetch_lastmod(server, base_uuid, seg_instance, body)['mutation id']
+        with resource_mgr.access_context(server, False, True, 0):
+            base_mutid = fetch_lastmod(server, base_uuid, seg_instance, body)['mutation id']
         chunk_df.loc[chunk_df['surface_mutid'] == 0, 'surface_mutid'] = base_mutid
 
     # Fetch all chunk mesh keys this body has
@@ -524,9 +562,10 @@ def fetch_stored_chunk_keys(server, uuid, seg_instance, config_name=None, body=N
     return key_df
 
 
-def _generate_body_mesh(server, uuid, seg_instance, body, chunk_df, body_mesh_config, chunk_config, quality, processes):
+def _generate_body_mesh(server, uuid, seg_instance, body, chunk_df, body_mesh_config, chunk_config, quality, processes, resource_mgr):
     seg = seg_instance
-    lastmod = fetch_lastmod(server, uuid, seg, body)['mutation id']
+    with resource_mgr.access_context(server, True, 1, 0):
+        lastmod = fetch_lastmod(server, uuid, seg, body)['mutation id']
 
     quality_configs = {qc['name']: qc for qc in chunk_config['quality-configs']}
     quality_config = quality_configs[quality]
@@ -537,10 +576,13 @@ def _generate_body_mesh(server, uuid, seg_instance, body, chunk_df, body_mesh_co
     stored_chunk_df = chunk_df.loc[~missing]
 
     with Timer(f"Generating {len(missing_chunk_df)} missing chunks", logger):
-        fn = partial(mesh_for_chunk, server, uuid, seg, body, lastmod, chunk_config, quality, True)
+        fn = partial(mesh_for_chunk, server, uuid, seg, body, lastmod, chunk_config, quality, True, resource_mgr)
         new_chunk_meshes = compute_parallel(fn, missing_chunk_df[[*'zyx']].values, processes=processes)
 
-    with Timer(f"Fetching {len(stored_chunk_df)} stored chunks", logger):
+    with (
+        Timer(f"Fetching {len(stored_chunk_df)} stored chunks", logger),
+        resource_mgr.access_context(server, True, 1, 0)
+    ):
         stored_chunk_mesh_bytes = fetch_keyvalues(server, uuid, f"{seg}_chunk_meshes", stored_chunk_df['key'].values, batch_size=10)
 
     with Timer("Combining chunks...", logger):
@@ -590,7 +632,7 @@ def _generate_body_mesh(server, uuid, seg_instance, body, chunk_df, body_mesh_co
     return mesh_bytes, mesh_info
 
 
-def mesh_for_chunk(server, uuid, seg_instance, body, lastmod, chunk_config, quality, store, chunk_zyx):
+def mesh_for_chunk(server, uuid, seg_instance, body, lastmod, chunk_config, quality, store, resource_mgr, chunk_zyx):
     seg = seg_instance
     _cfg = [
         cfg for cfg in chunk_config['quality-configs']
@@ -613,7 +655,8 @@ def mesh_for_chunk(server, uuid, seg_instance, body, lastmod, chunk_config, qual
     halo = chunk_config['chunk-halo']
     chunk_box.T[:] += [-halo, halo]
 
-    mask, mask_box = fetch_sparsevol(server, uuid, seg, body, scale, mask_box=chunk_box, format='mask')
+    with resource_mgr.access_context(server, True, 1, 0):
+        mask, mask_box = fetch_sparsevol(server, uuid, seg, body, scale, mask_box=chunk_box, format='mask')
     mesh = Mesh.from_binary_vol(mask, mask_box * 2**scale, method='skimage')
 
     smoothing = quality_config['smoothing']
@@ -633,7 +676,8 @@ def mesh_for_chunk(server, uuid, seg_instance, body, lastmod, chunk_config, qual
             mesh_mutid=lastmod,
             quality=quality,
         )
-        post_key(server, uuid, f"{seg}_chunk_meshes", key, mesh.serialize(fmt='ngmesh'))
+        with resource_mgr.access_context(server, False, 1, 0):
+            post_key(server, uuid, f"{seg}_chunk_meshes", key, mesh.serialize(fmt='ngmesh'))
     return mesh
 
 
@@ -657,13 +701,13 @@ def main_debug():
     from neuclease import configure_default_logging
     configure_default_logging()
 
-    cns_test = ('http://emdata7.int.janelia.org:9000', '7c89b8a7e4f744548307c4ae3647f335')
+    cns_test = ('http://emdata7.int.janelia.org:9000', 'cbac25b45a954a0f88e8a9c8516ca490')
     cns_test_seg = (*cns_test, 'segmentation')
 
     init_mesh_instances(*cns_test_seg)
 
     body_mesh_config = {
-        "source-method": "concatenated-chunks-1k_7020-dec005_from_s2",
+        "source-method": "concatenated-chunks-1k_cbac25-dec005_from_s2",
         "smoothing": 0,
         "small-body-overall-decimation-s0": 0.01,
         "large-body-overall-decimation-s0": 0.001,
@@ -672,8 +716,8 @@ def main_debug():
     }
 
     chunk_config = {
-        "config-name": "1k_7020",
-        "base-uuid": "7020099a6c4e4994941507ecf3573231",
+        "config-name": "1k_cbac25",
+        "base-uuid": "cbac25b45a954a0f88e8a9c8516ca490",
         "chunk-shape-s0": [1024, 1024, 1024],
         "chunk-halo": 2,
         "quality-configs": [
