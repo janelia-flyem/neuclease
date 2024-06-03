@@ -586,15 +586,17 @@ def _generate_body_mesh(server, uuid, seg_instance, body, chunk_df, body_mesh_co
 
     fn = partial(mesh_for_chunk, server, uuid, seg, body, lastmod, chunk_config, quality, True, resource_mgr)
     if processes == 'dask-worker-client':
-        with Timer(f"Generating {len(missing_chunk_df)} missing chunks using the dask cluster", logger):
-            from dask.distributed import worker_client
-            with worker_client() as client:
-                task_names = [
-                    f'mesh_for_chunk-body-{body}-chunk-{x}-{y}-{z}'
-                    for z,y,x in missing_chunk_df[[*'xyz']].values
-                ]
-                futures = client.map(fn, missing_chunk_df[[*'zyx']].values, key=task_names)
-                new_chunk_meshes = client.gather(futures)
+        from dask.distributed import worker_client
+        with (
+            Timer(f"Generating {len(missing_chunk_df)} missing chunks using the dask cluster", logger),
+            worker_client() as client
+        ):
+            task_names = [
+                f'mesh_for_chunk-body-{body}-chunk-{x},{y},{z}'
+                for z,y,x in missing_chunk_df[[*'xyz']].values
+            ]
+            futures = client.map(fn, missing_chunk_df[[*'zyx']].values, key=task_names, priority=10)
+            new_chunk_meshes = client.gather(futures)
     else:
         with Timer(f"Generating {len(missing_chunk_df)} missing chunks using {processes} processes", logger):
             new_chunk_meshes = compute_parallel(fn, missing_chunk_df[[*'zyx']].values, processes=processes)
