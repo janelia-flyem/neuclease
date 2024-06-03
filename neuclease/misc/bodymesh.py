@@ -16,6 +16,7 @@ from vol2mesh.mesh import Mesh
 from neuclease import PrefixFilter
 from neuclease.util import Timer, compute_parallel
 
+from neuclease.dvid import set_default_dvid_session_timeout
 from neuclease.dvid.repo import resolve_ref, create_instance, fetch_repo_instances
 from neuclease.dvid.node import fetch_instance_info
 from neuclease.dvid.keyvalue import fetch_keyrange, fetch_key, post_key, delete_key, fetch_keyvalues
@@ -231,8 +232,13 @@ class DummyResourceMgr:
 def update_body_mesh(server, uuid, seg_instance, body, body_mesh_config, chunk_config, force=False, processes=0, *, resource_mgr=None):
     """
     FIXME: Too many parameters -- server, uuid, seg_instance, and resource_mgr should be rolled into one.
-    FIXME: I should switch to parallelizing via task with worker_client() rather
-           than compute_parallel (or at least give an option).
+
+    Args:
+        processes:
+            If an int, then multiprocessing is used.
+            If a string with value 'dask-worker-client', then it is assumed that you called
+            this function from within a dask worker, and chunk mesh generation will be
+            submitted to the dask cluster.
     """
     seg = seg_instance
     uuid = resolve_ref(server, uuid, True)
@@ -474,6 +480,9 @@ def update_body_mesh_from_chunks(server, uuid, seg_instance, body, body_mesh_con
             resource_mgr
         )
 
+        # FIXME... had to hard-code this because dask workers didn't have the configured dvid timeout.
+        set_default_dvid_session_timeout(600.0, 600.0)
+
         with Timer(f"Storing body mesh: {body}.ngmesh", logger):
             post_key(server, uuid, f"{seg}_meshes", f"{body}.ngmesh", mesh_bytes)
             post_key(server, uuid, f"{seg}_mesh_info", body, json=mesh_info)
@@ -575,9 +584,20 @@ def _generate_body_mesh(server, uuid, seg_instance, body, chunk_df, body_mesh_co
     missing_chunk_df = chunk_df.loc[missing]
     stored_chunk_df = chunk_df.loc[~missing]
 
-    with Timer(f"Generating {len(missing_chunk_df)} missing chunks", logger):
-        fn = partial(mesh_for_chunk, server, uuid, seg, body, lastmod, chunk_config, quality, True, resource_mgr)
-        new_chunk_meshes = compute_parallel(fn, missing_chunk_df[[*'zyx']].values, processes=processes)
+    fn = partial(mesh_for_chunk, server, uuid, seg, body, lastmod, chunk_config, quality, True, resource_mgr)
+    if processes == 'dask-worker-client':
+        with Timer(f"Generating {len(missing_chunk_df)} missing chunks using the dask cluster", logger):
+            from dask.distributed import worker_client
+            with worker_client() as client:
+                task_names = [
+                    f'mesh_for_chunk-body-{body}-chunk-{x}-{y}-{z}'
+                    for z,y,x in missing_chunk_df[[*'xyz']].values
+                ]
+                futures = client.map(fn, missing_chunk_df[[*'zyx']].values, key=task_names)
+                new_chunk_meshes = client.gather(futures)
+    else:
+        with Timer(f"Generating {len(missing_chunk_df)} missing chunks using {processes} processes", logger):
+            new_chunk_meshes = compute_parallel(fn, missing_chunk_df[[*'zyx']].values, processes=processes)
 
     with (
         Timer(f"Fetching {len(stored_chunk_df)} stored chunks", logger),
@@ -655,6 +675,9 @@ def mesh_for_chunk(server, uuid, seg_instance, body, lastmod, chunk_config, qual
     halo = chunk_config['chunk-halo']
     chunk_box.T[:] += [-halo, halo]
 
+    # FIXME... had to hard-code this because dask workers didn't have the configured dvid timeout.
+    set_default_dvid_session_timeout(600.0, 600.0)
+
     with resource_mgr.access_context(server, True, 1, 0):
         mask, mask_box = fetch_sparsevol(server, uuid, seg, body, scale, mask_box=chunk_box, format='mask')
     mesh = Mesh.from_binary_vol(mask, mask_box * 2**scale, method='skimage')
@@ -701,13 +724,19 @@ def main_debug():
     from neuclease import configure_default_logging
     configure_default_logging()
 
-    cns_test = ('http://emdata7.int.janelia.org:9000', 'cbac25b45a954a0f88e8a9c8516ca490')
+    from neuclease.dvid import find_master
+
+    cns_test_server = 'http://emdata7.int.janelia.org:9000'
+    cns_test_uuid = find_master(cns_test_server)
+    cns_test = (cns_test_server, cns_test_uuid)
     cns_test_seg = (*cns_test, 'segmentation')
 
     init_mesh_instances(*cns_test_seg)
 
+    short_uuid = cns_test_uuid[:6]
+
     body_mesh_config = {
-        "source-method": "concatenated-chunks-1k_cbac25-dec005_from_s2",
+        "source-method": f"concatenated-chunks-1k_{short_uuid}-dec005_from_s2",
         "smoothing": 0,
         "small-body-overall-decimation-s0": 0.01,
         "large-body-overall-decimation-s0": 0.001,
@@ -716,8 +745,8 @@ def main_debug():
     }
 
     chunk_config = {
-        "config-name": "1k_cbac25",
-        "base-uuid": "cbac25b45a954a0f88e8a9c8516ca490",
+        "config-name": f"1k_{short_uuid}",
+        "base-uuid": cns_test_uuid,
         "chunk-shape-s0": [1024, 1024, 1024],
         "chunk-halo": 2,
         "quality-configs": [
@@ -730,8 +759,22 @@ def main_debug():
         ]
     }
 
-    body = 11005
-    update_body_mesh(*cns_test_seg, body, body_mesh_config, chunk_config, force=True, processes=8)
+    body = 39743  # Mi1
+    #body = 11005  # Huge bilateral CB neuron
+    # update_body_mesh(*cns_test_seg, body, body_mesh_config, chunk_config, force=True, processes='dask-worker-client')
+
+    from dask.distributed import LocalCluster, Client
+    from contextlib import closing
+    with (
+        closing(LocalCluster('foo', 8)) as cluster,
+        closing(Client(cluster)) as client
+    ):
+        configure_default_logging()
+        fut = client.submit(update_body_mesh, *cns_test_seg, body, body_mesh_config, chunk_config, force=True, processes='dask-worker-client')
+        fut.result()
+
+    mesh_info = fetch_key(*cns_test, 'segmentation_mesh_info', body, as_json=True)
+    logger.info(f"Mesh Info: {mesh_info}")
 
 
 if __name__ == "__main__":
