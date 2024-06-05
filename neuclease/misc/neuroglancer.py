@@ -321,7 +321,7 @@ def _standardize_annotation_dataframe(df):
 
     df['type'] = df['type'].fillna(
         df['rx'].isnull().map({
-            True: np.nan,
+            True: None,
             False: 'ellipsoid'
         })
     )
