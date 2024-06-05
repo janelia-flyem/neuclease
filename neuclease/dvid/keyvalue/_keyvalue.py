@@ -752,7 +752,7 @@ def _body_annotations_dataframe(values, status_categories=None):
     df = df.set_index('body')
 
     if 'status' in df.columns:
-        df['status'].fillna('', inplace=True)
+        df['status'] = df['status'].fillna('')
     else:
         df['status'] = ""
 
