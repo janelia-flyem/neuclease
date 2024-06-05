@@ -487,7 +487,8 @@ def _rank_syn_counts(point_df, conn_df, syn_counts_df=None, body_annotations_df=
             .rename_axis('body')
             .rename(columns={
                 'roi': 'top_output_roi',
-                0: 'top_output_roi_weight'
+                0: 'top_output_roi_weight',        # old pandas
+                'count': 'top_output_roi_weight',  # new pandas
             })
         )
         syn_counts_df = syn_counts_df.merge(top_output_roi, 'left', left_index=True, right_index=True)
@@ -502,7 +503,8 @@ def _rank_syn_counts(point_df, conn_df, syn_counts_df=None, body_annotations_df=
             .rename_axis('body')
             .rename(columns={
                 'roi': 'top_input_roi',
-                0: 'top_input_roi_weight'
+                0: 'top_input_roi_weight',        # old pandas
+                'count': 'top_input_roi_weight',  # new pandas
             })
         )
         syn_counts_df = syn_counts_df.merge(top_input_roi, 'left', left_index=True, right_index=True)
