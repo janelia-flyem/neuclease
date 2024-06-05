@@ -19,7 +19,7 @@ from neuclease.util import Timer, compute_parallel
 from neuclease.dvid import set_default_dvid_session_timeout
 from neuclease.dvid.repo import resolve_ref, create_instance, fetch_repo_instances
 from neuclease.dvid.node import fetch_instance_info
-from neuclease.dvid.keyvalue import fetch_keyrange, fetch_key, post_key, delete_key, fetch_keyvalues
+from neuclease.dvid.keyvalue import fetch_keyrange, fetch_key, post_key, delete_key, fetch_keyvalues, fetch_keyrangevalues
 from neuclease.dvid.tarsupervoxels import create_tarsupervoxel_instance
 from neuclease.dvid.labelmap import fetch_lastmod, fetch_sparsevol, fetch_labelindex
 from neuclease.dvid.tarsupervoxels import fetch_tarfile, fetch_missing, post_supervoxel
@@ -420,6 +420,18 @@ def update_body_mesh_from_supervoxels(server, uuid, seg_instance, body, body_mes
     post_key(server, uuid, f"{seg}_mesh_info", body, json=mesh_info)
 
 
+def fetch_body_mesh_info(server, uuid, seg_instance, bodies, format='pandas', *, session=None):
+    assert format in ('json', 'pandas')
+    seg = seg_instance
+    if not hasattr(bodies, '__len__'):
+        bodies = [bodies]
+    bodies = [str(b) for b in bodies]
+    kv = fetch_keyvalues(server, uuid, f"{seg}_mesh_info", bodies, as_json=True, session=session)
+    if format == 'json':
+        return kv
+    return pd.DataFrame(list(filter(None, kv.values()))).set_index('body')
+
+
 @cache
 def fetch_resolution_zyx(server, uuid, seg_instance):
     return fetch_instance_info(server, uuid, seg_instance)['Extended']['VoxelSize'][::-1]
@@ -720,6 +732,12 @@ def parse_chunk_ids(chunk_ids):
     df = chunk_ids.str.extract(r'(\d+),(\d+),(\d+)').astype(np.int32)
     df.columns = [*'xyz']
     return df[[*'zyx']]
+
+
+def fetch_all_body_mesh_info(server, uuid, seg_instance, *, session=None):
+    kv = fetch_keyrangevalues(server, uuid, f'{seg_instance}_mesh_info', as_json=True, session=session)
+    info_df = pd.DataFrame(kv.values())
+    return info_df
 
 
 def main_debug():
