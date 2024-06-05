@@ -853,8 +853,8 @@ def fetch_labels_batched(server, uuid, instance, coordinates_zyx, supervoxels=Fa
         ndarray of N labels (corresponding to the order you passed in)
     """
     assert not threads or not processes, "Choose either threads or processes (not both)"
-    coordinates_zyx = np.asarray(coordinates_zyx)
-    coords_df = pd.DataFrame(coordinates_zyx, columns=[*'zyx'], dtype=np.int32)
+    coordinates_zyx = np.asarray(coordinates_zyx, dtype=np.int32)
+    coords_df = pd.DataFrame(coordinates_zyx, columns=[*'zyx'])
     coords_df['label'] = np.uint64(0)
 
     if presort:
