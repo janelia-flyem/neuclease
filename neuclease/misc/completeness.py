@@ -700,6 +700,10 @@ def plot_categorized_connectivity_forecast(
     step = max(1, len(_df) // plotted_points)
     _df = _df.iloc[::step]
 
+    # Bokeh complains if our source DataFrame contains huge integers
+    # (bigger than 2**53), and we don't need these columns anyway.
+    _df = _df.drop(columns=['pre_id', 'post_id'])
+
     p = figure(align='center', height=500, width=800, title=title, y_range=(0, 1.0))
     p.title.text_font_size = '14pt'
     p.xaxis.axis_label = 'body rank'
