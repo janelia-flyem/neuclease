@@ -458,7 +458,7 @@ def _rank_syn_counts(point_df, conn_df, syn_counts_df=None, body_annotations_df=
             continue
         else:
             if '' in cat:
-                syn_counts_df[col].fillna('', inplace=True)
+                syn_counts_df.fillna({col: ''}, inplace=True)
 
     if 'SynWeight' in sort_by and 'SynWeight' not in syn_counts_df.columns:
         # The user didn't provide a preferred body weighting,

@@ -153,8 +153,7 @@ def main():
     neurons_df, _ = fetch_neurons(df['body'].unique())
     neurons_df = neurons_df.rename(columns={'bodyId': 'body', 'type': 'body_type', 'instance': 'body_instance'})
     df = df.merge(neurons_df[['body', 'body_type', 'body_instance']], 'left', on='body')
-    df['body_type'].fillna("", inplace=True)
-    df['body_instance'].fillna("", inplace=True)
+    df.fillna({'body_type': '', 'body_instance': ''}, inplace=True)
 
     # Append roi column
     print("Determining ROIs")

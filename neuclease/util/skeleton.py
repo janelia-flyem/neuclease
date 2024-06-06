@@ -141,6 +141,6 @@ def neuroglancer_skeleton_to_df(buf):
     df = pd.DataFrame(vertex_positions, columns=[*'xyz'])
     df['node'] = np.arange(len(df), dtype=np.uint32)
     df = df.merge(edge_df, 'left', on='node')
-    df['parent'].fillna(-1, inplace=True)
+    df['parent'] = df['parent'].fillna(-1)
     df['parent'] = df['parent'].astype(np.int32)
     return df

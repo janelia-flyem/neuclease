@@ -1581,7 +1581,8 @@ def body_synapse_counts(synapse_samples):
     assert 'kind' in synapse_samples.columns, "Samples must have a 'kind' col"
 
     synapse_samples = synapse_samples[['body', 'kind']]
-    synapse_counts = synapse_samples.pivot_table(index='body', columns='kind', aggfunc='size')
+    synapse_counts = synapse_samples.pivot_table(
+        index='body', columns='kind', aggfunc='size', observed=False)
     synapse_counts.fillna(0.0, inplace=True)
 
     if 0 in synapse_counts.index:

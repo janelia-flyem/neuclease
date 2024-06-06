@@ -231,7 +231,7 @@ def prepare_bookmark_assignment_setup(df, output_dir, bucket_path, csv_path, pre
 
     # Delete redundant file paths -- keep only the first row in each assignment group.
     tracking_df['file'] = tracking_df.groupby('assignment')['file'].head(1)
-    tracking_df['file'].fillna("", inplace=True)
+    tracking_df['file'] = tracking_df['file'].fillna("")
 
     tracking_df['user'] = ''
     tracking_df['date started'] = ''
@@ -355,7 +355,7 @@ def prepare_cleaving_assignment_setup(bodies, output_dir, bucket_path, csv_path,
 
     # Delete redundant file paths -- keep only the first row in each assignment group.
     df['file'] = df.groupby('assignment')['file'].head(1)
-    df['file'].fillna("", inplace=True)
+    df['file'] = df['file'].fillna("")
 
     df['user'] = ''
     df['date started'] = ''

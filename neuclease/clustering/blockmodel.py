@@ -291,10 +291,15 @@ def fetch_sanitized_body_annotations(server, uuid, cached_clio_ann=None, cached_
     if statuses:
         clio_ann = clio_ann.query('status in @statuses').copy()
 
-    clio_ann['has_soma'].fillna(False, inplace=True)
-    clio_ann['is_cervical'].fillna(False, inplace=True)
-    clio_ann['soma_neuromere'].fillna("", inplace=True)
-    clio_ann['hemilineage'].fillna("", inplace=True)
+    clio_ann.fillna(
+        {
+            'has_soma': False,
+            'is_cervial': False,
+            'soma_neuromere': "",
+            'hemilineage': ""
+        },
+        inplace=True
+    )
 
     # Convert groups to strings, even though they're originally integers.
     # This makes it easier to treat this feature like all the others for filtering purposes.

@@ -1043,8 +1043,13 @@ def extract_downstream_focused_tasks_for_bodies(server,
 
         # For bodies with no tasks at all won't be mentioned in cum_completeness_df,
         # so they'll have NaNs.  Replace with the appropriate values.
-        completion_stats_df['expected_final_completeness'].fillna(completion_stats_df['orig_completeness'], inplace=True)
-        completion_stats_df['max_final_completeness'].fillna(completion_stats_df['orig_completeness'], inplace=True)
+        completion_stats_df.fillna(
+            {
+                'expected_final_completeness': completion_stats_df['orig_completeness'],
+                'max_final_completeness': completion_stats_df['orig_completeness'],
+            },
+            inplace=True
+        )
         completion_stats_df['expected_additional_completeness'] = completion_stats_df.eval('expected_cumulative_completeness - orig_completeness')
 
     return downstream_focused_df, downstream_df, completion_stats_df

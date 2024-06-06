@@ -48,7 +48,7 @@ def tag_soma_anchors(server, uuid, soma_instance, seg_instance="segmentation", a
 
     soma_df = soma_df.query('body != 0')
     soma_df = soma_df.merge(ann_df['status'], 'left', left_on='body', right_index=True)
-    soma_df['status'].fillna("", inplace=True)
+    soma_df['status'] = soma_df['status'].fillna("")
 
     all_statuses = DEFAULT_BODY_STATUS_CATEGORIES
     keep_statuses = all_statuses[all_statuses.index('Soma Anchor'):]

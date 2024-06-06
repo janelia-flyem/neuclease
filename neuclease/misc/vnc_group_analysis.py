@@ -284,7 +284,7 @@ def fetch_sanitized_clio_group_annotations(clio_ann=None):
     clio_ann = clio_ann.set_index('bodyid').rename_axis('body')
     clio_ann = clio_ann.query('(not group.isnull() and group != "") or (not soma_side.isnull() and soma_side != "")').copy()
     clio_ann['group'] = clio_ann['group'].map(lambda g: np.nan if g == "" else float(g))
-    clio_ann['soma_side'].fillna("", inplace=True)
+    clio_ann['soma_side'] = clio_ann['soma_side'].fillna("")
     clio_ann['soma_side'] = clio_ann['soma_side'].map(lambda s: {'RHs': 'RHS', 'None': "", "TBD": ""}.get(s, s))
     return clio_ann
 
