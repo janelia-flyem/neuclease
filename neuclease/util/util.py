@@ -1862,6 +1862,8 @@ def narrowest_dtype(max_int, signed=True):
     """
     Return the narrowest integer dtype that can
     still hold values up to the given max_int.
+
+    Note: Consider using np.min_scalar_type() instead of this function.
     """
     if signed is None:
         dtypes = [

@@ -69,6 +69,76 @@ def block_stats_for_volume(block_shape, volume, physical_box):
     return brick_df
 
 
+def bincount_last_axis(a, maxbin=None):
+    """
+    Like np.bincount, but works for ND arrays.
+    The bincount is performed along the last axis of the input.
+
+    Args:
+        a:
+            ndarray, with unsigned integer contents
+        maxbin:
+            The highest bin value to return.
+            Determines the length of the last axis in the results.
+            If the input array contains higher values than this,
+            those values will not be counted in the results.
+    Returns:
+        ndarray
+
+        The dtype of the output will be the minimum unsigned type that is
+        guaranteed to accommodate the counts, based on the length of the input.
+
+        If the input shape is:
+
+            (S0, S1, S2, ..., S(N-1), SN),
+
+        then the result shape will be:
+
+            (S0, S1, S2, ..., S(N-1), maxbin+1)
+
+    Author: https://github.com/stuarteberg
+    """
+    a = np.asarray(a)
+    assert maxbin is None or maxbin >= -1
+    assert np.issubdtype(a.dtype, np.integer)
+    if np.issubdtype(a.dtype, np.signedinteger):
+        assert a.min() >= 0, "Can't operate on negative values"
+
+    maxval = a.max()
+    if maxbin is None:
+        num_bins = maxval + 1
+    elif maxval <= maxbin:
+        num_bins = maxbin + 1
+    else:
+        # Leave one extra bin for all values above maxbin,
+        # and force all high input values into that bin,
+        # which we will discard before returning.
+        num_bins = maxbin + 2
+        a = np.clip(a, 0, maxbin + 1)
+
+    # Flat counts
+    counts_dtype = np.min_scalar_type(num_bins-1)
+    counts = np.zeros((a.size // a.shape[-1]) * num_bins, dtype=counts_dtype)
+
+    # Calculate flat indexes into the 'counts' array
+    index_dtype = np.min_scalar_type(counts.size)
+    i = np.arange(a.size, dtype=index_dtype) // a.shape[-1]
+    i *= num_bins
+    i += a.reshape(-1).astype(index_dtype)
+
+    # Perform the bincounts
+    np.add.at(counts, i, 1)
+
+    # Reshape back to ND
+    counts = counts.reshape((*a.shape[:-1], num_bins))
+
+    if maxbin is None or maxval <= maxbin:
+        return counts
+
+    # Discard the extra bin we used for above-max values.
+    return counts[..., :-1]
+
+
 def mask_for_labels(volume, label_ids):
     """
     Given a label volume and a subset of labels to keep,
