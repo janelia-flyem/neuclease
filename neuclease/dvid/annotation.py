@@ -280,7 +280,7 @@ def fetch_relcounts_for_labels(server, uuid, instance, labels, *, session=None, 
 
 
 @dvid_api_wrapper
-def fetch_tag(server, uuid, instance, tag, relationships=False, *, session=None):
+def fetch_tag(server, uuid, instance, tag, relationships=False, *, format='list', session=None):
     """
     Returns all point annotations with the given tag as an array of elements.
 
@@ -693,12 +693,13 @@ def post_elements(server, uuid, instance, elements, kafkalog=True, *, session=No
 
         elements:
             Elements as JSON data (a python list-of-dicts).
-            This is the same format as returned by fetch_elements().
+            This is the same format as returned by any of the following:
 
-            Note:
-                This is NOT the format returned by fetch_blocks() or fetch_all_elements().
-                If your data came from one of those functions, you must extract
-                and concatenate the values of that dict before posting it.
+                - fetch_elements(..., format='list')
+                - fetch_all_elements(..., format='list')
+                - fetch_blocks(..., format='list')
+                - fetch_label(..., format='list')
+                - fetch_tag(..., format='list')
 
         kafkalog:
             If True, log kafka events for each posted element.
