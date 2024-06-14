@@ -623,6 +623,7 @@ DEFAULT_BODY_STATUS_CATEGORIES = [
     'Orphan-artifact',
     'Orphan',
     'Orphan hotknife',
+    'Putative Leaves',   # Annoyingly, this is used in hemibrain v1.2 for 4 teeny bodies.
     'Out of scope',
     'Not examined',
     '',
