@@ -65,32 +65,75 @@ def layer_state(state, name):
     return layer
 
 
-def extract_annotations(link, link_index=None, user=None, visible_only=False):
+def extract_annotations(link, *, link_index=None, user=None, visible_only=False):
+    """
+    Extract local://annotations data from a neuroglancer link.
+    The annotation coordinates (point, pointA, pointB, radii) are extracted
+    into separate columns, named x,y,z/xa,ya,za/xb,yb,zb/rx,ry,rz
+    (consitent with annotation_layer_json() in this file).
+
+    Args:
+        link:
+            Either a neuroglancer JSON state (dict), or a neuroglancer link with embedded state,
+            or a neuroglancer link that references a JSON state file, such as
+            https://neuroglancer-demo.appspot.com/#!gs://flyem-views/hemibrain/v1.2/base.json
+
+        link_index:
+            Deprecated.
+            Adds a column named 'link_index' populated with the provided value in all rows.
+
+        user:
+            Deprecated.
+            Adds a column named 'user' populated with the provided value in all rows.
+
+        visible_only:
+            If True, do not extract annotations from layers that are not currently
+            visible in the given link state.
+
+    Returns:
+        DataFrame
+    """
     if isinstance(link, str):
         link = parse_nglink(link)
     annotation_layers = [layer for layer in link['layers'] if layer['type'] == "annotation"]
 
-    data = []
+    dfs = []
     for layer in annotation_layers:
         if visible_only and (layer.get('archived', False) or not layer.get('visible', True)):
             continue
 
-        for a in layer.get('annotations', []):
-            data.append((layer['name'], *a['point'], a.get('description', '')))
+        _df = pd.DataFrame(layer['annotations'])
+        _df['layer'] = layer['name']
+        dfs.append(_df)
 
-    df = pd.DataFrame(data, columns=['layer', *'xyz', 'description'])
+    df = pd.concat(dfs, ignore_index=True)
+    if 'point' in df.columns:
+        rows = df['point'].notnull()
+        df.loc[rows, [*'xyz']] = df.loc[rows, 'point'].tolist()
+    if 'pointA' in df.columns:
+        rows = df['pointA'].notnull()
+        df.loc[rows, ['xa', 'ya', 'za']] = df.loc[rows, 'pointA'].tolist()
+    if 'pointB' in df.columns:
+        rows = df['pointB'].notnull()
+        df.loc[rows, ['xb', 'yb', 'zb']] = df.loc[rows, 'pointB'].tolist()
+    if 'radii' in df.columns:
+        rows = df['radii'].notnull()
+        df.loc[rows, ['rx', 'ry', 'rz']] = df.loc[rows, 'radii'].tolist()
 
-    cols = []
+    # Convert to int if possible.
+    for col in [*'xyz', 'xa', 'ya', 'za', 'xb', 'yb', 'zb', 'rx', 'ry', 'rz', 'radii']:
+        if col in df and df[col].notnull().all() and not (df[col] % 1).any():
+            df[col] = df[col].astype(np.int64)
+
     if link_index is not None:
         df['link_index'] = link_index
-        cols += ['link_index']
     if user is not None:
         df['user'] = user
-        cols += ['user']
 
-    df = df.astype({k: np.int64 for k in 'xyz'})
-    cols += ['layer', *'xyz', 'description']
-    return df[cols]
+    df = df.drop(columns=['point', 'pointA', 'pointB', 'radii'], errors='ignore')
+    cols = ['link_index', 'user', 'layer', 'type', *'xyz', 'rx', 'ry', 'rz', 'xa', 'ya', 'za', 'xb', 'yb', 'zb', 'id', 'description']
+    df = df[[c for c in cols if c in df.columns]]
+    return df
 
 
 # Tip: Here's a nice repo with lots of colormaps implemented in GLSL.
