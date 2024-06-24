@@ -963,12 +963,18 @@ def fetch_bodies_for_many_points(server, uuid, seg_instance, point_df, mutations
             # cached 'sv' column of the input table.
             mutations = fetch_mutations(*dvid_seg, dag_filter=None)
 
-        new, changed, deleted, new_svs, deleted_svs = compute_affected_bodies(mutations)
-        out_of_date = point_df.query('sv in @deleted_svs or sv in @new_svs').index
-        if len(out_of_date) > 0:
-            ood_coords = point_df.loc[out_of_date, [*'zyx']].values
-            point_df.loc[out_of_date, 'sv'] = fetch_labels_batched(*dvid_seg, ood_coords, supervoxels=True,
-                                                                   batch_size=5_000, threads=threads, processes=processes)
+        if len(mutations) == 0:
+            msg = (f"Mutation log for instance '{seg_instance}' is empty for uuid '{uuid}' and its ancestors. "
+                   "If the mutation log is incorrectly missing and the given mapping is not in-sync with the "
+                   "given UUID, then the results of fetch_bodies_for_many_points() will be incorrect!")
+            logger.warning(msg)
+        else:
+            new, changed, deleted, new_svs, deleted_svs = compute_affected_bodies(mutations)
+            out_of_date = point_df.query('sv in @deleted_svs or sv in @new_svs').index
+            if len(out_of_date) > 0:
+                ood_coords = point_df.loc[out_of_date, [*'zyx']].values
+                point_df.loc[out_of_date, 'sv'] = fetch_labels_batched(
+                    *dvid_seg, ood_coords, supervoxels=True, batch_size=5_000, threads=threads, processes=processes)
     #
     # Now map from sv -> body
     #
