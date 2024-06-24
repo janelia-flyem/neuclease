@@ -1,4 +1,5 @@
 import re
+import datetime
 from collections.abc import Iterable
 from functools import lru_cache
 
@@ -689,8 +690,9 @@ def find_branch_nodes(server, repo_uuid=None, branch=None, include_ancestors=Tru
 def node_info_dataframe(node_infos):
     nodes_df = pd.DataFrame(node_infos)
 
-    created = pd.to_datetime(nodes_df['Created'])
-    updated = pd.to_datetime(nodes_df['Updated'])
+    tz = datetime.datetime.now(datetime.timezone.utc).astimezone().tzinfo
+    created = pd.to_datetime(nodes_df['Created'], utc=True).dt.tz_convert(tz)
+    updated = pd.to_datetime(nodes_df['Updated'], utc=True).dt.tz_convert(tz)
     del nodes_df['Created']
     del nodes_df['Updated']
     nodes_df['Created'] = created

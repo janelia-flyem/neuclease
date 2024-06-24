@@ -242,7 +242,7 @@ def fetch_focused_decisions(server, uuid, instance='segmentation_merged',
 
     # Convert time to proper timestamp
     if 'time' in df:
-        times = pd.to_datetime(df['time'])
+        times = pd.to_datetime(df['time'], utc=True).dt.tz_convert('US/Eastern')
         df['time'] = times
 
         if 'time zone' not in df:
