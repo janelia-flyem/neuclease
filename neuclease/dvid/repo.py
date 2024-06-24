@@ -776,7 +776,7 @@ def find_master(server, repo_uuid=None, locked_only=False):
 def find_parent(server, uuids, dag=None):
     """
     Determine the parent node for one or more UUIDs.
-    
+
     Args:
         server:
             dvid server, e.g. 'emdata3:8900'
@@ -788,21 +788,27 @@ def find_parent(server, uuids, dag=None):
     Returns:
         If list of uuids was given, a pd.Series is returned.
         If a single uuid was given as a string, a string is returned.
+        If the given UUID has no parent (i.e. it is the DAG root), then None is returned.
     """
     if isinstance(uuids, str):
         first_uuid = uuids
     else:
         first_uuid =  uuids[0]
-    
+
     if dag is None:
         dag = fetch_repo_dag(server, first_uuid)
-    
+
+    def _parent(uuid):
+        uuid = expand_uuid(server, uuid)
+        try:
+            return next(dag.predecessors(uuid))
+        except StopIteration:
+            return None
+
     if isinstance(uuids, str):
-        first_uuid = expand_uuid(server, first_uuid)
-        return next(dag.predecessors(first_uuid))
-    
-    uuids = [expand_uuid(server, u) for u in uuids]
-    s = pd.Series(index=uuids, data=[next(dag.predecessors(u)) for u in uuids])
+        return _parent(first_uuid)
+
+    s = pd.Series(index=uuids, data=[*map(_parent, uuids)])
     s.name = 'parent'
     s.index.name = 'child'
     return s
