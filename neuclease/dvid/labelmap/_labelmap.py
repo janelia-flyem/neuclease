@@ -26,7 +26,7 @@ from ...util import (Timer, round_box, extract_subvol, DEFAULT_TIMESTAMP, tqdm_p
                      toposorted_ancestors, distance_transform, thickest_point_in_mask,
                      sort_blockmajor)
 
-from .. import dvid_api_wrapper, fetch_generic_json, fetch_repo_info
+from .. import dvid_api_wrapper, fetch_generic_json, fetch_repo_info, fetch_branch_nodes
 from ..server import fetch_server_info
 from ..repo import create_voxel_instance, fetch_repo_dag, is_locked, resolve_ref, expand_uuid, find_repo_root, resolve_ref_range, find_parent
 from ..kafka import read_kafka_messages, kafka_msgs_to_df
@@ -3138,10 +3138,26 @@ def resolve_snapshot_tag(server, uuid, instance, *, session=None):
     recent_muts = fetch_mutations(*dvid_seg, dag_filter='leaf-only', session=session)
     while len(recent_muts) == 0:
         parent = find_parent(*dvid_node)
+        if parent is None:
+            break
         dvid_node = (server, parent)
         recent_muts = fetch_mutations(*dvid_node, instance, dag_filter='leaf-only', session=session)
 
-    snapshot_date = recent_muts['timestamp'].dt.date.iloc[-1].strftime('%Y-%m-%d')
+    if len(recent_muts) > 0:
+        snapshot_date = (
+            recent_muts['timestamp']
+            .dt.date.iloc[-1]
+            .strftime('%Y-%m-%d')
+        )
+    else:
+        # If the mutation log is empty, then we revert to the UUID log's "Updated" timestamp,
+        # which isn't necessarily the same thing, but it's the best we can do.
+        snapshot_date = (
+            fetch_branch_nodes(server, uuid, uuid, full_info=True)
+            .loc[uuid, 'Updated']
+            .strftime('%Y-%m-%d')
+        )
+
     snapshot_tag = f"{snapshot_date}-{uuid[:6]}{suffix}"
     return uuid, snapshot_tag
 
