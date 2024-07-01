@@ -165,6 +165,12 @@ def _fetch_elements(url, params, format, relationships, session):
     if json_data is None:
         json_data = []
 
+    return _format_elements(json_data, relationships, format)
+
+
+def _format_elements(json_data, relationships, format):
+    assert format in ('list', 'blocks', 'pandas')
+
     if format == 'blocks':
         if isinstance(json_data, dict):
             return json_data
@@ -188,6 +194,7 @@ def _fetch_elements(url, params, format, relationships, session):
     if format == 'list':
         return json_data
 
+    assert format == 'pandas'
     return load_elements_as_dataframe(json_data, relationships)
 
 
@@ -410,6 +417,23 @@ def fetch_elements(server, uuid, instance, box_zyx, *, relationships=False, form
 
     url = f'{server}/api/node/{uuid}/{instance}/elements/{shape_str}/{offset_str}'
     return _fetch_elements(url, {}, format, relationships, session)
+
+
+def fetch_point_elements(server, uuid, instance, points, *, relationships=False, format='list'):
+    """
+    Fetch a list of elements, given by the points in the provided dataframe.
+
+    Calls /elements repeatedly (once per point).
+    """
+    assert isinstance(points, pd.DataFrame)
+    assert {*'xyz'} <= {*points.columns}
+
+    elements = []
+    for p in points[[*'zyx']].values:
+        e = fetch_elements(server, uuid, instance, [p, p+1], format='list')
+        elements.extend(e)
+
+    return _format_elements(elements, relationships, format)
 
 
 def load_elements_as_dataframe(elements, relationships=False):
