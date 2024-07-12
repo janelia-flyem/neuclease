@@ -634,6 +634,42 @@ def contingency_table(left_vol, right_vol):
     return sizes
 
 
+def erase_disconnected_islands(label_vol):
+    """
+    Given a label volume (with background label 0),
+    If any labels in the volume consist of multiple connected components,
+    erase all but the largest component from the label volume.
+
+    This involves computing the connected components of the label image,
+    the contingency table between the original and the CC, and erasing
+    small objects from the original.  Takes ~10 seconds per GB of input.
+
+    Args:
+        label_vol:
+            A label volume (segmentation)
+    Returns:
+            Same shape and dtype as label_vol.
+            If no changes were necessary, the input label_vol is returned (not a copy).
+    """
+    label_vol = vigra.taggedView(label_vol, 'zyx')
+    cc = vigra.analysis.labelMultiArrayWithBackground(label_vol)
+
+    ct = contingency_table(label_vol, cc).rename_axis(['roi', 'cc'])
+    cc_to_drop = (
+        ct
+        .reset_index()
+        .sort_values('voxel_count', ascending=False)
+        .groupby('roi')
+        .tail(-1)
+        ['cc']
+    )
+
+    if len(cc_to_drop) > 0:
+        label_vol = np.where(np.isin(cc, cc_to_drop), label_vol.dtype.type(0), label_vol)
+
+    return label_vol
+
+
 def split_disconnected_bodies(labels_orig):
     """
     Produces 3D volume split into connected components.
@@ -644,10 +680,6 @@ def split_disconnected_bodies(labels_orig):
     the original body label.
 
     Special exception: Segments with label 0 are not relabeled.
-    
-    Note:
-        Requires scikit-image (which, currently, is not otherwise
-        listed as a dependency of neuclease's conda-recipe).
 
     Args:
         labels_orig (numpy.array): 3D array of labels
