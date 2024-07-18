@@ -552,7 +552,7 @@ class LabelmapMergeGraphLocalTable(LabelmapMergeGraphBase):
             The count of appended edges
         """
         focused_merges = self.fetch_focused_merges(server, uuid, focused_decisions_instance)
-        if len(focused_merges) == 0:
+        if focused_merges is None or len(focused_merges) == 0:
             return 0
         self.merge_table_df = pd.concat((self.merge_table_df, focused_merges), ignore_index=True, copy=False)
         return len(focused_merges)
