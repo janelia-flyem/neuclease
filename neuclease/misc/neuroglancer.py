@@ -11,12 +11,14 @@ import urllib
 import logging
 import tempfile
 import subprocess
+from itertools import chain
 from collections.abc import Mapping, Collection
 import numpy as np
 import pandas as pd
 from textwrap import indent, dedent
 
 logger = logging.getLogger(__name__)
+VALID_SEGMENT_PROPERTY_TYPES = ['label', 'description', 'tags', 'string', 'number']
 
 
 def parse_nglink(link):
@@ -582,105 +584,6 @@ def upload_to_bucket(bucket, blob_name, blob_contents):
     return blob.public_url
 
 
-VALID_PROP_TYPES = ['label', 'description', 'tags', 'string', 'number']
-
-
-def serialize_segment_properties_info(df, prop_types={}, output_path=None):
-    """
-    Construct segment properties JSON info file according to the neuroglancer spec:
-    https://github.com/google/neuroglancer/blob/master/src/neuroglancer/datasource/precomputed/segment_properties.md
-
-    Note:
-        This function doesn't yet support 'tags'.
-
-    Args:
-        df:
-            DataFrame or Series.  Index must be named 'body'.
-            Every column will be interpreted as a segment property.
-
-        prop_types:
-            Dict to specify the neuroglancer property type of each column, e.g. {'instance': 'label'}.
-            For columns not listed in the dict, the property type is inferred from the name of the column
-            (if the name is 'label' or 'description') or the dtype of the column (string vs. number).
-
-        output_path:
-            If provided, export the JSON to a file.
-
-    Returns:
-        JSON data (as a dict)
-    """
-    assert df.index.name == 'body'
-    if isinstance(df, pd.Series):
-        df = df.to_frame()
-    invalid_prop_types = set(prop_types.values()) - set(VALID_PROP_TYPES)
-    assert not invalid_prop_types, \
-        f"Invalid property types: {invalid_prop_types}"
-
-    assert 'tags' not in prop_types.values(), \
-        "Sorry, 'tags' properties aren't yet supported by this function."
-
-    info = {
-        '@type': 'neuroglancer_segment_properties',
-        'inline': {
-            'ids': [*map(str, df.index)],
-            'properties': []
-        }
-    }
-
-    # If there's only one column, assume it's the 'label' property
-    if not prop_types and len(df.columns) == 1:
-        prop_types = {df.columns[0]: 'label'}
-
-    default_prop_types = {
-        'label': 'label',
-        'description': 'description'
-    }
-    prop_types = default_prop_types | prop_types
-
-    for col in df.columns:
-        prop = {}
-        prop['id'] = col
-
-        if np.issubdtype(df[col].dtype, np.number):
-            assert not df[col].dtype in (np.int64, np.uint64), \
-                "Neuroglancer doesn't support 64-bit integer properties.  Use int32 or float64"
-            prop['type'] = 'number'
-            prop['data_type'] = df[col].dtype.name
-            assert not df[col].isnull().any(), \
-                (f"Column {col} contans NaN entries. "
-                 "I'm not sure what to do with NaN values in numeric properties.")
-            prop['values'] = df[col].tolist()
-        else:
-            prop['type'] = prop_types.get(col, 'string')
-            prop['values'] = df[col].fillna("").astype(str).tolist()
-
-        info['inline']['properties'].append(prop)
-
-    _validate_property_type_counts(info)
-
-    if output_path:
-        with open(output_path, 'w') as f:
-            json.dump(info, f, indent=2)
-    return info
-
-
-def _validate_property_type_counts(info):
-    type_counts = (
-        pd.Series([prop['type'] for prop in info['inline']['properties']])
-        .value_counts()
-        .reindex(VALID_PROP_TYPES)
-        .fillna(0)
-        .astype(int)
-    )
-    for t in ['label', 'description', 'tags']:
-        assert type_counts.loc[t] <= 1, \
-            f"Can't have more than one property with type '{t}'"
-
-    if type_counts.loc['label'] == 0 and type_counts.loc['string'] > 0:
-        logger.warning("None of your segment properties are of type 'label', "
-                       "so none will be displayed in the neuroglancer UI.")
-
-
 def make_bucket_public(bucket=None):
     if bucket is None:
         bucket = sys.argv[1]
@@ -700,3 +603,202 @@ def make_bucket_public(bucket=None):
         subprocess.run(f'gsutil cors set {f.name} gs://{bucket}', shell=True, check=True)
 
     print(f"Configured bucket for public neuroglancer access: gs://{bucket}")
+
+
+def serialize_segment_properties_info(df, prop_types={}, tags_columns=[], prefix_tags=False, output_path=None):
+    """
+    Construct segment properties JSON info file according to the neuroglancer spec:
+    https://github.com/google/neuroglancer/blob/master/src/neuroglancer/datasource/precomputed/segment_properties.md
+
+    Args:
+        df:
+            DataFrame or Series.  Index must be named 'body' or 'segment'
+            Every column will be interpreted as a segment property.
+
+        prop_types:
+            Dict to specify the neuroglancer property type of each column, e.g. {'instance': 'label'}.
+            For columns not listed in the dict, the property type is inferred from the name of the column
+            (if the name is 'label' or 'description') or the dtype of the column (string vs. number).
+
+            TODO: A nicer API would be to just have separate arguments for each property type,
+                  as we already do for tags_columns.
+
+        tags_columns:
+            The list of columns which should be used to generate the (combined) 'tags' property.
+            (You can also specify tags columns directly in the prop_types argument.)
+
+        prefix_tags:
+            If True, all tags will be prefixed with the name of the column they came from,
+            e.g. 'status:Anchor'
+
+        output_path:
+            If provided, export the JSON to a file.
+
+    Returns:
+        JSON data (as a dict)
+    """
+    assert df.index.name in ('body', 'segment')
+    if isinstance(df, pd.Series):
+        df = df.to_frame()
+
+    prop_types, tags_columns = _reconcile_prop_types(
+        df.columns, prop_types, tags_columns
+    )
+
+    json_props = []
+    for col in {*df.columns} - {*tags_columns}:
+        prop = _property_json(df[col], prop_types)
+        json_props.append(prop)
+
+    if tags_columns:
+        tags_json = _tags_property_json(df, tags_columns, prefix_tags)
+        json_props.append(tags_json)
+
+    info = {
+        '@type': 'neuroglancer_segment_properties',
+        'inline': {
+            'ids': [*map(str, df.index)],
+            'properties': json_props
+        }
+    }
+
+    _validate_property_type_counts(info)
+
+    if output_path:
+        with open(output_path, 'w') as f:
+            json.dump(info, f)
+    return info
+
+
+def _reconcile_prop_types(col_names, prop_types, tags_columns):
+    """
+    Helper for serialize_segment_properties_info().
+
+    Validate the property types and tag columns,
+    append additional tag_columns if some were listed in prop_types,
+    and insert default prop_types if needed.
+    """
+    prop_types = dict(prop_types)
+    tags_columns = list(tags_columns)
+
+    invalid_prop_types = set(prop_types.values()) - set(VALID_SEGMENT_PROPERTY_TYPES)
+    assert not invalid_prop_types, \
+        f"Invalid property types: {invalid_prop_types}"
+
+    tag_props = {k for k,v in prop_types.items() if v == 'tags'}
+    non_tag_props = {k:v for k,v in prop_types.items() if v != 'tags'}
+
+    assert not (ambiguous_cols := set(non_tag_props.keys()) & set(tags_columns)), \
+        "Ambiguous property type for columns: " \
+        f"{ {k: v for k, v in non_tag_props if k in ambiguous_cols} }"
+
+    tags_columns = {*tags_columns, *tag_props}
+    prop_types |= {c: 'tags' for c in tags_columns}
+
+    # If there's only one column, assume it's the 'label' property
+    if not prop_types and len(col_names) == 1:
+        prop_types = {col_names[0]: 'label'}
+
+    default_prop_types = {
+        'label': 'label',
+        'description': 'description'
+    }
+    prop_types = default_prop_types | prop_types
+
+    return prop_types, tags_columns
+
+
+def _property_json(s, prop_types):
+    """
+    Helper for serialize_segment_properties_info().
+
+    Constructs the JSON for a segment property, other than the 'tags'
+    property, which is implemented in _tags_property_json()
+    """
+    if np.issubdtype(s.dtype, np.number) and prop_types.get(s.name, 'number') == 'number':
+        assert s.dtype not in (np.int64, np.uint64), \
+            "Neuroglancer doesn't support 64-bit integer properties.  Use int32 or float64"
+
+        assert not s.isnull().any(), \
+            (f"Column {s.name} contans NaN entries. "
+             "I'm not sure what to do with NaN values in numeric properties.")
+
+        return {
+            'id': s.name,
+            'type': 'number',
+            'data_type': s.dtype.name,
+            'values': s.tolist()
+        }
+
+    return {
+        'id': s.name,
+        'type': prop_types.get(s.name, 'string'),
+        'values': s.fillna("").astype(str).tolist()
+    }
+
+
+def _tags_property_json(df, tags_columns, prepend_colnames):
+    """
+    Helper for serialize_segment_properties_info().
+    Constructs the JSON for the 'tags' segment property.
+    """
+    df = df[[*tags_columns]].copy()
+
+    # Clean and convert each column to categorical
+    # before we combine categories below.
+    for c in df.columns:
+        df[c] = (
+            df[c]
+            .astype('string')
+            .str.replace(' ', '_')  # spaces are forbidden in tags
+            .replace('', None)      # discard empty strings
+            .astype('category')
+        )
+        if prepend_colnames:
+            prefix = c.replace(' ', '_')
+            prefixed_categories = [
+                f'{prefix}:{cat}'
+                for cat in df[c].dtype.categories
+            ]
+            df[c] = df[c].cat.rename_categories(prefixed_categories)
+
+    # Convert to a single big categorical dtype
+    all_tags = sorted({*chain(*(df[col].dtype.categories for col in df.columns))})
+    df = df.astype(pd.CategoricalDtype(categories=all_tags))
+
+    # Tags are written as a list-of-lists of sorted codes
+    codes_df = pd.DataFrame({c: df[c].cat.codes for c in df.columns})
+    sorted_codes = np.sort(codes_df.values, axis=1)
+    codes_lists = [
+        [x for x in row if x != -1]  # Drop nulls
+        for row in sorted_codes.tolist()
+    ]
+
+    return {
+        'id': 'tags',
+        'type': 'tags',
+        'tags': all_tags,
+        'values': codes_lists,
+    }
+
+
+def _validate_property_type_counts(info):
+    """
+    Helper for serialize_segment_properties_info().
+    Asserts that only one property has the 'labels' type.
+    Also checks 'description' and 'tags'
+    """
+    type_counts = (
+        pd.Series([prop['type'] for prop in info['inline']['properties']])
+        .value_counts()
+        .reindex(VALID_SEGMENT_PROPERTY_TYPES)
+        .fillna(0)
+        .astype(int)
+    )
+    for t in ['label', 'description', 'tags']:
+        assert type_counts.loc[t] <= 1, \
+            f"Can't have more than one property with type '{t}'"
+
+    if type_counts.loc['label'] == 0 and type_counts.loc['string'] > 0:
+        logger.warning("None of your segment properties are of type 'label', "
+                       "so none will be displayed in the neuroglancer UI.")
