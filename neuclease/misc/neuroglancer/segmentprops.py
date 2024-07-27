@@ -13,7 +13,7 @@ def segment_properties_json(
     string_cols=[],
     number_cols=[],
     tag_cols=[],
-    prefix_tags=False,
+    prefix_tags='all',
     drop_empty=True,
     output_path=None,
 ):
@@ -24,10 +24,14 @@ def segment_properties_json(
     Args:
         df:
             DataFrame whose index contains segment IDs.
-            To avoid confusion, we require that the Index be named 'body' or 'segment'.
+            For clarity of intent, we require that the Index be named 'segment' or 'body'.
+
             All columns will be converted to segment properties. If a column is not
             explicitly listed in the following arguments, its property type will be inferred
             from the column name and dtype.
+
+            The column dtypes can be string, category, or number (except int64).
+            Boolean columns are only valid as tags.
 
         label_col:
             Which column to use for the 'label' property which is shown in neuroglancer by default.
@@ -48,12 +52,23 @@ def segment_properties_json(
 
                 segment_properties_json(df, label_col='cell_class', tag_cols=['cell_class', ...])
 
+            Columns with dtype bool can be used for tags, in which case the false items
+            are discarded and the True items are tagged with the column name.
+
         prefix_tags:
-            If True, all tags will be prefixed with the name of the column they came from,
-            e.g. 'status:Anchor'
+            Either 'all' or 'disambiguate' or None.
+
+            - If 'all', then all tags will be prefixed with the name of their souce column,
+              (e.g. 'status:Anchor'), other than boolean columns.
+
+            - If 'disambiguate', then only prefix tags which appear in multiple columns
+              and therefore need a prefix to determine the tag's source column.
+
+            - If None, then no disambiguation is performed, and the meaning of duplicated tags cannot be
+              inferred by the user from the output alone.
 
         drop_empty:
-            If any IDs in the input have no non-empty (null or "") properties, then drop them,
+            If any IDs in the input have no non-empty (null or "") properties, then drop them
             from the output entirely so they don't show up in neuroglancer's default segment list.
 
         output_path:
@@ -64,16 +79,24 @@ def segment_properties_json(
         host neuroglancer precomputed segment properties.
     """
     assert df.index.name in ('body', 'segment')
+    assert prefix_tags in ('all', 'disambiguate', None)
+
+    if isinstance(string_cols, str):
+        string_cols = [string_cols]
+    if isinstance(number_cols, str):
+        number_cols = [number_cols]
+    if isinstance(tag_cols, str):
+        tag_cols = [tag_cols]
+
     if isinstance(df, pd.Series):
         df = df.to_frame()
+
+    if drop_empty:
+        df = _drop_empty_rows(df)
 
     scalar_types = _scalar_property_types(
         df, label_col, description_col, string_cols, number_cols, tag_cols
     )
-
-    if drop_empty:
-        null_mask = df.isnull() | (df == '')
-        df = df.loc[~null_mask.all(axis=1)]
 
     json_props = []
     for col, prop_type in scalar_types.items():
@@ -87,7 +110,7 @@ def segment_properties_json(
     info = {
         '@type': 'neuroglancer_segment_properties',
         'inline': {
-            'ids': [*map(str, df.index)],
+            'ids': [str(idx) for idx in df.index],
             'properties': json_props
         }
     }
@@ -99,16 +122,32 @@ def segment_properties_json(
     return info
 
 
+def _drop_empty_rows(df):
+    if len(df) == 0:
+        return df
+
+    bool_cols = df.dtypes[df.dtypes == bool].index
+    other_cols = df.dtypes[df.dtypes != bool].index
+
+    valid_bool = valid_other = False
+    if len(bool_cols) > 0:
+        valid_bool = df[bool_cols].any(axis=1)
+    if len(other_cols) > 0:
+        valid_other = (df[other_cols].notnull() & (df[other_cols] != '')).any(axis=1)
+
+    return df.loc[valid_bool | valid_other]
+
+
 def _scalar_property_types(df, label_col, description_col, string_cols, number_cols, tag_cols):
     """
     Determine the full set of scalar (non-tag) properties that should be emitted
-    along with their types, based on the users explicitly provided lists plus
+    along with their types, based on the user's explicitly provided lists plus
     default types for the unlisted columns in df.
     """
     # Tag columns can also be explicitly listed among the scalar properties, but if they
     # weren't explicitly listed, we don't create default scalar properties for them.
-    # We initialize the prop_types with tags first to make sure they don't receive
-    # default types, but allow those keys to be overwritten by scalar types from the user.
+    # We include tags prop_types to indicate that they don't require default types, but
+    # we add them *first* to allow those keys to be overwritten by scalar types that follow.
     prop_types = {c: 'tags' for c in tag_cols}
     prop_types |= {c: 'string' for c in string_cols}
     prop_types |= {c: 'number' for c in number_cols}
@@ -128,7 +167,9 @@ def _scalar_property_types(df, label_col, description_col, string_cols, number_c
 
     # Infer the types of unlisted columns from either the name or dtype
     for name, dtype in df.dtypes.items():
-        if name in prop_types:
+        if dtype == bool and name not in tag_cols:
+            raise RuntimeError("Boolean columns are only valid as tag_cols")
+        elif name in prop_types:
             continue
         elif name == 'label':
             prop_types['label'] = 'label'
@@ -145,31 +186,32 @@ def _scalar_property_types(df, label_col, description_col, string_cols, number_c
 
 def _scalar_property_json(s, prop_type):
     """
-    Constructs the JSON for a any segment property other than the 'tags' property.
+    Constructs the JSON for any segment property other than the 'tags' property.
     """
-    if prop_type == 'number':
-        assert s.dtype not in (np.int64, np.uint64), \
-            "Neuroglancer doesn't support 64-bit integer properties.  Use int32 or float64"
-
-        assert not s.isnull().any(), \
-            (f"Column {s.name} contans NaN entries. "
-             "I'm not sure what to do with NaN values in numeric properties.")
-
+    if prop_type != 'number':
         return {
             'id': s.name,
-            'type': 'number',
-            'data_type': s.dtype.name,
-            'values': s.tolist()
+            'type': prop_type,
+            'values': s.fillna("").astype(str).tolist()
         }
+
+    assert s.dtype not in (np.int64, np.uint64), \
+        ("Neuroglancer doesn't support 64-bit integer properties. "
+         "Use int32 or float64 instead.")
+
+    assert not s.isnull().any(), \
+        (f"Column {s.name} contans NaN entries. "
+         "I'm not sure what to do with NaN values in numeric properties.")
 
     return {
         'id': s.name,
-        'type': prop_type,
-        'values': s.fillna("").astype(str).tolist()
+        'type': 'number',
+        'data_type': s.dtype.name,
+        'values': s.tolist()
     }
 
 
-def _tags_property_json(df, tags_columns, prepend_colnames):
+def _tags_property_json(df, tags_columns, prefix_tags):
     """
     Constructs the JSON for the 'tags' segment property.
     """
@@ -178,20 +220,26 @@ def _tags_property_json(df, tags_columns, prepend_colnames):
     # Clean and convert each column to categorical
     # before we combine categories below.
     for c in df.columns:
+        if is_bool := (df[c].dtype == bool):
+            df[c] = df[c].replace([True, False], [c, None])
+
         df[c] = (
             df[c]
-            .astype('string')
+            .astype('string', copy=False)
             .str.replace(' ', '_')  # spaces are forbidden in tags
             .replace('', None)      # discard empty strings
             .astype('category')
         )
-        if prepend_colnames:
+        if prefix_tags == 'all' and not is_bool:
             prefix = c.replace(' ', '_')
             prefixed_categories = [
                 f'{prefix}:{cat}'
                 for cat in df[c].dtype.categories
             ]
             df[c] = df[c].cat.rename_categories(prefixed_categories)
+
+    if prefix_tags == 'disambiguate':
+        df = _disambiguate_tags(df)
 
     # Convert to a single big categorical dtype
     all_tags = sorted({*chain(*(df[col].dtype.categories for col in df.columns))})
@@ -211,3 +259,40 @@ def _tags_property_json(df, tags_columns, prepend_colnames):
         'tags': all_tags,
         'values': codes_lists,
     }
+
+
+def _disambiguate_tags(df):
+    """
+    Given a dataframe in which all columns are Categoricals,
+    find category values that are common across multiple columns
+    and prepend such values with a prefix (the column name)
+    to make sure no category value is duplicated from one column
+    to the next.
+    """
+    # List the columns in which each tag appears:
+    # {tag: [column, column, ...], ...}
+    tag_cols = {}
+    for col in df.columns:
+        for tag in df[col].dtype.categories:
+            cols = tag_cols.setdefault(tag, [])
+            cols.append(col)
+
+    # Build the renaming mapping for each column:
+    # {
+    #   column: {tag: new_tag, tag: new_tag, ...},
+    #   column: {tag: new_tag, tag: new_tag, ...}, ...
+    # }
+    all_renames = {}
+    for tag, cols in tag_cols.items():
+        if len(cols) == 1:
+            continue
+        for col in cols:
+            prefix = col.replace(' ', '_')
+            renames = all_renames.setdefault(col, {})
+            renames[tag] = f'{prefix}:{tag}'
+
+    # Replace old names with new
+    for col, renames in all_renames.items():
+        df[col] = df[col].cat.rename_categories(renames)
+
+    return df
