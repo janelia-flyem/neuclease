@@ -52,24 +52,24 @@ def segment_properties_json(
 
                 segment_properties_json(df, label_col='cell_class', tag_cols=['cell_class', ...])
 
-            Columns with dtype bool can be used for tags, in which case the false items
+            Columns with dtype bool can be used for tags, in which case the False items
             are discarded and the True items are tagged with the column name.
 
         prefix_tags:
             Either 'all' or 'disambiguate' or None.
 
-            - If 'all', then all tags will be prefixed with the name of their souce column,
+            - If 'all', then all tags will be prefixed with the name of their source column,
               (e.g. 'status:Anchor'), other than boolean columns.
 
-            - If 'disambiguate', then only prefix tags which appear in multiple columns
-              and therefore need a prefix to determine the tag's source column.
+            - If 'disambiguate', then only tags which appear in multiple columns
+              be prefixed with the name of their source column.
 
-            - If None, then no disambiguation is performed, and the meaning of duplicated tags cannot be
-              inferred by the user from the output alone.
+            - If None, then no disambiguation is performed.
 
         drop_empty:
-            If any IDs in the input have no non-empty (null or "") properties, then drop them
-            from the output entirely so they don't show up in neuroglancer's default segment list.
+            If any IDs in the input have no non-empty (null or "") properties,
+            then drop them from the output entirely so they don't show up in
+            neuroglancer's default segment list.
 
         output_path:
             If provided, export the JSON to a file.
@@ -123,7 +123,7 @@ def segment_properties_json(
 
 
 def _drop_empty_rows(df):
-    if len(df) == 0:
+    if len(df) == 0 or len(df.columns) == 0:
         return df
 
     bool_cols = df.dtypes[df.dtypes == bool].index
@@ -211,37 +211,22 @@ def _scalar_property_json(s, prop_type):
     }
 
 
-def _tags_property_json(df, tags_columns, prefix_tags):
+def _tags_property_json(prop_df, tags_columns, prefix_tags):
     """
     Constructs the JSON for the 'tags' segment property.
     """
-    df = df[[*tags_columns]].copy()
+    df = prop_df[[]].copy()
 
     # Clean and convert each column to categorical
-    # before we combine categories below.
-    for c in df.columns:
-        if is_bool := (df[c].dtype == bool):
-            df[c] = df[c].replace([True, False], [c, None])
-
-        df[c] = (
-            df[c]
-            .astype('string', copy=False)
-            .str.replace(' ', '_')  # spaces are forbidden in tags
-            .replace('', None)      # discard empty strings
-            .astype('category')
-        )
-        if prefix_tags == 'all' and not is_bool:
-            prefix = c.replace(' ', '_')
-            prefixed_categories = [
-                f'{prefix}:{cat}'
-                for cat in df[c].dtype.categories
-            ]
-            df[c] = df[c].cat.rename_categories(prefixed_categories)
+    # individually before we combine categories below.
+    for c in tags_columns:
+        add_prefix = (prefix_tags == 'all' and prop_df[c].dtype != bool)
+        df[c] = _convert_to_categorical(prop_df[c], add_prefix)
 
     if prefix_tags == 'disambiguate':
         df = _disambiguate_tags(df)
 
-    # Convert to a single big categorical dtype
+    # Convert to a single unified categorical dtype
     all_tags = sorted({*chain(*(df[col].dtype.categories for col in df.columns))})
     df = df.astype(pd.CategoricalDtype(categories=all_tags))
 
@@ -259,6 +244,41 @@ def _tags_property_json(df, tags_columns, prefix_tags):
         'tags': all_tags,
         'values': codes_lists,
     }
+
+
+def _convert_to_categorical(s, add_prefix):
+    """
+    Convert the given Series to a Categorical suitable for tags.
+    """
+    if s.dtype == 'category':
+        s = s.cat.remove_unused_categories()
+
+    if s.dtype == bool:
+        s = s.astype('category', copy=False)
+        s = s.cat.rename_categories({True: s.name})
+        if False in s.dtype.categories:
+            s = s.cat.remove_categories([False])
+
+    s = s.astype('category', copy=False)
+
+    # We interpret empty string as null
+    if '' in s.dtype.categories:
+        s = s.cat.remove_categories([''])
+
+    # Spaces are forbidden in tags
+    s = s.cat.rename_categories([
+        str(cat).replace(' ', '_')
+        for cat in s.dtype.categories
+    ])
+
+    if add_prefix:
+        prefix = s.name.replace(' ', '_')
+        s = s.cat.rename_categories([
+            f'{prefix}:{cat}'
+            for cat in s.dtype.categories
+        ])
+
+    return s
 
 
 def _disambiguate_tags(df):
@@ -291,7 +311,7 @@ def _disambiguate_tags(df):
             renames = all_renames.setdefault(col, {})
             renames[tag] = f'{prefix}:{tag}'
 
-    # Replace old names with new
+    # Replace old names with new.
     for col, renames in all_renames.items():
         df[col] = df[col].cat.rename_categories(renames)
 
