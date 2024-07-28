@@ -14,6 +14,7 @@ def segment_properties_json(
     number_cols=[],
     tag_cols=[],
     prefix_tags='all',
+    tag_descriptions={},
     drop_empty=True,
     output_path=None,
 ):
@@ -66,6 +67,9 @@ def segment_properties_json(
 
             - If None, then no disambiguation is performed.
 
+        tag_descriptions:
+            A dict of {tag: description}
+
         drop_empty:
             If any IDs in the input have no non-empty (null or "") properties,
             then drop them from the output entirely so they don't show up in
@@ -104,8 +108,8 @@ def segment_properties_json(
         json_props.append(j)
 
     if tag_cols:
-        j = _tags_property_json(df, tag_cols, prefix_tags)
-        json_props.append(j)
+        tags_prop = _tags_property_json(df, tag_cols, prefix_tags, tag_descriptions)
+        json_props.append(tags_prop)
 
     info = {
         '@type': 'neuroglancer_segment_properties',
@@ -211,7 +215,7 @@ def _scalar_property_json(s, prop_type):
     }
 
 
-def _tags_property_json(prop_df, tags_columns, prefix_tags):
+def _tags_property_json(prop_df, tags_columns, prefix_tags, tag_descriptions):
     """
     Constructs the JSON for the 'tags' segment property.
     """
@@ -238,12 +242,17 @@ def _tags_property_json(prop_df, tags_columns, prefix_tags):
         for row in sorted_codes.tolist()
     ]
 
-    return {
+    prop = {
         'id': 'tags',
         'type': 'tags',
         'tags': all_tags,
         'values': codes_lists,
     }
+
+    if tag_descriptions:
+        prop['tag_descriptions'] = _tag_description_list(all_tags, tag_descriptions)
+
+    return prop
 
 
 def _convert_to_categorical(s, add_prefix):
@@ -272,7 +281,7 @@ def _convert_to_categorical(s, add_prefix):
     ])
 
     if add_prefix:
-        prefix = s.name.replace(' ', '_')
+        prefix = s.name.replace(' ', '_').replace(':', '_')
         s = s.cat.rename_categories([
             f'{prefix}:{cat}'
             for cat in s.dtype.categories
@@ -307,7 +316,7 @@ def _disambiguate_tags(df):
         if len(cols) == 1:
             continue
         for col in cols:
-            prefix = col.replace(' ', '_')
+            prefix = col.replace(' ', '_').replace(':', '_')
             renames = all_renames.setdefault(col, {})
             renames[tag] = f'{prefix}:{tag}'
 
@@ -316,3 +325,28 @@ def _disambiguate_tags(df):
         df[col] = df[col].cat.rename_categories(renames)
 
     return df
+
+
+def _tag_description_list(all_tags, tag_descriptions):
+    """
+    Given the list of all tags and a mapping of tags to descriptions,
+    return the descriptions in the same order as all_tags.
+    """
+    tag_descriptions = {
+        str(k).replace(' ', '_'): v
+        for k,v in tag_descriptions.items()
+    }
+
+    td = []
+    for t in all_tags:
+        d = tag_descriptions.get(t, None)
+
+        # If we didn't find it, try stripping the tag prefix (if any)
+        if not d and ':' in t:
+            t2 = t[1+t.index(':'):]
+            d = tag_descriptions.get(t2, None)
+
+        # If we still didn't find it, emit the tag itself.
+        td.append(d or t)
+
+    return td
