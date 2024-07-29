@@ -134,6 +134,8 @@ def _drop_empty_rows(df):
     if len(df) == 0 or len(df.columns) == 0:
         return df
 
+    # Note that bool cols are guaranteed to be tag cols,
+    # so False is considered empty.
     bool_cols = df.dtypes[df.dtypes == bool].index
     other_cols = df.dtypes[df.dtypes != bool].index
 
