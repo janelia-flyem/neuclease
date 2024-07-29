@@ -13,7 +13,7 @@ def extract_annotations(link, *, link_index=None, user=None, visible_only=False)
     Extract local://annotations data from a neuroglancer link.
     The annotation coordinates (point, pointA, pointB, radii) are extracted
     into separate columns, named x,y,z/xa,ya,za/xb,yb,zb/rx,ry,rz
-    (consitent with annotation_layer_json() in this file).
+    (consistent with annotation_layer_json() in this file).
 
     Args:
         link:
@@ -409,37 +409,6 @@ def _annotation_property_specs(df, properties):
     Returns:
         JSON dict
     """
-    def proptype(col):
-        dtype = df[col].dtype
-        if dtype in (np.float64, np.int64, np.uint64):
-            raise RuntimeError('neuroglancer doesnt support 64-bit property types.')
-        if dtype in (np.uint8, np.int8, np.uint16, np.int16, np.uint32, np.int32, np.float32):
-            return str(dtype)
-
-        if dtype == 'category':
-            num_cats = len(dtype.categories)
-            for utype in (np.uint8, np.uint16, np.uint32):
-                if num_cats <= 1 + np.iinfo(utype).max:
-                    return str(np.dtype(utype))
-            raise RuntimeError(f"Column {col} has too many categories")
-
-        if df[col].dtype != object:
-            raise RuntimeError(f"Unsupported property dtype: {dtype} for column {col}")
-
-        is_str = df[col].map(lambda x: isinstance(x, str)).all()
-        is_color = is_str and df[col].str.startswith('#').all()
-        if not is_color:
-            msg = (
-                f"Column {col}: I don't know what to do with object dtype that isn't rbg or rgba.\n"
-                "If you want to create an enum property, then supply a pandas Categorical column."
-            )
-            raise RuntimeError(msg)
-        if (df[col].map(len) == len("#rrggbb")).all():
-            return 'rgb'
-        if (df[col].map(len) == len("#rrggbbaa")).all():
-            return 'rgba'
-        raise RuntimeError("Not valid RGB or RGBA colors")
-
     if isinstance(properties, Mapping):
         property_specs = properties
     else:
@@ -449,7 +418,7 @@ def _annotation_property_specs(df, properties):
     default_property_specs = {
         col: {
             'id': col,
-            'type': proptype(col),
+            'type': _proptype(df[col]),
         }
         for col in property_specs
     }
@@ -470,3 +439,41 @@ def _annotation_property_specs(df, properties):
 
 # Deprecated name (now supports more than just points)
 point_annotation_layer_json = annotation_layer_json
+
+
+def _proptype(s):
+    """
+    Helper for _annotation_property_specs().
+    Given a Series, determine the corresponding neuroglancer property type.
+
+    Returns: str
+        Either a numeric type (e.g. 'uint16') or a color type ('rgb' or 'rgba').
+    """
+    if s.dtype in (np.float64, np.int64, np.uint64):
+        raise RuntimeError('neuroglancer doesnt support 64-bit property types.')
+    if s.dtype in (np.uint8, np.int8, np.uint16, np.int16, np.uint32, np.int32, np.float32):
+        return str(s.dtype)
+
+    if s.dtype == 'category':
+        num_cats = len(s.dtype.categories)
+        for utype in (np.uint8, np.uint16, np.uint32):
+            if num_cats <= 1 + np.iinfo(utype).max:
+                return str(np.dtype(utype))
+        raise RuntimeError(f"Column {s.name} has too many categories")
+
+    if s.dtype != object:
+        raise RuntimeError(f"Unsupported property dtype: {s.dtype} for column {s.name}")
+
+    is_str = s.map(lambda x: isinstance(x, str)).all()
+    is_color = is_str and s.str.startswith('#').all()
+    if not is_color:
+        msg = (
+            f"Column {s.name}: I don't know what to do with object dtype that isn't rbg or rgba.\n"
+            "If you want to create an enum property, then supply a pandas Categorical column."
+        )
+        raise RuntimeError(msg)
+    if (s.map(len) == len("#rrggbb")).all():
+        return 'rgb'
+    if (s.map(len) == len("#rrggbbaa")).all():
+        return 'rgba'
+    raise RuntimeError("Not valid RGB or RGBA colors")
