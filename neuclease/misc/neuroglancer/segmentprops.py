@@ -15,6 +15,7 @@ def segment_properties_json(
     tag_cols=[],
     prefix_tags='all',
     tag_descriptions={},
+    col_descriptions={},
     drop_empty=True,
     output_path=None,
 ):
@@ -68,7 +69,10 @@ def segment_properties_json(
             - If None, then no disambiguation is performed.
 
         tag_descriptions:
-            A dict of {tag: description}
+            A dict of {tag: description} describing each tag value.
+
+        col_descriptions:
+            A dict of {column: description} describing each property (input column) other than 'tags'.
 
         drop_empty:
             If any IDs in the input have no non-empty (null or "") properties,
@@ -104,7 +108,7 @@ def segment_properties_json(
 
     json_props = []
     for col, prop_type in scalar_types.items():
-        j = _scalar_property_json(df[col], prop_type)
+        j = _scalar_property_json(df[col], prop_type, col_descriptions.get(col))
         json_props.append(j)
 
     if tag_cols:
@@ -188,16 +192,19 @@ def _scalar_property_types(df, label_col, description_col, string_cols, number_c
     return {k:v for k,v in prop_types.items() if v != 'tags'}
 
 
-def _scalar_property_json(s, prop_type):
+def _scalar_property_json(s, prop_type, description):
     """
     Constructs the JSON for any segment property other than the 'tags' property.
     """
     if prop_type != 'number':
-        return {
+        prop = {
             'id': s.name,
             'type': prop_type,
             'values': s.fillna("").astype(str).tolist()
         }
+        if description:
+            prop['description'] = description
+        return prop
 
     assert s.dtype not in (np.int64, np.uint64), \
         ("Neuroglancer doesn't support 64-bit integer properties. "
@@ -207,12 +214,16 @@ def _scalar_property_json(s, prop_type):
         (f"Column {s.name} contans NaN entries. "
          "I'm not sure what to do with NaN values in numeric properties.")
 
-    return {
+    prop = {
         'id': s.name,
         'type': 'number',
         'data_type': s.dtype.name,
         'values': s.tolist()
     }
+    if description:
+        prop['description'] = description
+
+    return prop
 
 
 def _tags_property_json(prop_df, tags_columns, prefix_tags, tag_descriptions):
@@ -294,7 +305,7 @@ def _disambiguate_tags(df):
     """
     Given a dataframe in which all columns are Categoricals,
     find category values that are common across multiple columns
-    and prepend such values with a prefix (the column name)
+    and prepend a prefix (the column name) to such values
     to make sure no category value is duplicated from one column
     to the next.
     """
