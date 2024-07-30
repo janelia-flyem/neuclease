@@ -32,8 +32,8 @@ def segment_properties_json(
             explicitly listed in the following arguments, its property type will be inferred
             from the column name and dtype.
 
-            The column dtypes can be string, category, or number (except int64).
-            Boolean columns are only valid as tags.
+            The column dtypes can be string, category, or number, but 64-bit values
+            will be downcast to 32-bit. Boolean columns are only valid as tags.
 
         label_col:
             Which column to use for the 'label' property which is shown in neuroglancer by default.
@@ -208,9 +208,22 @@ def _scalar_property_json(s, prop_type, description):
             prop['description'] = description
         return prop
 
-    assert s.dtype not in (np.int64, np.uint64), \
-        ("Neuroglancer doesn't support 64-bit integer properties. "
-         "Use int32 or float64 instead.")
+    if s.dtype == np.float64:
+        s = s.astype(np.float32)
+
+    # Convert int64 to int32 if we can do so losslessly.
+    if s.dtype in (np.int64, np.uint64):
+        for dtype32 in (np.int32, np.uint32):
+            info32 = np.iinfo(dtype32)
+            if s.min() >= info32.min and s.max() <= info32.max:
+                s = s.astype(dtype32)
+                break
+        else:
+            raise RuntimeError(
+                f"Can't create a property for column: '{s.name}'. "
+                "Neuroglancer doesn't support 64-bit integer properties, "
+                "and your data exceeds the limits of (u)int32."
+            )
 
     assert not s.isnull().any(), \
         (f"Column {s.name} contans NaN entries. "
