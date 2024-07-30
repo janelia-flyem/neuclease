@@ -60,8 +60,6 @@ def upload_ngstate(bucket_path, state):
     Upload the given JSON state to a gbucket location,
     such as 'gs://flyem-user-links/short/foobar.json'
     """
-    from neuclease.util import upload_to_bucket
-
     assert bucket_path.startswith('gs://')
     bucket_path = bucket_path[len('gs://'):]
 
@@ -72,7 +70,21 @@ def upload_ngstate(bucket_path, state):
     return upload_to_bucket(bucket, filename, state_string)
 
 
-def upload_to_bucket(bucket, blob_name, blob_contents):
+def upload_json(obj, bucket_path, disable_cache=True):
+    """
+    Upload the given JSON file to a gbucket location,
+    such as 'gs://flyem-user-links/short/foobar.json'
+    """
+    assert bucket_path.startswith('gs://')
+    bucket_path = bucket_path[len('gs://'):]
+
+    bucket = bucket_path.split('/')[0]
+    filename = bucket_path[1 + len(bucket):]
+
+    return upload_to_bucket(bucket, filename, json.dumps(obj), 'application/json', disable_cache)
+
+
+def upload_to_bucket(bucket, blob_name, blob_contents, content_type='application/json', disable_cache=False):
     """
     Upload a blob of data to the specified google storage bucket.
     """
@@ -82,8 +94,9 @@ def upload_to_bucket(bucket, blob_name, blob_contents):
         bucket = storage_client.get_bucket(bucket)
 
     blob = bucket.blob(blob_name)
-    blob.cache_control = 'public, no-store'
-    blob.upload_from_string(blob_contents, content_type='application/json')
+    if disable_cache:
+        blob.cache_control = 'public, no-store'
+    blob.upload_from_string(blob_contents, content_type)
     return blob.public_url
 
 
