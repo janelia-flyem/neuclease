@@ -35,6 +35,9 @@ def segment_properties_json(
             The column dtypes can be string, category, or number, but 64-bit values
             will be downcast to 32-bit. Boolean columns are only valid as tags.
 
+            The order of the input columns determines the order in which properties will be written.
+            Neuroglancer preserves that order when displaying columns of numeric properties.
+
         label_col:
             Which column to use for the 'label' property which is shown in neuroglancer by default.
 
@@ -88,6 +91,7 @@ def segment_properties_json(
     """
     assert df.index.name in ('body', 'segment')
     assert prefix_tags in ('all', 'disambiguate', None)
+    assert len(set(df.columns)) == len(df.columns), "Input contains duplicate column names"
 
     if isinstance(string_cols, str):
         string_cols = [string_cols]
@@ -190,8 +194,14 @@ def _scalar_property_types(df, label_col, description_col, string_cols, number_c
         else:
             prop_types[name] = 'string'
 
-    # drop tag properties
-    return {k:v for k,v in prop_types.items() if v != 'tags'}
+    # Re-order to match original input columns.
+    # Property order determines appearance in neuroglancer.
+    prop_types = {c: prop_types[c] for c in df.columns}
+
+    # Drop tag properties; return scalar properties only
+    prop_types = {k:v for k,v in prop_types.items() if v != 'tags'}
+
+    return prop_types
 
 
 def _scalar_property_json(s, prop_type, description):
