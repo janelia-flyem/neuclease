@@ -402,7 +402,7 @@ def create_legacy_mesh_info(mesh_dir, names=None):
         names = [p.split('/')[-1][:-len('.ngmesh')] for p in paths]
         labels = {int(name): name for name in names}
     else:
-        labels = {name: label for name, label in names.items()}
+        labels = {label: name for name, label in names.items()}
 
     dump_json({"@type": "neuroglancer_legacy_mesh"}, f"{mesh_dir}/info")
 
