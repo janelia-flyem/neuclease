@@ -91,7 +91,8 @@ def segment_properties_json(
     """
     assert df.index.name in ('body', 'segment')
     assert prefix_tags in ('all', 'disambiguate', None)
-    assert len(set(df.columns)) == len(df.columns), "Input contains duplicate column names"
+    assert not (dupes := df.columns.duplicated()).any(), \
+        f"Duplicated column names: {df.columns[dupes].tolist()}"
 
     if isinstance(string_cols, str):
         string_cols = [string_cols]
@@ -181,8 +182,10 @@ def _scalar_property_types(df, label_col, description_col, string_cols, number_c
 
     # Infer the types of unlisted columns from either the name or dtype
     for name, dtype in df.dtypes.items():
-        if dtype == bool and name not in tag_cols:
+        if dtype == bool and prop_types.get(name) != 'tags':
             raise RuntimeError("Boolean columns are only valid as tag_cols")
+        elif prop_types.get(name) == 'number' and not np.issubdtype(dtype, np.number):
+            raise RuntimeError(f"Column {name} not valid as number_cols (dtype: {dtype})")
         elif name in prop_types:
             continue
         elif name == 'label':
