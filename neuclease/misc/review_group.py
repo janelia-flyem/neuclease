@@ -13,9 +13,8 @@ from neuclease.misc.neuroglancer import parse_nglink, layer_dict, upload_json, s
 from neuprint.wrangle import bilateral_syndist, syndist_matrix, assign_sides_in_groups
 
 
-def review_central_brain_groups(neurons=None, syndist=None, group_size=2):
+def review_central_brain_groups(template_link, task_bucket, neurons=None, syndist=None, group_size=2):
     from neuprint import Client, fetch_neurons, NeuronCriteria as NC
-    template_link = 'https://clio-ng.janelia.org/#!gs://flyem-user-links/short/RT-approval-task-template.json'
     template_state = parse_nglink(template_link)
 
     c = Client('neuprint-cns.janelia.org', 'cns')
@@ -36,7 +35,7 @@ def review_central_brain_groups(neurons=None, syndist=None, group_size=2):
     _cb_bodies = set(syndist.query('roi in @cb')['bodyId'].unique())
     cb_only_bodies = _cb_bodies - olr_bodies - oll_bodies - vnc_bodies
 
-    task_links = review_groups(neurons, syndist, cb_only_bodies, c.primary_rois, template_state, 'brain-neuropils', group_size=group_size)
+    task_links = review_groups(neurons, syndist, cb_only_bodies, c.primary_rois, template_state, 'brain-neuropils', task_bucket, group_size=group_size)
     task_links = pd.Series(task_links, name='link').rename_axis('group')
     if group_size is None:
         group_size = 'all'
@@ -44,7 +43,7 @@ def review_central_brain_groups(neurons=None, syndist=None, group_size=2):
     return task_links
 
 
-def review_groups(neurons, syndist, bodies, primary_rois, template_state, roi_layer, untraced_only=True, group_size=None):
+def review_groups(neurons, syndist, bodies, primary_rois, template_state, roi_layer, task_bucket, untraced_only=True, group_size=None):
     neurons.index = neurons['bodyId']
     neurons = neurons.query('bodyId in @bodies and group.notnull() and group != 0').copy()
     if untraced_only:
@@ -75,7 +74,6 @@ def review_groups(neurons, syndist, bodies, primary_rois, template_state, roi_la
     )
 
     roicols = sorted(syn_bidist_mat.columns)
-    task_bucket = 'gs://flyem-assignments/cns/group-RT-approval'
     task_links = prepare_task_links(neurons, roicols, task_bucket, primary_rois, template_state, roi_layer)
     return task_links
 
