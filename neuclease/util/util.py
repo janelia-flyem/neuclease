@@ -1511,7 +1511,7 @@ def swap_df_cols(df, prefixes=None, swap_rows=None, suffixes=['_a', '_b']):
     if swap_rows is None:
         swap_rows = slice(None)
     else:
-        assert swap_rows.dtype == np.bool
+        assert swap_rows.dtype == bool
 
     all_cols = [p + s for p,s in product(prefixes, suffixes)]
     missing_cols = set(all_cols) - set(df.columns)

@@ -389,7 +389,7 @@ def _initialize_combined_roi_volume(roi_boxes, box_zyx, roi_labels, as_bool):
     combined_shape = (box_zyx[1] - box_zyx[0])
 
     if as_bool:
-        dtype = np.bool
+        dtype = bool
     else:
         # Choose smallest dtype that can hold enough unique values
         for d in [np.uint8, np.uint16, np.uint32]:
