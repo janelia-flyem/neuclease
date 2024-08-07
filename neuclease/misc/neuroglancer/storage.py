@@ -46,7 +46,7 @@ def upload_ngstates(bucket_dir, states, threads=0, processes=0):
     bucket = bucket_dir.split('/')[0]
     dirpath = bucket_dir[1 + len(bucket):]
 
-    blob_names = [dirpath + '/' + name for name in states.keys()]
+    blob_names = [dirpath + '/' + str(name) for name in states.keys()]
     blobs = map(json.dumps, states.values())
     args = [(bucket, blobname, blob) for blobname, blob in zip(blob_names, blobs)]
 
