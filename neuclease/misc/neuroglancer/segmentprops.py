@@ -186,9 +186,9 @@ def _scalar_property_types(df, label_col, description_col, string_cols, number_c
     # Infer the types of unlisted columns from either the name or dtype
     for name, dtype in df.dtypes.items():
         if dtype == bool and prop_types.get(name) != 'tags':
-            raise RuntimeError("Boolean columns are only valid as tag_cols")
+            raise RuntimeError(f"Column '{name}': Boolean columns are only valid as tag_cols")
         elif prop_types.get(name) == 'number' and not np.issubdtype(dtype, np.number):
-            raise RuntimeError(f"Column {name} not valid as number_cols (dtype: {dtype})")
+            raise RuntimeError(f"Column '{name}': Not valid as number_cols (dtype: {dtype})")
         elif name in prop_types:
             continue
         elif name == 'label':
