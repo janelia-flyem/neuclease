@@ -1,4 +1,3 @@
-from itertools import starmap
 import numpy as np
 
 
@@ -32,9 +31,9 @@ def box_to_slicing(start, stop):
 
     Example:
     
-        >>> assert bb_to_slicing([1,2,3], [4,5,6]) == np.s_[1:4, 2:5, 3:6]
+        >>> assert box_to_slicing([1,2,3], [4,5,6]) == np.s_[1:4, 2:5, 3:6]
     """
-    return tuple( starmap( slice, zip(start, stop) ) )
+    return tuple(map(slice, start, stop))
 
 
 def box_as_tuple(box):
@@ -112,12 +111,7 @@ def choose_pyramid_depth(bounding_box, top_level_max_dim=512):
 
 def box_intersection(box_A, box_B):
     """
-    Compute the intersection of the two given boxes.
-    If the two boxes do not intersect at all, then the returned box will have non-positive shape:
-
-    >>> intersection = box_intersection(box_A, box_B)
-    >>> assert (intersection[1] - intersection[0] > 0).all(), "Boxes do not intersect."
-
+    Compute the intersection(s) of two (arrays of) boxes.
     You may pass multiple boxes in either argument, in which case broadcasting rules apply.
     """
     box_A = np.asarray(box_A)
