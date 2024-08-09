@@ -37,8 +37,12 @@ def review_central_brain_groups(template_link, task_bucket, neurons=None, syndis
 
     task_links = review_groups(neurons, syndist, cb_only_bodies, c.primary_rois, template_state, 'brain-neuropils', task_bucket, group_size=group_size)
     task_links = pd.Series(task_links, name='link').rename_axis('group')
+
     if group_size is None:
         group_size = 'all'
+    elif hasattr(group_size, '__len__'):
+        group_size = 'various'
+
     task_links.to_csv(f'central-group-tasks-{group_size}.csv', index=True, header=True)
     return task_links
 
@@ -54,8 +58,10 @@ def review_groups(neurons, syndist, bodies, primary_rois, template_state, roi_la
         neurons = neurons.loc[~neurons['group_is_traced']].copy()
 
     if group_size is not None:
+        if not hasattr(group_size, '__len__'):
+            group_size = [group_size]
         neurons['group_size'] = neurons.groupby('group').transform('size')
-        neurons = neurons.loc[neurons['group_size'] == group_size].copy()
+        neurons = neurons.loc[neurons['group_size'].isin(group_size)].copy()
 
     syndist = syndist.query('roi in @primary_rois and bodyId in @neurons.bodyId')
     syndist = syndist[['bodyId', 'roi', 'pre', 'post']]
