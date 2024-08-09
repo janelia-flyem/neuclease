@@ -158,11 +158,14 @@ def _scalar_property_types(df, label_col, description_col, string_cols, number_c
     Determine the full set of scalar (non-tag) properties that should be emitted
     along with their types, based on the user's explicitly provided lists plus
     default types for the unlisted columns in df.
+
+    Here, 'scalar' includes types: number, string, label, description.
     """
-    # Tag columns can also be explicitly listed among the scalar properties, but if they
-    # weren't explicitly listed, we don't create default scalar properties for them.
-    # We include tags prop_types to indicate that they don't require default types, but
-    # we add them *first* to allow those keys to be overwritten by scalar types that follow.
+    # Tag columns can *also* be explicitly listed among the scalar properties, but if
+    # they aren't, then we avoid _automatically_ creating scalar properties for those columns.
+    # So we temporarily initialize prop_types with the tag_cols to ensure we don't
+    # automatically create scalar properties for the tag columns, but we allow those
+    # keys to be overwritten by the scalar types that follow.
     prop_types = {c: 'tags' for c in tag_cols}
     prop_types |= {c: 'string' for c in string_cols}
     prop_types |= {c: 'number' for c in number_cols}
@@ -211,16 +214,22 @@ def _scalar_property_json(s, prop_type, description):
     """
     Constructs the JSON for any segment property other than the 'tags' property.
     """
-    if prop_type != 'number':
-        prop = {
-            'id': s.name,
-            'type': prop_type,
-            'values': s.fillna("").astype(str).tolist()
-        }
-        if description:
-            prop['description'] = description
-        return prop
+    if prop_type == 'number':
+        return _number_property_json(prop_type, description)
 
+    prop = {
+        'id': s.name,
+        'type': prop_type,
+        'values': s.fillna("").astype(str).tolist()
+    }
+
+    if description:
+        prop['description'] = description
+
+    return prop
+
+
+def _number_property_json(s, description):
     if s.dtype == np.float64:
         s = s.astype(np.float32)
 
@@ -248,6 +257,7 @@ def _scalar_property_json(s, prop_type, description):
         'data_type': s.dtype.name,
         'values': s.tolist()
     }
+
     if description:
         prop['description'] = description
 
