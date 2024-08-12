@@ -1397,7 +1397,7 @@ def fix_df_names(df):
     Rename all columns of the given dataframe with programmer-friendly alternatives,
     i.e. lowercase and replace spaces with underscores.
     """
-    return df.rename(columns={c: c.lower().replace(' ', '_').replace('-', '_') for c in df.columns})
+    return df.rename(columns={c: re.sub(r'\s+', '_', c.lower()) for c in df.columns})
 
 
 def downgrade_nullable_dtypes(df, null_handling='error'):
