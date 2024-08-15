@@ -33,7 +33,7 @@ def download_ngstate(link):
     raise ValueError(f"Don't understand state link: {link}")
 
 
-def upload_ngstates(bucket_dir, states, threads=0, processes=0):
+def upload_ngstates(bucket_dir, states, threads=0, processes=0, disable_cache=False):
     """
     Use multithreading or multiprocessing to upload many files in parallel,
     similar to `gsutil -m cp []...]`, except that in this case you must choose
@@ -48,14 +48,17 @@ def upload_ngstates(bucket_dir, states, threads=0, processes=0):
 
     blob_names = [dirpath + '/' + str(name) for name in states.keys()]
     blobs = map(json.dumps, states.values())
-    args = [(bucket, blobname, blob) for blobname, blob in zip(blob_names, blobs)]
+    args = [
+        (bucket, blobname, blob, 'application/json', disable_cache)
+        for blobname, blob in zip(blob_names, blobs)
+    ]
 
     from neuclease.util import compute_parallel
     urls = compute_parallel(upload_to_bucket, args, starmap=True, threads=threads, processes=processes)
     return urls
 
 
-def upload_ngstate(bucket_path, state):
+def upload_ngstate(bucket_path, state, disable_cache=False):
     """
     Upload the given JSON state to a gbucket location,
     such as 'gs://flyem-user-links/short/foobar.json'
@@ -67,7 +70,7 @@ def upload_ngstate(bucket_path, state):
     filename = bucket_path[1 + len(bucket):]
 
     state_string = json.dumps(state, indent=2)
-    return upload_to_bucket(bucket, filename, state_string)
+    return upload_to_bucket(bucket, filename, state_string, disable_cache=disable_cache)
 
 
 def upload_json(obj, bucket_path, disable_cache=True):
