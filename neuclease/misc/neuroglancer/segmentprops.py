@@ -399,3 +399,54 @@ def _tag_description_list(all_tags, tag_descriptions):
         td.append(d or t)
 
     return td
+
+
+def segment_properties_to_dataframe(js):
+    """
+    Converts JSON to DataFrame.
+    This is primarily for testing and demonstration.
+
+    Note:
+        A user's original dataframe is not generally recoverable
+        from the segment properties JSON representation
+        if tags are present.
+
+        This function translates all tags to boolean columns
+        (one column per tag), rather than strings or categoricals
+        (which is how the user probably originally had them).
+        The resulting dataframe might contain MANY boolean columns,
+        likely requiring more memory than the user's original
+        dataframe did.
+    """
+    scalar_props = [
+        prop for prop in js['inline']['properties']
+        if prop['type'] != 'tags'
+    ]
+    names = [prop['id'] for prop in scalar_props]
+    values = [prop['values'] for prop in scalar_props]
+    segment_ids = [*map(int, js['inline']['ids'])]
+    df = pd.DataFrame(dict(zip(names, values)), segment_ids)
+
+    tags_props = [
+        prop for prop in js['inline']['properties']
+        if prop['type'] == 'tags'
+    ]
+    if not tags_props:
+        return df
+
+    unique_tags = tags_props[0]['tags']
+    code_lists = tags_props[0]['values']
+
+    # Flatten the lists of codes,
+    # but keep track of the rows they came from
+    cols = [*chain(*code_lists)]
+    rows = np.repeat(
+        range(len(code_lists)),
+        [*map(len, code_lists)]
+    )
+
+    flags = np.zeros((len(code_lists), len(unique_tags)), dtype=bool)
+    flags[rows, cols] = True
+
+    tags_df = pd.DataFrame(flags, segment_ids, unique_tags)
+    return pd.concat((df, tags_df), axis=1)
