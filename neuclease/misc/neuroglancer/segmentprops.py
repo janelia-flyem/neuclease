@@ -280,7 +280,7 @@ def _tags_property_json(df, tags_columns, tag_prefix_mode, tag_descriptions):
     for c in tags_columns:
         tags_df[c] = _convert_to_categorical(df[c])
 
-    tags_df = _insert_tag_prefixes(tags_df, tag_prefix_mode, df.dtypes)
+    _insert_tag_prefixes(tags_df, tag_prefix_mode, df.dtypes)
 
     # Convert to a single unified categorical dtype
     all_tags = sorted({*chain(*(tags_df[col].dtype.categories for col in tags_df.columns))})
@@ -342,12 +342,15 @@ def _insert_tag_prefixes(df, tag_prefix_mode, orig_dtypes):
 
     Columns which were originally bool (before we converted them to Categorical)
     require no prefix, so we refer to orig_dtypes to skip those columns.
+
+    Modifies df in-place.
     """
     if tag_prefix_mode is None:
-        return df
+        return
 
     if tag_prefix_mode == 'disambiguate':
-        return _disambiguate_tags(df)
+        _disambiguate_tags(df)
+        return
 
     assert tag_prefix_mode == 'all'
     for c, s in list(df.items()):
@@ -362,8 +365,6 @@ def _insert_tag_prefixes(df, tag_prefix_mode, orig_dtypes):
             for cat in s.dtype.categories
         ])
 
-    return df
-
 
 def _disambiguate_tags(df):
     """
@@ -372,6 +373,8 @@ def _disambiguate_tags(df):
     and prepend a prefix (the column name) to such values
     to make sure no category value is duplicated from one column
     to the next.
+
+    Modifies df in-place.
     """
     # List the columns in which each tag appears:
     # {tag: [column, column, ...], ...}
@@ -398,8 +401,6 @@ def _disambiguate_tags(df):
     # Replace old names with new.
     for col, renames in all_renames.items():
         df[col] = df[col].cat.rename_categories(renames)
-
-    return df
 
 
 def _tag_description_list(all_tags, tag_descriptions):
