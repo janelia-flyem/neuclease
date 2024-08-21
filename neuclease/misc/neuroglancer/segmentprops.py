@@ -13,14 +13,15 @@ def segment_properties_json(
     string_cols=[],
     number_cols=[],
     tag_cols=[],
-    prefix_tags='all',
+    tag_prefix_mode='all',
     tag_descriptions={},
     col_descriptions={},
     drop_empty=True,
     output_path=None,
 ):
     """
-    Construct segment properties JSON info file according to the neuroglancer spec:
+    Given a DataFrame, construct the JSON representation for neuroglancer segment properties
+    (i.e. segment properties 'info' file) according to the neuroglancer spec:
     https://github.com/google/neuroglancer/blob/master/src/datasource/precomputed/segment_properties.md
 
     Args:
@@ -30,7 +31,7 @@ def segment_properties_json(
 
             All columns will be converted to segment properties. If a column is not
             explicitly listed in the following arguments, its property type will be inferred
-            from the column name and dtype.
+            from the column dtype and/or name.
 
             The column dtypes can be string, category, or number, but 64-bit values
             will be downcast to 32-bit. Boolean columns are only valid as tags.
@@ -46,21 +47,25 @@ def segment_properties_json(
 
         string_cols:
             Columns to represent as 'string' properties.
+            (Usually unnecessary.  Non-numeric columns become string properties by default,
+            unless they are named in tag_cols.)
 
         number_cols:
             Columns to represent as 'number' properties.
+            (Usually unnecessary.  Numeric columns become number properties by default.)
 
         tag_cols:
             Columns which should be used to generate the (combined) 'tags' property.
-            If you want a column to be used for both tags and a different property,
+            If you want a column to be used for both tags _and_ a different property,
             be sure to list it explicitly in both arguments.  For example:
 
                 segment_properties_json(df, label_col='cell_class', tag_cols=['cell_class', ...])
 
-            Columns with dtype bool can be used for tags, in which case the False items
-            are discarded and the True items are tagged with the column name.
+            In addition to string/category inputs, columns with dtype bool can also be
+            used for tags, in which case the False items are discarded and the True items
+            are tagged with the column name.
 
-        prefix_tags:
+        tag_prefix_mode:
             Either 'all' or 'disambiguate' or None.
 
             - If 'all', then all tags will be prefixed with the name of their source column,
@@ -90,7 +95,7 @@ def segment_properties_json(
         host neuroglancer precomputed segment properties.
     """
     assert df.index.name in ('body', 'segment')
-    assert prefix_tags in ('all', 'disambiguate', None)
+    assert tag_prefix_mode in ('all', 'disambiguate', None)
     assert not (dupes := df.columns.duplicated()).any(), \
         f"Duplicated column names: {df.columns[dupes].tolist()}"
 
@@ -117,7 +122,7 @@ def segment_properties_json(
         json_props.append(j)
 
     if tag_cols:
-        tags_prop = _tags_property_json(df, tag_cols, prefix_tags, tag_descriptions)
+        tags_prop = _tags_property_json(df, tag_cols, tag_prefix_mode, tag_descriptions)
         json_props.append(tags_prop)
 
     info = {
@@ -159,13 +164,13 @@ def _scalar_property_types(df, label_col, description_col, string_cols, number_c
     along with their types, based on the user's explicitly provided lists plus
     default types for the unlisted columns in df.
 
-    Here, 'scalar' includes types: number, string, label, description.
+    Here, 'scalar' includes all non-tag types: number, string, label, description.
     """
     # Tag columns can *also* be explicitly listed among the scalar properties, but if
     # they aren't, then we avoid _automatically_ creating scalar properties for those columns.
     # So we temporarily initialize prop_types with the tag_cols to ensure we don't
     # automatically create scalar properties for the tag columns, but we allow those
-    # keys to be overwritten by the scalar types that follow.
+    # keys to be overwritten by explicitly listed scalar types.
     prop_types = {c: 'tags' for c in tag_cols}
     prop_types |= {c: 'string' for c in string_cols}
     prop_types |= {c: 'number' for c in number_cols}
@@ -204,7 +209,7 @@ def _scalar_property_types(df, label_col, description_col, string_cols, number_c
     # Property order determines appearance in neuroglancer.
     prop_types = {c: prop_types[c] for c in df.columns}
 
-    # Drop tag properties; return scalar properties only
+    # Return scalar properties only
     prop_types = {k:v for k,v in prop_types.items() if v != 'tags'}
 
     return prop_types
@@ -264,27 +269,25 @@ def _number_property_json(s, description):
     return prop
 
 
-def _tags_property_json(prop_df, tags_columns, prefix_tags, tag_descriptions):
+def _tags_property_json(df, tags_columns, tag_prefix_mode, tag_descriptions):
     """
     Constructs the JSON for the 'tags' segment property.
     """
-    df = prop_df[[]].copy()
+    tags_df = df[[]].copy()
 
     # Clean and convert each column to categorical
     # individually before we combine categories below.
     for c in tags_columns:
-        add_prefix = (prefix_tags == 'all' and prop_df[c].dtype != bool)
-        df[c] = _convert_to_categorical(prop_df[c], add_prefix)
+        tags_df[c] = _convert_to_categorical(df[c])
 
-    if prefix_tags == 'disambiguate':
-        df = _disambiguate_tags(df)
+    tags_df = _insert_tag_prefixes(tags_df, tag_prefix_mode, df.dtypes)
 
     # Convert to a single unified categorical dtype
-    all_tags = sorted({*chain(*(df[col].dtype.categories for col in df.columns))})
-    df = df.astype(pd.CategoricalDtype(categories=all_tags))
+    all_tags = sorted({*chain(*(tags_df[col].dtype.categories for col in tags_df.columns))})
+    tags_df = tags_df.astype(pd.CategoricalDtype(categories=all_tags))
 
-    # Tags are written as a list-of-lists of sorted codes
-    codes_df = pd.DataFrame({c: df[c].cat.codes for c in df.columns})
+    # Tags are represented as a list-of-lists of sorted codes
+    codes_df = pd.DataFrame({c: tags_df[c].cat.codes for c in tags_df.columns})
     sorted_codes = np.sort(codes_df.values, axis=1)
     codes_lists = [
         [x for x in row if x != -1]  # Drop nulls
@@ -304,7 +307,7 @@ def _tags_property_json(prop_df, tags_columns, prefix_tags, tag_descriptions):
     return prop
 
 
-def _convert_to_categorical(s, add_prefix):
+def _convert_to_categorical(s):
     """
     Convert the given Series to a Categorical suitable for tags.
     """
@@ -329,14 +332,37 @@ def _convert_to_categorical(s, add_prefix):
         for cat in s.dtype.categories
     ])
 
-    if add_prefix:
+    return s
+
+
+def _insert_tag_prefixes(df, tag_prefix_mode, orig_dtypes):
+    """
+    Insert prefixes onto tags in df according to the tag_prefix_mode (if any).
+    The columns of df must already be Categorical.
+
+    Columns which were originally bool (before we converted them to Categorical)
+    require no prefix, so we refer to orig_dtypes to skip those columns.
+    """
+    if tag_prefix_mode is None:
+        return df
+
+    if tag_prefix_mode == 'disambiguate':
+        return _disambiguate_tags(df)
+
+    assert tag_prefix_mode == 'all'
+    for c, s in list(df.items()):
+        if orig_dtypes[c] == 'bool':
+            # Boolean columns need no prefix;
+            # the column name is the entire tag.
+            continue
+
         prefix = s.name.replace(' ', '_').replace(':', '_')
-        s = s.cat.rename_categories([
+        df[c] = s.cat.rename_categories([
             f'{prefix}:{cat}'
             for cat in s.dtype.categories
         ])
 
-    return s
+    return df
 
 
 def _disambiguate_tags(df):
@@ -438,7 +464,7 @@ def segment_properties_to_dataframe(js):
     code_lists = tags_props[0]['values']
 
     # Flatten the lists of codes,
-    # but keep track of the rows they came from
+    # but keep track of the rows they came from.
     cols = [*chain(*code_lists)]
     rows = np.repeat(
         range(len(code_lists)),
