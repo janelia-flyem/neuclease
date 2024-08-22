@@ -39,8 +39,6 @@ def upload_ngstates(bucket_dir, states, threads=0, processes=0, disable_cache=Fa
     similar to `gsutil -m cp []...]`, except that in this case you must choose
     between multithreading or multiprocessing (not a combination of the two).
     """
-    from neuclease.util import upload_to_bucket
-
     assert bucket_dir.startswith('gs://')
     bucket_dir = bucket_dir[len('gs://'):]
     bucket = bucket_dir.split('/')[0]
