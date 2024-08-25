@@ -1,4 +1,8 @@
+"""
+Utility for converting a DataFrame to neuroglancer segment properties (a JSON object).
+"""
 import json
+from collections import defaultdict
 from itertools import chain
 
 import numpy as np
@@ -31,7 +35,7 @@ def segment_properties_json(
 
             All columns will be converted to segment properties. If a column is not
             explicitly listed in the following arguments, its property type will be inferred
-            from the column dtype and/or name.
+            from the column dtype (or column name, in the case of label/description).
 
             The column dtypes can be string, category, or number, but 64-bit values
             will be downcast to 32-bit. Boolean columns are only valid as tags.
@@ -41,9 +45,12 @@ def segment_properties_json(
 
         label_col:
             Which column to use for the 'label' property which is shown in neuroglancer by default.
+            If you name the column 'label', then you need not provide it here.
+            Or, if your dataframe contains only one column (and it's non-numeric), we assume it is the label.
 
         description_col:
             Which column to use as the 'description' property.
+            If you name the column 'description', then you need not provide it here.
 
         string_cols:
             Columns to represent as 'string' properties.
@@ -144,8 +151,8 @@ def _drop_empty_rows(df):
     if len(df) == 0 or len(df.columns) == 0:
         return df
 
-    # Note that bool cols are guaranteed to be tag cols,
-    # so False is considered empty.
+    # Note that bool cols are guaranteed to be
+    # tag cols, so False is considered empty.
     bool_cols = df.dtypes[df.dtypes == bool].index
     other_cols = df.dtypes[df.dtypes != bool].index
 
@@ -153,7 +160,9 @@ def _drop_empty_rows(df):
     if len(bool_cols) > 0:
         valid_bool = df[bool_cols].any(axis=1)
     if len(other_cols) > 0:
-        valid_other = (df[other_cols].notnull() & (df[other_cols] != '')).any(axis=1)
+        not_null = df[other_cols].notnull()
+        not_empty = df[other_cols] != ''
+        valid_other = (not_null & not_empty).any(axis=1)
 
     return df.loc[valid_bool | valid_other]
 
@@ -183,9 +192,13 @@ def _scalar_property_types(df, label_col, description_col, string_cols, number_c
     if unknown_cols := set(prop_types.keys()) - set(df.columns):
         raise RuntimeError(f"Columns not found: {unknown_cols}")
 
-    # If there's only one column and it wasn't explicitly listed,
-    # we assume its intended as the 'label' column.
-    if not prop_types and len(df.columns) == 1:
+    # If there's only one column, and it wasn't explicitly listed,
+    # AND it's non-numeric, we presume it's meant to be the 'label' column.
+    if (
+        len(df.columns) == 1
+        and not prop_types
+        and not np.issubdtype(df.dtypes.iloc[0], np.number)
+    ):
         prop_types = {df.columns[0]: 'label'}
 
     # Infer the types of unlisted columns from either the name or dtype
@@ -206,21 +219,21 @@ def _scalar_property_types(df, label_col, description_col, string_cols, number_c
             prop_types[name] = 'string'
 
     # Re-order to match original input columns.
-    # Property order determines appearance in neuroglancer.
+    # Property order determines appearance order in neuroglancer.
     prop_types = {c: prop_types[c] for c in df.columns}
 
     # Return scalar properties only
     prop_types = {k:v for k,v in prop_types.items() if v != 'tags'}
-
     return prop_types
 
 
 def _scalar_property_json(s, prop_type, description):
     """
-    Constructs the JSON for any segment property other than the 'tags' property.
+    Constructs the JSON for any segment property
+    other than the 'tags' property.
     """
     if prop_type == 'number':
-        return _number_property_json(prop_type, description)
+        return _scalar_number_property_json(s, description)
 
     prop = {
         'id': s.name,
@@ -234,27 +247,18 @@ def _scalar_property_json(s, prop_type, description):
     return prop
 
 
-def _number_property_json(s, description):
+def _scalar_number_property_json(s, description):
+    if s.isnull().any():
+        raise RuntimeError(
+            f"Column {s.name} contans NaN entries. "
+            "I'm not sure what to do with NaN values in numeric properties."
+        )
+
     if s.dtype == np.float64:
         s = s.astype(np.float32)
 
-    # Convert int64 to int32 if we can do so losslessly.
     if s.dtype in (np.int64, np.uint64):
-        for dtype32 in (np.int32, np.uint32):
-            info32 = np.iinfo(dtype32)
-            if s.min() >= info32.min and s.max() <= info32.max:
-                s = s.astype(dtype32)
-                break
-        else:
-            raise RuntimeError(
-                f"Can't create a property for column: '{s.name}'. "
-                "Neuroglancer doesn't support 64-bit integer properties, "
-                "and your data exceeds the limits of (u)int32."
-            )
-
-    assert not s.isnull().any(), \
-        (f"Column {s.name} contans NaN entries. "
-         "I'm not sure what to do with NaN values in numeric properties.")
+        s = _downcast_int64_series(s)
 
     prop = {
         'id': s.name,
@@ -269,26 +273,41 @@ def _number_property_json(s, description):
     return prop
 
 
+def _downcast_int64_series(s):
+    # Convert int64 to (u)int32 if we can do so losslessly.
+    for dtype32 in (np.int32, np.uint32):
+        info32 = np.iinfo(dtype32)
+        if s.min() >= info32.min and s.max() <= info32.max:
+            return s.astype(dtype32)
+
+    raise RuntimeError(
+        f"Can't create a property for column: '{s.name}'. "
+        "Neuroglancer doesn't support 64-bit integer properties, "
+        "and your data exceeds the limits of (u)int32."
+    )
+
+
 def _tags_property_json(df, tags_columns, tag_prefix_mode, tag_descriptions):
     """
     Constructs the JSON for the 'tags' segment property.
     """
     tags_df = df[[]].copy()
 
-    # Clean and convert each column to categorical
-    # individually before we combine categories below.
+    # Individually convert each column to Categorical
+    # before we combine into a unified Categorical below.
     for c in tags_columns:
         tags_df[c] = _convert_to_categorical(df[c])
 
     _insert_tag_prefixes(tags_df, tag_prefix_mode, df.dtypes)
 
-    # Convert to a single unified categorical dtype
-    all_tags = sorted({*chain(*(tags_df[col].dtype.categories for col in tags_df.columns))})
+    # Convert to a single unified Categorical dtype.
+    tag_sets = [dtype.categories for dtype in tags_df.dtypes]
+    all_tags = sorted({*chain(*tag_sets)})
     tags_df = tags_df.astype(pd.CategoricalDtype(categories=all_tags))
 
-    # Tags are represented as a list-of-lists of sorted codes
-    codes_df = pd.DataFrame({c: tags_df[c].cat.codes for c in tags_df.columns})
-    sorted_codes = np.sort(codes_df.values, axis=1)
+    # Tags are represented as a list-of-lists of sorted codes.
+    codes_df = pd.DataFrame({c: s.cat.codes for c, s in tags_df.items()})
+    sorted_codes = np.sort(codes_df.to_numpy(), axis=1)
     codes_lists = [
         [x for x in row if x != -1]  # Drop nulls
         for row in sorted_codes.tolist()
@@ -340,8 +359,9 @@ def _insert_tag_prefixes(df, tag_prefix_mode, orig_dtypes):
     Insert prefixes onto tags in df according to the tag_prefix_mode (if any).
     The columns of df must already be Categorical.
 
-    Columns which were originally bool (before we converted them to Categorical)
-    require no prefix, so we refer to orig_dtypes to skip those columns.
+    Tags in columns which were originally bool (before we converted them
+    to Categorical) require no prefix, so we refer to orig_dtypes to skip
+    those columns.
 
     Modifies df in-place.
     """
@@ -378,25 +398,23 @@ def _disambiguate_tags(df):
     """
     # List the columns in which each tag appears:
     # {tag: [column, column, ...], ...}
-    tag_cols = {}
+    tag_cols = defaultdict(list)
     for col in df.columns:
         for tag in df[col].dtype.categories:
-            cols = tag_cols.setdefault(tag, [])
-            cols.append(col)
+            tag_cols[tag].append(col)
 
     # Build the renaming mapping for each column:
     # {
     #   column: {tag: new_tag, tag: new_tag, ...},
     #   column: {tag: new_tag, tag: new_tag, ...}, ...
     # }
-    all_renames = {}
+    all_renames = defaultdict(dict)
     for tag, cols in tag_cols.items():
         if len(cols) == 1:
             continue
         for col in cols:
             prefix = col.replace(' ', '_').replace(':', '_')
-            renames = all_renames.setdefault(col, {})
-            renames[tag] = f'{prefix}:{tag}'
+            all_renames[col][tag] = f'{prefix}:{tag}'
 
     # Replace old names with new.
     for col, renames in all_renames.items():
@@ -444,20 +462,19 @@ def segment_properties_to_dataframe(js):
         The resulting dataframe might contain MANY boolean columns,
         likely requiring more memory than the user's original
         dataframe did.
-    """
-    scalar_props = [
-        prop for prop in js['inline']['properties']
-        if prop['type'] != 'tags'
-    ]
-    names = [prop['id'] for prop in scalar_props]
-    values = [prop['values'] for prop in scalar_props]
-    segment_ids = [*map(int, js['inline']['ids'])]
-    df = pd.DataFrame(dict(zip(names, values)), segment_ids)
 
-    tags_props = [
-        prop for prop in js['inline']['properties']
-        if prop['type'] == 'tags'
-    ]
+        No attempt is made to parse the prefixes of the tags to group
+        them into shared columns.
+    """
+    all_props = js['inline']['properties']
+    scalar_props = [prop for prop in all_props if prop['type'] != 'tags']
+    tags_props =   [prop for prop in all_props if prop['type'] == 'tags']
+
+    segment_ids = [*map(int, js['inline']['ids'])]
+    prop_ids = [prop['id'] for prop in scalar_props]
+    values = [prop['values'] for prop in scalar_props]
+
+    df = pd.DataFrame(dict(zip(prop_ids, values)), segment_ids)
     if not tags_props:
         return df
 
@@ -472,7 +489,7 @@ def segment_properties_to_dataframe(js):
         [*map(len, code_lists)]
     )
 
-    flags = np.zeros((len(code_lists), len(unique_tags)), dtype=bool)
+    flags = np.zeros((len(code_lists), len(unique_tags)), bool)
     flags[rows, cols] = True
 
     tags_df = pd.DataFrame(flags, segment_ids, unique_tags)
