@@ -100,6 +100,78 @@ def segment_properties_json(
     Returns:
         JSON data (as a dict) which should be written into an 'info' file to
         host neuroglancer precomputed segment properties.
+
+    Example:
+
+        .. code-block: ipython
+
+            In [41]: print(df)
+            Out[41]:
+                        type              class       hemilineage  has_soma  PreSyn  PostSyn
+            segment
+            910719  IN13B018   intrinsic_neuron               13B      True     786     3164
+            160503    PFNm/p            central          DM3_CX_p      True      40      177
+            908822  IN03B079   intrinsic_neuron               03B      True     176      951
+            10552      DNp29  descending_neuron  putative_primary      True    1567     4559
+            43797     MeVP11  visual_projection               NaN      True     158      504
+            232845     R1-R6            sensory               NaN     False      25       18
+            547654     R1-R6            sensory               NaN     False      57       29
+            803197  IN07B019   intrinsic_neuron               TBD      True     796     3615
+            75597      KCg-m            central              MBp4      True     223      802
+            165485   vDeltaK            central               NaN      True      36      282
+
+            In [42]: info = segment_properties_json(df, 'type', tag_cols=['class', 'hemilineage', 'has_soma'])
+
+            In [43]: # Note: The output below has been indented by hand for clarity.
+                ...: print(json.dumps(info))
+            {
+                "@type": "neuroglancer_segment_properties",
+                "inline": {
+                    "ids": ["910719", "160503", "908822", "10552", "43797", "232845", "547654", "803197", "75597", "165485"]
+                    "properties": [
+                        {
+                            "id": "type",
+                            "type": "label",
+                            "values": ["IN13B018", "PFNm/p", "IN03B079", "DNp29", "MeVP11", "R1-R6", "R1-R6", "IN07B019", "KCg-m", "vDeltaK"]
+                        },
+                        {
+                            "id": "PreSyn",
+                            "type": "number",
+                            "data_type": "int32",
+                            "values": [786, 40, 176, 1567, 158, 25, 57, 796, 223, 36]
+                        },
+                        {
+                            "id": "PostSyn",
+                            "type": "number",
+                            "data_type": "int32",
+                            "values": [3164, 177, 951, 4559, 504, 18, 29, 3615, 802, 282]
+                        },
+                        {
+                            "id": "tags",
+                            "type": "tags",
+                            "tags": [
+                                "class:central", "class:descending_neuron", "class:intrinsic_neuron",
+                                "class:sensory", "class:visual_projection",
+                                "has_soma",
+                                "hemilineage:03B", "hemilineage:13B", "hemilineage:DM3_CX_p", "hemilineage:MBp4",
+                                "hemilineage:TBD", "hemilineage:putative_primary"
+                            ],
+                            "values": [
+                                [2, 5, 7],
+                                [0, 5, 8],
+                                [2, 5, 6],
+                                [1, 5, 11],
+                                [4, 5],
+                                [3],
+                                [3],
+                                [2, 5, 10],
+                                [0, 5, 9],
+                                [0, 5]
+                            ]
+                        }
+                    ]
+                }
+            }
     """
     assert df.index.name in ('body', 'segment')
     assert tag_prefix_mode in ('all', 'disambiguate', None)
