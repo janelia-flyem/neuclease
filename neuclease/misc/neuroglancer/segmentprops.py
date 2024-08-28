@@ -545,8 +545,14 @@ def segment_properties_to_dataframe(js):
     segment_ids = [*map(int, js['inline']['ids'])]
     prop_ids = [prop['id'] for prop in scalar_props]
     values = [prop['values'] for prop in scalar_props]
+    dtypes = {
+        prop['id']: prop['data_type']
+        for prop in scalar_props
+        if 'data_type' in prop
+    }
 
     df = pd.DataFrame(dict(zip(prop_ids, values)), segment_ids)
+    df = df.astype(dtypes)
     if not tags_props:
         return df
 
