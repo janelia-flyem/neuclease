@@ -617,7 +617,7 @@ def contingency_table(left_vol, right_vol):
 
     Returns:
         pd.Series of sizes with a multi-level index (left,right),
-        named 'voxel_count'.
+        named 'voxel_count', sorted by descending voxel_count.
     """
     assert left_vol.shape == right_vol.shape
     mask = np.logical_or(left_vol, right_vol)
@@ -625,10 +625,11 @@ def contingency_table(left_vol, right_vol):
                         "right": right_vol[mask]} )
     sizes = df.value_counts()
 
-    if (both_zero := left_vol.size - mask.sum()):
+    if (both_zero := mask.size - mask.sum()):
         index = pd.MultiIndex.from_tuples([(0,0)], names=['left', 'right'])
         zero_count = pd.Series([both_zero], index)
         sizes = pd.concat((zero_count, sizes))
+        sizes = sizes.sort_values(ascending=False)
 
     sizes.name = 'voxel_count'
     return sizes
