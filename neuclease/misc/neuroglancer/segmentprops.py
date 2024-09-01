@@ -247,11 +247,16 @@ def _scalar_property_types(df, label_col, description_col, string_cols, number_c
 
     Here, 'scalar' includes all non-tag types: number, string, label, description.
     """
-    # Tag columns can *also* be explicitly listed among the scalar properties, but if
-    # they aren't, then we avoid _automatically_ creating scalar properties for those columns.
-    # So we temporarily initialize prop_types with the tag_cols to ensure we don't
-    # automatically create scalar properties for the tag columns, but we allow those
-    # keys to be overwritten by explicitly listed scalar types.
+    # Check for columns that were listed in multiple arguments (except tag_cols).
+    listed_scalar_cols = [label_col, description_col, *string_cols, *number_cols]
+    listed_scalar_cols = pd.Series(listed_scalar_cols)
+    dupes = listed_scalar_cols.loc[listed_scalar_cols.duplicated()].unique()
+    if dupes := sorted(dupes):
+        raise RuntimeError(f"Some columns were included in multiple arguments: {dupes}")
+
+    # Start with the provided types and then auto-type the other columns below.
+    # We initialize first with tags, but permit overwriting those with scalar.
+    # (A column is are permitted to be listed twice if it's both tag and scalar.)
     prop_types = {c: 'tags' for c in tag_cols}
     prop_types |= {c: 'string' for c in string_cols}
     prop_types |= {c: 'number' for c in number_cols}
