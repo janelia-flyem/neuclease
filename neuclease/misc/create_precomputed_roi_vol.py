@@ -7,7 +7,7 @@ import logging
 import tempfile
 import subprocess
 from functools import partial
-from collections.abc import Mapping
+from collections.abc import Mapping, Collection
 
 import numpy as np
 import pandas as pd
@@ -189,7 +189,12 @@ def create_precomputed_roi_vol(roi_vol, bucket_name, bucket_path, max_scale=3, r
     if bucket_name.startswith('gs://'):
         bucket_name = bucket_name[len('gs://'):]
 
-    for scale in tqdm(range(max_scale)):
+    if not isinstance(resolution_nm, Collection):
+        resolution_nm = 3 * (resolution_nm,)
+
+    resolution_nm = np.asarray(resolution_nm)
+    for scale in tqdm(range(1 + max_scale)):
+        res = resolution_nm * 2**scale
         store = ts.open({
             'driver': 'neuroglancer_precomputed',
             'kvstore': {
@@ -208,11 +213,7 @@ def create_precomputed_roi_vol(roi_vol, bucket_name, bucket_path, max_scale=3, r
                 "encoding": "compressed_segmentation",
                 "compressed_segmentation_block_size": [8, 8, 8],
                 "chunk_size": [64, 64, 64],
-                "resolution": [
-                    resolution_nm * 2**scale,
-                    resolution_nm * 2**scale,
-                    resolution_nm * 2**scale
-                ]
+                "resolution": res.tolist()
             }
         }).result()
         if scale == 0:
