@@ -70,11 +70,11 @@ class PrefixFilter(logging.Filter):
 
     Example Output:
 
-        [2023-08-22 11:01:33,873] INFO Good Morning!
-        [2023-08-22 11:01:33,874] INFO hello_context: hello
-        [2023-08-22 11:01:33,874] INFO hello_context: howdy_func: howdy
-        [2023-08-22 11:01:33,874] INFO hello_context: bye
-        [2023-08-22 11:01:33,874] INFO Goodnight!
+        [2024-09-08 16:15:52,175] INFO Good Morning!
+        [2024-09-08 16:15:52,182] INFO hello_context: hello
+        [2024-09-08 16:15:52,183] INFO hello_context: howdy_Guido: howdy Guido
+        [2024-09-08 16:15:52,184] INFO hello_context: bye
+        [2024-09-08 16:15:52,184] INFO Goodnight!
     """
 
     @classmethod
