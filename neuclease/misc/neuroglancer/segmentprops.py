@@ -2,6 +2,7 @@
 Utility for converting a DataFrame to neuroglancer segment properties (a JSON object).
 """
 import json
+import warnings
 from collections import defaultdict
 from itertools import chain
 
@@ -249,6 +250,7 @@ def _scalar_property_types(df, label_col, description_col, string_cols, number_c
     """
     # Check for columns that were listed in multiple arguments (except tag_cols).
     listed_scalar_cols = [label_col, description_col, *string_cols, *number_cols]
+    listed_scalar_cols = [*filter(None, listed_scalar_cols)]
     listed_scalar_cols = pd.Series(listed_scalar_cols)
     dupes = listed_scalar_cols.loc[listed_scalar_cols.duplicated()].unique()
     if dupes := sorted(dupes):
@@ -417,18 +419,32 @@ def _convert_to_categorical(s):
             s = s.cat.remove_categories([False])
 
     s = s.astype('category', copy=False)
+    s = _replace_spaces(s)
 
     # We interpret empty string as null
     if '' in s.dtype.categories:
         s = s.cat.remove_categories([''])
 
-    # Spaces are forbidden in tags
-    s = s.cat.rename_categories([
-        str(cat).replace(' ', '_')
-        for cat in s.dtype.categories
-    ])
-
     return s
+
+
+def _replace_spaces(s):
+    """
+    Replace all spaces in the given Categorical Series with underscores.
+    (Spaces are forbidden in neuroglancer tags.)
+    """
+    renames = {
+        cat: str(cat).replace(' ', '_')
+        for cat in s.dtype.categories
+    }
+
+    try:
+        return s.cat.rename_categories(renames)
+    except ValueError:
+        # If both "foo bar_baz" and "foo_bar baz" exist in the
+        # original data, they will both map to "foo_bar_baz", and
+        # rename_categories() complains about the duplicate category.
+        return s.str.replace(' ', '_').astype('category')
 
 
 def _insert_tag_prefixes(df, tag_prefix_mode, orig_dtypes):
