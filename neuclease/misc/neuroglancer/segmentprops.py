@@ -341,22 +341,20 @@ def _scalar_number_property_json(s, description):
     """
     Constructs the JSON for a 'number' property.
     """
-    if s.isnull().any():
-        raise RuntimeError(
-            f"Column {s.name} contans NaN entries. "
-            "I'm not sure what to do with NaN values in numeric properties."
-        )
-
-    if s.dtype == np.float64:
-        s = s.astype(np.float32)
+    dtype_name = s.dtype.name
 
     if s.dtype in (np.int64, np.uint64):
-        s = _downcast_int64_series(s)
+        dtype_name = _select_int64_downcast(s)
+
+    if np.issubdtype(s.dtype, np.floating):
+        dtype_name = 'float32'
+        if s.isnull().any():
+            raise RuntimeError(f"Numeric column '{s.name}' contains NaN.")
 
     prop = {
         'id': s.name,
         'type': 'number',
-        'data_type': s.dtype.name,
+        'data_type': dtype_name,
         'values': s.tolist()
     }
 
@@ -366,12 +364,12 @@ def _scalar_number_property_json(s, description):
     return prop
 
 
-def _downcast_int64_series(s):
-    # Convert int64 to (u)int32 if we can do so losslessly.
+def _select_int64_downcast(s):
+    # Select (u)int32 if we can do so losslessly.
     for dtype32 in (np.int32, np.uint32):
         info32 = np.iinfo(dtype32)
         if s.min() >= info32.min and s.max() <= info32.max:
-            return s.astype(dtype32)
+            return info32.dtype.name
 
     raise RuntimeError(
         f"Can't create a property for column: '{s.name}'. "
