@@ -10,6 +10,7 @@ with to use parts of this subpackage without installing all dependencies.
 """
 import sys
 import json
+import argparse
 import tempfile
 import subprocess
 
@@ -103,7 +104,9 @@ def upload_to_bucket(bucket, blob_name, blob_contents, content_type='application
 
 def make_bucket_public(bucket=None):
     if bucket is None:
-        bucket = sys.argv[1]
+        parser = argparse.ArgumentParser()
+        parser.add_argument('bucket')
+        bucket = parser.parse_args().bucket
     if bucket.startswith('gs://'):
         bucket = bucket[len('gs://'):]
     subprocess.run(f'gsutil iam ch allUsers:objectViewer gs://{bucket}', shell=True, check=True)
