@@ -400,17 +400,17 @@ def _tags_property_json(df, tags_columns, tag_prefix_mode, tag_descriptions):
 
     # Tags are represented as a list-of-lists of sorted codes.
     codes_df = pd.DataFrame({c: s.cat.codes for c, s in tags_df.items()})
-    sorted_codes = np.sort(codes_df.to_numpy(), axis=1)
-    codes_lists = [
-        [x for x in row if x != -1]  # Drop nulls
-        for row in sorted_codes.tolist()
-    ]
+    sorted_codes = np.sort(codes_df.to_numpy(), axis=1).tolist()
+
+    # Drop nulls
+    for row in sorted_codes:
+        row[:] = [x for x in row if x != -1]
 
     prop = {
         'id': 'tags',
         'type': 'tags',
         'tags': all_tags,
-        'values': codes_lists,
+        'values': sorted_codes,
     }
 
     if tag_descriptions:
