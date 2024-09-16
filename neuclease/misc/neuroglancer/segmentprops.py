@@ -2,8 +2,6 @@
 Utility for converting a DataFrame to neuroglancer segment properties (a JSON object).
 """
 import json
-import warnings
-from collections import defaultdict
 from itertools import chain
 
 import numpy as np
@@ -489,28 +487,24 @@ def _disambiguate_tags(df):
 
     Modifies df in-place.
     """
-    # List the columns in which each tag appears:
-    # {tag: [column, column, ...], ...}
-    tag_cols = defaultdict(list)
-    for col in df.columns:
-        for tag in df[col].dtype.categories:
-            tag_cols[tag].append(col)
+    col_tags = [
+        (col, tag)
+        for col in df.columns
+        for tag in df[col].dtype.categories
+    ]
+    col_tags = pd.DataFrame(col_tags, columns=['col', 'tag'])
 
-    # Build the renaming mapping for each column:
-    # {
-    #   column: {tag: new_tag, tag: new_tag, ...},
-    #   column: {tag: new_tag, tag: new_tag, ...}, ...
-    # }
-    all_renames = defaultdict(dict)
-    for tag, cols in tag_cols.items():
-        if len(cols) == 1:
-            continue
-        for col in cols:
-            prefix = col.replace(' ', '_').replace(':', '_')
-            all_renames[col][tag] = f'{prefix}:{tag}'
+    # Drop everything except the duplicate tags.
+    is_dup = col_tags.duplicated('tag', keep=False)
+    col_tags = col_tags.loc[is_dup].copy()
 
-    # Replace old names with new.
-    for col, renames in all_renames.items():
+    # Prefix must not contain spaces (forbidden by neuroglancer)
+    # or colons (because we use ':' as the separator).
+    prefixes = col_tags['col'].str.replace(r'[: ]', '_')
+    col_tags['new_tag'] = prefixes + ':' + col_tags['tag']
+
+    for col, old_new_df in col_tags.groupby('col')[['tag', 'new_tag']]:
+        renames = dict(old_new_df.to_numpy())
         df[col] = df[col].cat.rename_categories(renames)
 
 
