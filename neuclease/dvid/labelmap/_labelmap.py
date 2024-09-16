@@ -1913,7 +1913,7 @@ def generate_sample_coordinates(server, uuid, instance, bodies, supervoxels=Fals
             Instead, return [-1, -1, -1].
 
     Returns:
-        DataFrame with coolumns ['z', 'y', 'x'], indexed by body (or supervoxel).
+        DataFrame with columns ['z', 'y', 'x'], indexed by body (or supervoxel).
     """
     gen_coord = partial(_generate_sample_coordinate_no404, skip_out_of_sync, server, uuid, instance, supervoxels=supervoxels, interior=interior)
     coords = compute_parallel(gen_coord, bodies, processes=processes)
