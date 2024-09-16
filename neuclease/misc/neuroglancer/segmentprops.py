@@ -43,25 +43,25 @@ def segment_properties_json(
             Neuroglancer preserves that order when displaying columns of numeric properties.
 
         label_col:
-            Which column to use for the 'label' property which is shown in neuroglancer by default.
-            If you name the column 'label', then you need not provide it here.
+            Name of the column to use for the 'label' property, which is shown in neuroglancer by default.
+            If the column happens to be named 'label', then you need not provide it here.
             Or, if your dataframe contains only one column (and it's non-numeric), we assume it is the label.
 
         description_col:
-            Which column to use as the 'description' property.
+            Name of the column to use as the 'description' property.
             If you name the column 'description', then you need not provide it here.
 
         string_cols:
-            Columns to represent as 'string' properties.
+            Names of the columns to represent as 'string' properties.
             (Usually unnecessary.  Non-numeric columns become string properties by default,
             unless they are named in tag_cols.)
 
         number_cols:
-            Columns to represent as 'number' properties.
+            Names of the columns to represent as 'number' properties.
             (Usually unnecessary.  Numeric columns become number properties by default.)
 
         tag_cols:
-            Columns which should be used to generate the (combined) 'tags' property.
+            Names of the columns from which to generate the (combined) 'tags' property.
             If you want a column to be used for both tags _and_ a different property,
             be sure to list it explicitly in both arguments.  For example:
 
@@ -209,7 +209,8 @@ def segment_properties_json(
 
 def _validate_args(df, label_col, description_col, string_cols, number_cols, tag_cols, tag_prefix_mode):
     """
-    Basic checks and convenience conversions (Series -> DataFrame, str -> list)
+    Basic checks and convenience conversions where appropriate.
+    (Series -> DataFrame, str -> list)
     """
     if isinstance(df, pd.Series):
         df = df.to_frame()
@@ -309,7 +310,8 @@ def _scalar_property_types(df, label_col, description_col, string_cols, number_c
             prop_types[name] = 'string'
 
     # Re-order to match original input columns.
-    # Property order determines appearance order in neuroglancer.
+    # Property order determines appearance order in neuroglancer,
+    # at least for numeric properties.
     prop_types = {c: prop_types[c] for c in df.columns}
 
     # Return scalar properties only
