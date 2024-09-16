@@ -387,7 +387,7 @@ class NumpyConvertingEncoder(json.JSONEncoder):
         return super().default(o)
 
 
-def dump_json(obj, f=None, indent=2, convert_nans=False, unsplit_int_lists=False, nullval="NaN"):
+def dump_json(obj, f=None, indent=2, *, convert_nans=False, nullval="NaN", unsplit_number_lists=False, unsplit_int_lists=False):
     """
     Pretty-print the given object to json, either to a file or to a returned string.
 
@@ -405,15 +405,18 @@ def dump_json(obj, f=None, indent=2, convert_nans=False, unsplit_int_lists=False
         (without quotes) into the json file, which is not compliant with
         the json standard.
 
-    unsplit_int_lists:
-         When pretty-printing, json splits lists of integers (e.g. [123, 456, 789])
-         across several lines.  For short lists, this is undesirable.
-         This option will "unsplit" those lists, putting them back on a single line.
-         This is implemented as a post-processing step using text matching.
-         Might not be fast for huge files.
-
     nullval:
         If convert_nans is True, then ``nullval`` is used to replace nan values.
+
+    unsplit_number_lists:
+        When pretty-printing, json.dump splits lists of integers or floats (e.g. [123, 456.0, -78e-9])
+        across several lines.  For short lists, this is undesirable.
+        This option will "unsplit" those lists, putting them back on a single line.
+        This is implemented as a post-processing step using text matching.
+        Might not be fast for huge files.
+
+    unsplit_int_lists:
+        Deprecated.  Like unsplit_number_lists, but only works for integers.
 
     Returns:
         Nothing if f was provided, otherwise returns a string.
@@ -421,13 +424,19 @@ def dump_json(obj, f=None, indent=2, convert_nans=False, unsplit_int_lists=False
     if convert_nans:
         obj = _convert_nans(obj, nullval)
 
-    kwargs = dict(indent=indent,
-                  allow_nan=not convert_nans,
-                  cls=NumpyConvertingEncoder)
+    kwargs = dict(
+        indent=indent,
+        allow_nan=not convert_nans,
+        cls=NumpyConvertingEncoder
+    )
 
-    if unsplit_int_lists:
+    if unsplit_int_lists or unsplit_number_lists:
         json_text = json.dumps(obj, **kwargs)
-        json_text = unsplit_json_int_lists(json_text)
+
+        if unsplit_number_lists:
+            json_text = unsplit_json_number_lists(json_text)
+        elif unsplit_int_lists:
+            json_text = unsplit_json_int_lists(json_text)
 
         if isinstance(f, str):
             with open(f, 'w') as f:
@@ -495,7 +504,7 @@ _convert_nans = convert_nans
 
 def unsplit_json_int_lists(json_text):
     """
-    When pretty-printing json data, it will split all lists across several lines.
+    When pretty-printing json data, json.dump() will split all lists across several lines.
     For small lists of integers (such as [x,y,z] points), that may not be desirable.
     This function "unsplits" all lists of integers and puts them back on a single line.
 
@@ -515,15 +524,53 @@ def unsplit_json_int_lists(json_text):
         >>> u = unsplit_json_int_lists(s)
         >>> print(u)
         {
-        "body": 123,
-        "supervoxel": 456,
-        "coord": [123,456, 781],
+            "body": 123,
+            "supervoxel": 456,
+            "coord": [123, 456, 781],
         }
 
     """
-    json_text = re.sub(r'\[\s+(\d+),', r'[\1,', json_text)
-    json_text = re.sub(r'\n\s*(\d+),', r' \1,', json_text)
-    json_text = re.sub(r'\n\s*(\d+)\s*\]', r' \1]', json_text)
+    json_text = re.sub(r'\[\s+(-?\d+),', r'[\1,', json_text)
+    json_text = re.sub(r'\n\s*(-?\d+),', r' \1,', json_text)
+    json_text = re.sub(r'\n\s*(-?\d+)\s*\]', r' \1]', json_text)
+    return json_text
+
+
+def unsplit_json_number_lists(json_text):
+    """
+    When pretty-printing json data, json.dump() will split all lists across several lines.
+    For small lists of integers (such as [x,y,z] points), that may not be desirable.
+    This function "unsplits" all lists of numbers (int or float) and puts them back on a single line.
+
+    Note:
+        Unlike unsplit_json_int_lists above, this function reformats all numbers,
+        including ints and floats.
+
+    Example:
+        >>> s = '''\\
+        ... {
+        ...   "body": 123,
+        ...   "supervoxel": 456,
+        ...   "properties": [
+        ...     1.0,
+        ...     5,
+        ...     -1.9e-23
+        ...   ],
+        ... }
+        ... '''
+
+        >>> u = unsplit_json_int_lists(s)
+        >>> print(u)
+        {
+            "body": 123,
+            "supervoxel": 456,
+            "properties": [1.0, 5, -1.9e-23]
+        }
+    """
+    number = r'([-+]?[0-9]*\.?[0-9]+([eE][-+]?[0-9]+)?)'
+    json_text = re.sub(rf'\[\s+{number},', r'[\1,', json_text)
+    json_text = re.sub(rf'\n\s*{number},', r' \1,', json_text)
+    json_text = re.sub(rf'\n\s*{number}\s*\]', r' \1]', json_text)
     return json_text
 
 
