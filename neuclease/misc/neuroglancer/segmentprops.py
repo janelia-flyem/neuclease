@@ -172,20 +172,9 @@ def segment_properties_json(
                 }
             }
     """
-    if isinstance(df, pd.Series):
-        df = df.to_frame()
-
-    assert df.index.name in ('body', 'segment')
-    assert tag_prefix_mode in ('all', 'disambiguate', None)
-    assert not (dupes := df.columns.duplicated()).any(), \
-        f"Duplicated column names: {df.columns[dupes].tolist()}"
-
-    if isinstance(string_cols, str):
-        string_cols = [string_cols]
-    if isinstance(number_cols, str):
-        number_cols = [number_cols]
-    if isinstance(tag_cols, str):
-        tag_cols = [tag_cols]
+    df, string_cols, number_cols, tag_cols = _validate_args(
+        df, label_col, description_col, string_cols, number_cols, tag_cols, tag_prefix_mode
+    )
 
     if drop_empty:
         df = _drop_empty_rows(df)
@@ -218,6 +207,36 @@ def segment_properties_json(
     return info
 
 
+def _validate_args(df, label_col, description_col, string_cols, number_cols, tag_cols, tag_prefix_mode):
+    """
+    Basic checks and convenience conversions (Series -> DataFrame, str -> list)
+    """
+    if isinstance(df, pd.Series):
+        df = df.to_frame()
+
+    if isinstance(string_cols, str):
+        string_cols = [string_cols]
+    if isinstance(number_cols, str):
+        number_cols = [number_cols]
+    if isinstance(tag_cols, str):
+        tag_cols = [tag_cols]
+
+    assert df.index.name in ('body', 'segment')
+    assert tag_prefix_mode in ('all', 'disambiguate', None)
+    assert not (dupes := df.columns.duplicated()).any(), \
+        f"Duplicated column names: {df.columns[dupes].tolist()}"
+
+    # Check for columns that were listed in multiple arguments (except tag_cols).
+    listed_scalar_cols = [label_col, description_col, *string_cols, *number_cols]
+    listed_scalar_cols = [*filter(None, listed_scalar_cols)]
+    listed_scalar_cols = pd.Series(listed_scalar_cols)
+    dupes = listed_scalar_cols.loc[listed_scalar_cols.duplicated()].unique()
+    if dupes := sorted(dupes):
+        raise RuntimeError(f"Some columns were included in multiple arguments: {dupes}")
+
+    return df, string_cols, number_cols, tag_cols
+
+
 def _drop_empty_rows(df):
     if len(df) == 0 or len(df.columns) == 0:
         return df
@@ -240,20 +259,14 @@ def _drop_empty_rows(df):
 
 def _scalar_property_types(df, label_col, description_col, string_cols, number_cols, tag_cols):
     """
-    Determine the full set of scalar (non-tag) properties that should be emitted
-    along with their types, based on the user's explicitly provided lists plus
-    default types for the unlisted columns in df.
+    Determine the names and neuroglancer property types of all scalar (non-tag)
+    properties that can be extracted from the given DataFrame.
+
+    The property types will be determined from the user's explicitly provided lists
+    when possible, otherwise they're inferred from the column name/dtype.
 
     Here, 'scalar' includes all non-tag types: number, string, label, description.
     """
-    # Check for columns that were listed in multiple arguments (except tag_cols).
-    listed_scalar_cols = [label_col, description_col, *string_cols, *number_cols]
-    listed_scalar_cols = [*filter(None, listed_scalar_cols)]
-    listed_scalar_cols = pd.Series(listed_scalar_cols)
-    dupes = listed_scalar_cols.loc[listed_scalar_cols.duplicated()].unique()
-    if dupes := sorted(dupes):
-        raise RuntimeError(f"Some columns were included in multiple arguments: {dupes}")
-
     # Start with the provided types and then auto-type the other columns below.
     # We initialize first with tags, but permit overwriting those with scalar.
     # (A column is are permitted to be listed twice if it's both tag and scalar.)
@@ -325,6 +338,9 @@ def _scalar_property_json(s, prop_type, description):
 
 
 def _scalar_number_property_json(s, description):
+    """
+    Constructs the JSON for a 'number' property.
+    """
     if s.isnull().any():
         raise RuntimeError(
             f"Column {s.name} contans NaN entries. "
@@ -470,6 +486,8 @@ def _insert_tag_prefixes(df, tag_prefix_mode, orig_dtypes):
             # the column name is the entire tag.
             continue
 
+        # Prefix must not contain spaces (forbidden by neuroglancer)
+        # or colons (because we use ':' as the separator).
         prefix = s.name.replace(' ', '_').replace(':', '_')
         df[c] = s.cat.rename_categories([
             f'{prefix}:{cat}'
