@@ -174,6 +174,9 @@ def segment_properties_json(
                 }
             }
     """
+    if isinstance(df, pd.Series):
+        df = df.to_frame()
+
     assert df.index.name in ('body', 'segment')
     assert tag_prefix_mode in ('all', 'disambiguate', None)
     assert not (dupes := df.columns.duplicated()).any(), \
@@ -185,9 +188,6 @@ def segment_properties_json(
         number_cols = [number_cols]
     if isinstance(tag_cols, str):
         tag_cols = [tag_cols]
-
-    if isinstance(df, pd.Series):
-        df = df.to_frame()
 
     if drop_empty:
         df = _drop_empty_rows(df)
