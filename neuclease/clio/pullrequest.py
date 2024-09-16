@@ -170,7 +170,7 @@ def assess_merges(dvid_server, uuid, instance, merges, mutations=None):
          " main_body: [body, body, ...],\n"
          " ...}")
 
-    all_bodies = pd.unique([*merges.keys(), *chain(*merges.values())])
+    all_bodies = pd.unique(np.array([*merges.keys(), *chain(*merges.values())]))
 
     logger.info("Fetching body annotations")
     ann_df = fetch_body_annotations(dvid_server, uuid, f'{instance}_annotations', all_bodies)
