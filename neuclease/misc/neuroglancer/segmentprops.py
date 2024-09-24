@@ -1,5 +1,5 @@
 """
-Utility for converting a DataFrame to neuroglancer segment properties (a JSON object).
+Utility for converting a DataFrame to neuroglancer segment properties (a JSON document).
 """
 import json
 from itertools import chain
@@ -126,7 +126,7 @@ def segment_properties_json(
             {
                 "@type": "neuroglancer_segment_properties",
                 "inline": {
-                    "ids": ["910719", "160503", "908822", "10552", "43797", "232845", "547654", "803197", "75597", "165485"]
+                    "ids": ["910719", "160503", "908822", "10552", "43797", "232845", "547654", "803197", "75597", "165485"],
                     "properties": [
                         {
                             "id": "type",
@@ -179,23 +179,28 @@ def segment_properties_json(
     if drop_empty:
         df = _drop_empty_rows(df)
 
+    # Determine the neuroglancer property type for each column (except tags).
     scalar_types = _scalar_property_types(
         df, label_col, description_col, string_cols, number_cols, tag_cols
     )
 
+    # Construct JSON for all properties except tags.
     json_props = []
     for col, prop_type in scalar_types.items():
-        j = _scalar_property_json(df[col], prop_type, col_descriptions.get(col))
-        json_props.append(j)
+        jsn = _scalar_property_json(df[col], prop_type, col_descriptions.get(col))
+        json_props.append(jsn)
 
+    # Construct JSON for tags.
     if tag_cols:
-        tags_prop = _tags_property_json(df, tag_cols, tag_prefix_mode, tag_descriptions)
-        json_props.append(tags_prop)
+        jsn = _tags_property_json(df, tag_cols, tag_prefix_mode, tag_descriptions)
+        json_props.append(jsn)
 
+    # Assemble the complete output.
+    segment_ids = [str(idx) for idx in df.index]
     info = {
         '@type': 'neuroglancer_segment_properties',
         'inline': {
-            'ids': [str(idx) for idx in df.index],
+            'ids': segment_ids,
             'properties': json_props
         }
     }
@@ -239,6 +244,10 @@ def _validate_args(df, label_col, description_col, string_cols, number_cols, tag
 
 
 def _drop_empty_rows(df):
+    """
+    Drop rows which contain only NaN, "", and False, and thus
+    will have no non-empty value for any neuroglancer property.
+    """
     if len(df) == 0 or len(df.columns) == 0:
         return df
 
@@ -264,13 +273,16 @@ def _scalar_property_types(df, label_col, description_col, string_cols, number_c
     properties that can be extracted from the given DataFrame.
 
     The property types will be determined from the user's explicitly provided lists
-    when possible, otherwise they're inferred from the column name/dtype.
+    when available; otherwise they're inferred from the column name/dtype.
 
     Here, 'scalar' includes all non-tag types: number, string, label, description.
     """
-    # Start with the provided types and then auto-type the other columns below.
-    # We initialize first with tags, but permit overwriting those with scalar.
-    # (A column is are permitted to be listed twice if it's both tag and scalar.)
+    # Start with the user-provided types and then auto-type the other columns below.
+    # Although we won't include tag columns in the result, we temporarily store
+    # them in prop_types to avoid auto-typing them.
+    # Note:
+    #   The user is permitted to list tag columns in the scalar columns too,
+    #   in which case the scalar type takes precedence in this function.
     prop_types = {c: 'tags' for c in tag_cols}
     prop_types |= {c: 'string' for c in string_cols}
     prop_types |= {c: 'number' for c in number_cols}
@@ -283,7 +295,7 @@ def _scalar_property_types(df, label_col, description_col, string_cols, number_c
     if unknown_cols := set(prop_types.keys()) - set(df.columns):
         raise RuntimeError(f"Columns not found: {unknown_cols}")
 
-    # If there's only one column, and it wasn't explicitly listed,
+    # For convenience, if there's only one column, and it wasn't explicitly listed,
     # AND it's non-numeric, we presume it's meant to be the 'label' column.
     if (
         len(df.columns) == 1
@@ -367,7 +379,11 @@ def _scalar_number_property_json(s, description):
 
 
 def _select_int64_downcast(s):
-    # Select (u)int32 if we can do so losslessly.
+    """
+    Return either "int32" or "uint32" if the given (u)int64 Series
+    can be safely converted to one of those dtypes without overflow.
+    Otherwise, raise an error.
+    """
     for dtype32 in (np.int32, np.uint32):
         info32 = np.iinfo(dtype32)
         if s.min() >= info32.min and s.max() <= info32.max:
@@ -576,16 +592,17 @@ def segment_properties_to_dataframe(js):
     tags_props =   [prop for prop in all_props if prop['type'] == 'tags']
 
     segment_ids = [*map(int, js['inline']['ids'])]
-    prop_ids = [prop['id'] for prop in scalar_props]
-    values = [prop['values'] for prop in scalar_props]
+    prop_data = {
+        prop['id']: prop['values']
+        for prop in scalar_props
+    }
     dtypes = {
         prop['id']: prop['data_type']
         for prop in scalar_props
         if 'data_type' in prop
     }
 
-    df = pd.DataFrame(dict(zip(prop_ids, values)), segment_ids)
-    df = df.astype(dtypes)
+    df = pd.DataFrame(prop_data, segment_ids).astype(dtypes)
     if not tags_props:
         return df
 
