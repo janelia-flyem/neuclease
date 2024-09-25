@@ -343,6 +343,8 @@ class LabelmapMergeGraphBigQuery(LabelmapMergeGraphBase):
         making it efficient (and cheap) to query it for a specific
         body (or several).
 
+        It MUST be named with the UUID as the suffix, using '-' as a delimiter.
+
         Example table:
 
             janelia-flyem.cns_uploads.intrabody-edges-2023-07-30-41d6ec
@@ -371,6 +373,8 @@ class LabelmapMergeGraphBigQuery(LabelmapMergeGraphBase):
         dvid_supervoxels = fetch_supervoxels(*curr_seg, body_id, session=session)
         snapshot_bodies = pd.unique(fetch_mapping(*snapshot_seg, dvid_supervoxels))
 
+        bq_project = snapshot_table.split('.')[0]
+
         # Obtain the full set of intra-body edges for those
         # bodies at the time of the snapshot.
         q = dedent(f"""\
@@ -380,7 +384,7 @@ class LabelmapMergeGraphBigQuery(LabelmapMergeGraphBase):
         """)
         msg = f"Fetching edges for {len(snapshot_bodies)} body(s) from BigQuery snapshot"
         with Timer(msg, logger):
-            df = perform_bigquery(q)
+            df = perform_bigquery(q, project=bq_project)
             if len(df) == 0:
                 df = df.astype({
                     'sv_a': np.int64,
