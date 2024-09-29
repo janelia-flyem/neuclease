@@ -987,10 +987,18 @@ def fetch_skeleton(server, uuid, instance, body, format='neuprint', *, session=N
     Assumes the keys for skeletons are named using NeuTu conventions, e.g. "1234_swc".
 
     Args:
+        server:
+            DVID server
+        uuid:
+            DVID node
+        instance:
+            Name of a keyvalue instance, typically "segmentation_skeletons"
+        body:
+            body ID
         format:
             Either 'swc', 'pandas', or 'neuprint' (for pandas format with neuprint-style column names)
     """
-    assert format in ('pandas', 'swc')
+    assert format in ('pandas', 'swc', 'neuprint')
     swc_text = fetch_key(server, uuid, instance, f"{body}_swc", session=session).decode('utf-8')
     if format == 'swc':
         return swc_text
