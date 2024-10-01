@@ -303,8 +303,10 @@ def _standardize_annotation_dataframe(df):
         ids = [str(hex(abs(hash(tuple(x))))) for x in df[id_cols].values.tolist()]
         df['id'] = ids
 
-    assert (df['x'].isnull() ^ df['xa'].isnull()).all(), \
-        "You must supply either x,y,z or xa,ya,za,xb,yb,zb for every row."
+    is_point_or_ellipsoid = df[[*'xyz']].notnull().all(axis=1)
+    is_line_or_box = df[['xa', 'ya', 'za', 'xb', 'yb', 'zb']].notnull().all(axis=1)
+    assert (is_point_or_ellipsoid ^ is_line_or_box).all(), \
+        "You must supply either [x,y,z] or [xa,ya,za,xb,yb,zb] for every row (and not both)."
 
     df['type'] = df['type'].fillna(
         df['rx'].isnull().map({
