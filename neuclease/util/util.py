@@ -6,6 +6,7 @@ import copy
 import time
 import math
 import json
+import string
 import logging
 import inspect
 import copyreg
@@ -110,7 +111,15 @@ def timed(msg=None, logger=None, level=logging.INFO, log_start=True):
             A log message to pass to Timer().
             Will be emitted before and after the function executes.
             By default, the function name is used.
+
+            If msg is a format string (e.g. "Running myfunc with parameter {x}"),
+            then it is permitted to refer to function arguments by name, and
+            those arguments will be interpolated into the format string for
+            the log message.
+
             To avoid logging, pass an empty string.
+            (Even with logging disabled, you can still access
+            myfunc.last_timer to inspect the timing result.)
         logger:
             A logger object or the name of a logger.
 
@@ -130,44 +139,77 @@ def timed(msg=None, logger=None, level=logging.INFO, log_start=True):
 
         ..code-block: ipython
 
-            In [34]: @timed('Doing my thing')
-                ...: def myfunc(a,b,c):
-                ...:     print(a,b,c)
-                ...:
-
-            In [35]: myfunc(1,2,3)
-            [2023-08-31 10:27:25,039] INFO Doing my thing...
+            In [4]: @timed
+               ...: def myfunc(a,b,c):
+               ...:     print(a,b,c)
+               ...:
+               ...: myfunc(1, 2, 3)
+            [2024-10-01 12:04:04,810] INFO myfunc...
             1 2 3
-            [2023-08-31 10:27:25,040] INFO Doing my thing took 0:00:00.000217
+            [2024-10-01 12:04:04,810] INFO myfunc took 0:00:00.000115
 
-            In [37]: @timed
-                ...: def myfunc(a,b,c):
-                ...:     print(a,b,c)
-                ...:
-
-            In [38]: myfunc(1,2,3)
-            [2023-08-31 10:29:15,866] INFO myfunc...
+            In [5]: @timed('Doing my thing with {}, {}, {c}')
+               ...: def myfunc(a,b,c):
+               ...:     print(a,b,c)
+               ...:
+               ...: myfunc(1, 2, 3)
+            [2024-10-01 12:04:30,442] INFO Doing my thing with 1, 2, 3...
             1 2 3
-            [2023-08-31 10:29:15,866] INFO myfunc took 0:00:00.000114
+            [2024-10-01 12:04:30,443] INFO Doing my thing with 1, 2, 3 took 0:00:00.000216
     """
-    def decorator(f):
-        _msg = msg
-        if _msg is None:
-            _msg = f.__name__
+    def _decorator(f):
+        _msg = msg or f.__name__
+        parsed_fmt = string.Formatter().parse(_msg)
+        fmt_fields = [p[1] for p in parsed_fmt]
+        if not fmt_fields:
+            @wraps(f)
+            def wrapped_without_formatting(*args, **kwargs):
+                with Timer(_msg, logger, level, log_start) as timer:
+                    wrapped_without_formatting.last_timer = timer
+                    return f(*args, **kwargs)
+            return wrapped_without_formatting
+
+        named_fields = {f for f in fmt_fields if f and not str.isdigit(f)}
+        sig = inspect.signature(f)
+        if (unknown_fields := named_fields - set(sig.parameters)):
+            err_msg = (
+                f"Can't initialize @timed decorator for function '{f.__name__}' "
+                f"with message '{_msg}' because it contains format field(s) which "
+                f"aren't named in the function signature: {unknown_fields}"
+            )
+            raise RuntimeError(err_msg)
+
+        position_fields = [f for f in fmt_fields if not f or str.isdigit(f)]
+        position_fields = [
+            int(f) if f else i
+            for i, f in enumerate(position_fields)
+        ]
+        positional_params = [p for p in sig.parameters.values() if str(p.kind) != "KEYWORD_ONLY"]
+        if position_fields and (m := max(position_fields)) >= (pp := len(positional_params)):
+            err_msg = (
+                f"Can't initialize @timed decorator for function '{f.__name__}' "
+                f"with message '{_msg}' because it contains format field(s) "
+                f"corrresponding to positional argument {m} even though "
+                f"the function signature has only {pp} non-keyword arguments."
+            )
+            raise RuntimeError(err_msg)
 
         @wraps(f)
-        def wrapped(*args, **kwargs):
-            with Timer(_msg, logger, level, log_start) as timer:
-                wrapped.last_timer = timer
+        def wrapped_with_formatting(*args, **kwargs):
+            bound = sig.bind(*args, **kwargs)
+            bound.apply_defaults()
+            formatted_msg = _msg.format(*bound.args, **bound.arguments)
+            with Timer(formatted_msg, logger, level, log_start) as timer:
+                wrapped_with_formatting.last_timer = timer
                 return f(*args, **kwargs)
-        return wrapped
+        return wrapped_with_formatting
 
     if callable(msg):
         # Supports using @timed instead of @timed()
         f = msg
         msg = None
-        return decorator(f)
-    return decorator
+        return _decorator(f)
+    return _decorator
 
 
 def uuids_match(uuid1, uuid2):
