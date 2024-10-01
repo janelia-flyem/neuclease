@@ -3,6 +3,7 @@ Utility for converting a DataFrame to neuroglancer segment properties (a JSON do
 """
 import json
 from itertools import chain
+from collections.abc import Iterable, Mapping
 
 import numpy as np
 import pandas as pd
@@ -173,7 +174,8 @@ def segment_properties_json(
             }
     """
     df, string_cols, number_cols, tag_cols = _validate_args(
-        df, label_col, description_col, string_cols, number_cols, tag_cols, tag_prefix_mode
+        df, label_col, description_col, string_cols, number_cols,
+        tag_cols, tag_prefix_mode, tag_descriptions, col_descriptions
     )
 
     if drop_empty:
@@ -212,7 +214,8 @@ def segment_properties_json(
     return info
 
 
-def _validate_args(df, label_col, description_col, string_cols, number_cols, tag_cols, tag_prefix_mode):
+def _validate_args(df, label_col, description_col, string_cols, number_cols,
+                   tag_cols, tag_prefix_mode, tag_descriptions, col_descriptions):
     """
     Basic checks and convenience conversions where appropriate.
     (Series -> DataFrame, str -> list)
@@ -226,6 +229,13 @@ def _validate_args(df, label_col, description_col, string_cols, number_cols, tag
         number_cols = [number_cols]
     if isinstance(tag_cols, str):
         tag_cols = [tag_cols]
+
+    assert isinstance(df, pd.DataFrame)
+    assert isinstance(string_cols, Iterable)
+    assert isinstance(number_cols, Iterable)
+    assert isinstance(tag_cols, Iterable)
+    assert isinstance(tag_descriptions, Mapping)
+    assert isinstance(col_descriptions, Mapping)
 
     assert df.index.name in ('body', 'segment')
     assert tag_prefix_mode in ('all', 'disambiguate', None)
