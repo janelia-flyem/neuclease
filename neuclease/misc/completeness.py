@@ -1,5 +1,7 @@
 import re
 import logging
+import warnings
+import functools
 
 import numpy as np
 import pandas as pd
@@ -518,7 +520,7 @@ def _rank_syn_counts(point_df, conn_df, syn_counts_df=None, body_annotations_df=
     return syn_counts_df
 
 
-def plot_connectivity_forecast(conn_df, max_rank=None, plotted_points=20_000, hover_cols=[], color_by_col=None,
+def _plot_connectivity_forecast(conn_df, max_rank=None, plotted_points=20_000, hover_cols=[], color_by_col=None,
                                title='connectivity after prioritized merging', export_path=None):
     """
     Plot the curves of captured tbars, captured PSDs and captured dual-sided
@@ -637,7 +639,7 @@ def plot_connectivity_forecast(conn_df, max_rank=None, plotted_points=20_000, ho
     return p
 
 
-def plot_categorized_connectivity_forecast(
+def _plot_categorized_connectivity_forecast(
         conn_df, category_col, max_rank=None, plotted_points=20_000, hover_cols=[],
         title='connectivity after prioritized merging', export_path=None, selection_link=None,
         secondary_line='synweight', secondary_categories=['Anchor', '0.5assign', ''],
@@ -838,6 +840,32 @@ def _add_link_taptool(bokeh_plot, template_link, dots):
     #             console.error("Couldn't write body list to clipboard:", err)
     #         }
     # """.replace("TEMPLATE_LINK", template_link)))
+
+
+@functools.wraps(_plot_connectivity_forecast)
+def plot_connectivity_forecast(*args, **kwargs):
+    from bokeh.util.warnings import BokehUserWarning
+
+    # If we don't filter this warning, then plots involving large body IDs
+    # (such as FW IDs) will emit the following warning zillions of times:
+    #
+    #   BokehUserWarning: out of range integer may result in loss of precision
+    with warnings.catch_warnings():
+        warnings.simplefilter('once', BokehUserWarning)
+        return _plot_connectivity_forecast(*args, **kwargs)
+
+
+@functools.wraps(_plot_categorized_connectivity_forecast)
+def plot_categorized_connectivity_forecast(*args, **kwargs):
+    from bokeh.util.warnings import BokehUserWarning
+
+    # If we don't filter this warning, then plots involving large body IDs
+    # (such as FW IDs) will emit the following warning zillions of times:
+    #
+    #   BokehUserWarning: out of range integer may result in loss of precision
+    with warnings.catch_warnings():
+        warnings.simplefilter('once', BokehUserWarning)
+        return _plot_categorized_connectivity_forecast(*args, **kwargs)
 
 
 def variable_width_hbar(df, bar_name, bar_width, value, color=None, stackcolors=None, *,
