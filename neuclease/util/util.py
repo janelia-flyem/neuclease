@@ -161,7 +161,7 @@ def timed(msg=None, logger=None, level=logging.INFO, log_start=True):
         _msg = msg or f.__name__
         parsed_fmt = string.Formatter().parse(_msg)
         fmt_fields = [p[1] for p in parsed_fmt]
-        if not fmt_fields:
+        if not fmt_fields or all(ff is None for ff in fmt_fields):
             @wraps(f)
             def wrapped_without_formatting(*args, **kwargs):
                 with Timer(_msg, logger, level, log_start) as timer:
@@ -179,7 +179,7 @@ def timed(msg=None, logger=None, level=logging.INFO, log_start=True):
             )
             raise RuntimeError(err_msg)
 
-        position_fields = [f for f in fmt_fields if not f or str.isdigit(f)]
+        position_fields = [ff for ff in fmt_fields if not ff or str.isdigit(ff)]
         position_fields = [
             int(f) if f else i
             for i, f in enumerate(position_fields)
