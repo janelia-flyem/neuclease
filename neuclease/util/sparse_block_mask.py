@@ -222,7 +222,7 @@ class SparseBlockMask:
 
         Args:
             brick_grid:
-                The desired grid to use for the output.
+                The desired grid to use for the output, in full-res coordinates.
                 Does not need to be equivalent to the lowres grid that this SBM corresponds to.
 
             halo:
