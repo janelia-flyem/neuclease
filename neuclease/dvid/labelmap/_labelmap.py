@@ -2454,7 +2454,7 @@ def fetch_seg_around_point(server, uuid, instance, point_zyx, radius, scale=0, s
     return seg, aligned_box, p_out, corners
 
 
-def post_labelmap_voxels(server, uuid, instance, offset_zyx, volume, scale=0, downres=False, noindexing=False, throttle=False, *, session=None):
+def post_labelmap_voxels(server, uuid, instance, offset_zyx, volume, scale=0, downres=False, noindexing=False, throttle=False, skip_empty=False, *, session=None):
     """
     Post a supervoxel segmentation subvolume to a labelmap instance.
     Internally, breaks the volume into blocks and uses the ``/blocks``
@@ -2495,6 +2495,10 @@ def post_labelmap_voxels(server, uuid, instance, offset_zyx, volume, scale=0, do
             If True, passed via the query string to DVID, in which case DVID might return a '503' error
             if the server is too busy to service the request.
             It is your responsibility to catch DVIDExceptions in that case.
+
+        skip_empty:
+            If True, don't send blocks which have no non-zero voxels.
+            Obviously, this means you won't be erasing data that exists on the server.
     """
     offset_zyx = np.asarray(offset_zyx)
     shape = np.array(volume.shape)
@@ -2505,9 +2509,11 @@ def post_labelmap_voxels(server, uuid, instance, offset_zyx, volume, scale=0, do
     corners = []
     blocks = []
     for corner in ndrange(offset_zyx, offset_zyx + shape, (64,64,64)):
-        corners.append(corner)
         vol_corner = corner - offset_zyx
         block = volume[box_to_slicing(vol_corner, vol_corner+64)]
+        if skip_empty and not block.any():
+            continue
+        corners.append(corner)
         blocks.append( block )
 
     post_labelmap_blocks(server, uuid, instance, corners, blocks, scale, downres, noindexing, throttle, session=session)
