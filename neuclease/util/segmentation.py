@@ -643,11 +643,14 @@ def erase_disconnected_islands(label_vol):
 
     This involves computing the connected components of the label image,
     the contingency table between the original and the CC, and erasing
-    small objects from the original.  Takes ~10 seconds per GB of input.
+    small objects from the original.  Takes ~15 seconds per GB of input.
 
     Args:
         label_vol:
             A label volume (segmentation)
+        contingency_table:
+            A table of label IDs, arbitrary component IDs, and a column
+            indicating if the component was erased in the output.
     Returns:
             Same shape and dtype as label_vol.
             If no changes were necessary, the input label_vol is returned (not a copy).
@@ -655,20 +658,16 @@ def erase_disconnected_islands(label_vol):
     label_vol = vigra.taggedView(label_vol, 'zyx')
     cc = vigra.analysis.labelMultiArrayWithBackground(label_vol)
 
-    ct = contingency_table(label_vol, cc).rename_axis(['roi', 'cc'])
-    cc_to_drop = (
-        ct
-        .reset_index()
-        .sort_values('voxel_count', ascending=False)
-        .groupby('roi')
-        .tail(-1)
-        ['cc']
-    )
+    ct = contingency_table(label_vol, cc).rename_axis(['label', 'cc']).reset_index()
+    ct['erase'] = False
+    erase = ct.sort_values('voxel_count', ascending=False).groupby('label').tail(-1).index
+    ct.loc[erase, 'erase'] = True
+    cc_to_drop = ct.loc[ct['erase'], 'cc']
 
     if len(cc_to_drop) > 0:
         label_vol = np.where(np.isin(cc, cc_to_drop), label_vol.dtype.type(0), label_vol)
 
-    return label_vol
+    return label_vol, ct
 
 
 def split_disconnected_bodies(labels_orig):
@@ -1065,14 +1064,14 @@ def distance_transform(mask, background=False, smoothing=0.0, negate=False, pad=
             If False, calculate distances within the foreground (non-zero voxels) to the nearest background voxel.
             Note: Our default setting is the OPPOSITE of vigra's default!
         smoothing:
-            How must gaussian blur to apply before computing the max distance.
+            How much gaussian blur to apply before computing the max distance.
         negate:
             Negate the distance transform result before returning.
             Useful if you plan to run a watershed segmentation on the results.
         pad:
             If True, pad the mask with a halo of zeros before computing the distance tranform,
-            in case the foreground occupies the edge of the volume and results in strange results.
-            But strip off the padded voxels before returning the result.
+            in case the foreground occupies the edge of the volume and yields strange results.
+            But we still strip off the padded voxels before returning the result.
             The result will always have the same shape as the input.
     Returns:
         Same shape as mask, but float32.
