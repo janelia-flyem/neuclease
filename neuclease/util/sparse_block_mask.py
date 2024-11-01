@@ -242,6 +242,9 @@ class SparseBlockMask:
         if brick_grid is None:
             brick_grid = Grid(self.resolution)
 
+        if np.issubdtype(type(brick_grid), np.integer):
+            brick_grid = Grid([brick_grid]*self.lowres_mask.ndim)
+
         if not isinstance(brick_grid, Grid):
             assert isinstance(brick_grid, Collection)
             brick_grid = Grid(brick_grid)
@@ -249,59 +252,50 @@ class SparseBlockMask:
         assert not (halo > 0 and return_logical_boxes), \
             "The return_logical_boxes option makes no sense if halo > 0"
 
-        # With some effort, these requirements could be removed.
-        # It would require supporting floating-point grid shapes and offsets
-        # in boxes_from_grid(), so that the 'lowres' brick boxes can be computed
-        # (in SBM voxel units) despite not being divisible by the SBM resolution.
-        assert ((brick_grid.block_shape % self.resolution) == 0).all(), \
-            "Brick grid block shape must be a multiple of the SBM block shape"
-        assert (brick_grid.modulus_offset % self.resolution == 0).all(), \
-            "Brick grid offset must be a multiple of the SBM block shape"
+        sbm_fullres_box = self.nonzero_box
+        sbm_lowres_box = self.nonzero_box // self.resolution
+        sbm_lowres_mask = extract_subvol(self.lowres_mask, (self.nonzero_box - self.box[0]) // self.resolution)
 
-        sbm_box = self.nonzero_box
-        sbm_mask = extract_subvol(self.lowres_mask, (sbm_box - self.box[0]) // self.resolution)
+        logical_boxes = boxes_from_grid(sbm_fullres_box, brick_grid)
+        clipped_boxes = boxes_from_grid(sbm_fullres_box, brick_grid, clipped=True)
 
-        lowres_brick_grid = Grid(
-            brick_grid.block_shape // self.resolution,
-            brick_grid.modulus_offset // self.resolution
-        )
-        lowres_block_mask_box = sbm_box // self.resolution
-
-        lowres_logical_boxes = boxes_from_grid(lowres_block_mask_box, lowres_brick_grid)
-        lowres_clipped_boxes = boxes_from_grid(lowres_block_mask_box, lowres_brick_grid, clipped=True)
-
-        lowres_boxes = []
-        for logical_lowres_box, clipped_lowres_box in zip(lowres_logical_boxes, lowres_clipped_boxes):
-            box_within_mask = clipped_lowres_box - lowres_block_mask_box[0]
-            brick_mask = extract_subvol(sbm_mask, box_within_mask)
-            brick_coords = np.transpose(brick_mask.nonzero()).astype(np.int32)
-            if len(brick_coords) == 0:
+        boxes = []
+        for logical_box, clipped_box in zip(logical_boxes, clipped_boxes):
+            lowres_clipped_box = round_box(clipped_box, self.resolution, 'out') // self.resolution
+            lowres_box_within_mask = lowres_clipped_box - sbm_lowres_box[0]
+            brick_lowres_mask = extract_subvol(sbm_lowres_mask, lowres_box_within_mask)
+            if brick_lowres_mask.sum() == 0:
                 continue
 
             if return_logical_boxes:
-                lowres_boxes.append( logical_lowres_box )
+                boxes.append( logical_box )
             else:
                 # Find the smallest box that still encompasses the non-zero
                 # lowres voxels in this brick (denoted by brick_coords)
-                physical_lowres_box = ( brick_coords.min(axis=0),
-                                        brick_coords.max(axis=0) + 1 )
+                brick_lowres_coords = np.array(brick_lowres_mask.nonzero()).T.astype(np.int32)
+                physical_lowres_box = np.array([ brick_lowres_coords.min(axis=0),
+                                                 brick_lowres_coords.max(axis=0) + 1] )
 
                 # Translate back to global coordinates.
-                # Offset by this brick's location within the overall mask volume,
-                # and by the mask volume's location in global coordinates.
-                physical_lowres_box += box_within_mask[0] + lowres_block_mask_box[0]
+                # Offset by this brick's location within the overall nonzero mask,
+                # and again by the nonzero-mask's location in global SBM coordinates.
+                physical_lowres_box += lowres_box_within_mask[0] + sbm_lowres_box[0]
+                physical_fullres_box = physical_lowres_box * self.resolution
 
-                lowres_boxes.append( physical_lowres_box )
+                assert (physical_fullres_box[0] < physical_fullres_box[1]).all()
+                physical_fullres_box = box_intersection(physical_fullres_box, clipped_box)
+
+                boxes.append( physical_fullres_box )
 
         D = self.lowres_mask.ndim
-        if len(lowres_boxes) == 0:
-            nonempty_boxes = np.zeros((0,2,D), dtype=np.int32)
-        else:
-            nonempty_boxes = np.array(lowres_boxes, dtype=np.int32) * self.resolution
+        if len(boxes) == 0:
+            return np.zeros((0,2,D), dtype=np.int32)
 
-            halo_shape = np.zeros((D,), dtype=np.int32)
-            halo_shape[:] = halo
-            if halo_shape.any():
-                nonempty_boxes[:] += (-halo_shape, halo_shape)
+        nonempty_boxes = np.array(boxes, dtype=np.int32)
+
+        halo_shape = np.zeros((D,), dtype=np.int32)
+        halo_shape[:] = halo
+        if halo_shape.any():
+            nonempty_boxes[:] += (-halo_shape, halo_shape)
 
         return nonempty_boxes
