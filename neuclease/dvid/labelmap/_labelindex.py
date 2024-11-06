@@ -732,6 +732,10 @@ def encode_labelindex_block_id(coord_record):
 def decode_labelindex_blocks(encoded_blocks):
     """
     Calls decode_labelindex_block() on a 1-D array of encoded coordinates.
+
+    Note:
+        Returns full-resolution voxel coordinates (multiples of 64).
+        See note in decode_labelindex_block()
     """
     decoded_blocks = np.zeros((len(encoded_blocks), 3), dtype=np.int32)
     for i in range(len(encoded_blocks)):
