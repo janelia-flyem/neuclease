@@ -124,6 +124,7 @@ def find_missing_adjacencies(server, uuid, instance, body, known_edges=None, cc=
     cc_mapper = LabelMapper(svs, cc)
     sv_adj_found = []
     cc_adj_found = set()
+    coords_zyx_found = []
     block_tables = {}
     searched_block_svs = {}
 
@@ -185,6 +186,7 @@ def find_missing_adjacencies(server, uuid, instance, body, known_edges=None, cc=
             found_new_adj = True
             cc_adj_found.add( cc_adj )
             sv_adj_found.append( sv_adj )
+            coords_zyx_found.append( coord_zyx )
             block_adj_table.loc[sv_adj, 'applied'] = True
 
         block_tables[(*coord_zyx,)] = block_adj_table
@@ -216,6 +218,7 @@ def find_missing_adjacencies(server, uuid, instance, body, known_edges=None, cc=
 
                     cc_adj_found.add( (cc_a, cc_b) )
                     sv_adj_found.append( (sv_a, sv_b) )
+                    coords_zyx_found.append( coord_zyx )
 
                     block_tables[(*coord_zyx,)].loc[(sv_a, sv_b), 'applied'] = True
 
@@ -228,9 +231,11 @@ def find_missing_adjacencies(server, uuid, instance, body, known_edges=None, cc=
         block_table = block_table[BLOCK_TABLE_COLS]
 
     if sv_adj_found:
-        new_edges = np.array(sv_adj_found, np.uint64)
+        new_edges = pd.DataFrame(sv_adj_found, columns=['sv_a', 'sv_b'], dtype=np.uint64)
+        new_edges[[*'zyx']] = coords_zyx_found
     else:
-        new_edges = np.zeros((0,2), dtype=np.uint64)
+        new_edges = pd.DataFrame(np.zeros((0,5), dtype=np.int64), columns=['sv_a', 'sv_b', *'zyx'])
+        new_edges = new_edges.astype({'sv_a': np.uint64, 'sv_b': np.uint64})
 
     return new_edges, int(orig_num_cc), int(final_num_cc), block_table
 

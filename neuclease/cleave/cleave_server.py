@@ -350,7 +350,7 @@ def _run_cleave(data):
     try:
         # Perform the cleave computation
         with Timer() as timer:
-            results = cleave(edges, scores, seeds, supervoxels, method=method)
+            results = cleave(edges[['id_a', 'id_b']].values, scores, seeds, supervoxels, method=method)
     except InvalidCleaveMethodError as ex:
         body_logger.error(str(ex))
         body_logger.info("Responding with error BAD_REQUEST.")
@@ -434,9 +434,8 @@ def body_edge_table():
         return msg, ex.response.status_code
 
     response = StringIO()
-    table = pd.DataFrame(edges, columns=['id_a', 'id_b'])
-    table['score'] = scores
-    table.to_csv(response, index=False, header=True)
+    edges['score'] = scores
+    edges.to_csv(response, index=False, header=True)
     return response.getvalue()
 
 

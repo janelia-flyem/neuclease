@@ -104,7 +104,8 @@ class LabelmapMergeGraphBase(ABC):
         #     so they can't be updated to handle supervoxel splits.
         #     In the case of missing supervoxels, we simply rely on find_missing_adjacencies()
         #     to re-locate the edge.
-        self._extra_edge_cache = pd.DataFrame([], columns=['sv_a', 'sv_b'], dtype=np.uint64)
+        self._extra_edge_cache = pd.DataFrame(
+            [], columns=['id_a', 'id_b', 'za', 'ya', 'xa', 'zb', 'yb', 'xb'], dtype=np.uint64)
         self.disable_extra_edge_cache = disable_extra_edge_cache
 
         # This lock protects the above caches
@@ -170,7 +171,9 @@ class LabelmapMergeGraphBase(ABC):
                 body_id, dvid_supervoxels,
                 subset_df, find_missing, logger)
 
-            edges = np.concatenate((subset_df[['id_a', 'id_b']].values, extra_edges))
+            # Note: extra_edges won't have xa,ya,za,xb,yb,zb,
+            # so there will be NaNs in the concatenation result.  Fine.
+            edges = pd.concat((subset_df, extra_edges))
             scores = np.concatenate((subset_df['score'].values, extra_scores))
 
             # Cache before releasing key_lock, to ensure
@@ -186,15 +189,11 @@ class LabelmapMergeGraphBase(ABC):
         This is just factored out here to make _extract_edges() a little easier to read.
         """
         cached_extra_edges = (
-            self._extra_edge_cache.query(
-                'sv_a in @dvid_supervoxels and sv_b in @dvid_supervoxels'
-            ).values
+            self._extra_edge_cache
+            .query('id_a in @dvid_supervoxels and id_b in @dvid_supervoxels')
         )
-        known_edges = np.concatenate(
-            (subset_df[['id_a', 'id_b']].values, cached_extra_edges),
-            axis=0
-        )
-        cc = connected_components_nonconsecutive(known_edges, dvid_supervoxels)
+        known_edges = pd.concat((subset_df, cached_extra_edges))
+        cc = connected_components_nonconsecutive(known_edges[['id_a', 'id_b']].values, dvid_supervoxels)
         orig_num_cc = cc.max()+1
         extra_edges = np.zeros((0,2), dtype=np.uint64)
 
@@ -217,6 +216,13 @@ class LabelmapMergeGraphBase(ABC):
                             10, True
                         )
                     )
+                # This will look weird, but this is all for debug anyway.
+                extra_edges = extra_edges.rename(columns={'sv_a': 'id_a', 'sv_b': 'id_b'})
+                extra_edges[['za', 'ya', 'xa']] = extra_edges[[*'zyx']] + 32
+                extra_edges[['zb', 'yb', 'xb']] = extra_edges[[*'zyx']] + 32
+                extra_edges['source'] = 'extra'
+                extra_edges = extra_edges.drop(columns=[*'zyx'])
+
             self._store_extra_edges(extra_edges)
             logger.info(f"Searched {len(block_table)} blocks for missing adjacencies.")
             if final_num_cc == 1:
@@ -225,7 +231,7 @@ class LabelmapMergeGraphBase(ABC):
                 logger.info("Graph is not contiguous, but some missing adjacencies could not be found.")
                 logger.info(f"Reducing {orig_num_cc} disjoint components into {final_num_cc} took {timer.timedelta}.")
 
-        extra_edges = np.concatenate((cached_extra_edges, extra_edges))
+        extra_edges = pd.concat((cached_extra_edges, extra_edges))
         extra_scores = np.zeros(len(extra_edges), np.float32)
         return extra_edges, extra_scores
 
@@ -246,8 +252,7 @@ class LabelmapMergeGraphBase(ABC):
     def _store_extra_edges(self, extra_edges):
         if self.disable_extra_edge_cache:
             return
-        assert extra_edges.dtype == np.uint64
-        extra_edges = pd.DataFrame(extra_edges, columns=['sv_a', 'sv_b'])
+        assert (extra_edges[['id_a', 'id_b']].dtypes == np.uint64).all()
         with self._edge_cache_main_lock:
             self._extra_edge_cache = pd.concat(
                 (self._extra_edge_cache, extra_edges),
@@ -442,7 +447,9 @@ class LabelmapMergeGraphBigQuery(LabelmapMergeGraphBase):
         cols = [*cols, 'body']
         coltypes = dict(MERGE_TABLE_DTYPE)
         coltypes['body'] = np.uint64
-        return dvid_supervoxels, edges[cols].astype(coltypes)
+        edges = edges[cols].astype(coltypes)
+        edges['source'] = self.table
+        return dvid_supervoxels, edges
 
 
 class LabelmapMergeGraphLocalTable(LabelmapMergeGraphBase):
@@ -518,6 +525,7 @@ class LabelmapMergeGraphLocalTable(LabelmapMergeGraphBase):
         else:
             subset_df = self.extract_rows_by_sv(dvid_supervoxels)
 
+        subset_df['source'] = 'merge-table'
         return dvid_supervoxels, subset_df
 
     def extract_premapped_rows(self, body_id):
@@ -647,8 +655,8 @@ class LabelmapMergeGraphLocalTable(LabelmapMergeGraphBase):
                     if sv_b not in children and sv_b != parent_rows_df.iloc[i, 1]:
                         bad_edges.append(('b', sv_b) + tuple(parent_rows_df.iloc[i]))
                 else:
-                    parent_rows_df.iloc[i, 0] = sv_a # id_a
-                    parent_rows_df.iloc[i, 1] = sv_b # id_b
+                    parent_rows_df.iloc[i, 0] = sv_a  # id_a
+                    parent_rows_df.iloc[i, 1] = sv_b  # id_b
                     update_rows.append(parent_rows_df[i:i+1])
 
         update_table_df = pd.concat(update_rows, ignore_index=True)
