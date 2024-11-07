@@ -196,7 +196,9 @@ class LabelmapMergeGraphBase(ABC):
         known_edges = pd.concat((subset_df, cached_extra_edges))
         cc = connected_components_nonconsecutive(known_edges[['id_a', 'id_b']].values, dvid_supervoxels)
         orig_num_cc = cc.max()+1
-        extra_edges = np.zeros((0,2), dtype=np.uint64)
+
+        # Empty by default
+        extra_edges = cached_extra_edges.iloc[:0]
 
         if orig_num_cc == 1:
             logger.info("Graph is already contiguous.")
