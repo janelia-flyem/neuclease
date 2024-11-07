@@ -192,6 +192,7 @@ class LabelmapMergeGraphBase(ABC):
             self._extra_edge_cache
             .query('id_a in @dvid_supervoxels and id_b in @dvid_supervoxels')
         )
+
         known_edges = pd.concat((subset_df, cached_extra_edges))
         cc = connected_components_nonconsecutive(known_edges[['id_a', 'id_b']].values, dvid_supervoxels)
         orig_num_cc = cc.max()+1
@@ -232,7 +233,11 @@ class LabelmapMergeGraphBase(ABC):
                 logger.info(f"Reducing {orig_num_cc} disjoint components into {final_num_cc} took {timer.timedelta}.")
 
         extra_edges = pd.concat((cached_extra_edges, extra_edges))
-        extra_scores = np.zeros(len(extra_edges), np.float32)
+
+        # Scores are 'costs' and we want the 'extra' edges
+        # to have worse scores than any 'stored' edges.
+        extra_scores = np.full(len(extra_edges), np.inf, np.float32)
+
         return extra_edges, extra_scores
 
     def _store_body_edges(self, key, dvid_supervoxels, edges, scores, logger):
