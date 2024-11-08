@@ -153,12 +153,12 @@ class LabelmapMergeGraphBase(ABC):
 
         # Use a lock to avoid requesting the supervoxels from DVID in-parallel,
         # in case the user sends several requests at once for the same body,
-        # which can happen if they click faster than dvid can respond.
+        # which can happen if they click faster than we can respond.
         logger.info(f"Locking key lock: {key}")
         with key_lock:
-            if key in self._perbody_edge_cache:
-                supervoxels, edges, scores = self._perbody_edge_cache[key]
+            if cached := self._get_cached_body_edges(key):
                 logger.info("Returning cached edges")
+                supervoxels, edges, scores = cached
                 return (mutid, supervoxels, edges, scores)
 
             logger.info("Edges not found in cache.  Extracting from merge graph.")
@@ -241,6 +241,13 @@ class LabelmapMergeGraphBase(ABC):
         extra_scores = np.full(len(extra_edges), np.inf, np.float32)
 
         return extra_edges, extra_scores
+
+    def _get_cached_body_edges(self, key):
+        with self._edge_cache_main_lock:
+            if key in self._perbody_edge_cache:
+                supervoxels, edges, scores = self._perbody_edge_cache[key]
+                return (supervoxels, edges, scores)
+            return None
 
     def _store_body_edges(self, key, dvid_supervoxels, edges, scores, logger):
         if self.max_perbody_cache_len == 0:
