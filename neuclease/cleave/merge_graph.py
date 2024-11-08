@@ -430,11 +430,13 @@ class LabelmapMergeGraphBigQuery(LabelmapMergeGraphBase):
 
             # Update the retired IDs and their body mappings.
             if retired_a.sum() > 0:
-                df.loc[retired_a, 'sv_a'] = fetch_labels(*curr_seg, df.loc[retired_a, ['za', 'ya', 'xa']].values)
+                points_a = df.loc[retired_a, ['za', 'ya', 'xa']].values
+                df.loc[retired_a, 'sv_a'] = fetch_labels(*curr_seg, points_a, supervoxels=True)
                 df.loc[retired_a, 'body_a'] = fetch_mapping(*curr_seg, df.loc[retired_a, 'sv_a'].values)
 
             if retired_b.sum() > 0:
-                df.loc[retired_b, 'sv_b'] = fetch_labels(*curr_seg, df.loc[retired_b, ['zb', 'yb', 'xb']].values)
+                points_b = df.loc[retired_b, ['zb', 'yb', 'xb']].values
+                df.loc[retired_b, 'sv_b'] = fetch_labels(*curr_seg, points_b, supervoxels=True)
                 df.loc[retired_b, 'body_b'] = fetch_mapping(*curr_seg, df.loc[retired_b, 'sv_b'].values)
 
         # Filter out extraneous edges based on the updated IDs.
