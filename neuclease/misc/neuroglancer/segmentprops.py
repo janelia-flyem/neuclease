@@ -193,7 +193,7 @@ def segment_properties_json(
         json_props.append(jsn)
 
     # Construct JSON for tags.
-    if tag_cols:
+    if len(tag_cols):
         jsn = _tags_property_json(df, tag_cols, tag_prefix_mode, tag_descriptions)
         json_props.append(jsn)
 
@@ -597,15 +597,18 @@ def segment_properties_to_dataframe(js):
         No attempt is made to parse the prefixes of the tags to group
         them into shared columns.
     """
+    segment_ids = [*map(int, js['inline']['ids'])]
+    segment_ids = pd.Index(segment_ids, name='segment')
+
     all_props = js['inline']['properties']
     scalar_props = [prop for prop in all_props if prop['type'] != 'tags']
     tags_props =   [prop for prop in all_props if prop['type'] == 'tags']
 
-    segment_ids = [*map(int, js['inline']['ids'])]
     prop_data = {
         prop['id']: prop['values']
         for prop in scalar_props
     }
+
     dtypes = {
         prop['id']: prop['data_type']
         for prop in scalar_props
