@@ -421,8 +421,8 @@ def _tags_property_json(df, tags_columns, tag_prefix_mode, tag_descriptions):
 
     # Convert to a single unified Categorical dtype.
     tag_sets = [dtype.categories for dtype in tags_df.dtypes]
-    all_tags = sorted({*chain(*tag_sets)})
-    tags_df = tags_df.astype(pd.CategoricalDtype(categories=all_tags))
+    unique_tags = sorted({*chain(*tag_sets)})
+    tags_df = tags_df.astype(pd.CategoricalDtype(categories=unique_tags))
 
     # Tags are represented as a list-of-lists of sorted codes.
     codes_df = pd.DataFrame({c: s.cat.codes for c, s in tags_df.items()})
@@ -435,12 +435,12 @@ def _tags_property_json(df, tags_columns, tag_prefix_mode, tag_descriptions):
     prop = {
         'id': 'tags',
         'type': 'tags',
-        'tags': all_tags,
+        'tags': unique_tags,
         'values': sorted_codes,
     }
 
     if tag_descriptions:
-        prop['tag_descriptions'] = _tag_description_list(all_tags, tag_descriptions)
+        prop['tag_descriptions'] = _tag_description_list(unique_tags, tag_descriptions)
 
     return prop
 
@@ -552,10 +552,10 @@ def _disambiguate_tags(df):
         df[col] = df[col].cat.rename_categories(renames)
 
 
-def _tag_description_list(all_tags, tag_descriptions):
+def _tag_description_list(unique_tags, tag_descriptions):
     """
     Given the list of all tags and a mapping of tags to descriptions,
-    return the descriptions in the same order as all_tags.
+    return the descriptions in the same order as unique_tags.
     """
     tag_descriptions = {
         str(k).replace(' ', '_'): v
@@ -563,7 +563,7 @@ def _tag_description_list(all_tags, tag_descriptions):
     }
 
     td = []
-    for t in all_tags:
+    for t in unique_tags:
         d = tag_descriptions.get(t, None)
 
         # If we didn't find it, try stripping the tag prefix (if any)
@@ -604,34 +604,37 @@ def segment_properties_to_dataframe(js):
     scalar_props = [prop for prop in all_props if prop['type'] != 'tags']
     tags_props =   [prop for prop in all_props if prop['type'] == 'tags']
 
-    prop_data = {
+    scalar_values = {
         prop['id']: prop['values']
         for prop in scalar_props
     }
 
-    dtypes = {
+    scalar_dtypes = {
         prop['id']: prop['data_type']
         for prop in scalar_props
         if 'data_type' in prop
     }
 
-    df = pd.DataFrame(prop_data, segment_ids).astype(dtypes)
+    scalar_df = pd.DataFrame(scalar_values, segment_ids).astype(scalar_dtypes)
     if not tags_props:
-        return df
+        return scalar_df
 
-    unique_tags = tags_props[0]['tags']
     code_lists = tags_props[0]['values']
+    unique_tags = tags_props[0]['tags']
+
+    segment_count = len(code_lists)
+    tag_count = len(unique_tags)
 
     # Flatten the lists of codes,
     # but keep track of the rows they came from.
     cols = [*chain(*code_lists)]
     rows = np.repeat(
-        range(len(code_lists)),
+        range(segment_count),
         [*map(len, code_lists)]
     )
 
-    flags = np.zeros((len(code_lists), len(unique_tags)), bool)
+    flags = np.zeros((segment_count, tag_count), bool)
     flags[rows, cols] = True
 
     tags_df = pd.DataFrame(flags, segment_ids, unique_tags)
-    return pd.concat((df, tags_df), axis=1)
+    return pd.concat((scalar_df, tags_df), axis=1)
