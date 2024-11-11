@@ -8,7 +8,6 @@ Perhaps someday this subpackage will be properly distributed on its own,
 but for now we use local import statements as a convenience for those who
 with to use parts of this subpackage without installing all dependencies.
 """
-import sys
 import json
 import argparse
 import tempfile
@@ -34,11 +33,14 @@ def download_ngstate(link):
     raise ValueError(f"Don't understand state link: {link}")
 
 
-def upload_ngstates(bucket_dir, states, threads=0, processes=0, disable_cache=False):
+def upload_ngstates(bucket_dir, states, threads=0, processes=0, disable_cache=False, return_prefix='https://neuroglancer-demo.appspot.com'):
     """
     Use multithreading or multiprocessing to upload many files in parallel,
     similar to `gsutil -m cp []...]`, except that in this case you must choose
     between multithreading or multiprocessing (not a combination of the two).
+
+    For the return values, neuroglancer links are returned (using the given prefix).
+    If no prerix is given, then the URLs to the uploaded files are returned.
     """
     assert bucket_dir.startswith('gs://')
     bucket_dir = bucket_dir[len('gs://'):]
@@ -54,13 +56,22 @@ def upload_ngstates(bucket_dir, states, threads=0, processes=0, disable_cache=Fa
 
     from neuclease.util import compute_parallel
     urls = compute_parallel(upload_to_bucket, args, starmap=True, threads=threads, processes=processes)
+
+    if return_prefix:
+        old_prefix = 'https://storage.googleapis.com/'
+        assert all(url.startswith(old_prefix) for url in urls)
+        return_prefix = return_prefix.rstrip('/') + '/#!gs://'
+        urls = [url.replace(old_prefix, return_prefix) for url in urls]
     return urls
 
 
-def upload_ngstate(bucket_path, state, disable_cache=False):
+def upload_ngstate(bucket_path, state, disable_cache=False, return_prefix='https://neuroglancer-demo.appspot.com'):
     """
     Upload the given JSON state to a gbucket location,
     such as 'gs://flyem-user-links/short/foobar.json'
+
+    For the return value, a neuroglancer link is returned (using the given prefix).
+    If no prerix is given, then the URL to the uploaded file is returned.
     """
     assert bucket_path.startswith('gs://')
     bucket_path = bucket_path[len('gs://'):]
@@ -69,7 +80,12 @@ def upload_ngstate(bucket_path, state, disable_cache=False):
     filename = bucket_path[1 + len(bucket):]
 
     state_string = json.dumps(state, indent=2)
-    return upload_to_bucket(bucket, filename, state_string, disable_cache=disable_cache)
+    url = upload_to_bucket(bucket, filename, state_string, disable_cache=disable_cache)
+
+    if return_prefix:
+        return_prefix = return_prefix.rstrip('/') + '/#!gs://'
+        url = url.replace('https://storage.googleapis.com/', return_prefix)
+    return url
 
 
 def upload_json(obj, bucket_path, disable_cache=True):
