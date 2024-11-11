@@ -213,13 +213,17 @@ def init_mesh_instances(server, uuid, seg_instance, body=True, chunks=True, sv=T
 
 
 class DummyResourceMgr:
-
     @contextmanager
     def access_context(self, *args, **kwargs):
         yield
 
     @classmethod
     def overwrite_none_kwarg(cls, f):
+        """
+        Decorator. If no resoruce_mgr was provided, supply a dummy object that
+        can be used in a 'with' statement so the functions below don't have to
+        check for "resource_mgr is None" all over the place.
+        """
         @wraps(f)
         def wrapper(*args, **kwargs):
             if kwargs.get('resource_mgr', None) is None:
