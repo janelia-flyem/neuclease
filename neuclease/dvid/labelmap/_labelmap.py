@@ -222,7 +222,8 @@ def fetch_lastmod(server, uuid, instance, body, *, session=None):
         {
             "mutation id": 2314,
             "last mod user": "johndoe",
-            "last mod time": "2000-02-01 12:13:14 +0000 UTC", "last mod app": "Neu3"
+            "last mod time": "2000-02-01 12:13:14 +0000 UTC",
+            "last mod app": "Neu3"
         }
 
     """

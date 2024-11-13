@@ -50,7 +50,8 @@ BodyMeshParametersSchema = {
         "source-method": {
             "description":
                 "Body meshes can be constructed by assembling supervoxel meshes or chunk meshes.\n"
-                "This setting specifies which method to use for generating/retrieving the component meshes.\n",
+                "This setting specifies which method to use for generating/retrieving the component meshes.\n"
+                "To generate meshes by naively assembling supervoxel meshes, use 'concatenated-supervoxels'\n",
             "type": "string",
             "default": ""
         },
