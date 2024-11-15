@@ -18,6 +18,7 @@ def segment_properties_json(
     number_cols=[],
     tag_cols=[],
     tag_prefix_mode='all',
+    sort_tags=False,
     tag_descriptions={},
     col_descriptions={},
     drop_empty=True,
@@ -82,6 +83,15 @@ def segment_properties_json(
               be prefixed with the name of their source column.
 
             - If None, then no disambiguation is performed.
+
+        sort_tags:
+            If True, order tags alphabetically (after prefixes are applied, if any) so they
+            are listed in sorted order in the neuroglancer UI.
+            Otherwise, tags are listed according to the order given by 'tag_cols',
+            with tags from earlier columns preceding tags from later columns,
+            but tags within each column will be sorted with respect to each other.
+            Note: For categorical input columns with ordered categories,
+            the sort order is determined by the categories, not alphanumeric sorting.
 
         tag_descriptions:
             A dict of {tag: description} describing each tag value.
@@ -194,7 +204,7 @@ def segment_properties_json(
 
     # Construct JSON for tags.
     if len(tag_cols):
-        jsn = _tags_property_json(df, tag_cols, tag_prefix_mode, tag_descriptions)
+        jsn = _tags_property_json(df, tag_cols, tag_prefix_mode, sort_tags, tag_descriptions)
         json_props.append(jsn)
 
     # Assemble the complete output.
@@ -406,7 +416,7 @@ def _select_int64_downcast(s):
     )
 
 
-def _tags_property_json(df, tags_columns, tag_prefix_mode, tag_descriptions):
+def _tags_property_json(df, tag_cols, tag_prefix_mode, sort_tags, tag_descriptions):
     """
     Constructs the JSON for the 'tags' segment property.
     """
@@ -414,14 +424,18 @@ def _tags_property_json(df, tags_columns, tag_prefix_mode, tag_descriptions):
 
     # Individually convert each column to Categorical
     # before we combine into a unified Categorical below.
-    for c in tags_columns:
+    for c in tag_cols:
         tags_df[c] = _convert_to_categorical(df[c])
 
     _insert_tag_prefixes(tags_df, tag_prefix_mode, df.dtypes)
 
     # Convert to a single unified Categorical dtype.
     tag_sets = [dtype.categories for dtype in tags_df.dtypes]
-    unique_tags = sorted({*chain(*tag_sets)})
+
+    # Deduplicate, but preserve order.
+    unique_tags = pd.Series([*chain(*tag_sets)]).unique().tolist()
+    if sort_tags:
+        unique_tags = sorted(unique_tags)
     tags_df = tags_df.astype(pd.CategoricalDtype(categories=unique_tags))
 
     # Tags are represented as a list-of-lists of sorted codes.
