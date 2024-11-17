@@ -94,10 +94,12 @@ def segment_properties_json(
             the sort order is determined by the categories, not alphanumeric sorting.
 
         tag_descriptions:
-            A dict of {tag: description} describing each tag value.
+            Optional. A dict of {tag: description} describing each tag value.
+            Missing tags will be given a default description.
 
         col_descriptions:
-            A dict of {column: description} describing each property (input column) other than 'tags'.
+            Optional. A dict of {column: description} describing each property
+            (input column) other than 'tags'.
 
         drop_empty:
             If any IDs in the input have no non-empty (null or "") properties,
@@ -429,16 +431,16 @@ def _tags_property_json(df, tag_cols, tag_prefix_mode, sort_tags, tag_descriptio
 
     _insert_tag_prefixes(tags_df, tag_prefix_mode, df.dtypes)
 
-    # Convert to a single unified Categorical dtype.
-    tag_sets = [dtype.categories for dtype in tags_df.dtypes]
-
-    # Deduplicate, but preserve order.
+    # Unified tag list: deduplicate, but preserve order by default.
+    tag_sets = (dtype.categories for dtype in tags_df.dtypes)
     unique_tags = pd.Series([*chain(*tag_sets)]).unique().tolist()
     if sort_tags:
         unique_tags = sorted(unique_tags)
+
+    # Convert all columns to a single unified Categorical dtype.
     tags_df = tags_df.astype(pd.CategoricalDtype(categories=unique_tags))
 
-    # Tags are represented as a list-of-lists of sorted codes.
+    # Tags are represented in JSON as a list-of-lists of sorted codes.
     codes_df = pd.DataFrame({c: s.cat.codes for c, s in tags_df.items()})
     sorted_codes = np.sort(codes_df.to_numpy(), axis=1).tolist()
 
