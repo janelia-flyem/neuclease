@@ -2549,7 +2549,7 @@ def convert_nested_custom_dict(x, custom_cls=None):
         have been converted to plain dicts.
     """
     if custom_cls is None and isinstance(x, Mapping):
-        custom_cls = type(custom_cls)
+        custom_cls = type(x)
 
     assert custom_cls is not None, \
         "Please provide the explicit type of the dict class to replace"
