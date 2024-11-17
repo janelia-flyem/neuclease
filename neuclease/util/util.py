@@ -1221,8 +1221,6 @@ def downsample_mask(mask, factor, method='or'):
     """
     Downsample a boolean mask by the given factor.
     """
-    assert method in ('or', 'and')
-
     mask = np.asarray(mask)
     assert mask.ndim >= 1
     if not isinstance(factor, Iterable):
@@ -1240,9 +1238,10 @@ def downsample_mask(mask, factor, method='or'):
     v = view_as_blocks(mask, (*factor,))
     last_axes = (*range(v.ndim),)[-mask.ndim:]
 
+    assert method in ('or', 'and')
     if method == 'or':
         f = np.logical_or.reduce
-    if method == 'and':
+    else:
         f = np.logical_and.reduce
 
     return f(v, axis=last_axes)
@@ -2488,13 +2487,13 @@ def find_files(root_dir, file_exts=None, skip_exprs=None, file_exprs=None):
 
     if file_exts:
         # Strip leading '.'
-        file_exts = map(lambda e: e[1:] if e.startswith('.') else e, file_exts)
+        file_exts = (e.lstrip('.') for e in file_exts)
 
         # Handle double-extensions like '.tar.gz' properly
-        file_exts = map(lambda e: e.replace('.', '\\.'), file_exts)
+        file_exts = (e.replace('.', '\\.') for e in file_exts)
 
         # Convert file extensions -> file expressions (regex)
-        file_exprs = map(lambda e: f".*\\.{e}", file_exts)
+        file_exprs = (f".*\\.{e}" for e in file_exts)
 
     # Combine and compile expression lists
     file_expr = '|'.join(f"({e})" for e in file_exprs)
