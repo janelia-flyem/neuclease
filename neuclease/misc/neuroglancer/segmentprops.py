@@ -463,7 +463,7 @@ def _tags_property_json(df, tag_cols, tag_prefix_mode, sort_tags, tag_descriptio
 
 def _convert_to_categorical(s):
     """
-    Convert the given Series to a Categorical suitable for tags.
+    Convert the given Series to a Categorical Series suitable for tags.
     """
     if s.dtype == 'category':
         s = s.cat.remove_unused_categories()
@@ -506,7 +506,7 @@ def _replace_spaces(s):
 def _insert_tag_prefixes(df, tag_prefix_mode, orig_dtypes):
     """
     Insert prefixes onto tags in df according to the tag_prefix_mode (if any).
-    The columns of df must already be Categorical.
+    The columns of df must already have Categorical dtypes.
 
     Tags in columns which were originally bool (before we converted them
     to Categorical) require no prefix, so we refer to orig_dtypes to skip
