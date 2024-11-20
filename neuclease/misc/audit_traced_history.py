@@ -38,7 +38,7 @@ def audit_traced_history_for_branch(server, branch='', instance='segmentation', 
     if final_uuid is not None:
         final_uuid = expand_uuid(server, final_uuid)
 
-    branch_uuids = find_branch_nodes(server, final_uuid, branch)
+    branch_uuids = list(find_branch_nodes(server, final_uuid, branch))
     leaf_uuid = branch_uuids[-1]
     
     if start_uuid is None:

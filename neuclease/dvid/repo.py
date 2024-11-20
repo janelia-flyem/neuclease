@@ -635,7 +635,7 @@ def find_branch_nodes(server, repo_uuid=None, branch=None, include_ancestors=Tru
             branch are included.
 
     Returns:
-        list of UUIDs, sorted chronologically from first to last,
+        pd.Categorical of UUIDs, sorted chronologically from first to last,
         unless full_info=True, in which case a DataFrame is returned.
 
 
@@ -681,7 +681,7 @@ def find_branch_nodes(server, repo_uuid=None, branch=None, include_ancestors=Tru
         nodes = nodes[:nodes.index(uuid)+1]
 
     if not full_info:
-        return nodes
+        return pd.Categorical(nodes, nodes, True)
 
     node_infos = [repo_info['DAG']['Nodes'][node] for node in nodes]
     return node_info_dataframe(node_infos)
@@ -698,6 +698,9 @@ def node_info_dataframe(node_infos):
     nodes_df['Created'] = created
     nodes_df['Updated'] = updated
 
+    uuids = nodes_df.sort_values('Created')['UUID']
+    uuid_dtype = pd.CategoricalDtype(uuids, ordered=True)
+    nodes_df['UUID'] = nodes_df['UUID'].astype(uuid_dtype)
     nodes_df = nodes_df.set_index(nodes_df['UUID'].rename('uuid'))
     return nodes_df
 
@@ -975,6 +978,7 @@ def resolve_ref_range(server, ref_range, *, session=None):
         start_uuid = resolve_ref(server, start_ref, expand=True, session=session)
 
     nodes = find_branch_nodes(server, end_uuid, end_uuid, session=session)
+    nodes = list(nodes)
     nodes = nodes[nodes.index(start_uuid):nodes.index(end_uuid)+1]
     if start_bracket == '(':
         nodes = nodes[1:]
