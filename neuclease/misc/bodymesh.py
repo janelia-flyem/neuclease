@@ -46,6 +46,7 @@ BodyMeshParametersSchema = {
     "type": "object",
     "default": {},
     "additionalProperties": False,
+    "description": "Settings for body mesh creation.\n",
     "properties": {
         "source-method": {
             "description":
@@ -103,6 +104,7 @@ BodyMeshParametersSchema = {
 }
 
 ChunkMeshParametersSchema = {
+    "description": "Settings for chunk mesh creation, to be used if your body meshes are assembled from chunk meshes.\n",
     "type": "object",
     "default": {},
     "additionalProperties": False,
@@ -143,6 +145,7 @@ ChunkMeshParametersSchema = {
 }
 
 MeshChunkConfigSchema = {
+    "description": "Settings to define a single chunk 'quality'\n",
     "type": "object",
     "default": {},
     "additionalProperties": False,
@@ -183,9 +186,14 @@ MeshChunkConfigSchema = {
             "default": 2,
         },
         "quality-configs": {
+            "description":
+                "Multiple sets of chunk meshes can be produced, with different 'quality' settings.\n"
+                "The idea here is that body meshes could be generated at different LOD depending on the set of chunks they start from.\n"
+                "Ultimately, we could use this to quickly update multi-LOD body meshes for neuroglancer.\n"
+                "For now, we typically list only one 'quality' configuration.\n",
             "type": "array",
             "items": ChunkMeshParametersSchema,
-            "default": []
+            "default": [{}]
         }
     }
 }
