@@ -1615,6 +1615,11 @@ def swap_df_cols(df, prefixes=None, swap_rows=None, suffixes=['_a', '_b']):
         df.loc[swap_rows, col_b] = orig_df.loc[swap_rows, col_a]
 
 
+tqdm_proxy_config = {
+    'output_file': None
+}
+
+
 def tqdm_proxy(iterable=None, *, logger=None, level=logging.INFO, **kwargs):
     """
     Useful as an (almost) drop-in replacement for ``tqdm`` which can be used
@@ -1664,9 +1669,12 @@ def tqdm_proxy(iterable=None, *, logger=None, level=logging.INFO, **kwargs):
     _file = None
     disable_monitor = False
 
-    if not _file and os.isatty(sys.stdout.fileno()):
+    if tqdm_proxy_config['output_file'] is None:
+        if os.isatty(sys.stdout.fileno()):
+            _file = sys.stdout
+    elif tqdm_proxy_config['output_file'] == 'stdout':
         _file = sys.stdout
-    else:
+    elif tqdm_proxy_config['output_file'] == 'logger':
         if logger is None:
             frame = inspect.stack()[1]
             modname = inspect.getmodulename(frame[1])
