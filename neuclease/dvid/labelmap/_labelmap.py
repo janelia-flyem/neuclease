@@ -3721,7 +3721,7 @@ def compute_merge_hierarchies(msgs):
     return g
 
 
-def determine_owners(merge_hierarchy, bodies):
+def determine_owners(merge_hierarchy, bodies=None):
     """
     Use the merge history graph which was obtained from the mutations
     log via ``compute_merge_hierarchies()`` to determine the new
@@ -3729,6 +3729,9 @@ def determine_owners(merge_hierarchy, bodies):
 
     Any bodies not mentioned in the graph will be assumed to be "owned" by themselves.
     """
+    if bodies is None:
+        bodies = merge_hierarchy.nodes
+
     owners = []
     for body in bodies:
         try:
