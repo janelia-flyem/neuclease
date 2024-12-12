@@ -1615,6 +1615,28 @@ def swap_df_cols(df, prefixes=None, swap_rows=None, suffixes=['_a', '_b']):
         df.loc[swap_rows, col_b] = orig_df.loc[swap_rows, col_a]
 
 
+def get_all_logging_stream_handlers():
+    """
+    Inspect all loggers for handlers and return
+    the list of those which are StreamHandlers.
+    """
+    # Get the root logger
+    root_logger = logging.getLogger()
+
+    # Initialize a set to store unique handlers
+    all_handlers = set(root_logger.handlers)
+
+    # Get all loggers from the logging manager
+    loggers = logging.Logger.manager.loggerDict
+
+    for logger_name, logger in loggers.items():
+        if isinstance(logger, logging.Logger):
+            all_handlers.update(logger.handlers)
+
+    stream_handlers = [h for h in all_handlers if isinstance(h, logging.StreamHandler)]
+    return stream_handlers
+
+
 tqdm_proxy_config = {
     'output_file': None
 }
@@ -1669,12 +1691,21 @@ def tqdm_proxy(iterable=None, *, logger=None, level=logging.INFO, **kwargs):
     _file = None
     disable_monitor = False
 
-    if tqdm_proxy_config['output_file'] is None:
+    output_file = tqdm_proxy_config['output_file']
+
+    # Without an explicit config,
+    # we have to guess where to write the progress bar.
+    if output_file is None:
         if os.isatty(sys.stdout.fileno()):
-            _file = sys.stdout
-    elif tqdm_proxy_config['output_file'] == 'stdout':
+            output_file = 'stdout'
+        elif get_all_logging_stream_handlers():
+            # The user seems to be sending the log to a stream handler,
+            # so write progress to the log.
+            output_file = 'logger'
+
+    if output_file == 'stdout':
         _file = sys.stdout
-    elif tqdm_proxy_config['output_file'] == 'logger':
+    elif output_file == 'logger':
         if logger is None:
             frame = inspect.stack()[1]
             modname = inspect.getmodulename(frame[1])
