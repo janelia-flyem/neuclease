@@ -494,7 +494,7 @@ def update_body_mesh_from_chunks(server, uuid, seg_instance, body, body_mesh_con
             # TODO: What, if anything, will I do with the other chunk qualities?
             continue
 
-        mesh_bytes, mesh_info = _generate_body_mesh(
+        mesh_bytes, mesh_info = _generate_body_mesh_from_chunks(
             server, uuid, seg_instance,
             body,
             chunk_df,
@@ -596,7 +596,7 @@ def fetch_stored_chunk_keys(server, uuid, seg_instance, config_name=None, body=N
     return key_df
 
 
-def _generate_body_mesh(server, uuid, seg_instance, body, chunk_df, body_mesh_config, chunk_config, quality, processes, resource_mgr):
+def _generate_body_mesh_from_chunks(server, uuid, seg_instance, body, chunk_df, body_mesh_config, chunk_config, quality, processes, resource_mgr):
     seg = seg_instance
     with resource_mgr.access_context(server, True, 1, 0):
         lastmod = fetch_lastmod(server, uuid, seg, body)['mutation id']
