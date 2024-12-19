@@ -45,7 +45,8 @@ def create_bookmark_file(df, output_path=None, default_text=None, grayscale=None
 
     Args:
         df:
-            DataFrame with columns ['x', 'y', 'z'], and optionally 'body',  'text', and 'extra' (extra body IDs).
+            DataFrame with columns ['x', 'y', 'z'], and
+            optionally 'body',  'text', 'extra' (extra body IDs), 'suggest_extra' (if True, show extra IDs by default)
 
         output_path:
             If given, the bookmark file will be written to the given path.
@@ -77,7 +78,10 @@ def create_bookmark_file(df, output_path=None, default_text=None, grayscale=None
     if 'extra' in df.columns:
         df["extra body IDs"] = df['extra'].map(lambda x: x if x else [])
 
-    cols = [*{'location', 'body ID', 'text', 'extra body IDs'} & {*df.columns}]
+    if 'suggest_extra' in df.columns:
+        df["suggest extra"] = df['suggest_extra'] & df['extra body IDs'].map(len).astype(bool)
+
+    cols = [*{'location', 'body ID', 'text', 'extra body IDs', 'suggest extras'} & {*df.columns}]
     data = df[cols].to_dict('records')
 
     # Does any of this metadata actually matter?
