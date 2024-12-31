@@ -24,7 +24,7 @@ requirements:
     - flask >=1.0
     - numpy >=1.17
     - scipy
-    - scikit-image
+    - scikit-image >=0.25
     - h5py
     - pandas
     - numba >=0.45
