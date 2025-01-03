@@ -654,9 +654,11 @@ def _generate_body_mesh_from_chunks(server, uuid, seg_instance, body, chunk_df, 
         body_mesh_config,
     )
 
+    decimation_seconds = 0.0
     if decimation <= 1.0:
         with Timer(f"Decimating body mesh with {decimation}", logger) as dec_timer:
             body_mesh.simplify_openmesh(decimation)
+        decimation_seconds = dec_timer.seconds
 
     mesh_bytes = body_mesh.serialize(fmt='ngmesh')
     config_name = chunk_config['config-name']
@@ -673,7 +675,7 @@ def _generate_body_mesh_from_chunks(server, uuid, seg_instance, body, chunk_df, 
         "chunk-vertex-total": orig_vertices,
         "target-body-decimation-s0": target_decimation_s0,
         "applied-body-decimation": decimation,
-        "applied-body-decimation-seconds": dec_timer.seconds,
+        "applied-body-decimation-seconds": decimation_seconds,
         "final-body-vertex-count": len(body_mesh.vertices_zyx),
     }
     return mesh_bytes, mesh_info
