@@ -635,6 +635,32 @@ def contingency_table(left_vol, right_vol):
     return sizes
 
 
+def fill_holes_in_mask(mask, inplace=False):
+    """
+    Find the "bubbles" in the mask and fill them.
+    Find the connected components of the mask, and set all of them
+    to 1 except for those which touch the edge of the mask (the volume borders).
+    """
+    cc = vigra.analysis.labelMultiArrayWithBackground((mask == 0).astype(np.uint8))
+    face_ids = volume_face_ids(cc)  # noqa
+    non_face_ids = (
+        contingency_table(mask, cc)
+        .rename_axis(['mask', 'cc'])
+        .reset_index()
+        .query('cc not in @face_ids and cc != 0')['cc'].values
+    )
+    if len(non_face_ids) == 0:
+        return mask
+
+    if not inplace:
+        mask = mask.copy()
+
+    mask[np.isin(cc, non_face_ids)] = 1
+
+    if not inplace:
+        return mask
+
+
 def erase_disconnected_islands(label_vol):
     """
     Given a label volume (with background label 0),

@@ -15,6 +15,7 @@ from vol2mesh.mesh import Mesh
 
 from neuclease import PrefixFilter
 from neuclease.util import Timer, compute_parallel
+from neuclease.util.segmentation import fill_holes_in_mask
 
 from neuclease.dvid import set_default_dvid_session_timeout
 from neuclease.dvid.repo import resolve_ref, create_instance, fetch_repo_instances
@@ -140,6 +141,13 @@ ChunkMeshParametersSchema = {
             # We compromise by decimating part-way at the chunk level, leaving the final 16x decimation
             # (0.0625) in the body decimation step.
             "default": 0.08
+        },
+        "fill-holes": {
+            "description":
+                "If True, erase holes (by filling them with ones) in the chunk mask before meshing.\n"
+                "Objects which touch the chunk boundary will not be filled.\n",
+            "type": "boolean",
+            "default": True
         }
     }
 }
@@ -720,6 +728,11 @@ def mesh_for_chunk(server, uuid, seg_instance, body, lastmod, chunk_config, qual
 
     with resource_mgr.access_context(server, True, 1, 0):
         mask, mask_box = fetch_sparsevol(server, uuid, seg, body, scale, mask_box=chunk_box, format='mask')
+
+    fill_holes = quality_config['fill-holes']
+    if fill_holes:
+        fill_holes_in_mask(mask, inplace=True)
+
     mesh = Mesh.from_binary_vol(mask, mask_box * 2**scale, method='skimage')
 
     smoothing = quality_config['smoothing']
