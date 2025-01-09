@@ -16,7 +16,7 @@ SplitEvent = namedtuple("SplitEvent", "mutid old remain split type")
 SplitEvent.__new__.__defaults__ = ('unknown',)
 
 @dvid_api_wrapper
-def fetch_supervoxel_splits(server, uuid, instance, source='kafka', format='dict', *, session=None): # @ReservedAssignment
+def fetch_supervoxel_splits(server, uuid, instance, source='kafka', format='dict', *, session=None):
     """
     Fetch supervoxel split events from dvid or kafka.
     (See fetch_supervoxel_splits_from_dvid() for details.)

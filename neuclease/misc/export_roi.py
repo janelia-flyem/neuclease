@@ -177,7 +177,7 @@ def export_roi_slices(server, uuid, roi_name, scale, scaled_shape_zyx, parent_ou
     if (roi_box[0] < 0).any() or (roi_box[1] > scaled_mask_view.shape[:3]).any():
         # Drop coordinates outside the volume.
         # (Some ROIs extend beyond our sample.)
-        (Z, Y, X) = scaled_mask_view.shape[:3] #@UnusedVariable
+        (Z, Y, X) = scaled_mask_view.shape[:3]
         roi_coords_df = pd.DataFrame(roi_coords, columns=list('zyx'))
         roi_coords_df.query('x >= 0 and y >= 0 and z >= 0 and x < @X and y < @Y and z < @Z', inplace=True)
 

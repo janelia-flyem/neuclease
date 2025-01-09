@@ -494,7 +494,7 @@ def match_overlaps(left_img, right_img, min_overlap=1, min_jaccard=0.0, crossove
             # Crossovers not permitted.
             # We exclude matches in which EITHER side is a 'crossover' object.
             crossover_table = cc_overlap_sizes.query('left == right')
-            crossover_components = set(crossover_table['left_cc']) | set(crossover_table['right_cc']) #@UnusedVariable
+            crossover_components = set(crossover_table['left_cc']) | set(crossover_table['right_cc'])
             cc_overlap_sizes.query('left_cc not in @crossover_components and right_cc not in @crossover_components', inplace=True)
         logger.info(f"Found {len(cc_overlap_sizes)} edges after crossover filter")
 

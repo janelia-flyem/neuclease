@@ -82,8 +82,8 @@ def check_in_rois(server, uuid, synapse_df, rois):
 
     # Drop everything outside the combined_box
     logger.info("Excluding OOB points")
-    min_z, min_y, min_x = combined_box[0] #@UnusedVariable
-    max_z, max_y, max_x = combined_box[1] #@UnusedVariable
+    min_z, min_y, min_x = combined_box[0]
+    max_z, max_y, max_x = combined_box[1]
     q = 'z >= @min_z and y >= @min_y and x >= @min_x and z < @max_z and y < @max_y and x < @max_x'
     downsampled_coords_zyx.query(q, inplace=True)
 

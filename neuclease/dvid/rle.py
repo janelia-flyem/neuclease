@@ -102,7 +102,7 @@ def combine_sparsevol_rle_responses(rle_payloads):
     return construct_rle_payload_from_coords(combined_coords)
 
 
-def parse_rle_response(response_bytes, dtype=np.int32, format='coords'):  # @ReservedAssignment
+def parse_rle_response(response_bytes, dtype=np.int32, format='coords'):
     """
     Parse a (legacy) RLE response from DVID, used by various endpoints
     such as 'sparsevol' and 'sparsevol-coarse'.

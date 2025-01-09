@@ -112,7 +112,7 @@ def graph_tool_available():
                 # Importing graph_tool results in warnings about duplicate C++/Python conversion functions.
                 # Ignore those warnings
                 warnings.filterwarnings("ignore", "to-Python converter")
-                import graph_tool as gt #@UnusedImport
+                import graph_tool as gt
         
             _graph_tool_available = True
         except ImportError:

@@ -13,7 +13,7 @@ from .rle import runlength_decode_from_ranges, runlength_decode_from_ranges_to_m
 logger = logging.getLogger(__name__)
 
 @dvid_api_wrapper
-def fetch_roi(server, uuid, instance, format='ranges', *, mask_box=None, session=None): # @ReservedAssignment
+def fetch_roi(server, uuid, instance, format='ranges', *, mask_box=None, session=None):
     """
     Fetch an ROI from dvid.
     
