@@ -18,7 +18,7 @@ from functools import partial, lru_cache, wraps
 from multiprocessing import get_context
 from multiprocessing.pool import ThreadPool
 from datetime import datetime, timedelta
-from collections.abc import Mapping, Iterable, Sequence
+from collections.abc import Mapping, Iterable, Sequence, Collection
 
 import pytz
 import ujson
@@ -2035,14 +2035,15 @@ def mask_centroid(mask, as_int=False):
 
 
 @lru_cache(maxsize=1)
-def sphere_mask(radius):
+def sphere_mask(radius, ndim=3):
     """
-    Return the binary mask of a sphere.
+    Return the binary mask of a sphere (or hyper-sphere).
     Resulting array is a cube with side 2R+1
     """
     r = radius
-    cz, cy, cx = np.ogrid[-r:r+1, -r:r+1, -r:r+1]
-    distances_sq = cz**2 + cy**2 + cx**2
+    sl = (slice(-r, r+1) for _ in range(ndim))
+    centers = np.ogrid[tuple(sl)]
+    distances_sq = sum(c**2 for c in centers)
     mask = (distances_sq <= r**2)
 
     # The result will be cached, so don't let the caller overwrite it!
@@ -2067,16 +2068,62 @@ def ellipsoid_mask_axis_aligned(rz, ry, rx):
 
 def place_sphere(vol, center_point, radius, label=1):
     """
-    Place a sphere mask within the given volume
+    Place a sphere mask within the given volume.
+    Works in-place.
     """
     p = np.asarray(center_point)
     r = radius
     sphere_box = [p - r, p + r + 1]
-    cropped_box = box_intersection([(0,0,0), vol.shape], sphere_box)
-    m = extract_subvol(sphere_mask(radius), cropped_box - sphere_box[0])
+    cropped_box = box_intersection([(0,)*vol.ndim, vol.shape], sphere_box)
+    m = extract_subvol(sphere_mask(radius, vol.ndim), cropped_box - sphere_box[0])
 
     subvol = vol[box_to_slicing(*cropped_box)]
     subvol[:] = np.where(m, label, subvol)
+
+
+def random_spheres(shape, radius, n=None, avoid_cropping=True):
+    """
+    Create an empty volume and place random spheres into it.
+    Useful for testing.
+    No effort is made to avoid overlaps between spheres.
+
+    Args:
+        shape:
+            The shape of the volume to create.
+        radius:
+            The radius of the spheres to place.
+            If a list/array is given, it specifies the radius for each sphere.
+        n:
+            The number of spheres to place.
+            If not provided, the number of spheres is equal to the number of elements in radius.
+        avoid_cropping:
+            If True, allow the spheres to be placed close enough
+            to the edge of the volume that they may be cropped.
+            Otherwise, the spheres may be placed near the volume edge,
+            but the sphere centers will always fall within the volume.
+    Returns:
+        ndarray, with the narrowest dtype that can hold N unique labels (and zero).
+    """
+    if isinstance(radius, Collection):
+        if n is None:
+            n = len(radius)
+        assert n == len(radius), "n must match the length of radius"
+        radii = radius
+    else:
+        if n is None:
+            n = 1
+        radii = [radius] * n
+
+    vol = np.zeros(shape, dtype=np.min_scalar_type(n))
+    for label, r in zip(range(1, n+1), radii):
+        if avoid_cropping:
+            center = np.random.randint(r, np.array(shape) - r - 1)
+        else:
+            center = np.random.randint(0, shape)
+
+        place_sphere(vol, center, r, label)
+
+    return vol
 
 
 def ellipsoid_mask(v0, v1, v2):
