@@ -1679,19 +1679,19 @@ def tqdm_proxy(iterable=None, *, logger=None, level=logging.INFO, **kwargs):
     if iterable is not None and isinstance(iterable, range) and 'total' not in kwargs:
         kwargs['total'] = (iterable.stop - iterable.start) // iterable.step
 
-    try:
-        import ipykernel.iostream
-        from tqdm.notebook import tqdm as tqdm_notebook
-        if isinstance(sys.stdout, ipykernel.iostream.OutStream):
-            return tqdm_notebook(iterable, **kwargs)
-    except ImportError:
-        pass
+    output_file = tqdm_proxy_config['output_file']
+    if output_file in (None, 'notebook'):
+        try:
+            import ipykernel.iostream
+            from tqdm.notebook import tqdm as tqdm_notebook
+            if isinstance(sys.stdout, ipykernel.iostream.OutStream):
+                return tqdm_notebook(iterable, **kwargs)
+        except ImportError:
+            pass
 
     _tqdm = tqdm
     _file = None
     disable_monitor = False
-
-    output_file = tqdm_proxy_config['output_file']
 
     # Without an explicit config,
     # we have to guess where to write the progress bar.
