@@ -4,26 +4,27 @@ Utility for converting a DataFrame to neuroglancer segment properties (a JSON do
 import json
 from itertools import chain
 from collections.abc import Iterable, Mapping
+from typing import Optional, List, Dict, Union, Literal
 
 import numpy as np
 import pandas as pd
 
 
 def segment_properties_json(
-    df,
-    label_col=None,
+    df: pd.DataFrame,
+    label_col: Optional[str] = None,
     *,
-    description_col=None,
-    string_cols=[],
-    number_cols=[],
-    tag_cols=[],
-    tag_prefix_mode='all',
-    sort_tags=False,
-    tag_descriptions={},
-    col_descriptions={},
-    drop_empty=True,
-    output_path=None,
-):
+    description_col: Optional[str] = None,
+    string_cols: List[str] = [],
+    number_cols: List[str] = [],
+    tag_cols: List[str] = [],
+    tag_prefix_mode: Literal['all', 'disambiguate', None] = 'all',
+    sort_tags: bool = False,
+    tag_descriptions: Dict[str, str] = {},
+    col_descriptions: Dict[str, str] = {},
+    drop_empty: bool = True,
+    output_path: Optional[str] = None,
+) -> Dict[str, Union[str, Dict]]:
     """
     Given a DataFrame, construct the JSON representation for neuroglancer segment properties
     (i.e. segment properties 'info' file) according to the neuroglancer spec:
