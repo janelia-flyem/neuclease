@@ -91,8 +91,8 @@ def segment_properties_json(
             Otherwise, tags are listed according to the order given by 'tag_cols',
             with tags from earlier columns preceding tags from later columns,
             but tags within each column will be sorted with respect to each other.
-            Note: For categorical input columns with ordered categories,
-            the sort order is determined by the categories, not alphanumeric sorting.
+            Note: For categorical input columns with ordered categories, the sort order
+            is determined by the categorical's intrinsic ordering, not alphanumeric sorting.
 
         tag_descriptions:
             Optional. A dict of {tag: description} describing each tag value.
@@ -250,8 +250,10 @@ def _validate_args(df, label_col, description_col, string_cols, number_cols,
     assert isinstance(tag_descriptions, Mapping)
     assert isinstance(col_descriptions, Mapping)
 
-    assert df.index.name in ('body', 'segment')
-    assert tag_prefix_mode in ('all', 'disambiguate', None)
+    assert df.index.name in ('body', 'segment'), \
+        f"Index name must be 'body' or 'segment', not '{df.index.name}'"
+    assert tag_prefix_mode in ('all', 'disambiguate', None), \
+        f"Invalid tag_prefix_mode: {tag_prefix_mode}."
     assert not (dupes := df.columns.duplicated()).any(), \
         f"Duplicated column names: {df.columns[dupes].tolist()}"
 
@@ -271,13 +273,14 @@ def _drop_empty_rows(df):
     Drop rows which contain only NaN, "", and False, and thus
     will have no non-empty value for any neuroglancer property.
     """
-    if len(df) == 0 or len(df.columns) == 0:
+    if df.empty:
         return df
 
-    # Note that bool cols are guaranteed to be
-    # tag cols, so False is considered empty.
-    bool_cols = df.dtypes[df.dtypes == bool].index
-    other_cols = df.dtypes[df.dtypes != bool].index
+    # Note that the only columns which are permitted to
+    # have dtype 'bool' are the boolean tag cols (if any).
+    # Therefore, False is considered 'empty'.
+    bool_cols = df.select_dtypes(include=bool).columns
+    other_cols = df.columns.difference(bool_cols)
 
     valid_bool = valid_other = False
     if len(bool_cols) > 0:
@@ -329,7 +332,7 @@ def _scalar_property_types(df, label_col, description_col, string_cols, number_c
 
     # Infer the types of unlisted columns from either the name or dtype
     for name, dtype in df.dtypes.items():
-        if dtype == bool and prop_types.get(name) != 'tags':
+        if dtype == bool and prop_types.get(name) != 'tags':  # noqa: E721
             raise RuntimeError(f"Column '{name}': Boolean columns are only valid as tag_cols")
         elif prop_types.get(name) == 'number' and not np.issubdtype(dtype, np.number):
             raise RuntimeError(f"Column '{name}': Not valid as number_cols (dtype: {dtype})")
