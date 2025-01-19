@@ -11,7 +11,7 @@ import logging
 import inspect
 import copyreg
 import contextlib
-from textwrap import indent
+from textwrap import indent, dedent
 from itertools import chain, product, islice, filterfalse
 from operator import itemgetter
 from functools import partial, lru_cache, wraps
@@ -2818,3 +2818,24 @@ def activate_plotly_theme(theme='plotly_dark'):
     """
     import plotly.io
     plotly.io.templates.default = theme
+
+
+def activate_tqdm_vscode_theme():
+    """
+    Change the tqdm notebook style to match the VSCode editor.
+    https://github.com/microsoft/vscode-jupyter/issues/7161#issuecomment-1616627670
+    """
+    from IPython import get_ipython
+    get_ipython().run_cell_magic('html', '', dedent(
+        """\
+        <style>
+        .cell-output-ipywidget-background {
+            background-color: transparent !important;
+        }
+        :root {
+            --jp-widgets-color: var(--vscode-editor-foreground);
+            --jp-widgets-font-size: var(--vscode-editor-font-size);
+        }
+        </style>
+        """
+    ))
