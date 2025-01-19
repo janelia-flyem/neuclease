@@ -2785,3 +2785,36 @@ def convert_nested_custom_dict(x, custom_cls=None):
         del copyreg.dispatch_table[custom_cls]
         if orig_pickler:
             copyreg.dispatch_table[custom_cls] = orig_pickler
+
+
+def activate_bokeh_theme(theme='dark_minimal'):
+    """
+    Set the bokeh dark theme, and apply it to holoviews/hvplot, too.
+    https://docs.bokeh.org/en/latest/docs/reference/themes.html
+
+    Args:
+        theme:
+            One of 'caliber', 'carbon', 'dark_minimal', 'light_minimal', 'night_sky', 'contrast'
+    """
+    from bokeh.io import curdoc
+    curdoc().theme = theme
+
+    try:
+        import holoviews as hv
+        hv.renderer('bokeh').theme = theme
+    except ImportError:
+        pass
+
+
+def activate_plotly_theme(theme='plotly_dark'):
+    """
+    Set the plotly dark theme.
+
+    Args:
+        theme:
+            One of 'ggplot2', 'seaborn', 'simple_white', 'plotly',
+            'plotly_white', 'plotly_dark', 'presentation', 'xgridoff',
+            'ygridoff', 'gridon', 'none'
+    """
+    import plotly.io
+    plotly.io.templates.default = theme
