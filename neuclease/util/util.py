@@ -2513,6 +2513,9 @@ def find_files(root_dir, file_exts=None, skip_exprs=None, file_exprs=None):
     but skipping directories that match a different pattern.
     Skipped directories are not even searched, saving time.
 
+    See also:
+        count_files()
+
     Args:
         root_dir:
             The root directory for the search
@@ -2618,6 +2621,135 @@ def find_files(root_dir, file_exts=None, skip_exprs=None, file_exprs=None):
         return chain(files, *subdir_filesets)
 
     return list(_find_files(root_dir))
+
+
+def count_files(root_dir, file_exts=None, skip_exprs=None, file_exprs=None):
+    """
+    Utility for counting files within a directory tree, including subdirectories,
+    but skipping specified directories. Returns a nested dictionary with
+    cumulative file counts for each directory and its subdirectories.
+
+    The total file count is stored in the `__total` key at each level of the dict.
+
+    See also:
+        find_files()
+
+    Note:
+        To produce this function, I gave ChatGPT the above implementation of
+        find_files() and told it to modify it to meet a different spec
+        (count files instead of listing them).
+
+    Args:
+        root_dir:
+            The root directory for the search.
+
+        file_exts:
+            A file extension or list of extensions to search for.
+            Cannot be used in conjunction with file_exprs.
+
+        skip_exprs:
+            A regular expression (or list of them) to specify which
+            directories should be skipped entirely during the search.
+
+        file_exprs:
+            A regular expression (or list of them) to specify which file names to search for.
+            Cannot be used in conjunction with file_exts.
+
+    Returns:
+        dict:
+            A nested dictionary mapping directory names to cumulative file counts.
+            Each directory has entries for `__total`, `__files`, and `__directories`,
+            and subdirectories are nested.
+
+    Example:
+        Count all .json files in an N5 directory hierarchy,
+        but skip the block directories such as 's0', 's1', etc.
+
+        count_files_with_subdirs_nested(root_dir, '.json', ['s[0-9]+'])
+    """
+    assert not file_exts or not file_exprs, \
+        "Please specify file extensions or whole file patterns, not both."
+
+    file_exts = file_exts or []
+    skip_exprs = skip_exprs or []
+    file_exprs = file_exprs or []
+
+    if isinstance(skip_exprs, str):
+        skip_exprs = [skip_exprs]
+    if isinstance(file_exts, str):
+        file_exts = [file_exts]
+    if isinstance(file_exprs, str):
+        file_exprs = [file_exprs]
+
+    if file_exts:
+        # Strip leading '.'
+        file_exts = (e.lstrip('.') for e in file_exts)
+
+        # Handle double-extensions like '.tar.gz' properly
+        file_exts = (e.replace('.', '\\.') for e in file_exts)
+
+        # Convert file extensions -> file expressions (regex)
+        file_exprs = (f".*\\.{e}" for e in file_exts)
+
+    # Combine and compile expression lists
+    file_expr = '|'.join(f"({e})" for e in file_exprs)
+    file_rgx = re.compile(file_expr) if file_expr else None
+
+    skip_expr = '|'.join(f"({e})" for e in skip_exprs)
+    skip_rgx = re.compile(skip_expr) if skip_expr else None
+
+    def _count_files(parent_dir):
+        logger.debug("Searching %s", parent_dir)
+
+        try:
+            # Get only the parent directory contents (not subdir contents),
+            # i.e., just one iteration of os.walk()
+            _, subdirs, files = next(os.walk(parent_dir))
+        except StopIteration:
+            return {}, 0, 0, 0
+
+        # Matching files
+        if file_rgx:
+            files = filter(file_rgx.fullmatch, files)
+
+        matching_files = list(files)
+
+        # Count files in the current directory (excluding subdirectories)
+        file_count = len(matching_files)
+
+        # Count subdirectories
+        dir_count = len(subdirs)
+
+        # Exclude skipped directories
+        if skip_rgx:
+            subdirs = filterfalse(skip_rgx.fullmatch, subdirs)
+
+        subdirs = sorted([f"{parent_dir}/{d}" for d in subdirs])
+
+        # Recurse into subdirectories
+        results = {}
+        total_count = file_count
+        file_count_in_subdirs = file_count
+        total_dirs = dir_count
+
+        for subdir in subdirs:
+            subdir_name = subdir.split(os.sep)[-1]  # Extract the subdirectory name only
+            subdir_results, subdir_total_count, subdir_file_count, subdir_dir_count = _count_files(subdir)
+            total_count += subdir_total_count
+            file_count_in_subdirs += subdir_file_count
+            total_dirs += subdir_dir_count
+            results[subdir_name] = subdir_results
+
+        # Store the cumulative count and the count of files at this level (excluding subdirs)
+        results['__total'] = total_count
+        results['__files'] = file_count
+        results['__directories'] = total_dirs
+
+        return results, total_count, file_count_in_subdirs, total_dirs
+
+    # Start the recursion from the root directory
+    result, _, _, _ = _count_files(root_dir)
+    return result
 
 
 def convert_nested_custom_dict(x, custom_cls=None):
