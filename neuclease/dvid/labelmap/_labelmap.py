@@ -3250,7 +3250,7 @@ def fetch_mutations(server, uuid, instance, userid=None, *, action_filter=None, 
         uuids = resolve_ref_range(server, uuid, session=session)
     elif dag_filter is None:
         dag = fetch_repo_dag(server, uuid, session=session)
-        uuids = nx.topological_sort(dag.nodes())
+        uuids = list(nx.topological_sort(dag))
     elif dag_filter == 'leaf-only':
         uuids = [resolve_ref(server, uuid, session=session)]
     elif dag_filter == 'leaf-and-parents':
