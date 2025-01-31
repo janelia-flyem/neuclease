@@ -137,8 +137,8 @@ def visualize_edges_table(cleave_server, dvid_server, uuid, instance, body, ngst
     ngstate['layers'].append(edge_layer)
 
     if bucket_path:
-        url = upload_ngstate(bucket_path, ngstate, True)
+        url = upload_ngstate(bucket_path, ngstate, True, return_prefix=neuroglancer_domain)
         url = url.replace('https://storage.googleapis.com/', 'gs://')
-        return f"{neuroglancer_domain}/#!{url}"
+        return url
 
     return ngstate
