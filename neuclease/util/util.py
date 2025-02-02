@@ -2326,6 +2326,7 @@ def upload_chunked_table(df, full_table_name, gbucket_dir, gbucket_subdir, local
     via the Python API.
     """
     import pyarrow
+    import pyarrow.parquet
     import subprocess
 
     assert gbucket_dir.startswith('gs://')
