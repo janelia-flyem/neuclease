@@ -181,8 +181,10 @@ def main():
     if 'skeletons' in cfg['update-derived-types']:
         update_skeletons(
             *dvid_seg,
+            cfg['skeletons']['neutu-executable'],
+            cfg['force-update'],
             cfg['skeletons']['scale'],
-            cfg['force-update']
+            cfg['dvid']['ignore-mutations-before-uuid']
         )
 
     if 'annotations' in cfg['update-derived-types']:
@@ -316,7 +318,7 @@ def update_body_meshes(dvid_server, uuid, seg_instance, body_mesh_config, chunk_
     store_update_receipt(*dvid_seg, "meshes", last_mutid)
 
 
-def update_skeletons(dvid_server, uuid, seg_instance, force, scale=5, ignore_before_uuid=None):
+def update_skeletons(dvid_server, uuid, seg_instance, neutu_executable, force, scale=5, ignore_before_uuid=None):
     dvid_seg = (dvid_server, uuid, seg_instance)
     prev_update, affected, last_mutid = mutated_bodies_since_previous_update(*dvid_seg, "skeletons", ignore_before_uuid)
 
@@ -345,7 +347,7 @@ def update_skeletons(dvid_server, uuid, seg_instance, force, scale=5, ignore_bef
             logger.info(f"Failed to fetch lastmod for body {body}")
             failed_bodies.append(body)
         else:
-            update_skeleton(*dvid_seg, body, mutid, force, scale)
+            update_skeleton(*dvid_seg, body, mutid, neutu_executable, force, scale)
 
     if not failed_bodies:
         store_update_receipt(*dvid_seg, "skeletons", last_mutid)
