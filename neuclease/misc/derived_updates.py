@@ -46,8 +46,8 @@ SegmentationDvidInstanceSchema = {
                 "update script is run, starting at the root repo uuid.\n"
                 "Use this only if you know what you're doing! Once you use this setting, earlier "
                 "UUIDs will never be processed, even in subsequent calls to the update script.\n",
-            "type": "string",
-            "default": ""
+            "default": "",
+            "type": ["string", "null"]
         },
         "uuid": {
             "description": "version node from dvid for which the derived data will be brought in sync with the segmentation",
