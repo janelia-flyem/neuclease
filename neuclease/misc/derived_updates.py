@@ -15,11 +15,11 @@ from requests import HTTPError
 from confiddler import load_config, dump_default_config
 
 from neuclease import PrefixFilter
-from neuclease.util import switch_cwd, tqdm_proxy_config, Timer
+from neuclease.util import switch_cwd, tqdm_proxy_config, Timer, tqdm_proxy
 from neuclease.dvid import (
     set_default_dvid_session_timeout,
     fetch_branch_nodes, resolve_ref, fetch_repo_instances, find_repo_root,
-    create_instance, fetch_key, post_key, delete_key, fetch_keyrange,
+    create_instance, fetch_key, fetch_keys, post_key, delete_key, fetch_keyrange,
     fetch_mutations, compute_affected_bodies, fetch_skeleton, fetch_lastmod
 )
 from neuclease.misc.bodymesh import update_body_mesh, BodyMeshParametersSchema, MeshChunkConfigSchema
@@ -320,13 +320,24 @@ def update_skeletons(dvid_server, uuid, seg_instance, force, scale=5, ignore_bef
     dvid_seg = (dvid_server, uuid, seg_instance)
     prev_update, affected, last_mutid = mutated_bodies_since_previous_update(*dvid_seg, "skeletons", ignore_before_uuid)
 
-    for body in affected.removed_bodies:
-        # There's no harm in 'deleting' keys that don't actually exist.
-        # (DVID doesn't complain.)
-        delete_key(dvid_server, uuid, f"{seg_instance}_skeletons", f"{body}_swc")
+    logger.info(f"Found {len(affected.removed_bodies)} removed bodies since last update.")
+    logger.info(f"Found {len(affected.new_bodies)} new bodies since last update.")
+    logger.info(f"Found {len(affected.changed_bodies)} changed bodies since last update.")
 
+    keys_to_delete = {f"{body}_swc" for body in affected.removed_bodies}
+    if len(keys_to_delete) >= 10_000:
+        logger.info("Reading existing skeleton keys")
+        stored_keys = fetch_keys(dvid_server, uuid, f'{seg_instance}_skeletons')
+        keys_to_delete &= set(stored_keys)
+
+    logger.info(f"Deleting {len(keys_to_delete)} skeleton keys.")
+    for key in keys_to_delete:
+        # Note: DVID doesn't complain if the key doesn't exist.
+        delete_key(dvid_server, uuid, f"{seg_instance}_skeletons", key)
+
+    logger.info(f"Updating skeletons for {len(affected.changed_bodies)} changed bodies and {len(affected.new_bodies)} new bodies.")
     failed_bodies = []
-    for body in [*affected.changed_bodies, *affected.new_bodies]:
+    for body in tqdm_proxy([*affected.changed_bodies, *affected.new_bodies]):
         try:
             lastmod = fetch_lastmod(*dvid_seg, body)
             mutid = lastmod["mutation id"]
@@ -338,6 +349,8 @@ def update_skeletons(dvid_server, uuid, seg_instance, force, scale=5, ignore_bef
 
     if not failed_bodies:
         store_update_receipt(*dvid_seg, "skeletons", last_mutid)
+
+    logger.info("Done updating skeletons.")
 
 
 def update_skeleton(dvid_server, uuid, seg_instance, body, mutid, neutu_executable, force=False, scale=5):
