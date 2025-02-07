@@ -18,7 +18,7 @@ from confiddler import load_config, dump_default_config
 from neuclease import PrefixFilter
 from neuclease.util import switch_cwd, tqdm_proxy_config, Timer, tqdm_proxy
 from neuclease.dvid import (
-    set_default_dvid_session_timeout,
+    set_default_dvid_session_timeout, is_locked,
     fetch_branch_nodes, resolve_ref, fetch_repo_instances, find_repo_root,
     create_instance, fetch_key, fetch_keys, post_key, delete_key, fetch_keyrange,
     fetch_mutations, compute_affected_bodies, fetch_skeleton, fetch_lastmod, fetch_query
@@ -328,6 +328,13 @@ def update_body_meshes(dvid_server, uuid, seg_instance, body_mesh_config, chunk_
 
 
 def update_skeletons(dvid_server, uuid, seg_instance, neutu_executable, force, scale=5, ignore_before_uuid=None):
+    if is_locked(dvid_server, uuid) and not os.environ.get('DVID_ADMIN_TOKEN'):
+        # Without this error, NeuTu would silently just switch to the HEAD uuid without telling us!
+        raise RuntimeError(
+            "The UUID is locked, but DVID_ADMIN_TOKEN is not defined. "
+            "You must define DVID_ADMIN_TOKEN to update skeletons."
+        )
+
     dvid_seg = (dvid_server, uuid, seg_instance)
     prev_update, affected, last_mutid = mutated_bodies_since_previous_update(*dvid_seg, "skeletons", ignore_before_uuid)
 
@@ -381,7 +388,11 @@ def update_skeleton(dvid_server, uuid, seg_instance, body, mutid, neutu_executab
 
     # We use --force here because we have already decided to regenerate the skeleton,
     # so we don't want NeuTu to second-guess our decision.
-    cmd = f'{neutu_executable} --command --skeletonize --force --bodyid {body} "{dvid_server}?uuid={uuid}&segmentation={seg_instance}&label_zoom={scale}"'
+    target = f"{dvid_server}?uuid={uuid}&segmentation={seg_instance}&label_zoom={scale}"
+    if admintoken := os.environ.get('DVID_ADMIN_TOKEN'):
+        target = f"{target}&admintoken={admintoken}"
+
+    cmd = f'{neutu_executable} --command --skeletonize --force --bodyid {body} "{target}"'
     logger.info(cmd)
     subprocess.run(cmd, shell=True, check=True)
 
