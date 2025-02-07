@@ -11,6 +11,7 @@ import subprocess
 from pathlib import Path
 from datetime import datetime
 
+import json
 from requests import HTTPError
 from confiddler import load_config, dump_default_config
 
@@ -20,7 +21,7 @@ from neuclease.dvid import (
     set_default_dvid_session_timeout,
     fetch_branch_nodes, resolve_ref, fetch_repo_instances, find_repo_root,
     create_instance, fetch_key, fetch_keys, post_key, delete_key, fetch_keyrange,
-    fetch_mutations, compute_affected_bodies, fetch_skeleton, fetch_lastmod
+    fetch_mutations, compute_affected_bodies, fetch_skeleton, fetch_lastmod, fetch_query
 )
 from neuclease.misc.bodymesh import update_body_mesh, BodyMeshParametersSchema, MeshChunkConfigSchema
 
@@ -304,6 +305,7 @@ def store_update_receipt(dvid_server, uuid, seg_instance, derived_type, mutid):
         f"{seg_instance}-{derived_type}-{mutid:020d}",
         update_value
     )
+    return update_value
 
 
 def update_body_meshes(dvid_server, uuid, seg_instance, body_mesh_config, chunk_config, ignore_before_uuid=None, force=False, processes=0):
@@ -386,12 +388,26 @@ def update_annotations(dvid_server, uuid, seg_instance, ignore_before_uuid=None)
     dvid_seg = (dvid_server, uuid, seg_instance)
     prev_update, affected, last_mutid = mutated_bodies_since_previous_update(*dvid_seg, "skeletons", ignore_before_uuid)
 
-    for body in affected.removed_bodies:
-        # There's no harm in 'deleting' keys that don't actually exist.
-        # (DVID doesn't complain.)
-        delete_key(dvid_server, uuid, f"{seg_instance}_annotations", body)
+    keys = fetch_keys(dvid_server, uuid, f"{seg_instance}_annotations")
+    keys_to_delete = set(keys) & set(map(str, affected.removed_bodies))
+    q = {'bodyid': [*list(map(int, keys_to_delete))]}
+    ann_to_delete = fetch_query(dvid_server, uuid, f"{seg_instance}_annotations", q, format='json')
 
-    store_update_receipt(*dvid_seg, "annotations", last_mutid)
+    try:
+        logger.info(f"Deleting {len(keys_to_delete)} annotations for removed (merged) bodies.")
+        for key in keys_to_delete:
+            # There's no harm in 'deleting' keys that don't actually exist.
+            # (DVID doesn't complain.)
+            delete_key(dvid_server, uuid, f"{seg_instance}_annotations", key)
+        update_value = store_update_receipt(*dvid_seg, "annotations", last_mutid)
+        path = f"deleted-{seg_instance}-annotations-{update_value['mutid']:020d}-{update_value['timestamp']}.json"
+        with open(path, 'w') as f:
+            json.dump(ann_to_delete, f)
+    except Exception:
+        logger.error("Failed to delete annotations. Logging annotations to failed-annotation-deletions.json")
+        with open("failed-annotation-deletions.json", 'w') as f:
+            json.dump(ann_to_delete, f)
+        raise
 
 
 if __name__ == "__main__":
