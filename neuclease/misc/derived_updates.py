@@ -239,7 +239,7 @@ def mutated_bodies_since_previous_update(dvid_server, uuid, seg_instance, derive
         )
 
     if keys:
-        prev_update = fetch_key(dvid_server, uuid, "derived-data-checkpoints", max(keys))
+        prev_update = fetch_key(dvid_server, uuid, "derived-data-checkpoints", max(keys), as_json=True)
     else:
         prev_update = {
             'uuid': find_repo_root(dvid_server, uuid),
@@ -271,9 +271,13 @@ def mutated_bodies_since_previous_update(dvid_server, uuid, seg_instance, derive
 
     recent_muts = fetch_mutations(dvid_server, f"[{updated_uuid}, {uuid}]", seg_instance)
     recent_muts = recent_muts.query('mutid >= @updated_mutid')
+    if len(recent_muts) == 0:
+        last_mutid = int(updated_mutid)
+    else:
+        last_mutid = int(recent_muts['mutid'].iloc[-1])
 
     affected = compute_affected_bodies(recent_muts)
-    return prev_update, affected, recent_muts['mutid'].iloc[-1]
+    return prev_update, affected, last_mutid
 
 
 def store_update_receipt(dvid_server, uuid, seg_instance, derived_type, mutid):
@@ -303,7 +307,7 @@ def store_update_receipt(dvid_server, uuid, seg_instance, derived_type, mutid):
         uuid,
         "derived-data-checkpoints",
         f"{seg_instance}-{derived_type}-{mutid:020d}",
-        update_value
+        json=update_value
     )
     return update_value
 
