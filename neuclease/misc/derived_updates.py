@@ -270,7 +270,7 @@ def mutated_bodies_since_previous_update(dvid_server, uuid, seg_instance, derive
             updated_uuid = ignore_before_uuid
 
     recent_muts = fetch_mutations(dvid_server, f"[{updated_uuid}, {uuid}]", seg_instance)
-    recent_muts = recent_muts.query('mutid >= @updated_mutid')
+    recent_muts = recent_muts.query('mutid > @updated_mutid')
     if len(recent_muts) == 0:
         last_mutid = int(updated_mutid)
     else:
