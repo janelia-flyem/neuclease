@@ -374,6 +374,7 @@ def update_skeleton(dvid_server, uuid, seg_instance, body, mutid, neutu_executab
                     return
 
     cmd = f'{neutu_executable} --command --skeletonize --bodyid {body} "{dvid_server}?uuid={uuid}&segmentation={seg_instance}&label_zoom={scale}"'
+    logger.info(cmd)
     subprocess.run(cmd, shell=True, check=True)
 
 
@@ -390,7 +391,7 @@ def update_annotations(dvid_server, uuid, seg_instance, ignore_before_uuid=None)
         # (DVID doesn't complain.)
         delete_key(dvid_server, uuid, f"{seg_instance}_annotations", body)
 
-    store_update_receipt(*dvid_seg, "annoations", last_mutid)
+    store_update_receipt(*dvid_seg, "annotations", last_mutid)
 
 
 if __name__ == "__main__":
