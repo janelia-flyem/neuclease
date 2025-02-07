@@ -379,7 +379,9 @@ def update_skeleton(dvid_server, uuid, seg_instance, body, mutid, neutu_executab
                 if swc_mutid >= mutid:
                     return
 
-    cmd = f'{neutu_executable} --command --skeletonize --bodyid {body} "{dvid_server}?uuid={uuid}&segmentation={seg_instance}&label_zoom={scale}"'
+    # We use --force here because we have already decided to regenerate the skeleton,
+    # so we don't want NeuTu to second-guess our decision.
+    cmd = f'{neutu_executable} --command --skeletonize --force --bodyid {body} "{dvid_server}?uuid={uuid}&segmentation={seg_instance}&label_zoom={scale}"'
     logger.info(cmd)
     subprocess.run(cmd, shell=True, check=True)
 
