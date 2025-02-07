@@ -804,7 +804,7 @@ def find_parent(server, uuids, dag=None):
         dag = fetch_repo_dag(server, first_uuid)
 
     def _parent(uuid):
-        uuid = expand_uuid(server, uuid)
+        uuid = resolve_ref(server, uuid, expand=True)
         try:
             return next(dag.predecessors(uuid))
         except StopIteration:
@@ -993,7 +993,7 @@ def is_locked(server, uuid, *, session=None):
     is locked (via fetching the repo info).
     """
     repo_info = fetch_repo_info(server, uuid, session=session)
-    uuid = expand_uuid(server, uuid, repo_info=repo_info, session=session)
+    uuid = resolve_ref(server, uuid, expand=True, session=session)
     return repo_info['DAG']['Nodes'][uuid]['Locked']
 
 

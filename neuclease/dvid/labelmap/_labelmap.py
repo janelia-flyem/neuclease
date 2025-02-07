@@ -28,7 +28,7 @@ from ...util import (Timer, round_box, extract_subvol, DEFAULT_TIMESTAMP, tqdm_p
 
 from .. import dvid_api_wrapper, fetch_generic_json, fetch_repo_info, fetch_branch_nodes
 from ..server import fetch_server_info
-from ..repo import create_voxel_instance, fetch_repo_dag, is_locked, resolve_ref, expand_uuid, find_repo_root, resolve_ref_range, find_parent
+from ..repo import create_voxel_instance, fetch_repo_dag, is_locked, resolve_ref, find_repo_root, resolve_ref_range, find_parent
 from ..kafka import read_kafka_messages, kafka_msgs_to_df
 from ..rle import parse_rle_response, runlength_decode_from_ranges_to_mask, rle_ranges_box, construct_rle_payload_from_ranges, split_ranges_for_grid
 
@@ -88,8 +88,7 @@ def fetch_maxlabel(server, uuid, instance, *, session=None, dag=None):
         if ex.response is None or 'No maximum label' not in ex.response.content.decode('utf-8'):
             raise
 
-        uuid = resolve_ref(server, uuid)
-        uuid = expand_uuid(server, uuid)
+        uuid = resolve_ref(server, uuid, expand=True)
 
         # Oops, Issue 284
         # Search upwards in the DAG for a uuid with a valid max label
