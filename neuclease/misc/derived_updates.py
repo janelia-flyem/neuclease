@@ -227,6 +227,7 @@ def init_logging(config_path, logfile, stdout_logging=False):
 
 
 def mutated_bodies_since_previous_update(dvid_server, uuid, seg_instance, derived_type, ignore_before_uuid=None):
+    keys = []
     if "derived-data-checkpoints" in fetch_repo_instances(dvid_server, uuid):
         keys = fetch_keyrange(
             dvid_server,
@@ -235,6 +236,8 @@ def mutated_bodies_since_previous_update(dvid_server, uuid, seg_instance, derive
             f"{seg_instance}-{derived_type}-",
             f"{seg_instance}-{derived_type}-a"
         )
+
+    if keys:
         prev_update = fetch_key(dvid_server, uuid, "derived-data-checkpoints", max(keys))
     else:
         prev_update = {
