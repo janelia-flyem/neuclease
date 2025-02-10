@@ -2627,3 +2627,8 @@ def example_ingest(server, uuid, tbar_and_psd_pickle_path):
     post_reload(server, uuid, 'synapses')
 
     print("Done.  Reload initiated.")
+
+    # Once that's done, initialize a labelsz instance
+    create_instance(server, uuid, 'labelsz', 'labelsz')
+    post_sync(server, uuid, 'labelsz', ['synapses'])
+    post_reload(server, uuid, 'labelsz')
