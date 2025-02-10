@@ -382,7 +382,7 @@ def create_supervoxel_mesh(server, uuid, seg_instance, sv, smoothing=3, decimati
     mesh.laplacian_smooth(smoothing)
 
     decimation = min(decimation_s0 * (4**SV_MESH_SCALE), 1.0)
-    mesh.simplify_openmesh(decimation)
+    mesh.simplify(decimation)
     return mesh
 
 
@@ -417,7 +417,7 @@ def update_body_mesh_from_supervoxels(server, uuid, seg_instance, body, body_mes
     logger.info(f"Original mesh has {orig_vertices} vertices and {len(mesh.faces)} faces ({mesh_mb:.1f} MB)")
 
     with Timer(f"Decimating at {decimation}", logger) as dec_timer:
-        mesh.simplify_openmesh(decimation)
+        mesh.simplify(decimation)
 
     mesh_mb = mesh.uncompressed_size() / 1e6
     logger.info(f"Final mesh has {len(mesh.vertices_zyx)} vertices and {len(mesh.faces)} faces ({mesh_mb:.1f} MB)")
@@ -662,7 +662,7 @@ def _generate_body_mesh_from_chunks(server, uuid, seg_instance, body, chunk_df, 
     decimation_seconds = 0.0
     if decimation <= 1.0:
         with Timer(f"Decimating body mesh with {decimation}", logger) as dec_timer:
-            body_mesh.simplify_openmesh(decimation)
+            body_mesh.simplify(decimation)
         decimation_seconds = dec_timer.seconds
 
     mesh_bytes = body_mesh.serialize(fmt='ngmesh')
@@ -758,7 +758,7 @@ def mesh_for_chunk(server, uuid, seg_instance, body, lastmod, chunk_config, qual
     decimation = min(decimation_s0 * 4**scale, 1.0)
 
     mesh.laplacian_smooth(smoothing)
-    mesh.simplify_openmesh(decimation)
+    mesh.simplify(decimation)
     if store:
         key = CHUNK_KEY_FMT.format(
             config_name=chunk_config['config-name'],
