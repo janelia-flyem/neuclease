@@ -805,12 +805,18 @@ def main_debug():
     cns_test = (cns_test_server, cns_test_uuid)
     cns_test_seg = (*cns_test, 'segmentation')
 
+    # cns_server = 'http://emdata6.int.janelia.org:9000'
+    # cns_uuid = find_master(cns_server)
+    # cns = (cns_server, cns_uuid)
+    # cns_seg = (*cns, 'segmentation')
+
     init_mesh_instances(*cns_test_seg)
 
     short_uuid = cns_test_uuid[:6]
 
     body_mesh_config = {
-        "source-method": f"concatenated-chunks-1k_{short_uuid}-dec005_from_s2",
+        #"source-method": f"concatenated-chunks-1k_{short_uuid}-dec005_from_s2",
+        "source-method": f"concatenated-chunks-1k_{short_uuid}-sc2_halo2_cl8_filled_sm3_dec005",
         "smoothing": 0,
         "small-body-overall-decimation-s0": 0.01,
         "large-body-overall-decimation-s0": 0.001,
@@ -825,27 +831,44 @@ def main_debug():
         "chunk-halo": 2,
         "quality-configs": [
             {
-                "name": "dec005_from_s2",
+                "name": "sc2_halo2_cl8_filled_sm3_dec005",
                 "source-scale": 2,
+                "morphological-closing-s0": 2 * (2**2),
+                "fill-holes": True,
                 "smoothing": 3,
                 "decimation-s0": 0.005,
             }
         ]
     }
 
-    body = 39743  # Mi1
+    # body = 17198
+    #body = 805741
     #body = 11005  # Huge bilateral CB neuron
-    # update_body_mesh(*cns_test_seg, body, body_mesh_config, chunk_config, force=True, processes='dask-worker-client')
 
-    from dask.distributed import LocalCluster, Client
-    from contextlib import closing
-    with (
-        closing(LocalCluster('foo', 8)) as cluster,
-        closing(Client(cluster)) as client
-    ):
-        configure_default_logging()
-        fut = client.submit(update_body_mesh, *cns_test_seg, body, body_mesh_config, chunk_config, force=True, processes='dask-worker-client')
-        fut.result()
+    body = 10114
+    #body = 10705
+    #body = 11369
+
+    # More test cases:
+    # https://flyem-cns.slack.com/archives/C02QFC68HPX/p1733326471601639
+
+    # update_body_mesh(*cns_test_seg, body, body_mesh_config, chunk_config, force=True, processes='dask-worker-client')
+    update_body_mesh(*cns_test_seg, body, body_mesh_config, chunk_config, force=True, processes=8)
+
+    from vol2mesh.mesh import Mesh
+    buf = fetch_key(*cns_test, 'segmentation_meshes', f"{body}.ngmesh")
+    mesh = Mesh.from_buffer(buf, 'ngmesh')
+    mesh.serialize(f"/tmp/{body}.obj")
+
+    # from dask.distributed import LocalCluster, Client
+    # from contextlib import closing
+    # with (
+    #     closing(LocalCluster('foo', 8)) as cluster,
+    #     closing(Client(cluster)) as client
+    # ):
+    #     configure_default_logging()
+    #     fut = client.submit(update_body_mesh, *cns_test_seg, body, body_mesh_config, chunk_config, force=True, processes='dask-worker-client')
+    #     fut.result()
 
     mesh_info = fetch_key(*cns_test, 'segmentation_mesh_info', body, as_json=True)
     logger.info(f"Mesh Info: {mesh_info}")
