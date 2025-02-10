@@ -638,24 +638,21 @@ def contingency_table(left_vol, right_vol):
 def fill_holes_in_mask(mask, inplace=False):
     """
     Find the "bubbles" in the mask and fill them.
-    Find the connected components of the mask, and set all of them
-    to 1 except for those which touch the edge of the mask (the volume borders).
+    Find the connected components of the inverted mask, and set all of them
+    to 1 in the original mask except for those which touch the edge
+    of the mask (the volume borders).
     """
-    cc = vigra.analysis.labelMultiArrayWithBackground((mask == 0).astype(np.uint8))
+    inverted_mask = (mask == 0).astype(np.uint8)
+    cc = vigra.analysis.labelMultiArrayWithBackground(inverted_mask)
+    cc_ids = pd.unique(cc.reshape(-1))
     face_ids = volume_face_ids(cc)  # noqa
-    non_face_ids = (
-        contingency_table(mask, cc)
-        .rename_axis(['mask', 'cc'])
-        .reset_index()
-        .query('cc not in @face_ids and cc != 0')['cc'].values
-    )
-    if len(non_face_ids) == 0:
-        return mask
+    non_face_ids = sorted(set(cc_ids) - set(face_ids) - {0})
 
     if not inplace:
         mask = mask.copy()
 
-    mask[np.isin(cc, non_face_ids)] = 1
+    if len(non_face_ids) > 0:
+        mask[np.isin(cc, non_face_ids)] = 1
 
     if not inplace:
         return mask
