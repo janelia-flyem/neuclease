@@ -61,3 +61,10 @@ def fetch_users(*, base=None, session=None):
     r = session.get(f"{base}/v2/users")
     r.raise_for_status()
     return r.json()
+
+
+@clio_api_wrapper
+def post_refresh_caches(base, session=None):
+    r = session.post(f"{base}/v2/refresh-caches")
+    r.raise_for_status()
+    return r.json()
