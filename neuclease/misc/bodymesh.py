@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 
 import numpy as np
 import pandas as pd
+import skimage.morphology
 from requests import HTTPError
 
 from confiddler import validate, flow_style
@@ -121,6 +122,18 @@ ChunkMeshParametersSchema = {
             "minimum": 0,
             "default": 2,
         },
+        "morphological-closing-s0": {
+            "description": "Apply morphological closing to the chunk mask with the given radius, specified in units of scale-0 voxels.",
+            "type": "integer",
+            "default": 0
+        },
+        "fill-holes": {
+            "description":
+                "If True, erase holes (by filling them with ones) in the chunk mask before meshing.\n"
+                "Objects which touch the chunk boundary will not be filled.\n",
+            "type": "boolean",
+            "default": True
+        },
         "smoothing": {
             "description": "How many iterations of smoothing to apply to each mesh before decimation.",
             "type": "integer",
@@ -142,13 +155,6 @@ ChunkMeshParametersSchema = {
             # (0.0625) in the body decimation step.
             "default": 0.08
         },
-        "fill-holes": {
-            "description":
-                "If True, erase holes (by filling them with ones) in the chunk mask before meshing.\n"
-                "Objects which touch the chunk boundary will not be filled.\n",
-            "type": "boolean",
-            "default": True
-        }
     }
 }
 
@@ -729,11 +735,20 @@ def mesh_for_chunk(server, uuid, seg_instance, body, lastmod, chunk_config, qual
     with resource_mgr.access_context(server, True, 1, 0):
         mask, mask_box = fetch_sparsevol(server, uuid, seg, body, scale, mask_box=chunk_box, format='mask')
 
+    closing_radius = quality_config['morphological-closing-s0']
+    closing_radius //= 2**scale
+    if closing_radius:
+        # Note that it's okay to use out=mask since the implementation
+        # of binary_closing() operates on a temporary array.
+        footprints = skimage.morphology.ball(closing_radius, decomposition='sequence')
+        skimage.morphology.binary_closing(mask, footprints, out=mask)
+
     fill_holes = quality_config['fill-holes']
     if fill_holes:
         fill_holes_in_mask(mask, inplace=True)
 
-    mesh = Mesh.from_binary_vol(mask, mask_box * 2**scale, method='skimage')
+    scaled_box = mask_box * 2**scale
+    mesh = Mesh.from_binary_vol(mask, scaled_box, method='skimage')
 
     smoothing = quality_config['smoothing']
     decimation_s0 = quality_config['decimation-s0']
