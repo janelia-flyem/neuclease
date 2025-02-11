@@ -28,7 +28,7 @@ from ...util import (Timer, round_box, extract_subvol, DEFAULT_TIMESTAMP, tqdm_p
 
 from .. import dvid_api_wrapper, fetch_generic_json, fetch_repo_info, fetch_branch_nodes
 from ..server import fetch_server_info
-from ..repo import create_voxel_instance, fetch_repo_dag, is_locked, resolve_ref, expand_uuid, find_repo_root, resolve_ref_range, find_parent
+from ..repo import create_voxel_instance, fetch_repo_dag, is_locked, resolve_ref, find_repo_root, resolve_ref_range, find_parent
 from ..kafka import read_kafka_messages, kafka_msgs_to_df
 from ..rle import parse_rle_response, runlength_decode_from_ranges_to_mask, rle_ranges_box, construct_rle_payload_from_ranges, split_ranges_for_grid
 
@@ -88,8 +88,7 @@ def fetch_maxlabel(server, uuid, instance, *, session=None, dag=None):
         if ex.response is None or 'No maximum label' not in ex.response.content.decode('utf-8'):
             raise
 
-        uuid = resolve_ref(server, uuid)
-        uuid = expand_uuid(server, uuid)
+        uuid = resolve_ref(server, uuid, expand=True)
 
         # Oops, Issue 284
         # Search upwards in the DAG for a uuid with a valid max label
@@ -948,34 +947,16 @@ def fetch_bodies_for_many_points(server, uuid, seg_instance, point_df, mutations
     assert not threads or not processes, "Choose either threads or processes (not both)"
     dvid_seg = (server, uuid, seg_instance)
 
-    if 'sv' not in point_df.columns:
+    if 'sv' in point_df.columns:
+        _update_supervoxels_for_mutated_bodies(server, uuid, seg_instance, mutations, point_df, threads, processes)
+    else:
         # Fetch supervoxel under all coordinates
         coords = point_df[[*'zyx']].values
-        point_df['sv'] = fetch_labels_batched(*dvid_seg, coords, supervoxels=True,
-                                              batch_size=batch_size, threads=threads, processes=processes)
-    else:
-        # Only update the supervoxel IDs for coordinates which reside on a supervoxel which
-        # was somehow involved in a split (as either parent or child).
-        # For those points, there's no guarantee that the supervoxel in the given table
-        # is in-sync with the given UUID, so we must check.
-        if mutations is None:
-            # We fetch the  mutations for the entire DAG (even other branches).
-            # That way, we don't care at all which UUID was used to produce the
-            # cached 'sv' column of the input table.
-            mutations = fetch_mutations(*dvid_seg, dag_filter=None)
+        point_df['sv'] = fetch_labels_batched(
+            *dvid_seg, coords, supervoxels=True,
+            batch_size=batch_size, threads=threads, processes=processes
+        )
 
-        if len(mutations) == 0:
-            msg = (f"Mutation log for instance '{seg_instance}' is empty for uuid '{uuid}' and its ancestors. "
-                   "If the mutation log is incorrectly missing and the given mapping is not in-sync with the "
-                   "given UUID, then the results of fetch_bodies_for_many_points() will be incorrect!")
-            logger.warning(msg)
-        else:
-            new, changed, deleted, new_svs, deleted_svs = compute_affected_bodies(mutations)
-            out_of_date = point_df.query('sv in @deleted_svs or sv in @new_svs').index
-            if len(out_of_date) > 0:
-                ood_coords = point_df.loc[out_of_date, [*'zyx']].values
-                point_df.loc[out_of_date, 'sv'] = fetch_labels_batched(
-                    *dvid_seg, ood_coords, supervoxels=True, batch_size=5_000, threads=threads, processes=processes)
     #
     # Now map from sv -> body
     #
@@ -1003,6 +984,46 @@ def fetch_bodies_for_many_points(server, uuid, seg_instance, point_df, mutations
     else:
         mapper = LabelMapper(*mapping.T)
         point_df['body'] = mapper.apply(point_df['sv'].values, True)
+
+
+def _update_supervoxels_for_mutated_bodies(server, uuid, seg_instance, mutations, point_df, threads, processes):
+    """
+    Helper for fetch_bodies_for_many_points()
+    """
+    dvid_seg = (server, uuid, seg_instance)
+
+    # Only update the supervoxel IDs for coordinates which reside on a supervoxel which
+    # was somehow involved in a split (as either parent or child).
+    # For those points, there's no guarantee that the supervoxel in the given table
+    # is in-sync with the given UUID, so we must check.
+
+    if mutations is None:
+        # We fetch the  mutations for the entire DAG (even other branches).
+        # That way, we don't care at all which UUID was used to produce the
+        # cached 'sv' column of the input table.
+        mutations = fetch_mutations(*dvid_seg, dag_filter=None)
+
+    if len(mutations) == 0:
+        logger.warning(
+            f"Mutation log for instance '{seg_instance}' is empty for uuid '{uuid}' and its ancestors. "
+            "If the mutation log is incorrectly missing and the given mapping is not in-sync with the "
+            "given UUID, then the results of fetch_bodies_for_many_points() will be incorrect!"
+        )
+        return
+
+    _new_bodies, _changed_bodies, _deleted_bodies, new_svs, deleted_svs = compute_affected_bodies(mutations)
+    out_of_date = point_df.query('sv in @deleted_svs or sv in @new_svs').index
+    if len(out_of_date) == 0:
+        return
+
+    ood_coords = point_df.loc[out_of_date, [*'zyx']].values
+    ood_svs = fetch_labels_batched(*dvid_seg, ood_coords, supervoxels=True, batch_size=5_000, threads=threads, processes=processes)
+
+    # pandas will complain if the dtypes don't match.
+    if ood_svs.dtype != point_df['sv'].dtype and ood_svs.max() > np.iinfo(point_df['sv'].dtype).max:
+        point_df['sv'] = point_df['sv'].astype(np.uint64)
+
+    point_df.loc[out_of_date, 'sv'] = ood_svs.astype(point_df['sv'].dtype)
 
 
 @dvid_api_wrapper
@@ -3917,7 +3938,7 @@ def _wait_for_split_done(server, uuid, instance, parent_sv, child_sv, indent=0, 
 
     (We can't check for the presence of the child ID because at low-res scales,
     the child ID isn't guaranteed to exist in the voxels at all, due to downsampling
-    effects. But we know the parent MUST NOT be absent.)
+    effects. But we know the parent MUST NOT be present.)
     """
     svc = fetch_sparsevol_coarse(server, uuid, instance, child_sv, supervoxels=True, format='coords')
 

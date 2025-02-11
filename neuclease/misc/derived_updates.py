@@ -11,16 +11,17 @@ import subprocess
 from pathlib import Path
 from datetime import datetime
 
+import json
 from requests import HTTPError
 from confiddler import load_config, dump_default_config
 
 from neuclease import PrefixFilter
-from neuclease.util import switch_cwd, tqdm_proxy_config, Timer
+from neuclease.util import switch_cwd, tqdm_proxy_config, Timer, tqdm_proxy
 from neuclease.dvid import (
-    set_default_dvid_session_timeout,
+    set_default_dvid_session_timeout, is_locked,
     fetch_branch_nodes, resolve_ref, fetch_repo_instances, find_repo_root,
-    create_instance, fetch_key, post_key, delete_key, fetch_keyrange,
-    fetch_mutations, compute_affected_bodies, fetch_skeleton, fetch_lastmod
+    create_instance, fetch_key, fetch_keys, post_key, delete_key, fetch_keyrange,
+    fetch_mutations, compute_affected_bodies, fetch_skeleton, fetch_lastmod, fetch_query
 )
 from neuclease.misc.bodymesh import update_body_mesh, BodyMeshParametersSchema, MeshChunkConfigSchema
 
@@ -46,8 +47,8 @@ SegmentationDvidInstanceSchema = {
                 "update script is run, starting at the root repo uuid.\n"
                 "Use this only if you know what you're doing! Once you use this setting, earlier "
                 "UUIDs will never be processed, even in subsequent calls to the update script.\n",
-            "type": "string",
-            "default": ""
+            "default": "",
+            "type": ["string", "null"]
         },
         "uuid": {
             "description": "version node from dvid for which the derived data will be brought in sync with the segmentation",
@@ -181,8 +182,10 @@ def main():
     if 'skeletons' in cfg['update-derived-types']:
         update_skeletons(
             *dvid_seg,
+            cfg['skeletons']['neutu-executable'],
+            cfg['force-update'],
             cfg['skeletons']['scale'],
-            cfg['force-update']
+            cfg['dvid']['ignore-mutations-before-uuid']
         )
 
     if 'annotations' in cfg['update-derived-types']:
@@ -225,6 +228,7 @@ def init_logging(config_path, logfile, stdout_logging=False):
 
 
 def mutated_bodies_since_previous_update(dvid_server, uuid, seg_instance, derived_type, ignore_before_uuid=None):
+    keys = []
     if "derived-data-checkpoints" in fetch_repo_instances(dvid_server, uuid):
         keys = fetch_keyrange(
             dvid_server,
@@ -233,7 +237,9 @@ def mutated_bodies_since_previous_update(dvid_server, uuid, seg_instance, derive
             f"{seg_instance}-{derived_type}-",
             f"{seg_instance}-{derived_type}-a"
         )
-        prev_update = fetch_key(dvid_server, uuid, "derived-data-checkpoints", max(keys))
+
+    if keys:
+        prev_update = fetch_key(dvid_server, uuid, "derived-data-checkpoints", max(keys), as_json=True)
     else:
         prev_update = {
             'uuid': find_repo_root(dvid_server, uuid),
@@ -264,10 +270,14 @@ def mutated_bodies_since_previous_update(dvid_server, uuid, seg_instance, derive
             updated_uuid = ignore_before_uuid
 
     recent_muts = fetch_mutations(dvid_server, f"[{updated_uuid}, {uuid}]", seg_instance)
-    recent_muts = recent_muts.query('mutid >= @updated_mutid')
+    recent_muts = recent_muts.query('mutid > @updated_mutid')
+    if len(recent_muts) == 0:
+        last_mutid = int(updated_mutid)
+    else:
+        last_mutid = int(recent_muts['mutid'].iloc[-1])
 
     affected = compute_affected_bodies(recent_muts)
-    return prev_update, affected, recent_muts['mutid'].iloc[-1]
+    return prev_update, affected, last_mutid
 
 
 def store_update_receipt(dvid_server, uuid, seg_instance, derived_type, mutid):
@@ -297,8 +307,9 @@ def store_update_receipt(dvid_server, uuid, seg_instance, derived_type, mutid):
         uuid,
         "derived-data-checkpoints",
         f"{seg_instance}-{derived_type}-{mutid:020d}",
-        update_value
+        json=update_value
     )
+    return update_value
 
 
 def update_body_meshes(dvid_server, uuid, seg_instance, body_mesh_config, chunk_config, ignore_before_uuid=None, force=False, processes=0):
@@ -316,17 +327,35 @@ def update_body_meshes(dvid_server, uuid, seg_instance, body_mesh_config, chunk_
     store_update_receipt(*dvid_seg, "meshes", last_mutid)
 
 
-def update_skeletons(dvid_server, uuid, seg_instance, force, scale=5, ignore_before_uuid=None):
+def update_skeletons(dvid_server, uuid, seg_instance, neutu_executable, force, scale=5, ignore_before_uuid=None):
+    if is_locked(dvid_server, uuid) and not os.environ.get('DVID_ADMIN_TOKEN'):
+        # Without this error, NeuTu would silently just switch to the HEAD uuid without telling us!
+        raise RuntimeError(
+            "The UUID is locked, but DVID_ADMIN_TOKEN is not defined. "
+            "You must define DVID_ADMIN_TOKEN to update skeletons."
+        )
+
     dvid_seg = (dvid_server, uuid, seg_instance)
     prev_update, affected, last_mutid = mutated_bodies_since_previous_update(*dvid_seg, "skeletons", ignore_before_uuid)
 
-    for body in affected.removed_bodies:
-        # There's no harm in 'deleting' keys that don't actually exist.
-        # (DVID doesn't complain.)
-        delete_key(dvid_server, uuid, f"{seg_instance}_skeletons", f"{body}_swc")
+    logger.info(f"Found {len(affected.removed_bodies)} removed bodies since last update.")
+    logger.info(f"Found {len(affected.new_bodies)} new bodies since last update.")
+    logger.info(f"Found {len(affected.changed_bodies)} changed bodies since last update.")
 
+    keys_to_delete = {f"{body}_swc" for body in affected.removed_bodies}
+    if len(keys_to_delete) >= 10_000:
+        logger.info("Reading existing skeleton keys")
+        stored_keys = fetch_keys(dvid_server, uuid, f'{seg_instance}_skeletons')
+        keys_to_delete &= set(stored_keys)
+
+    logger.info(f"Deleting {len(keys_to_delete)} skeleton keys.")
+    for key in keys_to_delete:
+        # Note: DVID doesn't complain if the key doesn't exist.
+        delete_key(dvid_server, uuid, f"{seg_instance}_skeletons", key)
+
+    logger.info(f"Updating skeletons for {len(affected.changed_bodies)} changed bodies and {len(affected.new_bodies)} new bodies.")
     failed_bodies = []
-    for body in [*affected.changed_bodies, *affected.new_bodies]:
+    for body in tqdm_proxy([*affected.changed_bodies, *affected.new_bodies]):
         try:
             lastmod = fetch_lastmod(*dvid_seg, body)
             mutid = lastmod["mutation id"]
@@ -334,10 +363,12 @@ def update_skeletons(dvid_server, uuid, seg_instance, force, scale=5, ignore_bef
             logger.info(f"Failed to fetch lastmod for body {body}")
             failed_bodies.append(body)
         else:
-            update_skeleton(*dvid_seg, body, mutid, force, scale)
+            update_skeleton(*dvid_seg, body, mutid, neutu_executable, force, scale)
 
     if not failed_bodies:
         store_update_receipt(*dvid_seg, "skeletons", last_mutid)
+
+    logger.info("Done updating skeletons.")
 
 
 def update_skeleton(dvid_server, uuid, seg_instance, body, mutid, neutu_executable, force=False, scale=5):
@@ -355,7 +386,14 @@ def update_skeleton(dvid_server, uuid, seg_instance, body, mutid, neutu_executab
                 if swc_mutid >= mutid:
                     return
 
-    cmd = f'{neutu_executable} --command --skeletonize --bodyid {body} "{dvid_server}?uuid={uuid}&segmentation={seg_instance}&label_zoom={scale}"'
+    # We use --force here because we have already decided to regenerate the skeleton,
+    # so we don't want NeuTu to second-guess our decision.
+    target = f"{dvid_server}?uuid={uuid}&segmentation={seg_instance}&label_zoom={scale}"
+    if admintoken := os.environ.get('DVID_ADMIN_TOKEN'):
+        target = f"{target}&admintoken={admintoken}"
+
+    cmd = f'{neutu_executable} --command --skeletonize --force --bodyid {body} "{target}"'
+    logger.info(cmd)
     subprocess.run(cmd, shell=True, check=True)
 
 
@@ -367,12 +405,26 @@ def update_annotations(dvid_server, uuid, seg_instance, ignore_before_uuid=None)
     dvid_seg = (dvid_server, uuid, seg_instance)
     prev_update, affected, last_mutid = mutated_bodies_since_previous_update(*dvid_seg, "skeletons", ignore_before_uuid)
 
-    for body in affected.removed_bodies:
-        # There's no harm in 'deleting' keys that don't actually exist.
-        # (DVID doesn't complain.)
-        delete_key(dvid_server, uuid, f"{seg_instance}_annotations", body)
+    keys = fetch_keys(dvid_server, uuid, f"{seg_instance}_annotations")
+    keys_to_delete = set(keys) & set(map(str, affected.removed_bodies))
+    q = {'bodyid': [*list(map(int, keys_to_delete))]}
+    ann_to_delete = fetch_query(dvid_server, uuid, f"{seg_instance}_annotations", q, format='json')
 
-    store_update_receipt(*dvid_seg, "annoations", last_mutid)
+    try:
+        logger.info(f"Deleting {len(keys_to_delete)} annotations for removed (merged) bodies.")
+        for key in keys_to_delete:
+            # There's no harm in 'deleting' keys that don't actually exist.
+            # (DVID doesn't complain.)
+            delete_key(dvid_server, uuid, f"{seg_instance}_annotations", key)
+        update_value = store_update_receipt(*dvid_seg, "annotations", last_mutid)
+        path = f"deleted-{seg_instance}-annotations-{update_value['mutid']:020d}-{update_value['timestamp']}.json"
+        with open(path, 'w') as f:
+            json.dump(ann_to_delete, f)
+    except Exception:
+        logger.error("Failed to delete annotations. Logging annotations to failed-annotation-deletions.json")
+        with open("failed-annotation-deletions.json", 'w') as f:
+            json.dump(ann_to_delete, f)
+        raise
 
 
 if __name__ == "__main__":

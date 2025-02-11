@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 
 from dvidutils import LabelMapper
-from neuclease.util import mask_for_labels, apply_mask_for_labels, contingency_table, split_disconnected_bodies
+from neuclease.util import mask_for_labels, apply_mask_for_labels, contingency_table, split_disconnected_bodies, fill_holes_in_mask
 
 def test_mask_for_labels():
     volume = [[0,2,3], [4,5,0]]
@@ -113,6 +113,44 @@ def test_split_disconnected_bodies():
     mapper = LabelMapper(np.fromiter(mapping.keys(), np.uint64), np.fromiter(mapping.values(), np.uint64))
     assert (mapper.apply(split, True) == orig).all(), \
         "Applying mapping to the relabeled image did not recreate the original image."
+
+
+def test_fill_holes_in_mask():
+    _ = 0
+    X = 1
+    mask = np.array([
+        [_, _, _, _, _, X, _, _, _, _, _],
+        [_, _, X, X, X, X, X, X, X, _, _],
+        [_, X, X, X, X, X, X, X, X, X, _],
+        [_, X, X, _, _, _, _, _, X, X, _],
+        [_, X, X, X, X, X, X, X, X, X, _],
+        [_, X, X, _, _, _, _, _, X, X, _],
+        [_, X, X, X, X, X, X, X, X, X, _],
+        [_, X, X, _, _, _, _, _, X, X, _],
+        [_, X, X, X, X, X, X, X, X, X, _],
+        [_, _, X, X, X, X, X, X, X, _, _],
+        [_, _, _, _, _, X, _, _, _, _, _]
+    ])
+    expected = np.array([
+        [_, _, _, _, _, X, _, _, _, _, _],
+        [_, _, X, X, X, X, X, X, X, _, _],
+        [_, X, X, X, X, X, X, X, X, X, _],
+        [_, X, X, X, X, X, X, X, X, X, _],
+        [_, X, X, X, X, X, X, X, X, X, _],
+        [_, X, X, X, X, X, X, X, X, X, _],
+        [_, X, X, X, X, X, X, X, X, X, _],
+        [_, X, X, X, X, X, X, X, X, X, _],
+        [_, X, X, X, X, X, X, X, X, X, _],
+        [_, _, X, X, X, X, X, X, X, _, _],
+        [_, _, _, _, _, X, _, _, _, _, _]
+    ])
+
+    filled = fill_holes_in_mask(mask)
+    assert (filled == expected).all()
+
+    r = fill_holes_in_mask(mask, inplace=True)
+    assert r is None
+    assert (mask == expected).all()
 
 
 if __name__ == "__main__":

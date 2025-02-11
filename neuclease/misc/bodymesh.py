@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 
 import numpy as np
 import pandas as pd
+import skimage.morphology
 from requests import HTTPError
 
 from confiddler import validate, flow_style
@@ -121,6 +122,18 @@ ChunkMeshParametersSchema = {
             "minimum": 0,
             "default": 2,
         },
+        "morphological-closing-s0": {
+            "description": "Apply morphological closing to the chunk mask with the given radius, specified in units of scale-0 voxels.",
+            "type": "integer",
+            "default": 0
+        },
+        "fill-holes": {
+            "description":
+                "If True, erase holes (by filling them with ones) in the chunk mask before meshing.\n"
+                "Objects which touch the chunk boundary will not be filled.\n",
+            "type": "boolean",
+            "default": True
+        },
         "smoothing": {
             "description": "How many iterations of smoothing to apply to each mesh before decimation.",
             "type": "integer",
@@ -142,13 +155,6 @@ ChunkMeshParametersSchema = {
             # (0.0625) in the body decimation step.
             "default": 0.08
         },
-        "fill-holes": {
-            "description":
-                "If True, erase holes (by filling them with ones) in the chunk mask before meshing.\n"
-                "Objects which touch the chunk boundary will not be filled.\n",
-            "type": "boolean",
-            "default": True
-        }
     }
 }
 
@@ -376,7 +382,7 @@ def create_supervoxel_mesh(server, uuid, seg_instance, sv, smoothing=3, decimati
     mesh.laplacian_smooth(smoothing)
 
     decimation = min(decimation_s0 * (4**SV_MESH_SCALE), 1.0)
-    mesh.simplify_openmesh(decimation)
+    mesh.simplify(decimation)
     return mesh
 
 
@@ -411,7 +417,7 @@ def update_body_mesh_from_supervoxels(server, uuid, seg_instance, body, body_mes
     logger.info(f"Original mesh has {orig_vertices} vertices and {len(mesh.faces)} faces ({mesh_mb:.1f} MB)")
 
     with Timer(f"Decimating at {decimation}", logger) as dec_timer:
-        mesh.simplify_openmesh(decimation)
+        mesh.simplify(decimation)
 
     mesh_mb = mesh.uncompressed_size() / 1e6
     logger.info(f"Final mesh has {len(mesh.vertices_zyx)} vertices and {len(mesh.faces)} faces ({mesh_mb:.1f} MB)")
@@ -656,7 +662,7 @@ def _generate_body_mesh_from_chunks(server, uuid, seg_instance, body, chunk_df, 
     decimation_seconds = 0.0
     if decimation <= 1.0:
         with Timer(f"Decimating body mesh with {decimation}", logger) as dec_timer:
-            body_mesh.simplify_openmesh(decimation)
+            body_mesh.simplify(decimation)
         decimation_seconds = dec_timer.seconds
 
     mesh_bytes = body_mesh.serialize(fmt='ngmesh')
@@ -729,11 +735,20 @@ def mesh_for_chunk(server, uuid, seg_instance, body, lastmod, chunk_config, qual
     with resource_mgr.access_context(server, True, 1, 0):
         mask, mask_box = fetch_sparsevol(server, uuid, seg, body, scale, mask_box=chunk_box, format='mask')
 
+    closing_radius = quality_config['morphological-closing-s0']
+    closing_radius //= 2**scale
+    if closing_radius:
+        # Note that it's okay to use out=mask since the implementation
+        # of binary_closing() operates on a temporary array.
+        footprints = skimage.morphology.ball(closing_radius, decomposition='sequence')
+        skimage.morphology.binary_closing(mask, footprints, out=mask)
+
     fill_holes = quality_config['fill-holes']
     if fill_holes:
         fill_holes_in_mask(mask, inplace=True)
 
-    mesh = Mesh.from_binary_vol(mask, mask_box * 2**scale, method='skimage')
+    scaled_box = mask_box * 2**scale
+    mesh = Mesh.from_binary_vol(mask, scaled_box, method='skimage')
 
     smoothing = quality_config['smoothing']
     decimation_s0 = quality_config['decimation-s0']
@@ -743,7 +758,7 @@ def mesh_for_chunk(server, uuid, seg_instance, body, lastmod, chunk_config, qual
     decimation = min(decimation_s0 * 4**scale, 1.0)
 
     mesh.laplacian_smooth(smoothing)
-    mesh.simplify_openmesh(decimation)
+    mesh.simplify(decimation)
     if store:
         key = CHUNK_KEY_FMT.format(
             config_name=chunk_config['config-name'],
@@ -790,12 +805,18 @@ def main_debug():
     cns_test = (cns_test_server, cns_test_uuid)
     cns_test_seg = (*cns_test, 'segmentation')
 
+    # cns_server = 'http://emdata6.int.janelia.org:9000'
+    # cns_uuid = find_master(cns_server)
+    # cns = (cns_server, cns_uuid)
+    # cns_seg = (*cns, 'segmentation')
+
     init_mesh_instances(*cns_test_seg)
 
     short_uuid = cns_test_uuid[:6]
 
     body_mesh_config = {
-        "source-method": f"concatenated-chunks-1k_{short_uuid}-dec005_from_s2",
+        #"source-method": f"concatenated-chunks-1k_{short_uuid}-dec005_from_s2",
+        "source-method": f"concatenated-chunks-1k_{short_uuid}-sc2_halo2_cl8_filled_sm3_dec005",
         "smoothing": 0,
         "small-body-overall-decimation-s0": 0.01,
         "large-body-overall-decimation-s0": 0.001,
@@ -810,27 +831,44 @@ def main_debug():
         "chunk-halo": 2,
         "quality-configs": [
             {
-                "name": "dec005_from_s2",
+                "name": "sc2_halo2_cl8_filled_sm3_dec005",
                 "source-scale": 2,
+                "morphological-closing-s0": 2 * (2**2),
+                "fill-holes": True,
                 "smoothing": 3,
                 "decimation-s0": 0.005,
             }
         ]
     }
 
-    body = 39743  # Mi1
+    # body = 17198
+    #body = 805741
     #body = 11005  # Huge bilateral CB neuron
-    # update_body_mesh(*cns_test_seg, body, body_mesh_config, chunk_config, force=True, processes='dask-worker-client')
 
-    from dask.distributed import LocalCluster, Client
-    from contextlib import closing
-    with (
-        closing(LocalCluster('foo', 8)) as cluster,
-        closing(Client(cluster)) as client
-    ):
-        configure_default_logging()
-        fut = client.submit(update_body_mesh, *cns_test_seg, body, body_mesh_config, chunk_config, force=True, processes='dask-worker-client')
-        fut.result()
+    body = 10114
+    #body = 10705
+    #body = 11369
+
+    # More test cases:
+    # https://flyem-cns.slack.com/archives/C02QFC68HPX/p1733326471601639
+
+    # update_body_mesh(*cns_test_seg, body, body_mesh_config, chunk_config, force=True, processes='dask-worker-client')
+    update_body_mesh(*cns_test_seg, body, body_mesh_config, chunk_config, force=True, processes=8)
+
+    from vol2mesh.mesh import Mesh
+    buf = fetch_key(*cns_test, 'segmentation_meshes', f"{body}.ngmesh")
+    mesh = Mesh.from_buffer(buf, 'ngmesh')
+    mesh.serialize(f"/tmp/{body}.obj")
+
+    # from dask.distributed import LocalCluster, Client
+    # from contextlib import closing
+    # with (
+    #     closing(LocalCluster('foo', 8)) as cluster,
+    #     closing(Client(cluster)) as client
+    # ):
+    #     configure_default_logging()
+    #     fut = client.submit(update_body_mesh, *cns_test_seg, body, body_mesh_config, chunk_config, force=True, processes='dask-worker-client')
+    #     fut.result()
 
     mesh_info = fetch_key(*cns_test, 'segmentation_mesh_info', body, as_json=True)
     logger.info(f"Mesh Info: {mesh_info}")

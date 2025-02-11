@@ -2403,9 +2403,14 @@ def partner_table_to_synapse_table(partner_df):
 
 
 def points_to_full_partner_table(point_df, partner_df):
+    """
+    Add columns from the point table to the partner table,
+    while simultaneously dropping any rows from the partner table
+    that don't have a corresponding row in the point table.
+    """
     assert point_df.index.name == 'point_id'
-    partner_df = partner_df.merge(point_df.rename_axis('pre_id'), 'left', on='pre_id')
-    partner_df = partner_df.merge(point_df.rename_axis('post_id'), 'left', on='post_id', suffixes=['_pre', '_post'])
+    partner_df = partner_df.merge(point_df.rename_axis('pre_id'), 'inner', on='pre_id')
+    partner_df = partner_df.merge(point_df.rename_axis('post_id'), 'inner', on='post_id', suffixes=['_pre', '_post'])
     return partner_df
 
 
@@ -2622,3 +2627,8 @@ def example_ingest(server, uuid, tbar_and_psd_pickle_path):
     post_reload(server, uuid, 'synapses')
 
     print("Done.  Reload initiated.")
+
+    # Once that's done, initialize a labelsz instance
+    create_instance(server, uuid, 'labelsz', 'labelsz')
+    post_sync(server, uuid, 'labelsz', ['synapses'])
+    post_reload(server, uuid, 'labelsz')
