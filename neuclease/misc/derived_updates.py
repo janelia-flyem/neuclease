@@ -407,6 +407,10 @@ def update_annotations(dvid_server, uuid, seg_instance, ignore_before_uuid=None)
 
     keys = fetch_keys(dvid_server, uuid, f"{seg_instance}_annotations")
     keys_to_delete = set(keys) & set(map(str, affected.removed_bodies))
+    if not keys_to_delete:
+        logger.info("No annotations to delete.")
+        return
+
     q = {'bodyid': [*list(map(int, keys_to_delete))]}
     ann_to_delete = fetch_query(dvid_server, uuid, f"{seg_instance}_annotations", q, format='json')
 
@@ -417,7 +421,8 @@ def update_annotations(dvid_server, uuid, seg_instance, ignore_before_uuid=None)
             # (DVID doesn't complain.)
             delete_key(dvid_server, uuid, f"{seg_instance}_annotations", key)
         update_value = store_update_receipt(*dvid_seg, "annotations", last_mutid)
-        path = f"deleted-{seg_instance}-annotations-{update_value['mutid']:020d}-{update_value['timestamp']}.json"
+        os.makedirs("deleted-annotations", exist_ok=True)
+        path = f"deleted-annotations/deleted-{seg_instance}-annotations-{update_value['mutid']:020d}-{update_value['timestamp']}.json"
         with open(path, 'w') as f:
             json.dump(ann_to_delete, f)
     except Exception:
