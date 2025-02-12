@@ -320,7 +320,7 @@ def delete_body_mesh(server, uuid, seg_instance, body):
         delete_key(server, uuid, f"{seg}_meshes", f"{body}.ngmesh")
 
     try:
-        mesh_info = fetch_key(server, uuid, f"{seg}_mesh_info", body)
+        mesh_info = fetch_key(server, uuid, f"{seg}_mesh_info", body, as_json=True)
         if mesh_info['method'] == 'deleted':
             return
     except HTTPError:
