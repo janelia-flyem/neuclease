@@ -554,7 +554,7 @@ def update_body_mesh_from_chunks(
             post_key(server, uuid, f"{seg}_mesh_info", body, json=mesh_info)
 
 
-def _chunk_table(server, uuid, seg_instance, body, chunk_config, resource_mgr):
+def _chunk_table(server, uuid, seg_instance, body, chunk_config, resource_mgr, enforce_block_hash_match=True):
     """
     Return a table with a row for each chunk in the given body.
     For chunks with a stored mesh in DVID, their properties are included as columns.
@@ -572,6 +572,7 @@ def _chunk_table(server, uuid, seg_instance, body, chunk_config, resource_mgr):
         3   17408  37888  23552     1006321331  0xaa12cc78    1k_04993d  90972  17408,37888,23552  1006321331  sc2_q1  1k_04993d-90972-17408,37888,23552-1006321331-0xaa12cc78-sc2_q1
         4   17408  37888  24576     1006321331  0x39915e1a    1k_04993d  90972  17408,37888,24576  1006321331  sc2_q1  1k_04993d-90972-17408,37888,24576-1006321331-0x39915e1a-sc2_q1
     """
+    resource_mgr = resource_mgr or DummyResourceMgr()
     base_uuid = resolve_ref(server, chunk_config['base-uuid'], True)
     chunk_shape_s0 = np.array(chunk_config['chunk-shape-s0'])
     assert not (chunk_shape_s0 % 64).any(), "Chunk shape must be a multiple of 64"
@@ -622,8 +623,9 @@ def _chunk_table(server, uuid, seg_instance, body, chunk_config, resource_mgr):
     chunk_df = chunk_df.merge(key_df, 'left', on=[*'xyz'])
     chunk_df['mesh_mutid'] = chunk_df['mesh_mutid'].fillna(0).astype(int)
 
-    # If the block_hash doesn't match, we treat it as out-of-date
-    chunk_df.loc[chunk_df.eval('block_hash != mesh_block_hash'), 'mesh_mutid'] = 0
+    if enforce_block_hash_match:
+        # If the block_hash doesn't match, we treat it as out-of-date
+        chunk_df.loc[chunk_df.eval('block_hash != mesh_block_hash'), 'mesh_mutid'] = 0
     return chunk_df
 
 
@@ -658,8 +660,13 @@ def fetch_stored_chunk_keys(server, uuid, seg_instance, config_name=None, body=N
     if len(keys) == 0:
         key_df = pd.DataFrame([], columns=key_cols)
     else:
-        key_splits = pd.Series(keys, dtype=str).str.split('-').tolist()
-        key_df = pd.DataFrame(key_splits, columns=key_cols)
+        key_splits = pd.Series(keys, dtype=str).str.split('-')
+
+        # Support old keys that didn't store the mesh_block_hash in the second-to-last position
+        old_keys = (key_splits.map(len) < len(key_cols))
+        key_splits.loc[old_keys] = key_splits.loc[old_keys].map(lambda x: [*x[:-1], '0x0', x[-1]])
+
+        key_df = pd.DataFrame(key_splits.tolist(), columns=key_cols)
     key_df['key'] = keys
     key_df = key_df.sort_values('mesh_mutid')
     key_df = key_df.astype({'body': np.uint64, 'mesh_mutid': int})
