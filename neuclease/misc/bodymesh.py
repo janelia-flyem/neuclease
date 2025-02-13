@@ -800,23 +800,23 @@ def main_debug():
 
     from neuclease.dvid import find_master
 
-    cns_test_server = 'http://emdata7.int.janelia.org:9000'
-    cns_test_uuid = find_master(cns_test_server)
-    cns_test = (cns_test_server, cns_test_uuid)
-    cns_test_seg = (*cns_test, 'segmentation')
+    # cns_test_server = 'http://emdata7.int.janelia.org:9000'
+    # cns_test_uuid = find_master(cns_test_server)
+    # cns_test = (cns_test_server, cns_test_uuid)
+    # cns_test_seg = (*cns_test, 'segmentation')
+    # init_mesh_instances(*cns_test_seg)
 
-    # cns_server = 'http://emdata6.int.janelia.org:9000'
-    # cns_uuid = find_master(cns_server)
-    # cns = (cns_server, cns_uuid)
-    # cns_seg = (*cns, 'segmentation')
+    cns_server = 'http://emdata6.int.janelia.org:9000'
+    cns_uuid = find_master(cns_server)
+    cns = (cns_server, cns_uuid)
+    cns_seg = (*cns, 'segmentation')
 
-    init_mesh_instances(*cns_test_seg)
-
-    short_uuid = cns_test_uuid[:6]
+    base_uuid = "04993d60dd594df8927c70f4f993b188"
+    short_base_uuid = base_uuid[:6]
 
     body_mesh_config = {
         #"source-method": f"concatenated-chunks-1k_{short_uuid}-dec005_from_s2",
-        "source-method": f"concatenated-chunks-1k_{short_uuid}-sc2_halo2_cl8_filled_sm3_dec005",
+        "source-method": f"concatenated-chunks-1k_{short_base_uuid}-sc2_halo2_cl8_filled_sm3_dec005",
         "smoothing": 0,
         "small-body-overall-decimation-s0": 0.01,
         "large-body-overall-decimation-s0": 0.001,
@@ -825,8 +825,8 @@ def main_debug():
     }
 
     chunk_config = {
-        "config-name": f"1k_{short_uuid}",
-        "base-uuid": cns_test_uuid,
+        "config-name": f"1k_{short_base_uuid}",
+        "base-uuid": base_uuid,
         "chunk-shape-s0": [1024, 1024, 1024],
         "chunk-halo": 2,
         "quality-configs": [
@@ -842,21 +842,20 @@ def main_debug():
     }
 
     # body = 17198
-    #body = 805741
-    #body = 11005  # Huge bilateral CB neuron
-
-    body = 10114
-    #body = 10705
-    #body = 11369
+    # body = 805741
+    # body = 11005  # Huge bilateral CB neuron
+    # body = 10705
+    # body = 11369
+    body = 807948  # Strange floating chunks???
 
     # More test cases:
     # https://flyem-cns.slack.com/archives/C02QFC68HPX/p1733326471601639
 
     # update_body_mesh(*cns_test_seg, body, body_mesh_config, chunk_config, force=True, processes='dask-worker-client')
-    update_body_mesh(*cns_test_seg, body, body_mesh_config, chunk_config, force=True, processes=8)
+    update_body_mesh(*cns_seg, body, body_mesh_config, chunk_config, force=True, processes=8)
 
     from vol2mesh.mesh import Mesh
-    buf = fetch_key(*cns_test, 'segmentation_meshes', f"{body}.ngmesh")
+    buf = fetch_key(*cns, 'segmentation_meshes', f"{body}.ngmesh")
     mesh = Mesh.from_buffer(buf, 'ngmesh')
     mesh.serialize(f"/tmp/{body}.obj")
 
@@ -870,7 +869,7 @@ def main_debug():
     #     fut = client.submit(update_body_mesh, *cns_test_seg, body, body_mesh_config, chunk_config, force=True, processes='dask-worker-client')
     #     fut.result()
 
-    mesh_info = fetch_key(*cns_test, 'segmentation_mesh_info', body, as_json=True)
+    mesh_info = fetch_key(*cns, 'segmentation_mesh_info', body, as_json=True)
     logger.info(f"Mesh Info: {mesh_info}")
 
 
