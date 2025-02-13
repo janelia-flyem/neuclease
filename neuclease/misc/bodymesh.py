@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 import skimage.morphology
 from requests import HTTPError
+from cityhash import CityHash64
 
 from confiddler import validate, flow_style
 from vol2mesh.mesh import Mesh
@@ -256,7 +257,18 @@ class DummyResourceMgr:
 
 
 @DummyResourceMgr.overwrite_none_kwarg
-def update_body_mesh(server, uuid, seg_instance, body, body_mesh_config, chunk_config, force=False, processes=0, *, resource_mgr=None):
+def update_body_mesh(
+    server,
+    uuid,
+    seg_instance,
+    body,
+    body_mesh_config,
+    chunk_config,
+    force=False,
+    processes=0,
+    *,
+    resource_mgr=None
+):
     """
     FIXME: Too many parameters -- server, uuid, seg_instance, and resource_mgr should be rolled into one.
 
@@ -299,9 +311,15 @@ def update_body_mesh(server, uuid, seg_instance, body, body_mesh_config, chunk_c
         update_body_mesh_from_supervoxels(server, uuid, seg, body, body_mesh_config, resource_mgr=resource_mgr)
         return
 
+    if '-' in chunk_config['config-name']:
+        raise RuntimeError(f"Chunk config-name cannot contain a hyphen: {chunk_config['config-name']}")
+
     method_parts = requested_method.split('-')
     if len(method_parts) != 4 or method_parts[:2] != ['concatenated', 'chunks']:
-        raise RuntimeError(f"Body mesh config requests invalid source-method: {requested_method}")
+        raise RuntimeError(
+            f"Body mesh config requests invalid source-method: {requested_method}\n"
+            "(source-method must start with 'concatenated-chunks-' and neither the config name nor 'quality' may contain hyphens)"
+        )
     chunk_config_name, quality = method_parts[2:]
     if chunk_config_name != chunk_config['config-name']:
         raise RuntimeError(f"Body mesh config requests a chunk config which you didn't supply: {chunk_config_name}")
@@ -488,11 +506,20 @@ def select_body_decimation(chunk_decimation_s0, chunk_total_vertices, body_mesh_
     return target_decimation_s0, remaining_needed_decimation
 
 
-CHUNK_KEY_FMT = "{config_name}-{body}-{chunk_id}-{mesh_mutid}-{quality}"
+CHUNK_KEY_FMT = "{config_name}-{body}-{chunk_id}-{mesh_mutid}-{mesh_block_hash}-{quality}"
 
 
 @PrefixFilter.with_context("Body {body}")
-def update_body_mesh_from_chunks(server, uuid, seg_instance, body, body_mesh_config, chunk_config, processes=0, resource_mgr=None):
+def update_body_mesh_from_chunks(
+    server,
+    uuid,
+    seg_instance,
+    body,
+    body_mesh_config,
+    chunk_config,
+    processes=0,
+    resource_mgr=None
+):
     validate(chunk_config, MeshChunkConfigSchema, inject_defaults=True)
     if '-' in (name := chunk_config['config-name']) or name == "":
         raise RuntimeError(f"Invalid chunk config-name name: {name}")
@@ -536,17 +563,44 @@ def _chunk_table(server, uuid, seg_instance, body, chunk_config, resource_mgr):
 
     Returns:
         DataFrame
+
+    Example result:
+                x      y      z  surface_mutid  block_hash  config_name   body           chunk_id  mesh_mutid quality                                                             key
+        0   16384  38912  26624     1006321331  0x4f11fa6b    1k_04993d  90972  16384,38912,26624  1006321331  sc2_q1  1k_04993d-90972-16384,38912,26624-1006321331-0x4f11fa6b-sc2_q1
+        1   16384  38912  27648     1006321331  0x854b11fa    1k_04993d  90972  16384,38912,27648  1006321331  sc2_q1  1k_04993d-90972-16384,38912,27648-1006321331-0x854b11fa-sc2_q1
+        2   17408  36864  25600     1006321331  0xb7bcdfe0    1k_04993d  90972  17408,36864,25600  1006321331  sc2_q1  1k_04993d-90972-17408,36864,25600-1006321331-0xb7bcdfe0-sc2_q1
+        3   17408  37888  23552     1006321331  0xaa12cc78    1k_04993d  90972  17408,37888,23552  1006321331  sc2_q1  1k_04993d-90972-17408,37888,23552-1006321331-0xaa12cc78-sc2_q1
+        4   17408  37888  24576     1006321331  0x39915e1a    1k_04993d  90972  17408,37888,24576  1006321331  sc2_q1  1k_04993d-90972-17408,37888,24576-1006321331-0x39915e1a-sc2_q1
     """
-    chunk_shape_s0 = chunk_config['chunk-shape-s0']
     base_uuid = resolve_ref(server, chunk_config['base-uuid'], True)
+    chunk_shape_s0 = np.array(chunk_config['chunk-shape-s0'])
+    assert not (chunk_shape_s0 % 64).any(), "Chunk shape must be a multiple of 64"
 
     with resource_mgr.access_context(server, False, True, 0):
         pli = fetch_labelindex(server, uuid, seg_instance, body, format='pandas')
 
-    chunk_df = pli.surface_mutids.copy()
-    chunk_df[[*'xyz']] //= chunk_shape_s0
-    chunk_df[[*'xyz']] *= chunk_shape_s0
-    chunk_df = chunk_df.groupby([*'xyz'])['surface_mutid'].max().reset_index()
+    # DVID blocks (64x64x64)
+    block_df = pli.surface_mutids
+    block_df[['cz', 'cy', 'cx']] = (block_df[[*'zyx']] // chunk_shape_s0) * chunk_shape_s0
+    block_df = block_df.sort_values(['cz', 'cy', 'cx', *'zyx'], ignore_index=True)
+
+    def compute_block_hash(df):
+        """Compute a hash of the set of DVID block coordinates in a chunk"""
+        return hex(CityHash64(df[[*'zyx']].values.copy('C')))
+
+    block_hashes = (
+        block_df
+        .groupby(['cz', 'cy', 'cx'])
+        .apply(compute_block_hash, include_groups=False)
+        .rename('block_hash')
+    )
+    chunk_mutids = block_df.groupby(['cz', 'cy', 'cx'])['surface_mutid'].max()
+    chunk_df = (
+        pd.concat([chunk_mutids, block_hashes], axis=1)
+        .reset_index()
+        .rename(columns={'cx': 'x', 'cy': 'y', 'cz': 'z'})
+    )
+
     if (chunk_df['surface_mutid'] == 0).any():
         # Any missing surface_mutids will be replaced with the lastmod in the BASE uuid.
         # It is assumed that any chunks that ARE present in the chunk store are at least
@@ -564,9 +618,12 @@ def _chunk_table(server, uuid, seg_instance, body, chunk_config, resource_mgr):
     # Drop all but the most recent key for each chunk
     key_df = key_df.sort_values('mesh_mutid').drop_duplicates([*'xyz'], keep='last')
 
-    # Append mesh_mutid column
+    # Append mesh_mutid and block_hash columns
     chunk_df = chunk_df.merge(key_df, 'left', on=[*'xyz'])
     chunk_df['mesh_mutid'] = chunk_df['mesh_mutid'].fillna(0).astype(int)
+
+    # If the block_hash doesn't match, we treat it as out-of-date
+    chunk_df.loc[chunk_df.eval('block_hash != mesh_block_hash'), 'mesh_mutid'] = 0
     return chunk_df
 
 
@@ -596,7 +653,7 @@ def fetch_stored_chunk_keys(server, uuid, seg_instance, config_name=None, body=N
         prefix = f"{config_name}-{body}-"
 
     key_cols = [x[1] for x in Formatter().parse(CHUNK_KEY_FMT)]
-    assert key_cols == ['config_name', 'body', 'chunk_id', 'mesh_mutid', 'quality']
+    assert key_cols == ['config_name', 'body', 'chunk_id', 'mesh_mutid', 'mesh_block_hash', 'quality']
     keys = fetch_keyrange(server, uuid, f"{seg}_chunk_meshes", f"{prefix} ", f"{prefix}~")
     if len(keys) == 0:
         key_df = pd.DataFrame([], columns=key_cols)
@@ -610,7 +667,18 @@ def fetch_stored_chunk_keys(server, uuid, seg_instance, config_name=None, body=N
     return key_df
 
 
-def _generate_body_mesh_from_chunks(server, uuid, seg_instance, body, chunk_df, body_mesh_config, chunk_config, quality, processes, resource_mgr):
+def _generate_body_mesh_from_chunks(
+    server,
+    uuid,
+    seg_instance,
+    body,
+    chunk_df,
+    body_mesh_config,
+    chunk_config,
+    quality,
+    processes,
+    resource_mgr
+):
     seg = seg_instance
     with resource_mgr.access_context(server, True, 1, 0):
         lastmod = fetch_lastmod(server, uuid, seg, body)['mutation id']
@@ -625,9 +693,9 @@ def _generate_body_mesh_from_chunks(server, uuid, seg_instance, body, chunk_df, 
 
     new_chunk_meshes = meshes_for_chunks(
         server, uuid, seg,
-        body, lastmod,
+        body,
         chunk_config, quality, True,
-        missing_chunk_df[[*'zyx']].values,
+        missing_chunk_df[[*'zyx', 'surface_mutid', 'block_hash']],
         processes, resource_mgr
     )
 
@@ -686,28 +754,55 @@ def _generate_body_mesh_from_chunks(server, uuid, seg_instance, body, chunk_df, 
     return mesh_bytes, mesh_info
 
 
-def meshes_for_chunks(server, uuid, seg_instance, body, lastmod, chunk_config, quality, store, chunk_coords_zyx, processes, resource_mgr):
-    fn = partial(mesh_for_chunk, server, uuid, seg_instance, body, lastmod, chunk_config, quality, store, resource_mgr)
+def meshes_for_chunks(
+    server,
+    uuid,
+    seg_instance,
+    body,
+    chunk_config,
+    quality,
+    store,
+    missing_chunk_df,
+    processes,
+    resource_mgr
+):
+    fn = partial(mesh_for_chunk, server, uuid, seg_instance, body, chunk_config, quality, store, resource_mgr)
+    chunk_specs = missing_chunk_df[[*'zyx', 'surface_mutid', 'block_hash']].values.tolist()
 
     if processes != 'dask-worker-client':
-        with Timer(f"Generating {len(chunk_coords_zyx)} missing chunks using {processes} processes", logger):
-            return compute_parallel(fn, chunk_coords_zyx, processes=processes)
+        with Timer(f"Generating {len(chunk_specs)} missing chunks using {processes} processes", logger):
+            return compute_parallel(fn, chunk_specs, processes=processes)
 
     from dask.distributed import worker_client
     with (
-        Timer(f"Generating {len(chunk_coords_zyx)} missing chunks using the dask cluster", logger),
+        Timer(f"Generating {len(missing_chunk_df)} missing chunks using the dask cluster", logger),
         worker_client() as client
     ):
         task_names = [
             f'mesh_for_chunk-body-{body}-chunk-{x},{y},{z}'
-            for z,y,x in chunk_coords_zyx
+            for z,y,x in missing_chunk_df[[*'zyx']].values
         ]
-        futures = client.map(fn, chunk_coords_zyx, key=task_names, priority=10)
+        futures = client.map(fn, chunk_specs, key=task_names, priority=10)
         return client.gather(futures)
 
 
-def mesh_for_chunk(server, uuid, seg_instance, body, lastmod, chunk_config, quality, store, resource_mgr, chunk_zyx):
+def mesh_for_chunk(
+    server,
+    uuid,
+    seg_instance,
+    body,
+    chunk_config,
+    quality,
+    store,
+    resource_mgr,
+    chunk_spec
+):
+    """
+    chunk_spec is a tuple of (*chunk_zyx, surface_mutid, block_hash)
+    """
     seg = seg_instance
+    *chunk_zyx, surface_mutid, block_hash = chunk_spec
+    chunk_zyx = np.asarray(chunk_zyx)
     _cfg = [
         cfg for cfg in chunk_config['quality-configs']
         if cfg['name'] == quality
@@ -718,7 +813,6 @@ def mesh_for_chunk(server, uuid, seg_instance, body, lastmod, chunk_config, qual
         raise RuntimeError(f"More than one quality config named '{quality}'")
     quality_config = _cfg[0]
 
-    chunk_zyx = np.asarray(chunk_zyx)
     chunk_shape_s0_zyx = chunk_config['chunk-shape-s0'][::-1]
 
     scale = quality_config['source-scale']
@@ -764,7 +858,8 @@ def mesh_for_chunk(server, uuid, seg_instance, body, lastmod, chunk_config, qual
             config_name=chunk_config['config-name'],
             body=body,
             chunk_id=make_chunk_id(chunk_zyx),
-            mesh_mutid=lastmod,
+            mesh_mutid=surface_mutid,
+            mesh_block_hash=block_hash,
             quality=quality,
         )
         with resource_mgr.access_context(server, False, 1, 0):
@@ -846,7 +941,8 @@ def main_debug():
     # body = 11005  # Huge bilateral CB neuron
     # body = 10705
     # body = 11369
-    body = 807948  # Strange floating chunks???
+    # body = 807948  # Strange floating chunks???
+    body = 90972
 
     # More test cases:
     # https://flyem-cns.slack.com/archives/C02QFC68HPX/p1733326471601639

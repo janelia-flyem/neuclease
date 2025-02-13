@@ -40,6 +40,7 @@ requirements:
     - asciitree
     - protobuf 4
     - confiddler
+    - python-cityhash
 
     # Optional dependencies
     #- graph-tool  # <-- Faster connected-components for very large graphs
