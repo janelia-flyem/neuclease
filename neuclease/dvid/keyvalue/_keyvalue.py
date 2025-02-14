@@ -300,7 +300,7 @@ def delete_key(server, uuid, instance, key, *, session=None):
 
 
 @dvid_api_wrapper
-def fetch_keyvalues(server, uuid, instance, keys, *, as_json=False, batch_size=None, check=None, serialization=None, show=None, session=None):
+def fetch_keyvalues(server, uuid, instance, keys, *, as_json=False, batch_size=None, check=None, show_progress=True, serialization=None, show=None, session=None):
     """
     Fetch a list of values from a keyvalue instance in a single batch call,
     or split across multiple batches.
@@ -365,7 +365,7 @@ def fetch_keyvalues(server, uuid, instance, keys, *, as_json=False, batch_size=N
     keys = list(keys)
     keyvalues = {}
     batch_size = batch_size or max(len(keys), 1)
-    for start in tqdm_proxy(range(0, len(keys), batch_size), leave=False, disable=(batch_size >= len(keys))):
+    for start in tqdm_proxy(range(0, len(keys), batch_size), leave=False, disable=(batch_size >= len(keys)) or not show_progress):
         batch_keys = keys[start:start+batch_size]
 
         if serialization == 'json':
