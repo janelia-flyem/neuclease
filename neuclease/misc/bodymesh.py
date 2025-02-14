@@ -353,7 +353,8 @@ def delete_body_mesh(server, uuid, seg_instance, body):
     post_key(server, uuid, f"{seg}_mesh_info", body, json=mesh_info)
 
 
-def create_and_upload_missing_supervoxel_meshes(server, uuid, seg_instance, body, resource_mgr):
+@DummyResourceMgr.overwrite_none_kwarg
+def create_and_upload_missing_supervoxel_meshes(server, uuid, seg_instance, body, resource_mgr=None):
     seg = seg_instance
     with resource_mgr.access_context(server, True, 1, 0):
         missing = fetch_missing(server, uuid, f"{seg}_sv_meshes", body)
@@ -363,7 +364,11 @@ def create_and_upload_missing_supervoxel_meshes(server, uuid, seg_instance, body
     logger.info(f"Creating supervoxel meshes for {len(missing)} missing supervoxel(s).")
     for sv in missing:
         mesh = create_supervoxel_mesh(server, uuid, seg, sv, decimation_s0=SV_MESH_DECIMATION_S0, resource_mgr=resource_mgr)
+        if mesh is False:
+            # The supervoxel doesn't exist so we don't store anything.
+            return
         if mesh is None:
+            # The supervoxel DOES exist, but it has no voxels at the requested scale.
             # By our convention, objects that were too small to
             # create meshes for are given an empty file in DVID.
             mesh_bytes = b''
@@ -386,7 +391,13 @@ def create_supervoxel_mesh(server, uuid, seg_instance, sv, smoothing=3, decimati
             decimate then as severely -- we increase the decimation fraction by 4x.
     """
     with resource_mgr.access_context(server, True, 1, 0):
-        rng = fetch_sparsevol(server, uuid, seg_instance, sv, scale=SV_MESH_SCALE, format='ranges')
+        try:
+            rng = fetch_sparsevol(server, uuid, seg_instance, sv, scale=SV_MESH_SCALE, format='ranges')
+        except HTTPError as ex:
+            # If the supervoxel has been split already, then we can't generate a mesh for it.
+            if ex.response.status_code == 404:
+                return False
+            raise
     if len(rng) == 0:
         # Supervoxels that are VERY small might have no voxels at all at low scales.
         # We return None in that case.

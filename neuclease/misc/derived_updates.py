@@ -21,9 +21,9 @@ from neuclease.dvid import (
     set_default_dvid_session_timeout, is_locked,
     fetch_branch_nodes, resolve_ref, fetch_repo_instances, find_repo_root,
     create_instance, fetch_key, fetch_keys, post_key, delete_key, fetch_keyrange,
-    fetch_mutations, compute_affected_bodies, fetch_skeleton, fetch_lastmod, fetch_query
+    fetch_mapping,fetch_mutations, compute_affected_bodies, fetch_skeleton, fetch_lastmod, fetch_query
 )
-from neuclease.misc.bodymesh import update_body_mesh, BodyMeshParametersSchema, MeshChunkConfigSchema
+from neuclease.misc.bodymesh import update_body_mesh, BodyMeshParametersSchema, MeshChunkConfigSchema, create_and_upload_missing_supervoxel_meshes
 
 logger = logging.getLogger(__name__)
 
@@ -115,9 +115,9 @@ ConfigSchema = {
             "type": "array",
             "items": {
                 "type": "string",
-                "enum": ["meshes", "skeletons", "annotations"]
+                "enum": ["meshes", "sv-meshes", "skeletons", "annotations"]
             },
-            "default": ["meshes", "skeletons", "annotations"]
+            "default": ["meshes", "sv-meshes", "skeletons", "annotations"]
         },
         "body-meshes": BodyMeshParametersSchema,
         "chunk-meshes": MeshChunkConfigSchema,
@@ -178,6 +178,9 @@ def main():
             cfg['force-update'],
             args.processes
         )
+
+    if 'sv-meshes' in cfg['update-derived-types']:
+        update_sv_meshes(*dvid_seg, cfg['dvid']['ignore-mutations-before-uuid'])
 
     if 'skeletons' in cfg['update-derived-types']:
         update_skeletons(
@@ -319,12 +322,37 @@ def update_body_meshes(dvid_server, uuid, seg_instance, body_mesh_config, chunk_
     prev_mutid = prev_update['mutid']
     prev_timestamp = prev_update.get('timestamp', '<unknown time>')
     bodies = [*affected.changed_bodies, *affected.removed_bodies, *affected.new_bodies]
-    logger.info(f"Detected {len(bodies)} mutated bodies since the previous mesh update in uuid {prev_uuid} (mutid: {prev_mutid}) at {prev_timestamp}")
+    logger.info(
+        f"Detected {len(bodies)} mutated bodies since the previous mesh update "
+        f"in uuid {prev_uuid} (mutid: {prev_mutid}) at {prev_timestamp}"
+    )
     for i, body in enumerate(bodies, start=1):
-        with PrefixFilter.context(f"({i}/{len(bodies)})"), Timer(f"Body {body} Updating ", logger):
+        with PrefixFilter.context(f"({i}/{len(bodies)})"), Timer(f"Body {body} Updating chunks/body", logger):
             update_body_mesh(*dvid_seg, body, body_mesh_config, chunk_config, force, processes)
 
     store_update_receipt(*dvid_seg, "meshes", last_mutid)
+
+
+def update_sv_meshes(dvid_server, uuid, seg_instance, ignore_before_uuid=None):
+    dvid_seg = (dvid_server, uuid, seg_instance)
+    prev_update, affected, last_mutid = mutated_bodies_since_previous_update(*dvid_seg, "sv-meshes", ignore_before_uuid)
+    prev_uuid = prev_update['uuid']
+    prev_mutid = prev_update['mutid']
+    prev_timestamp = prev_update.get('timestamp', '<unknown time>')
+
+    # Due to race conditions, one of our 'new_svs' might already be invalid
+    # by the time we fetch its mapping, so we filter out body 0 just in case.
+    new_svs = set(affected.new_svs) - set(affected.deleted_svs)
+    bodies = set(fetch_mapping(*dvid_seg, new_svs)) - {0}
+    logger.info(
+        f"Detected {len(bodies)} bodies with new supervoxels since the previous "
+        f"sv-mesh update in uuid {prev_uuid} (mutid: {prev_mutid}) at {prev_timestamp}"
+    )
+    for i, body in enumerate(bodies, start=1):
+        with PrefixFilter.context(f"({i}/{len(bodies)})"), Timer(f"Body {body} Updating new supervoxel meshes", logger):
+            create_and_upload_missing_supervoxel_meshes(*dvid_seg, body)
+
+    store_update_receipt(*dvid_seg, "sv-meshes", last_mutid)
 
 
 def update_skeletons(dvid_server, uuid, seg_instance, neutu_executable, force, scale=5, ignore_before_uuid=None):
