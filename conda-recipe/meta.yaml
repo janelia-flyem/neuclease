@@ -32,7 +32,7 @@ requirements:
     - vigra
     - pillow
     - libdvid-cpp >=0.4.post21
-    - dvidutils >=0.0.post91
+    - dvidutils >=0.0.post114
     - tqdm
     - ujson
     - pykafka
