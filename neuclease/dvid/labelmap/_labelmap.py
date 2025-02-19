@@ -983,7 +983,7 @@ def fetch_bodies_for_many_points(server, uuid, seg_instance, point_df, mutations
         point_df['body'] = lut[point_df['sv'].values]
     else:
         mapper = LabelMapper(*mapping.T)
-        point_df['body'] = mapper.apply(point_df['sv'].values, True)
+        point_df['body'] = mapper.apply(point_df['sv'].values.astype(np.uint64), True)
 
 
 def _update_supervoxels_for_mutated_bodies(server, uuid, seg_instance, mutations, point_df, threads, processes):
