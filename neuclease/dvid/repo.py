@@ -912,9 +912,12 @@ def resolve_ref_range(server, ref_range, *, session=None):
             DVID server
 
         ref_range:
-            A string in the form of '[uuid1, uuid2]', e.g. '[abc123, def456]'.
+            A string in the form of '[uuid1, uuid2]'.
             Use parentheses instead of square brackets to indicate that the
-            range should EXCLUDE the start/end UUID.  See examples.
+            range should EXCLUDE the start/end UUID.  See more examples below.
+            Examples:
+                - '[abc123, def456]'
+                - '(abc123, :master]'
 
     Returns:
         list of UUIDs.
