@@ -7,6 +7,7 @@ from contextlib import closing
 
 import numpy as np
 import pandas as pd
+from requests.exceptions import HTTPError
 
 from ..util import fetch_file, post_file, tqdm_proxy, compute_parallel
 from . import dvid_api_wrapper, fetch_generic_json
@@ -470,7 +471,7 @@ def _fetch_missing(server, uuid, instance, body):
     try:
         missing_svs = fetch_missing(server, uuid, instance, body)
         return pd.DataFrame({'sv': missing_svs, 'body': body}, dtype=np.uint64)
-    except Exception as ex:
+    except HTTPError as ex:
         if 'has no supervoxels' in str(ex):
             return pd.DataFrame({'sv': [0], 'body': [body]}, dtype=np.uint64)
         else:

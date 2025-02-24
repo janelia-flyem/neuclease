@@ -52,7 +52,8 @@ class PointLabeler:
     @property
     def mutations(self):
         if self._mutations is None:
-            with Timer(f"Fetching full mutation log for {self.dvidseg.instance} from {self.dvidseg.uuid} and ancestors", logger):
+            msg = f"Fetching full mutation log for {self.dvidseg.instance} from {self.dvidseg.uuid} and ancestors"
+            with Timer(msg, logger):
                 self._mutations = fetch_mutations(*self.dvidseg)
         return self._mutations
 
@@ -61,7 +62,12 @@ class PointLabeler:
         if self._last_mutation:
             return self._last_mutation
 
-        branch_nodes = fetch_branch_nodes(self.dvidseg.server, self.dvidseg.uuid, self.dvidseg.uuid, full_info=True)
+        branch_nodes = fetch_branch_nodes(
+            self.dvidseg.server,
+            self.dvidseg.uuid,
+            self.dvidseg.uuid,
+            full_info=True
+        )
 
         # By default, refer to the UUID log for timestamp
         last_mutation = {
@@ -70,10 +76,15 @@ class PointLabeler:
             "mutid": 0,
         }
 
-        # Look for the last mutation in teh mutation log,
+        # Look for the last mutation in the mutation log,
         # searching backwards in the DAG until a non-empty UUID is found.
         for uuid in branch_nodes.index[::-1]:
-            muts = fetch_mutations(self.dvidseg.server, uuid, self.dvidseg.instance, dag_filter='leaf-only')
+            muts = fetch_mutations(
+                self.dvidseg.server,
+                uuid,
+                self.dvidseg.instance,
+                dag_filter='leaf-only'
+            )
             if len(muts):
                 last_mutation = muts.iloc[-1].to_dict()
                 break
