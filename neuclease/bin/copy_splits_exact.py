@@ -22,6 +22,7 @@ def main():
     configure_default_logging()
     
     parser = argparse.ArgumentParser()
+    parser.add_argument('--mutation-log', action='store_true')
     parser.add_argument('--kafka-log')
     parser.add_argument('--kafka-servers')
     parser.add_argument('--min-timestamp')
@@ -41,7 +42,9 @@ def main():
     dest_seg = (args.dest_server, args.dest_uuid, args.dest_labelmap_instance)
     
     # Fetch kafka log from src if none was provided from the command line
-    if args.kafka_log is not None:
+    if args.mutation_log:
+        kafka_msgs = fetch_mutations(*src_seg)
+    elif args.kafka_log is not None:
         with open(args.kafka_log, 'r') as f:
             kafka_msgs = ujson.load(f)
     else:
