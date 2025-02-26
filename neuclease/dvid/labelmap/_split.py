@@ -149,7 +149,9 @@ def fetch_supervoxel_splits_from_kafka(server, uuid, instance, actions=['split-c
         msgs = read_kafka_messages(server, uuid, instance, action_filter=actions, dag_filter='leaf-and-parents', session=session)
 
         # Standardize the log format; ensure 'complete' messages have all info we need.
-        msgs = labelmap_kafka_msgs_to_df(msgs)['msg']
+        msgs = labelmap_kafka_msgs_to_df(msgs)['msg'].tolist()
+    elif isinstance(kafka_msgs, pd.DataFrame):
+        msgs = kafka_msgs.query('action in @actions')['msg'].tolist()
     else:
         msgs = list(filter(lambda msg: msg["Action"] in actions, kafka_msgs))
 
