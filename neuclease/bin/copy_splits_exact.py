@@ -66,8 +66,10 @@ def copy_splits_exact(src_server, src_uuid, src_instance, dest_server, dest_uuid
     src_seg = (src_server, src_uuid, src_instance)
     dest_seg = (dest_server, dest_uuid, dest_instance)
 
-    min_timestamp = parse_timestamp(min_timestamp)
-    max_timestamp = parse_timestamp(max_timestamp)
+    if min_timestamp is not None:
+        min_timestamp = parse_timestamp(min_timestamp)
+    if max_timestamp is not None:
+        max_timestamp = parse_timestamp(max_timestamp)
 
     kafka_msgs = filter_kafka_msgs_by_timerange(kafka_msgs, min_timestamp, max_timestamp, min_mutid, max_mutid)
     
