@@ -59,6 +59,10 @@ class PointLabeler:
 
     @property
     def last_mutation(self):
+        """
+        Returns the last mutation in the mutation log, as a dict with
+        (at least) the uuid, timestamp, and mutid.
+        """
         if self._last_mutation:
             return self._last_mutation
 
