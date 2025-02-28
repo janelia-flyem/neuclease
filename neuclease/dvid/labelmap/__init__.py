@@ -2,4 +2,4 @@ from ._labelmap import *
 from ._split import *
 from ._labelindex import *
 from .pointlabeler import *
-
+from .pointcloud import *
