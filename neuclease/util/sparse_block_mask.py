@@ -215,7 +215,7 @@ class SparseBlockMask:
         # Return the full-res voxels
         return result_mask_fullres
 
-    def sparse_boxes( self, brick_grid, halo=0, return_logical_boxes=False ):
+    def sparse_boxes( self, brick_grid, return_logical_boxes=False ):
         """
         Overlay a coarse grid (brick_grid) on top of this SparseBlockMask
         and extract the list of non-empty boxes from the given coarse grid.
@@ -224,17 +224,14 @@ class SparseBlockMask:
             brick_grid:
                 The desired grid to use for the output, in full-res coordinates.
                 Does not need to be equivalent to the lowres grid that this SBM corresponds to.
-
-            halo:
-                If nonzero, expand each box by the given width in all dimensions.
-                Note: This will result in boxes that are wider than the brick grid's native block shape.
+                May include a halo, in which case the halo is applied AFTER the boxes are computed
+                and clipped to the overall bounding box of the SBM.
 
             return_logical_boxes:
                 If True, the result is returned as a list of full-size "logical" boxes.
                 Otherwise, each box is shrunken to the minimal size while still
                 encompassing all non-zero mask voxels with its grid box (i.e. a physical box),
-                plus halo, if given.
-                Note: It is not valid to use this option if halo is nonzero.
+                plus halo, if the given Grid has one.
 
         Returns:
             boxes, shape=(N,2,D) of non-empty bricks, as indicated by block_mask.
@@ -248,9 +245,6 @@ class SparseBlockMask:
         if not isinstance(brick_grid, Grid):
             assert isinstance(brick_grid, Collection)
             brick_grid = Grid(brick_grid)
-
-        assert not (halo > 0 and return_logical_boxes), \
-            "The return_logical_boxes option makes no sense if halo > 0"
 
         sbm_fullres_box = self.nonzero_box
         sbm_lowres_box = self.nonzero_box // self.resolution
@@ -292,10 +286,7 @@ class SparseBlockMask:
             return np.zeros((0,2,D), dtype=np.int32)
 
         nonempty_boxes = np.array(boxes, dtype=np.int32)
-
-        halo_shape = np.zeros((D,), dtype=np.int32)
-        halo_shape[:] = halo
-        if halo_shape.any():
-            nonempty_boxes[:] += (-halo_shape, halo_shape)
+        if brick_grid.halo_shape.any() and not return_logical_boxes:
+            nonempty_boxes[:] += (-brick_grid.halo_shape, brick_grid.halo_shape)
 
         return nonempty_boxes
