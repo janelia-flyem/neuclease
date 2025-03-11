@@ -108,7 +108,7 @@ def align_box(box, grid, how='out'):
     return np.concatenate( (box0, box1), axis=-2 )
 
 
-def pad_for_grid(a, grid, box_zyx=None):
+def pad_for_grid(a, grid, box_zyx=None, **kwargs):
     """
     For an array which currently occupies the given box in space,
     pad the array (with zeros) such that its edges align to the given grid.
@@ -120,7 +120,8 @@ def pad_for_grid(a, grid, box_zyx=None):
             Grid or grid shape (or a single int, for isometric grids)
         box_zyx:
             The box which the array inhabits
-
+        kwargs:
+            Keyword arguments to pass to np.pad(), such as mode='edge'
     Returns:
         padded_array, aligned_box
     """
@@ -133,7 +134,7 @@ def pad_for_grid(a, grid, box_zyx=None):
     box_padding = np.array([box_zyx[0] - aligned_box[0],
                             aligned_box[1] - box_zyx[1]])
     if box_padding.any():
-        padded = np.pad(a, box_padding.T,)
+        padded = np.pad(a, box_padding.T, **kwargs)
         return padded, aligned_box
     else:
         return a, box_zyx
