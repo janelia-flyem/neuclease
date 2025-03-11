@@ -95,6 +95,19 @@ def post_newversion(server, uuid, note, custom_uuid=None, *, session=None):
 
 
 @dvid_api_wrapper
+def post_tag(server, uuid, tag, note, *, session=None):
+    """
+    Add a tag to the given node.
+    In the dvid console, tags appear similar to committed UUIDs
+    that have been branched from another node, but they can have
+    arbitrary names instead of a hexadecimal UUID.
+    """
+    body = { "tag": tag, "note": note }
+    r = session.post(f'{server}/api/node/{uuid}/tag', json=body)
+    r.raise_for_status()
+
+
+@dvid_api_wrapper
 def post_blob(server, uuid, instance, data=None, json=None, *, session=None):
     """
     Post a 'blob' of arbitrary data to the DVID server's blobstore.
