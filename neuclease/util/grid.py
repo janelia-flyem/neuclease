@@ -3,7 +3,7 @@ import numpy as np
 import pandas as pd
 
 from .util import ndrange, tqdm_proxy, compute_parallel, ndrange_array
-from .box import box_intersection, round_box, overwrite_subvol
+from .box import box_intersection, round_box, overwrite_subvol, box_to_slicing
 
 
 class Grid:
@@ -136,6 +136,36 @@ def pad_for_grid(a, grid, box_zyx=None, **kwargs):
     if box_padding.any():
         padded = np.pad(a, box_padding.T, **kwargs)
         return padded, aligned_box
+    else:
+        return a, box_zyx
+
+
+def crop_for_grid(a, grid, box_zyx=None):
+    """
+    For an array which currently occupies the given box in space,
+    crop the array such that its edges align to the given grid.
+
+    Args:
+        a:
+            ndarray
+        grid:
+            Grid or grid shape (or a single int, for isometric grids)
+        box_zyx:
+            The box which the array inhabits
+    Returns:
+        cropped_array, aligned_box
+    """
+    if box_zyx is None:
+        box_zyx = [(0,)*a.ndim, a.shape]
+
+    box_zyx = np.asarray(box_zyx)
+    assert ((box_zyx[1] - box_zyx[0]) == a.shape).all()
+    aligned_box = align_box(box_zyx, grid, 'in')
+    box_cropping = np.array([aligned_box[0] - box_zyx[0],
+                             aligned_box[1] - box_zyx[1]])
+    if box_cropping.any():
+        cropped = a[box_to_slicing(*aligned_box - box_zyx[0])]
+        return cropped, aligned_box
     else:
         return a, box_zyx
 
