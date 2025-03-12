@@ -2,25 +2,27 @@ import sys
 import time
 import logging
 import argparse
-from datetime import datetime
 
 import ujson
 import requests
-import numpy as np
-import pandas as pd
 import networkx as nx
 
 from neuclease import configure_default_logging
 from neuclease.util import tqdm_proxy, write_json_list, parse_timestamp
-from neuclease.dvid import *
 from neuclease.dvid.rle import combine_sparsevol_rle_responses, extract_rle_size_and_first_coord
+from neuclease.dvid.kafka import read_kafka_messages, filter_kafka_msgs_by_timerange
+from neuclease.dvid.labelmap import (
+    fetch_mutations, fetch_supervoxel_splits_from_kafka,
+    split_events_to_dataframe, split_events_to_graph, fetch_label_for_coordinate, post_split_supervoxel, fetch_sparsevol_rles)
 
 logger = logging.getLogger(__name__)
+
 
 def main():
     configure_default_logging()
     
     parser = argparse.ArgumentParser()
+    parser.add_argument('--mutation-log', action='store_true')
     parser.add_argument('--kafka-log')
     parser.add_argument('--kafka-servers')
     parser.add_argument('--min-timestamp')
@@ -40,7 +42,9 @@ def main():
     dest_seg = (args.dest_server, args.dest_uuid, args.dest_labelmap_instance)
     
     # Fetch kafka log from src if none was provided from the command line
-    if args.kafka_log is not None:
+    if args.mutation_log:
+        kafka_msgs = fetch_mutations(*src_seg)
+    elif args.kafka_log is not None:
         with open(args.kafka_log, 'r') as f:
             kafka_msgs = ujson.load(f)
     else:
@@ -62,8 +66,10 @@ def copy_splits_exact(src_server, src_uuid, src_instance, dest_server, dest_uuid
     src_seg = (src_server, src_uuid, src_instance)
     dest_seg = (dest_server, dest_uuid, dest_instance)
 
-    min_timestamp = parse_timestamp(min_timestamp)
-    max_timestamp = parse_timestamp(max_timestamp)
+    if min_timestamp is not None:
+        min_timestamp = parse_timestamp(min_timestamp)
+    if max_timestamp is not None:
+        max_timestamp = parse_timestamp(max_timestamp)
 
     kafka_msgs = filter_kafka_msgs_by_timerange(kafka_msgs, min_timestamp, max_timestamp, min_mutid, max_mutid)
     

@@ -1932,10 +1932,7 @@ def post_tbar_jsons(server, uuid, instance, partner_df, merge_existing=True, pro
     and sent to DVID via multiple processes.
 
     Note:
-        If you want to post T-bars and PSDs, you have to call this function first,
-        then call post_psd_jsons(..., merge_existing=True, ...)
-        It's a little inefficient, but unfortunately I haven't implemented a combined
-        loading function yet.
+        If you want to post T-bars and PSDs, see process_partners_and_post_synapse_jsons()
 
     Args:
         server, uuid, instance:

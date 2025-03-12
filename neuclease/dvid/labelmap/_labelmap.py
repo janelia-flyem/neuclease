@@ -191,6 +191,32 @@ def post_nextlabel(server, uuid, instance, num_labels, *, session=None):
 
 
 @dvid_api_wrapper
+def post_set_nextlabel(server, uuid, instance, nextlabel, *, session=None):
+    """
+    Set the nextlabel counter to the given value.
+    Unlike post_nextlabel(), which merely reserves a range of next label IDs
+    and increments the counter from its current value acccordingly,
+    this function allows you to set the counter to an arbitrary value.
+
+    Args:
+        server:
+            dvid server, e.g. 'emdata3:8900'
+
+        uuid:
+            dvid uuid, e.g. 'abc9'
+
+        instance:
+            dvid instance name, e.g. 'segmentation'
+
+        nextlabel:
+            The new value of the counter.
+    """
+    url = f'{server}/api/node/{uuid}/{instance}/set-nextlabel/{nextlabel}'
+    r = session.post(url)
+    r.raise_for_status()
+
+
+@dvid_api_wrapper
 def fetch_lastmod(server, uuid, instance, body, *, session=None):
     """
     Returns last modification metadata for a label in JSON.

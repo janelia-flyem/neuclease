@@ -649,6 +649,7 @@ def find_branch_nodes(server, repo_uuid=None, branch=None, include_ancestors=Tru
         ['Branch', 'Note', 'Log', 'UUID', 'VersionID', 'Locked', 'Parents', 'Children', 'Created', 'Updated']
 
     """
+    repo_uuid = repo_uuid or None
     assert branch is not None, "You must supply a branch or uuid"
 
     assert branch != "master", \
@@ -877,8 +878,9 @@ def resolve_ref(server, ref, expand=False, *, uuid_only=False, session=None):
     if uuid_only:
         raise RuntimeError(f'"{ref}" is not a known uuid')
 
-    if ref.startswith(':'):
-        ref = ref[1:]
+    repo_uuid = None
+    if m := re.match(r'(.*?):(.*)', ref):
+        repo_uuid, ref = m.groups()
 
     if '~' in ref:
         ref, offset = ref.split('~')
@@ -891,7 +893,7 @@ def resolve_ref(server, ref, expand=False, *, uuid_only=False, session=None):
 
     # Not a valid UUID.  Maybe it's a branch.
     try:
-        branch_nodes = find_branch_nodes(server, branch=ref, session=session)
+        branch_nodes = find_branch_nodes(server, repo_uuid, branch=ref, session=session)
         if branch_nodes:
             return branch_nodes[len(branch_nodes) - offset - 1]
         raise RuntimeError(f"Could not resolve reference '{ref}'.  It is neither a UUID or a branch name.")
