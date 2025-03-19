@@ -550,6 +550,10 @@ def unsplit_json_int_lists(json_text):
     For small lists of integers (such as [x,y,z] points), that may not be desirable.
     This function "unsplits" all lists of integers and puts them back on a single line.
 
+    Note:
+        This implementation makes several passes over the input text,
+        so it is not efficient for large inputs.
+
     Example:
         >>> s = '''\\
         ... {
@@ -572,9 +576,19 @@ def unsplit_json_int_lists(json_text):
         }
 
     """
+
+    # Remove line break before first element
     json_text = re.sub(r'\[\s+(-?\d+),', r'[\1,', json_text)
+
+    # Remove line breaks before middle elements
     json_text = re.sub(r'\n\s*(-?\d+),', r' \1,', json_text)
+
+    # Remove line break before last element
     json_text = re.sub(r'\n\s*(-?\d+)\s*\]', r' \1]', json_text)
+
+    # Fix single-element case: [ 123] -> [123]
+    json_text = re.sub(r'\[\s+(-?\d+)\s*\]', r'[\1]', json_text)
+
     return json_text
 
 
@@ -587,6 +601,10 @@ def unsplit_json_number_lists(json_text):
     Note:
         Unlike unsplit_json_int_lists above, this function reformats all numbers,
         including ints and floats.
+
+    Note:
+        This implementation makes several passes over the input text,
+        so it is not efficient for large inputs.
 
     Example:
         >>> s = '''\\
@@ -610,9 +628,19 @@ def unsplit_json_number_lists(json_text):
         }
     """
     number = r'([-+]?[0-9]*\.?[0-9]+([eE][-+]?[0-9]+)?)'
+
+    # Remove line break before first element
     json_text = re.sub(rf'\[\s+{number},', r'[\1,', json_text)
+
+    # Remove line breaks before middle elements
     json_text = re.sub(rf'\n\s*{number},', r' \1,', json_text)
+
+    # Remove line break before last element
     json_text = re.sub(rf'\n\s*{number}\s*\]', r' \1]', json_text)
+
+    # Fix single-element case: [ 123] -> [123]
+    json_text = re.sub(rf'\[\s+{number}\s*\]', r'[\1]', json_text)
+
     return json_text
 
 
