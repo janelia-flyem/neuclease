@@ -163,9 +163,13 @@ def main():
     timeout = cfg['dvid']['timeout']
     set_default_dvid_session_timeout(timeout, timeout)
 
+    # We must resolve the UUID before starting in case the UUID becomes
+    # locked before we store our update receipts, which would result in
+    # inconsistencies between the update receipt's stored UUID and the
+    # stored mutation ID.
     dvid_seg = (
         cfg['dvid']['server'],
-        cfg['dvid']['uuid'],
+        resolve_ref(cfg['dvid']['server'], cfg['dvid']['uuid']),
         cfg['dvid']['segmentation-name'],
     )
 
@@ -231,6 +235,24 @@ def init_logging(config_path, logfile, stdout_logging=False):
 
 
 def mutated_bodies_since_previous_update(dvid_server, uuid, seg_instance, derived_type, ignore_before_uuid=None):
+    """
+    Read the most recent update receipt to determine when the previous update
+    occurred for the given 'derived_type' (e.g. meshes, sv-meshes, skeletons, annotations).
+
+    Then read the mutation log for mutations since that update occurred,
+    and return the affected bodies as a named tuple (as returned by compute_affected_bodies()).
+
+    Also return the previous update receipt and the new mutation ID that corresponds to the newly affected bodies.
+
+    Returns:
+        prev_update, affected, last_mutid
+        where prev_update is a dict with keys 'uuid' and 'mutid'
+        and affected is a named tuple with attributes 'changed_bodies', 'removed_bodies', 'new_bodies'
+        and last_mutid is the mutation ID of the most recent mutation in the mutation log (up to and including the given uuid).
+    """
+    assert uuid == resolve_ref(dvid_server, uuid, expand=True), \
+        "The given UUID should be a valid, pre-resolved UUID."
+
     keys = []
     if "derived-data-checkpoints" in fetch_repo_instances(dvid_server, uuid):
         keys = fetch_keyrange(
@@ -253,7 +275,6 @@ def mutated_bodies_since_previous_update(dvid_server, uuid, seg_instance, derive
     updated_mutid = prev_update['mutid']  # noqa
 
     if ignore_before_uuid:
-        uuid = resolve_ref(dvid_server, uuid, expand=True)
         ignore_before_uuid = resolve_ref(dvid_server, ignore_before_uuid, expand=True)
         updated_uuid = resolve_ref(dvid_server, updated_uuid, expand=True)
 
@@ -287,7 +308,8 @@ def store_update_receipt(dvid_server, uuid, seg_instance, derived_type, mutid):
     """
     TODO: Store the list of updated bodies.
     """
-    uuid = resolve_ref(dvid_server, uuid, expand=True)
+    assert uuid == resolve_ref(dvid_server, uuid, expand=True), \
+        "The given UUID should be a valid, pre-resolved UUID."
     now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     update_value = {
         "uuid": uuid,
