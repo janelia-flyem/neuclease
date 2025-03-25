@@ -1091,7 +1091,7 @@ def camelcase_to_snakecase(name):
     Numbers are grouped with their preceding letters.
 
         >>> camelcase_to_snakecase('oneTwo3FourFIVE_SIX_seven_8_nine10Eleven')
-        'one_two3_four_five_six_seven_8_nine10'
+        'one_two3_four_five_six_seven_8_nine10_eleven'
     """
     word_pattern = (
         r'[A-Z]*'            # 0 or more consecutive capital
