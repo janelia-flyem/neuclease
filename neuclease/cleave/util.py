@@ -59,21 +59,15 @@ SHADER = dedent("""\
     }
 
     void main() {
-    vec3 color = defaultColor();
-    if (int(prop_source()) == 0) {
-        color = vec3(1.0, 0.0, 0.0);
-    }
-    else {
+        vec3 color = defaultColor();
         float normalized_score = 1.0 - (prop_score() - SCORE_MIN) / (SCORE_MAX - SCORE_MIN);
         color = viridis_quintic(normalized_score);
+        setLineColor(color);
+        setEndpointMarkerSize(8.0, 8.0);
+        setEndpointMarkerColor(color, color);
+        setEndpointMarkerBorderWidth(1.0, 1.0);
+        setEndpointMarkerBorderColor(defaultColor(), defaultColor());
     }
-    setLineColor(color);
-    setEndpointMarkerSize(8.0, 8.0);
-    setEndpointMarkerColor(color, color);
-    setEndpointMarkerBorderWidth(1.0, 1.0);
-    setEndpointMarkerBorderColor(defaultColor(), defaultColor());
-    }
-
 """)
 
 
