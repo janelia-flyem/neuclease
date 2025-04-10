@@ -5,6 +5,7 @@ from functools import partial
 
 import numpy as np
 import pandas as pd
+from requests import HTTPError
 
 from neuclease.util import upload_to_bucket, dump_json, compute_parallel
 from neuclease.util.graph import euclidean_mst
@@ -45,7 +46,10 @@ def maxgap_for_body(server, uuid, instance, body):
         and a body with diagonal connectivity will have a
         'max gap' of √3.
     """
-    svc = fetch_sparsevol_coarse(server, uuid, instance, body)
+    try:
+        svc = fetch_sparsevol_coarse(server, uuid, instance, body)
+    except HTTPError:
+        return np.nan
     return euclidean_mst(svc, format='max-or-initial')
 
 
