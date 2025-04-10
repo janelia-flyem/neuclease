@@ -357,7 +357,16 @@ def delete_body_mesh(server, uuid, seg_instance, body):
 def create_and_upload_missing_supervoxel_meshes(server, uuid, seg_instance, body, resource_mgr=None):
     seg = seg_instance
     with resource_mgr.access_context(server, True, 1, 0):
-        missing = fetch_missing(server, uuid, f"{seg}_sv_meshes", body)
+        try:
+            missing = fetch_missing(server, uuid, f"{seg}_sv_meshes", body)
+        except HTTPError as ex:
+            # Apparently it's possible for a supervoxel to be split into two children with 0 and N voxels, respectively.
+            # The 0 voxel child will map to a body that -- if merged -- will not exist any more, but will still be in
+            # the mapping for the 0-voxel child.
+            # Long story short: Don't try to generate supervoxel meshes for bodies which don't have any supervoxels.
+            if 'has no supervoxels' in ex.response.content.decode('utf-8'):
+                return
+            raise
     if len(missing) == 0:
         return
 
