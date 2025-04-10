@@ -89,6 +89,8 @@ def view_edges_for_body(edges, body, initial_ngstate, seg_layer_name='.*', link_
     else:
         state = download_ngstate(initial_ngstate)
 
+    center_of_mass = edges[['xa', 'ya', 'za']].mean().values.tolist()
+
     # Select the first segmentation layer that matches the given pattern
     seg_layer = [
         layer
@@ -97,6 +99,7 @@ def view_edges_for_body(edges, body, initial_ngstate, seg_layer_name='.*', link_
     ][0]
 
     state['title'] = f'Body {body}'
+    state['position'] = center_of_mass
     seg_layer['segments'] = [str(body)]
     seg_layer['segmentQuery'] = str(body)
     line_layer = annotation_layer_json(
