@@ -74,7 +74,8 @@ from .repo import fetch_repo_instances, fetch_repo_info
 from .node import fetch_instance_info
 from .roi import fetch_roi_roi
 from .annotation import fetch_annotation_label, post_annotation_sync, post_annotation_reload, fetch_annotation_roi
-from .labelmap import fetch_labelmap_label
+from .mutations import fetch_generic_mutations
+from .labelmap import fetch_labelmap_label, fetch_labelmap_mutations
 
 
 @dvid_api_wrapper
@@ -147,3 +148,14 @@ def fetch_label(server, uuid, instance, *args, session=None, **kwargs):
         return fetch_labelmap_label(server, uuid, instance, *args, **kwargs, session=session)
     elif instance_type == 'annotation':
         return fetch_annotation_label(server, uuid, instance, *args, **kwargs, session=session)
+
+
+def fetch_mutations(server, uuid, instance, *args, session=None, **kwargs):
+    """
+    Convenience wrapper for both ``labelmap.fetch_labelmap_mutations()`` and ``mutations.fetch_generic_mutations()``
+    """
+    instance_type = fetch_repo_instances(server, uuid, session=session)[instance]
+    if instance_type == 'labelmap':
+        return fetch_labelmap_mutations(server, uuid, instance, *args, **kwargs, session=session)
+    else:
+        return fetch_generic_mutations(server, uuid, instance, *args, **kwargs, session=session)

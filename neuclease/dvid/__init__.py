@@ -6,6 +6,7 @@ from .repo import *
 from .node import *
 from .kafka import *
 
+from .mutations import *
 from .keyvalue import *
 from .neuronjson import *
 from .annotation import *
