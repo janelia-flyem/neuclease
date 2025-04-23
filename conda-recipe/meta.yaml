@@ -36,7 +36,7 @@ outputs:
         - pykafka
         - networkx >=2.1
         - asciitree
-        - protobuf 4
+        - protobuf 5
         - confiddler
         - python-cityhash
 
