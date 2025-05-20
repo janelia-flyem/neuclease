@@ -5,6 +5,7 @@ from functools import partial
 
 import numpy as np
 import pandas as pd
+from requests import HTTPError
 
 from neuclease.util import upload_to_bucket, dump_json, compute_parallel
 from neuclease.util.graph import euclidean_mst
@@ -45,7 +46,10 @@ def maxgap_for_body(server, uuid, instance, body):
         and a body with diagonal connectivity will have a
         'max gap' of √3.
     """
-    svc = fetch_sparsevol_coarse(server, uuid, instance, body)
+    try:
+        svc = fetch_sparsevol_coarse(server, uuid, instance, body)
+    except HTTPError:
+        return np.nan
     return euclidean_mst(svc, format='max-or-initial')
 
 
@@ -85,6 +89,12 @@ def view_edges_for_body(edges, body, initial_ngstate, seg_layer_name='.*', link_
     else:
         state = download_ngstate(initial_ngstate)
 
+    max_gap = edges['distance'].max()
+    max_gap_edge = edges['distance'].idxmax()
+
+    #center_of_mass = edges[['xa', 'ya', 'za']].mean().values.tolist()
+    max_gap_midpoint = (edges.loc[max_gap_edge, ['xa', 'ya', 'za']].values + edges.loc[max_gap_edge, ['xb', 'yb', 'zb']].values) / 2
+
     # Select the first segmentation layer that matches the given pattern
     seg_layer = [
         layer
@@ -93,11 +103,12 @@ def view_edges_for_body(edges, body, initial_ngstate, seg_layer_name='.*', link_
     ][0]
 
     state['title'] = f'Body {body}'
+    state['position'] = max_gap_midpoint.tolist()
     seg_layer['segments'] = [str(body)]
     seg_layer['segmentQuery'] = str(body)
     line_layer = annotation_layer_json(
         edges.assign(type='line', segments=body),
-        f'{body}-edges',
+        f'{body}-edges-max-{max_gap:.1f}',
         linkedSegmentationLayer=seg_layer['name'],
         properties=['distance'],
         shader=SHADER

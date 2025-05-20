@@ -31,8 +31,10 @@ from ..server import fetch_server_info
 from ..repo import create_voxel_instance, fetch_repo_dag, is_locked, resolve_ref, find_repo_root, resolve_ref_range, find_parent
 from ..kafka import read_kafka_messages, kafka_msgs_to_df
 from ..rle import parse_rle_response, runlength_decode_from_ranges_to_mask, rle_ranges_box, construct_rle_payload_from_ranges, split_ranges_for_grid
+from ..mutations import fetch_generic_mutations
 
 from ._split import fetch_supervoxel_splits_from_dvid
+
 
 # $ protoc --python_out=. neuclease/dvid/labelmap/labelops.proto
 from .labelops_pb2 import MappingOps, MappingOp
@@ -3223,7 +3225,7 @@ def resolve_snapshot_tag(server, uuid, instance, *, session=None):
 
 
 @dvid_api_wrapper
-def fetch_mutations(server, uuid, instance, userid=None, *, action_filter=None, dag_filter='leaf-and-parents', format='pandas', session=None):
+def fetch_labelmap_mutations(server, uuid, instance, userid=None, *, action_filter=None, dag_filter='leaf-and-parents', format='pandas', session=None):
     """
     Fetch the log of successfully completed mutations.
     The log is returned in the same format as the kafka log.
@@ -3288,38 +3290,7 @@ def fetch_mutations(server, uuid, instance, userid=None, *, action_filter=None, 
         Either a DataFrame or list of parsed json values, depending
         on what you passed as 'format'.
     """
-    assert dag_filter in ('leaf-only', 'leaf-and-parents', None)
-
-    # json-values is a synonym, for compatibility with read_kafka_messages
-    assert format in ('pandas', 'json', 'json-values')
-
-    if ',' in uuid:
-        uuids = resolve_ref_range(server, uuid, session=session)
-    elif dag_filter is None:
-        dag = fetch_repo_dag(server, uuid, session=session)
-        uuids = list(nx.topological_sort(dag))
-    elif dag_filter == 'leaf-only':
-        uuids = [resolve_ref(server, uuid, session=session)]
-    elif dag_filter == 'leaf-and-parents':
-        uuids = resolve_ref_range(server, f"[root, {uuid}]", session=session)
-
-    if userid:
-        params = {'userid': userid}
-    else:
-        params = {}
-
-    msgs = []
-    for uuid in uuids:
-        r = session.get(f'{server}/api/node/{uuid}/{instance}/mutations', params=params)
-        r.raise_for_status()
-        msgs.extend(r.json())
-
-    if isinstance(action_filter, str):
-        action_filter = [action_filter]
-
-    if action_filter is not None:
-        action_filter = {*action_filter}
-        msgs = [*filter(lambda m: m['Action'] in action_filter, msgs)]
+    msgs = fetch_generic_mutations(server, uuid, instance, userid=userid, action_filter=action_filter, dag_filter=dag_filter, format='json', session=session)
 
     if format == 'pandas':
         # We don't need special handling of '*-complete' messages
@@ -3338,6 +3309,10 @@ def fetch_mutations(server, uuid, instance, userid=None, *, action_filter=None, 
         return msg_df
     else:
         return msgs
+
+
+# Alternative name.
+fetch_mutations = fetch_labelmap_mutations
 
 
 @dvid_api_wrapper

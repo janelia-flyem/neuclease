@@ -521,7 +521,7 @@ def _rank_syn_counts(point_df, conn_df, syn_counts_df=None, body_annotations_df=
 
 
 def _plot_connectivity_forecast(conn_df, max_rank=None, plotted_points=20_000, hover_cols=[], color_by_col=None,
-                               title='connectivity after prioritized merging', export_path=None):
+                                title='connectivity after prioritized merging', export_path=None):
     """
     Plot the curves of captured tbars, captured PSDs and captured dual-sided
     connections as bodies are traced/merged from large to small.
@@ -584,10 +584,10 @@ def _plot_connectivity_forecast(conn_df, max_rank=None, plotted_points=20_000, h
 
     renames = {
         'max_rank': 'body priority ranking',
-        'traced_presyn_frac': 'tbars captured',
+        'traced_presyn_frac': 'presyn captured',
         # 'minimally_connected_tbar_frac': 'traced tbars with a traced output',
         'traced_synweight_frac': 'synweight captured',
-        'traced_postsyn_frac': 'psds captured',
+        'traced_postsyn_frac': 'postsyn captured',
         'traced_conn_frac': 'pairwise connections'
     }
     renames = {k: v for k,v in renames.items() if k in _df.columns}
@@ -709,7 +709,7 @@ def _plot_categorized_connectivity_forecast(
     p = figure(align='center', height=500, width=800, title=title, y_range=(0, 1.0))
     p.title.text_font_size = '14pt'
     p.xaxis.axis_label = 'body rank'
-    p.yaxis.axis_label = 'fraction of captured tbars, synweight, psds, and connectivity'
+    p.yaxis.axis_label = 'fraction of captured presyn, synweight, postsyn, and connectivity'
     p.yaxis.ticker = np.arange(0.0, 1.1, 0.1)
 
     if secondary_line:
@@ -744,7 +744,7 @@ def _plot_categorized_connectivity_forecast(
     hover.tooltips = [
         ("body rank", "@max_rank"),
         (category_col, f"@{category_col}"),
-        ("tbars captured", "@traced_presyn_frac"),
+        ("presyn captured", "@traced_presyn_frac"),
     ]
     if 'traced_synweight_frac' in _df.columns:
         hover.tooltips.append(
@@ -752,7 +752,7 @@ def _plot_categorized_connectivity_forecast(
         )
 
     hover.tooltips += [
-        ("psds captured", "@traced_postsyn_frac"),
+        ("postsyn captured", "@traced_postsyn_frac"),
         ("connections captured", "@traced_conn_frac"),
     ]
     hover.tooltips += [("body", "@body_max_rank")]

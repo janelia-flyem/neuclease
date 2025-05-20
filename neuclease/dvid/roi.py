@@ -6,7 +6,7 @@ import ujson
 import numpy as np
 import pandas as pd
 
-from ..util import Timer, tqdm_proxy, extract_labels_from_volume, box_shape, extract_subvol, box_intersection, compute_parallel
+from ..util import Timer, tqdm_proxy, extract_labels_from_volume, box_shape, extract_subvol, box_intersection, compute_parallel, region_boxes
 from . import dvid_api_wrapper, fetch_generic_json
 from .rle import runlength_decode_from_ranges, runlength_decode_from_ranges_to_mask, runlength_encode_mask_to_ranges
 
@@ -160,6 +160,65 @@ def post_roi_from_mask(server, uuid, instance, mask, mask_box=None, *, session):
     """
     ranges = runlength_encode_mask_to_ranges(mask, mask_box)
     post_roi(server, uuid, instance, ranges, session=session)
+
+
+@dvid_api_wrapper
+def post_rois_from_segmentation(server, uuid, roi_names, vol, vol_box=None, *, session):
+    """
+    Post ROIs to DVID based on a segmentation volume.
+
+    Args:
+        server:
+            dvid server, e.g. 'emdata3:8900'
+
+        uuid:
+            dvid uuid, e.g. 'abc9'
+
+        roi_names:
+            Mapping of {segment_id: name} (or the reverse mapping).
+            Any ROIs not included in this mapping will be skipped,
+            even if they had nonzero size in vol.
+
+        vol:
+            segmentation_volume in which each ROI has a unique label, at scale-5 resolution
+            (relative to the associated raw data and/or labelmap segmentation).
+            ROI IDs need not be consecutive, but arbitrarily large IDs will result in high memory usage.
+            Any labels from vol which are not included in roi_names will be skipped.
+
+        vol_box:
+            The bounding box of the volume, in scale-5 coordinates.
+
+    Returns:
+        Mapping of {segment_id: name}
+        indicating which ROIs were found in both roi_vol and roi_names and were therefore written to DVID.
+    """
+    if isinstance(roi_names, Mapping):
+        # We need a mapping of roi_ids -> names.
+        # If the user provided the reverse mapping,
+        # then flip it.
+        (k,v) = next(iter(roi_names.items()))
+        if isinstance(k, str):
+            # Reverse the mapping
+            roi_names = { v:k for k,v in roi_names.items() }
+    else:
+        roi_names = dict(enumerate(roi_names, start=1))
+
+    if vol_box is None:
+        vol_box = np.array([[0,0,0], vol.shape], np.int32)
+
+    boxes = region_boxes(vol)
+
+    written_rois = {}
+    for roi_id, roi_name in tqdm_proxy(roi_names.items()):
+        box = boxes[roi_id]
+        if (box[0] >= box[1]).any():
+            continue
+
+        roi_mask = (extract_subvol(vol, box) == roi_id)
+        post_roi_from_mask(server, uuid, roi_name, roi_mask, box + vol_box[0], session=session)
+        written_rois[roi_id] = roi_name
+
+    return written_rois
 
 
 @dvid_api_wrapper

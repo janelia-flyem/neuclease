@@ -45,7 +45,10 @@ def extract_annotations(link, *, link_index=None, user=None, visible_only=False)
         if visible_only and (layer.get('archived', False) or not layer.get('visible', True)):
             continue
 
-        _df = pd.DataFrame(layer['annotations'])
+        try:
+            _df = pd.DataFrame(layer['annotations'])
+        except KeyError as e:
+            continue
         _df['layer'] = layer['name']
         dfs.append(_df)
 
@@ -299,9 +302,13 @@ def _standardize_annotation_dataframe(df):
         if col not in df.columns:
             df[col] = np.nan
 
-    if 'id' not in df.columns:
-        ids = [str(hex(abs(hash(tuple(x))))) for x in df[id_cols].values.tolist()]
-        df['id'] = ids
+    if 'id' in df.columns:
+        df['id'] = df['id'].astype(str)
+    else:
+        df['id'] = [
+            str(hex(abs(hash(tuple(x)))))
+            for x in df[id_cols].values.tolist()
+        ]
 
     is_point_or_ellipsoid = df[[*'xyz']].notnull().all(axis=1)
     is_line_or_box = df[['xa', 'ya', 'za', 'xb', 'yb', 'zb']].notnull().all(axis=1)
@@ -317,7 +324,7 @@ def _standardize_annotation_dataframe(df):
 
     # We have no way of choosing between 'line' and 'axis_aligned_bounding_box'
     # unless the user provides the 'type' explicitly.
-    # We default to 'axis_aligned_bounding_box'.
+    # We default to 'axis_aligned_bounding_box' because it's harder to type than 'line' :-)
     df['type'] = df['type'].fillna(
         df['x'].isnull().map({
             True: 'axis_aligned_bounding_box',

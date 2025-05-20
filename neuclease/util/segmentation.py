@@ -1,4 +1,5 @@
 import logging
+from itertools import starmap
 from collections import OrderedDict
 
 import scipy
@@ -1072,6 +1073,126 @@ def normalize_image_range(img, dtype):
 
     img = img.astype(dtype)
     return img
+
+
+def closest_to_point(point, mask, mask_offset=None, voxel_size=None):
+    """
+    Find the point in the mask that is closest to the given point.
+
+    Args:
+        point:
+            The point to find the closest point to.
+        mask:
+            ND mask image/volume (Will be converted to bool if necessary.)
+        mask_offset:
+            The spatial location, in physical units, of the mask's upper corner,
+            if the mask doesn't occupy the region starting with (0,0,...).
+        voxel_size:
+            The dimensions of each mask voxel in physical units.
+            Useful for anisotropic masks.
+
+    Returns:
+        The coordinates of the closest point in the mask, in physical units
+
+    See also:
+        distance_transform(), which can measure distances from all points
+        in a volume to the nearest mask voxel.
+
+    Example:
+
+        .. code-block:: python
+
+            _ = 0
+            mask = [
+            [_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _],
+            [_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _],
+            [_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _],
+            [_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _],
+            [_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _],
+            [_, _, _, _, _, _, _, _, 1, _, _, _, _, _, _, _, _],
+            [_, _, _, _, _, _, 1, 1, 1, 1, 1, _, _, _, _, _, _],
+            [_, _, _, _, _, _, 1, 1, 1, 1, 1, _, _, _, _, _, _],
+            [_, _, _, _, _, 1, 1, 1, 1, 1, 1, 1, _, _, _, _, _],
+            [_, _, _, _, _, _, 1, 1, 1, 1, 1, _, _, _, _, _, _],
+            [_, _, _, _, _, _, 1, 1, 1, 1, 1, _, _, _, _, _, _],
+            [_, _, _, _, _, _, _, _, 1, _, _, _, _, _, _, _, _],
+            [_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _],
+            [_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _],
+            [_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _],
+            [_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _],
+            [_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _]
+            ]
+
+            p = (30, 15)
+            vs = (3,1)
+            p2 = closest_to_point(p, mask, (0,0), vs)
+
+            viz = np.array(mask.copy())
+            viz[tuple(np.array(p) // vs)] = -1
+            viz[tuple(np.array(p2) // vs)] = -2
+            print(str(viz).replace('0', '_'))
+
+    Result:
+
+        .. code-block::
+
+            [
+            [ _  _  _  _  _  _  _  _  _  _  _  _  _  _  _  _  _]
+            [ _  _  _  _  _  _  _  _  _  _  _  _  _  _  _  _  _]
+            [ _  _  _  _  _  _  _  _  _  _  _  _  _  _  _  _  _]
+            [ _  _  _  _  _  _  _  _  _  _  _  _  _  _  _  _  _]
+            [ _  _  _  _  _  _  _  _  _  _  _  _  _  _  _  _  _]
+            [ _  _  _  _  _  _  _  _  1  _  _  _  _  _  _  _  _]
+            [ _  _  _  _  _  _  1  1  1  1  1  _  _  _  _  _  _]
+            [ _  _  _  _  _  _  1  1  1  1  1  _  _  _  _  _  _]
+            [ _  _  _  _  _  1  1  1  1  1  1  1  _  _  _  _  _]
+            [ _  _  _  _  _  _  1  1  1  1  1  _  _  _  _  _  _]
+            [ _  _  _  _  _  _  1  1  1  1 -2  _  _  _  _ -1  _]
+            [ _  _  _  _  _  _  _  _  1  _  _  _  _  _  _  _  _]
+            [ _  _  _  _  _  _  _  _  _  _  _  _  _  _  _  _  _]
+            [ _  _  _  _  _  _  _  _  _  _  _  _  _  _  _  _  _]
+            [ _  _  _  _  _  _  _  _  _  _  _  _  _  _  _  _  _]
+            [ _  _  _  _  _  _  _  _  _  _  _  _  _  _  _  _  _]
+            [ _  _  _  _  _  _  _  _  _  _  _  _  _  _  _  _  _]
+            ]
+    """
+    mask = np.asarray(mask, dtype=bool)
+    D = mask.ndim
+
+    if voxel_size is None:
+        voxel_size = (1,) * D
+
+    if mask_offset is None:
+        mask_offset = (0,) * D
+
+    mask_offset = np.asarray(mask_offset) // voxel_size
+    mask_box = np.array([mask_offset, mask_offset + mask.shape])
+
+    assert len(point) == D
+    assert mask_offset.shape == (D,)
+    assert mask_box.shape == (2, D)
+    assert len(voxel_size) == D
+
+    # Use ogrid to avoid allocating a big array of coordinates.
+    sl = starmap(slice, mask_box.T)
+    mask_coords = np.ogrid[tuple(sl)]
+    mask_coords = tuple(c * vs for c, vs in zip(mask_coords, voxel_size))
+
+    # Pairwise squared distances
+    # (We don't need actual distances to find the minimum.)
+    distances_sq = np.zeros(mask.shape, dtype=np.float32)
+    for c, p in zip(mask_coords, point):
+        distances_sq += (c - p)**2
+
+    INF = distances_sq.max() + 1
+    distances_sq[~mask] = INF
+
+    closest_point = np.unravel_index(np.argmin(distances_sq), mask.shape)
+    closest_point = (closest_point + mask_box[0]) * voxel_size
+    if distances_sq[tuple(closest_point)] == INF:
+        raise ValueError("mask is empty")
+
+    return tuple(closest_point)
 
 
 def distance_transform(mask, background=False, smoothing=0.0, negate=False, pad=True):

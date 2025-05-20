@@ -240,6 +240,38 @@ def fetch_label(server, uuid, instance, label, relationships=False, *, format='l
 fetch_annotation_label = fetch_label
 
 
+def fetch_elements_for_bodies(server, uuid, instance, bodies, format='pandas', *, session=None, processes=0):
+    """
+    Fetch all elements for the given bodies.
+
+    Args:
+        server:
+            dvid server, e.g. 'emdata3:8900'
+
+        uuid:
+            dvid uuid, e.g. 'abc9'
+
+        instance:
+            dvid annotations instance name, e.g. 'synapses'
+
+        bodies:
+            List of body IDs
+
+        format:
+            Either 'list' or 'pandas'.
+
+        processes:
+            Number of processes to use for parallel fetching.
+    """
+    fn = partial(fetch_label, server, uuid, instance, session=session)
+    element_lists = compute_parallel(fn, bodies, processes=processes)
+    elements = [*chain(*element_lists)]
+    if format == 'pandas':
+        return load_elements_as_dataframe(elements, relationships=False)
+    else:
+        return elements
+
+
 @dvid_api_wrapper
 def fetch_relcounts_for_label(server, uuid, instance, label, *, session=None):
     """
@@ -479,6 +511,14 @@ def load_elements_as_dataframe(elements, relationships=False):
         For synapse annotations in particular,
         see ``load_synapses_as_dataframes()``
     """
+    if len(elements) == 0:
+        df = pd.DataFrame([], columns=[*'xyz', 'kind', 'tags', 'conf', 'user'])
+        if relationships:
+            rels = pd.DataFrame([], columns=[*'xyz', 'rel', 'to_x', 'to_y', 'to_z']).set_index([*'xyz'])
+            return df, rels
+        else:
+            return df
+
     df = pd.DataFrame(elements)
     df[[*'xyz']] = df['Pos'].tolist()
 
