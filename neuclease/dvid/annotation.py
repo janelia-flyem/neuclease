@@ -511,6 +511,14 @@ def load_elements_as_dataframe(elements, relationships=False):
         For synapse annotations in particular,
         see ``load_synapses_as_dataframes()``
     """
+    if len(elements) == 0:
+        df = pd.DataFrame([], columns=[*'xyz', 'kind', 'tags', 'conf', 'user'])
+        if relationships:
+            rels = pd.DataFrame([], columns=[*'xyz', 'rel', 'to_x', 'to_y', 'to_z']).set_index([*'xyz'])
+            return df, rels
+        else:
+            return df
+
     df = pd.DataFrame(elements)
     df[[*'xyz']] = df['Pos'].tolist()
 
