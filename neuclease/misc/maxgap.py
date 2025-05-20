@@ -89,7 +89,11 @@ def view_edges_for_body(edges, body, initial_ngstate, seg_layer_name='.*', link_
     else:
         state = download_ngstate(initial_ngstate)
 
-    center_of_mass = edges[['xa', 'ya', 'za']].mean().values.tolist()
+    max_gap = edges['distance'].max()
+    max_gap_edge = edges['distance'].idxmax()
+
+    #center_of_mass = edges[['xa', 'ya', 'za']].mean().values.tolist()
+    max_gap_midpoint = (edges.loc[max_gap_edge, ['xa', 'ya', 'za']].values + edges.loc[max_gap_edge, ['xb', 'yb', 'zb']].values) / 2
 
     # Select the first segmentation layer that matches the given pattern
     seg_layer = [
@@ -99,12 +103,12 @@ def view_edges_for_body(edges, body, initial_ngstate, seg_layer_name='.*', link_
     ][0]
 
     state['title'] = f'Body {body}'
-    state['position'] = center_of_mass
+    state['position'] = max_gap_midpoint.tolist()
     seg_layer['segments'] = [str(body)]
     seg_layer['segmentQuery'] = str(body)
     line_layer = annotation_layer_json(
         edges.assign(type='line', segments=body),
-        f'{body}-edges',
+        f'{body}-edges-max-{max_gap:.1f}',
         linkedSegmentationLayer=seg_layer['name'],
         properties=['distance'],
         shader=SHADER
