@@ -240,6 +240,38 @@ def fetch_label(server, uuid, instance, label, relationships=False, *, format='l
 fetch_annotation_label = fetch_label
 
 
+def fetch_elements_for_bodies(server, uuid, instance, bodies, format='pandas', *, session=None, processes=0):
+    """
+    Fetch all elements for the given bodies.
+
+    Args:
+        server:
+            dvid server, e.g. 'emdata3:8900'
+
+        uuid:
+            dvid uuid, e.g. 'abc9'
+
+        instance:
+            dvid annotations instance name, e.g. 'synapses'
+
+        bodies:
+            List of body IDs
+
+        format:
+            Either 'list' or 'pandas'.
+
+        processes:
+            Number of processes to use for parallel fetching.
+    """
+    fn = partial(fetch_label, server, uuid, instance, session=session)
+    element_lists = compute_parallel(fn, bodies, processes=processes)
+    elements = [*chain(*element_lists)]
+    if format == 'pandas':
+        return load_elements_as_dataframe(elements, relationships=False)
+    else:
+        return elements
+
+
 @dvid_api_wrapper
 def fetch_relcounts_for_label(server, uuid, instance, label, *, session=None):
     """
