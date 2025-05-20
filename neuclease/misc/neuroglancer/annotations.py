@@ -45,7 +45,10 @@ def extract_annotations(link, *, link_index=None, user=None, visible_only=False)
         if visible_only and (layer.get('archived', False) or not layer.get('visible', True)):
             continue
 
-        _df = pd.DataFrame(layer['annotations'])
+        try:
+            _df = pd.DataFrame(layer['annotations'])
+        except KeyError as e:
+            continue
         _df['layer'] = layer['name']
         dfs.append(_df)
 
