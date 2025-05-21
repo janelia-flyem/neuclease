@@ -411,13 +411,25 @@ def extract_and_coerce_mergeable_groups(body_df):
     # https://flyem-cns.slack.com/archives/C02QFC68HPX/p1711620475295349?thread_ts=1710953883.337249&cid=C02QFC68HPX
     mergeable_df.loc[mergeable_df['class'] == 'vnc_tbc', 'class'] = np.nan
 
-    # Sort by: [has_type, has_instance, has_class, status, assessment]
+    # Sort by: [has_type, has_instance, ..., status, assessment]
     sortby = [
         ('mergeset', True),
     ]
-    for c in ['type', 'instance', 'group', 'manc_group', 'class']:
+    for c in [
+        'type', 'flywire_type', 'hemibrain_type',
+        'instance', 'group', 'manc_group', 'serial', 'mcns_serial',
+        'hemilineage', 'itolee_hl', 'truman_hl', 'cell_body_fiber',
+        'matching_notes', 'dimorphism',
+        'class', 'superclass',
+        'soma_neuromere', 'soma_side', 'fru_dsx'
+    ]:
         if c in mergeable_df.columns:
             mergeable_df[f'has_{c}'] = mergeable_df[c].notnull()
+
+            # Special case: cervical_tbd and vnc_tbc are treated as empty class.
+            if c in ('class', 'superclass'):
+                mergeable_df.loc[mergeable_df[c].isin(['cervical_tbd', 'vnc_tbc']), f'has_{c}'] = False
+
             sortby.append((f'has_{c}', False))
 
     sortby += [
