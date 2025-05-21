@@ -70,7 +70,7 @@ We offer three alternatives to allow clients to resolve the ambiguity:
 """
 from . import dvid_api_wrapper
 from .server import fetch_server_info
-from .repo import fetch_repo_instances, fetch_repo_info
+from .repo import fetch_repo_instances, fetch_repo_info, resolve_ref_range
 from .node import fetch_instance_info
 from .roi import fetch_roi_roi
 from .annotation import fetch_annotation_label, post_annotation_sync, post_annotation_reload, fetch_annotation_roi
@@ -154,7 +154,13 @@ def fetch_mutations(server, uuid, instance, *args, session=None, **kwargs):
     """
     Convenience wrapper for both ``labelmap.fetch_labelmap_mutations()`` and ``mutations.fetch_generic_mutations()``
     """
-    instance_type = fetch_repo_instances(server, uuid, session=session)[instance]
+    if ',' in uuid:
+        repo_uuid = resolve_ref_range(server, uuid, session=session)[0]
+    else:
+        repo_uuid = uuid
+
+    instance_type = fetch_repo_instances(server, repo_uuid, session=session)[instance]
+
     if instance_type == 'labelmap':
         return fetch_labelmap_mutations(server, uuid, instance, *args, **kwargs, session=session)
     else:
