@@ -2385,15 +2385,27 @@ def load_gary_partners(pkl_path):
     # But explode() rescues us.
     tbar_coord = pd.DataFrame(data['locs'], columns=['x_pre', 'y_pre', 'z_pre'])
     tbar_conf = pd.Series(data['conf'], name='conf_pre')
-    psds = pd.Series(data['psds']).explode().rename('p').to_frame()
+
+    psds = pd.Series(data['psds']).explode().rename('p')
+    
+    # Filter out NaN values (from empty lists in original data) and keep track of valid indices
+    valid_mask = psds.notna()
+    psds = psds[valid_mask]
+    valid_index = psds.index
+    
+    psds = psds.to_frame()
     psds[['x_post', 'y_post', 'z_post']] = np.stack(psds['p'])
     del psds['p']
-    psds_conf = pd.Series(data['psds_conf'], name='conf_post').explode()
+    
+    # Apply the same filtering to psds_conf and expand tbar data using the valid index
+    psds_conf = pd.Series(data['psds_conf'], name='conf_post').explode()[valid_mask]
+    tbar_coord_expanded = tbar_coord.loc[valid_index]
+    tbar_conf_expanded = tbar_conf.loc[valid_index]
 
     # Thanks to explode() above, this concat will duplicate tbars
     # to align their indexes with the duplicated psd indexes.
     # Then we can discard that index after the concat.
-    df = pd.concat((tbar_coord, tbar_conf, psds, psds_conf), axis=1).reset_index(drop=True)
+    df = pd.concat((tbar_coord_expanded, tbar_conf_expanded, psds, psds_conf), axis=1).reset_index(drop=True)
 
     for col in ['z_pre', 'y_pre', 'x_pre', 'z_post', 'y_post', 'x_post']:
         df[col] = df[col].astype(np.int32)
