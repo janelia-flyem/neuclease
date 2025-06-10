@@ -7,71 +7,57 @@ package:
 source:
   path: ../
 
-outputs:
-  - name: neuclease-dependencies
+build:
+  number: 0
+  string: {{PKG_BUILDNUM}}_g{{GIT_FULL_HASH[:7]}}
+  noarch: python
 
-    about:
-      home: https://github.com/janelia-flyem/neuclease
-      license: BSD (3-clause)
-      summary: This is a "meta-package" to allow installing the dependencies of neuclease without installing neuclease itself.
+requirements:
+  host:
+    - python {{ python }}
+    - setuptools
 
-    requirements:
-      run:
-        - python {{ python }}
-        - requests
-        - flask >=1.0
-        - numpy >=1.17
-        - scipy
-        - scikit-image >=0.25
-        - h5py
-        - pandas
-        - numba >=0.45
-        - pytz
-        - vigra
-        - pillow
-        - libdvid-cpp >=0.5
-        - dvidutils >=0.0.post114
-        - tqdm
-        - ujson
-        - pykafka
-        - networkx >=2.1
-        - asciitree
-        - protobuf >=5.28.3,<5.29
-        - confiddler
-        - python-cityhash
+  run:
+    - python {{ python }}
+    - requests
+    - flask >=1.0
+    - numpy >=1.17
+    - scipy
+    - scikit-image >=0.25
+    - h5py
+    - pandas
+    - numba >=0.45
+    - pytz
+    - vigra
+    - pillow
+    - libdvid-cpp >=0.5
+    - dvidutils >=0.0.post114
+    - tqdm
+    - ujson
+    - pykafka
+    - networkx >=2.1
+    - asciitree
+    - protobuf >=5.28.3,<5.29
+    - confiddler
+    - python-cityhash
 
-        # Optional dependencies
-        #- graph-tool  # <-- Faster connected-components for very large graphs
-        #- nifty       # <-- Alternative cleaving algorithm "seeded-watershed"
+    # Optional dependencies
+    #- graph-tool  # <-- Faster connected-components for very large graphs
+    #- nifty       # <-- Alternative cleaving algorithm "seeded-watershed"
 
-  - name: neuclease
-    build:
-      number: 0
-      string: {{PKG_BUILDNUM}}_g{{GIT_FULL_HASH[:7]}}
-      noarch: python
-      script: python setup.py install --single-version-externally-managed --record=record.txt
+test:
+  requires:
+    - pytest
+    - dvid >=dvid-0.9.17
+    - libdvid-cpp >=0.5
 
-    requirements:
-      build:
-        - python {{ python }}
-        - setuptools
+  imports:
+    - neuclease
 
-      run:
-        - {{ pin_subpackage('neuclease-dependencies', exact=True) }}
+  commands:
+    - pytest -s --tb=native --pyargs neuclease.tests
 
-    test:
-      requires:
-        - pytest
-        - dvid >=dvid-0.9.17
-        - libdvid-cpp >=0.5
-
-      imports:
-        - neuclease
-
-      commands:
-        - pytest -s --tb=native --pyargs neuclease.tests
-
-    about:
-      home: https://github.com/janelia-flyem/neuclease
-      license: BSD (3-clause)
-      summary: Tools for computing interactive "cleaves" of agglomerated neuron fragments from a DVID server.
+about:
+  home: https://github.com/janelia-flyem/neuclease
+  license: BSD (3-clause)
+  summary: Tools for computing interactive "cleaves" of agglomerated neuron fragments from a DVID server.
