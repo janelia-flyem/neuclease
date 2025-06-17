@@ -317,7 +317,7 @@ def assess_merges(dvid_server, uuid, instance, merges, mutations=None):
     return body_df, g
 
 
-def extract_and_coerce_mergeable_groups(body_df):
+def extract_and_coerce_mergeable_groups(body_df, use_size=False):
     """
     Given the output from assess_merges(), above,
     extract the rows which can be used as merge sets.
@@ -432,10 +432,11 @@ def extract_and_coerce_mergeable_groups(body_df):
 
             sortby.append((f'has_{c}', False))
 
-    sortby += [
-        ('status', False),
-        ('body', True)
-    ]
+    sortby.append(('status', False))
+    if use_size:
+        sortby.append(('size', False))
+    sortby.append(('body', True))
+
     [*by], [*ascending] = zip(*sortby)
     mergeable_df = mergeable_df.sort_values(by, ascending=ascending)
     mergeable_df = mergeable_df.drop(columns=['has_type', 'has_instance', 'has_class'], errors='ignore')
