@@ -615,9 +615,10 @@ def dataframe_to_elements(df, prop_cols=[]):
         for e in elements:
             e['Prop'] = {}
         for col in prop_cols:
-            for e, p in zip(elements, df[col]):
-                if p is not None and p != '' and not np.isnan(p):
-                    e['Prop'][col] = str(p)  # properties must be strings
+            # Properties must be strings.
+            for e, p in zip(elements, df[col].astype('string')):
+                if not pd.isna(p):
+                    e['Prop'][col] = p
 
     return elements
 
