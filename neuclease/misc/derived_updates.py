@@ -453,7 +453,7 @@ def update_annotations(dvid_server, uuid, seg_instance, ignore_before_uuid=None)
           annotated 'location' (if any) still lives in the body.
     """
     dvid_seg = (dvid_server, uuid, seg_instance)
-    prev_update, affected, last_mutid = mutated_bodies_since_previous_update(*dvid_seg, "skeletons", ignore_before_uuid)
+    prev_update, affected, last_mutid = mutated_bodies_since_previous_update(*dvid_seg, "annotations", ignore_before_uuid)
 
     keys = fetch_keys(dvid_server, uuid, f"{seg_instance}_annotations")
     keys_to_delete = set(keys) & set(map(str, affected.removed_bodies))
