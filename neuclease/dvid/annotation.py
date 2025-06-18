@@ -571,6 +571,10 @@ def dataframe_to_elements(df, prop_cols=[]):
         prop_cols:
             The column names which should be included in
             the elements as part of the 'Prop' subobject.
+
+            If a property is None, empty, or NaN, for any particular element,
+            it will not be stored with that element.
+
     Returns:
         list of dicts (JSON data), suitable for uploading via post_elements()
 
@@ -611,8 +615,10 @@ def dataframe_to_elements(df, prop_cols=[]):
         for e in elements:
             e['Prop'] = {}
         for col in prop_cols:
-            for e, p in zip(elements, df[col]):
-                e['Prop'][col] = str(p)  # properties must be strings
+            # Properties must be strings.
+            for e, p in zip(elements, df[col].astype('string')):
+                if not pd.isna(p):
+                    e['Prop'][col] = p
 
     return elements
 
@@ -768,12 +774,15 @@ def post_elements(server, uuid, instance, elements, kafkalog=True, *, session=No
         kafkalog:
             If True, log kafka events for each posted element.
 
-        Example:
+    Example:
 
-            from itertools import chain
-            blocks = fetch_blocks(server, uuid, instance_1, box)
-            elements = list(chain(*blocks.values()))
-            post_elements(server, uuid, instance_2, elements)
+        from itertools import chain
+        blocks = fetch_blocks(server, uuid, instance_1, box)
+        elements = list(chain(*blocks.values()))
+        post_elements(server, uuid, instance_2, elements)
+    
+    See also:
+        dataframe_to_elements()
 
     """
     params = {}
