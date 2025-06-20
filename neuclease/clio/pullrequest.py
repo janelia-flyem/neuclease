@@ -75,7 +75,7 @@ def fetch_pull_requests(user_email='all', *, base=None, session=None):
     return cleaned, timestamps
 
 
-def assess_merges(dvid_server, uuid, instance, merges, mutations=None):
+def assess_merges(dvid_server, uuid, instance, merges, mutations=None, include_bad_merges_in_mergeset=False):
     """
     Given a set of merges from clio, given as a dict:
 
@@ -138,6 +138,11 @@ def assess_merges(dvid_server, uuid, instance, merges, mutations=None):
     - Also check for double somas
     - Also consult a list of "forbidden merges"
       e.g. for the VNC neck break segment, or for glia, or known frankenbodies, etc.
+
+    Args:
+        include_bad_merges_in_mergeset:
+            Experimental.  Assign a mergeset to every fragment, evne if its one we can't merge.
+            Useful for debugging.
 
     Example Results:
 
@@ -278,8 +283,9 @@ def assess_merges(dvid_server, uuid, instance, merges, mutations=None):
             g.nodes[n]['display_id'] = display_id
             display_id += 1
 
-    # Sever the bad merges
-    g.remove_edges_from(bad_merges)
+    if not include_bad_merges_in_mergeset:
+        # Sever the bad merges
+        g.remove_edges_from(bad_merges)
 
     merge_roots = [n for n, d in g.in_degree() if d == 0]
     for root in merge_roots:
@@ -287,7 +293,10 @@ def assess_merges(dvid_server, uuid, instance, merges, mutations=None):
             continue
 
         if g.nodes[root]['assessment'] == 'merged_elsewhere':
-            fragments = [d for d in nx.descendants(g, root) if g.nodes[d]['assessment'] == 'mergeable']
+            if include_bad_merges_in_mergeset:
+                fragments = list(nx.descendants(g, root))
+            else:
+                fragments = [d for d in nx.descendants(g, root) if g.nodes[d]['assessment'] == 'mergeable']
             if fragments:
                 g.nodes[root]['mergeset'] = root
                 for f in fragments:
@@ -295,7 +304,10 @@ def assess_merges(dvid_server, uuid, instance, merges, mutations=None):
                     g.nodes[f]['assessment'] = 'my_target_merged_elsewhere'
 
         root_owner = g.nodes[root]['owner']
-        fragments = [d for d in nx.descendants(g, root) if g.nodes[d]['assessment'] == 'mergeable']
+        if include_bad_merges_in_mergeset:
+            fragments = list(nx.descendants(g, root))
+        else:
+            fragments = [d for d in nx.descendants(g, root) if g.nodes[d]['assessment'] == 'mergeable']
         if fragments:
             g.nodes[root]['mergeset'] = g.nodes[root]['owner']
             for f in fragments:
