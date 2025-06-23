@@ -326,6 +326,8 @@ def assess_merges(dvid_server, uuid, instance, merges, mutations=None, include_b
     body_df['owner'] = owners
 
     assert set(ASSESSMENT_CATEGORIES) >= set(body_df['assessment']), set(body_df['assessment'])
+
+    body_df['assessment'] = pd.Categorical(body_df['assessment'], ASSESSMENT_CATEGORIES, ordered=True)
     return body_df, g
 
 
