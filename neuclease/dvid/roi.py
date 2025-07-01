@@ -8,6 +8,7 @@ import pandas as pd
 
 from ..util import Timer, tqdm_proxy, extract_labels_from_volume, box_shape, extract_subvol, box_intersection, compute_parallel, region_boxes
 from . import dvid_api_wrapper, fetch_generic_json
+from .repo import create_instance, fetch_repo_instances
 from .rle import runlength_decode_from_ranges, runlength_decode_from_ranges_to_mask, runlength_encode_mask_to_ranges
 
 logger = logging.getLogger(__name__)
@@ -202,6 +203,15 @@ def post_rois_from_segmentation(server, uuid, roi_names, vol, vol_box=None, *, s
             roi_names = { v:k for k,v in roi_names.items() }
     else:
         roi_names = dict(enumerate(roi_names, start=1))
+
+    # Create any missing ROI instances.
+    # Note:
+    #   If they already exist, that's fine, since posting
+    #   to an ROI always overwrites the whole thing.
+    roi_instances = fetch_repo_instances(server, uuid, 'roi')
+    for name in roi_names.values():
+        if name not in roi_instances:
+            create_instance(server, uuid, name, 'roi')
 
     if vol_box is None:
         vol_box = np.array([[0,0,0], vol.shape], np.int32)
