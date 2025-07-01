@@ -277,7 +277,7 @@ def _annotation_list_json(df, linkedSegmentationLayer, properties):
             segments = row.segments
             if not hasattr(segments, '__len__'):
                 segments = [segments]
-            segments = [str(s) for s in segments]
+            segments = [str(int(s)) for s in segments]
             entry['segments'] = segments
 
         if properties:
