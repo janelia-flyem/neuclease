@@ -5,7 +5,7 @@ from collections.abc import Mapping, Collection
 import numpy as np
 import pandas as pd
 
-from .util import parse_nglink
+from ..util import parse_nglink
 
 
 def extract_annotations(link, *, link_index=None, user=None, visible_only=False):
