@@ -55,75 +55,6 @@ def write_annotations(
     )
 
 
-def _write_metadata(df, coord_space, annotation_type, property_specs, by_id_metadata, by_rel_metadata, output_dir):
-    """
-    Write the top-level 'info' file for the annotation output directory.
-    """
-    os.makedirs(output_dir, exist_ok=True)
-
-    geometry_cols = _geometry_cols(coord_space.names, annotation_type)
-
-    lower_bound = [np.inf] * len(coord_space.names)
-    upper_bound = [-np.inf] * len(coord_space.names)
-    for cols in geometry_cols:
-        lower_bound = np.minimum(lower_bound, df[cols].min().to_numpy())
-        upper_bound = np.maximum(upper_bound, df[cols].max().to_numpy())
-
-    info = {
-        "@type": "neuroglancer_annotations_v1",
-        "dimensions": coord_space.to_json(),
-        "lower_bound": lower_bound.tolist(),
-        "upper_bound": upper_bound.tolist(),
-        "annotation_type": annotation_type,
-        "properties": property_specs,
-        "by_id": by_id_metadata,
-        "relationships": by_rel_metadata,
-        "spatial": []  # TODO
-    }
-
-    with open(f"{output_dir}/info", 'w') as f:
-        json.dump(info, f)
-
-
-def _geometry_cols(coord_names, annotation_type):
-    """
-    Determine the list of column groups that express
-    the geometry of annotations of the given type.
-    Point annotations have only one group,
-    but other annotation types have two.
-    
-    Examples:
-    
-        >>> _geometry_cols([*'xyz'], 'point')
-        [['x', 'y', 'z']]
-
-        >>> _geometry_cols([*'xyz'], 'ellipsoid')
-        [['x', 'y', 'z'], ['rx', 'ry', 'rz']]
-
-        >>> _geometry_cols([*'xyz'], 'line')
-        [['xa', 'ya', 'za'], ['xb', 'yb', 'zb']]
-
-        >>> _geometry_cols([*'xyz'], 'axis_aligned_bounding_box')
-        [['xa', 'ya', 'za'], ['xb', 'yb', 'zb']]
-    """
-    if annotation_type == 'point':
-        return [[c for c in coord_names]]
-
-    if annotation_type == 'ellipsoid':
-        return [
-            [c for c in coord_names],
-            [f'r{c}' for c in coord_names]
-        ]
-
-    if annotation_type in ('line', 'axis_aligned_bounding_box'):
-        return [
-            [f'{c}a' for c in coord_names],
-            [f'{c}b' for c in coord_names]
-        ]
-
-    raise ValueError(f"Annotation type {annotation_type} not supported")
-
-
 def _encode_annotations(df, coord_space, annotation_type, property_specs, relationships, output_dir):
     id_bufs = _encode_uint64_series(df.index)
     ann_bufs = _encode_geometries_and_properties(df, coord_space, annotation_type, property_specs)
@@ -168,6 +99,45 @@ def _encode_geometries_and_properties(df, coord_space, annotation_type, property
     encoded_annotations = [buf[i*recsize:(i+1)*recsize] for i in range(len(records))]
     ann_bufs = pd.Series(encoded_annotations, index=df.index)
     return ann_bufs
+
+
+def _geometry_cols(coord_names, annotation_type):
+    """
+    Determine the list of column groups that express
+    the geometry of annotations of the given type.
+    Point annotations have only one group,
+    but other annotation types have two.
+    
+    Examples:
+    
+        >>> _geometry_cols([*'xyz'], 'point')
+        [['x', 'y', 'z']]
+
+        >>> _geometry_cols([*'xyz'], 'ellipsoid')
+        [['x', 'y', 'z'], ['rx', 'ry', 'rz']]
+
+        >>> _geometry_cols([*'xyz'], 'line')
+        [['xa', 'ya', 'za'], ['xb', 'yb', 'zb']]
+
+        >>> _geometry_cols([*'xyz'], 'axis_aligned_bounding_box')
+        [['xa', 'ya', 'za'], ['xb', 'yb', 'zb']]
+    """
+    if annotation_type == 'point':
+        return [[c for c in coord_names]]
+
+    if annotation_type == 'ellipsoid':
+        return [
+            [c for c in coord_names],
+            [f'r{c}' for c in coord_names]
+        ]
+
+    if annotation_type in ('line', 'axis_aligned_bounding_box'):
+        return [
+            [f'{c}a' for c in coord_names],
+            [f'{c}b' for c in coord_names]
+        ]
+
+    raise ValueError(f"Annotation type {annotation_type} not supported")
 
 
 def _encode_relationships(df, relationships):
@@ -345,6 +315,36 @@ def _write_annotations_by_relationship(df, relationship, output_dir, write_shard
             kvstore.with_transaction(txn)[segment_key] = buf
 
     return metadata
+
+
+def _write_metadata(df, coord_space, annotation_type, property_specs, by_id_metadata, by_rel_metadata, output_dir):
+    """
+    Write the top-level 'info' file for the annotation output directory.
+    """
+    os.makedirs(output_dir, exist_ok=True)
+
+    geometry_cols = _geometry_cols(coord_space.names, annotation_type)
+
+    lower_bound = [np.inf] * len(coord_space.names)
+    upper_bound = [-np.inf] * len(coord_space.names)
+    for cols in geometry_cols:
+        lower_bound = np.minimum(lower_bound, df[cols].min().to_numpy())
+        upper_bound = np.maximum(upper_bound, df[cols].max().to_numpy())
+
+    info = {
+        "@type": "neuroglancer_annotations_v1",
+        "dimensions": coord_space.to_json(),
+        "lower_bound": lower_bound.tolist(),
+        "upper_bound": upper_bound.tolist(),
+        "annotation_type": annotation_type,
+        "properties": property_specs,
+        "by_id": by_id_metadata,
+        "relationships": by_rel_metadata,
+        "spatial": []  # TODO
+    }
+
+    with open(f"{output_dir}/info", 'w') as f:
+        json.dump(info, f)
 
 
 def test():
