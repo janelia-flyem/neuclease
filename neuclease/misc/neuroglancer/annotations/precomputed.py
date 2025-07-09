@@ -23,6 +23,7 @@ def write_annotations(
     output_dir: str = 'annotations',
     write_sharded: bool = False
 ):
+    annotation_type = annotation_type.lower()
     property_specs = annotation_property_specs(df, properties)
 
     df = _encode_annotations(
@@ -239,6 +240,7 @@ def _write_annotations_by_id(df, output_dir, write_sharded):
 
     metadata = {"key": "by_id"}
 
+    # FIXME: Factor this into a separate function that can be used for both by_id and by_rel
     if not write_sharded:
         shard_spec = None
         kvstore = ts.KvStore.open(f"file://{output_dir}/by_id/").result()
@@ -304,6 +306,7 @@ def _write_annotations_by_relationship(df, relationship, output_dir, write_shard
         "key": f"by_rel_{relationship}"
     }
 
+    # FIXME: Factor this into a separate function that can be used for both by_id and by_rel
     if not write_sharded:
         shard_spec = None
         bufs_by_segment.index = bufs_by_segment.index.astype(str)
@@ -340,13 +343,7 @@ def _write_metadata(df, coord_space, annotation_type, property_specs, by_id_meta
     """
     os.makedirs(output_dir, exist_ok=True)
 
-    geometry_cols = _geometry_cols(coord_space.names, annotation_type)
-
-    lower_bound = [np.inf] * len(coord_space.names)
-    upper_bound = [-np.inf] * len(coord_space.names)
-    for cols in geometry_cols:
-        lower_bound = np.minimum(lower_bound, df[cols].min().to_numpy())
-        upper_bound = np.maximum(upper_bound, df[cols].max().to_numpy())
+    lower_bound, upper_bound = _get_bounds(df, coord_space, annotation_type)
 
     info = {
         "@type": "neuroglancer_annotations_v1",
@@ -362,6 +359,25 @@ def _write_metadata(df, coord_space, annotation_type, property_specs, by_id_meta
 
     with open(f"{output_dir}/info", 'w') as f:
         json.dump(info, f)
+
+
+def _get_bounds(df, coord_space, annotation_type):
+    geometry_cols = _geometry_cols(coord_space.names, annotation_type)
+
+    if annotation_type == 'ellipsoid':
+        center = df[geometry_cols[0]].to_numpy()
+        radii = df[geometry_cols[1]].to_numpy()
+        lower_bound = (center - radii).min(axis=0)
+        upper_bound = (center + radii).max(axis=0)
+        return lower_bound, upper_bound
+
+    lower_bound = [np.inf] * len(coord_space.names)
+    upper_bound = [-np.inf] * len(coord_space.names)
+    for cols in geometry_cols:
+        lower_bound = np.minimum(lower_bound, df[cols].min().to_numpy())
+        upper_bound = np.maximum(upper_bound, df[cols].max().to_numpy())
+
+    return lower_bound, upper_bound
 
 
 def test():
