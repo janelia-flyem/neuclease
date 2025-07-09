@@ -17,15 +17,12 @@ from .util import annotation_property_specs, choose_output_spec
 def write_annotations(
     df: pd.DataFrame,
     coord_space: CoordinateSpace,
-    annotation_type: str | None = None,
+    annotation_type: str,
     properties: list[str] | list[AnnotationPropertySpec] | dict[str, AnnotationPropertySpec] | list[dict] = (),
     relationships: list[str] = (),
     output_dir: str = 'annotations',
-    use_sharding: bool = False
+    write_sharded: bool = False
 ):
-    if annotation_type is None:
-        annotation_type = _infer_annotation_type(df)
-    
     property_specs = annotation_property_specs(df, properties)
 
     id_bufs, ann_bufs, rel_bufs = _encode_annotations(df, coord_space, annotation_type, property_specs, relationships, output_dir)
@@ -34,12 +31,34 @@ def write_annotations(
     if rel_bufs is not None:
         df['rel_buf'] = rel_bufs
 
-    by_id_metadata = _write_annotations_by_id(df, output_dir, use_sharding)
-    by_rel_metadata = _write_annotations_by_relationship(df, relationships, output_dir, use_sharding)
-    _write_metadata(df, coord_space, annotation_type, property_specs, by_id_metadata, by_rel_metadata, output_dir)
+    by_id_metadata = _write_annotations_by_id(
+        df,
+        output_dir,
+        write_sharded
+    )
+    
+    by_rel_metadata = _write_annotations_by_relationships(
+        df,
+        relationships,
+        output_dir,
+        write_sharded
+    )
+    
+    _write_metadata(
+        df,
+        coord_space,
+        annotation_type,
+        property_specs,
+        by_id_metadata,
+        by_rel_metadata,
+        output_dir
+    )
 
 
 def _write_metadata(df, coord_space, annotation_type, property_specs, by_id_metadata, by_rel_metadata, output_dir):
+    """
+    Write the top-level 'info' file for the annotation output directory.
+    """
     os.makedirs(output_dir, exist_ok=True)
 
     geometry_cols = _geometry_cols(coord_space.names, annotation_type)
@@ -225,7 +244,7 @@ def _encode_relationship(related_ids):
     return np.array(encoded_ids, dtype=object)
 
 
-def _write_annotations_by_id(df, output_dir, use_sharding):
+def _write_annotations_by_id(df, output_dir, write_sharded):
     if 'rel_buf' in df.columns:
         ann_bufs = df['ann_buf'] + df['rel_buf']
     else:
@@ -233,7 +252,7 @@ def _write_annotations_by_id(df, output_dir, use_sharding):
 
     metadata = {"key": "by_id"}
 
-    if not use_sharding:
+    if not write_sharded:
         shard_spec = None
         kvstore = ts.KvStore.open(f"file://{output_dir}/by_id/").result()
 
@@ -266,68 +285,66 @@ def _write_annotations_by_id(df, output_dir, use_sharding):
     return metadata
 
 
-def _write_annotations_by_relationship(df, relationships, output_dir, use_sharding):
+def _write_annotations_by_relationships(df, relationships, output_dir, write_sharded):
     by_rel_metadata = []
     for relationship in relationships:
-        rel_df = df[['id_buf', 'ann_buf', relationship]]
-        bufs_by_segment = (
-            rel_df[['id_buf', 'ann_buf', relationship]]
-            .dropna(subset=relationship)
-            .explode(relationship)
-            .groupby(relationship)
-            .agg({'id_buf': ['count', 'sum'], 'ann_buf': 'sum'})
+        metadata = _write_annotations_by_relationship(
+            df,
+            relationship,
+            output_dir,
+            write_sharded
         )
-        bufs_by_segment.columns = ['count', 'id_buf', 'ann_buf']
-        bufs_by_segment['count_buf'] = _encode_uint64_series(bufs_by_segment['count'])
-        bufs_by_segment['combined_buf'] = bufs_by_segment[['count_buf', 'ann_buf', 'id_buf']].sum(axis=1)
-
-        metadata = {
-            "id": relationship,
-            "key": f"by_rel_{relationship}"
-        }
-
-        if not use_sharding:
-            shard_spec = None
-            bufs_by_segment.index = bufs_by_segment.index.astype(str)
-            kvstore = ts.KvStore.open(f"file://{output_dir}/by_rel_{relationship}/").result()
-        else:
-            shard_spec = choose_output_spec(
-                total_count=len(bufs_by_segment),
-                total_bytes=sum(bufs_by_segment['combined_buf'].apply(len).to_numpy()),  # fixme, too slow
-                hashtype='murmurhash3_x86_128',
-                gzip_compress=True
-            )
-            spec = {
-                "driver": "neuroglancer_uint64_sharded",
-                "metadata": shard_spec.to_json(),
-                "base": f"file://{output_dir}/by_rel_{relationship}",
-            }
-            kvstore = ts.KvStore.open(spec).result()
-            metadata['sharding'] = shard_spec.to_json()
-
-            # When writing sharded data, we must use encoded bigendian uint64 as the key
-            # https://github.com/google/neuroglancer/pull/522#issuecomment-1923137085
-            bufs_by_segment.index = _encode_uint64_series(bufs_by_segment.index, '>u8')
-
-        with ts.Transaction() as txn:
-            for segment_key, buf in tqdm(bufs_by_segment['combined_buf'].items(), total=len(bufs_by_segment)):
-                kvstore.with_transaction(txn)[segment_key] = buf
-
         by_rel_metadata.append(metadata)
 
     return by_rel_metadata
 
 
-def _infer_annotation_type(df):
-    if 'rx' in df.columns:
-        return 'ellipsoid'
-    if 'xa' in df.columns:
-        return 'axis_aligned_bounding_box'
-    if 'xa' in df.columns:
-        return 'line'
-    if 'x' in df.columns:
-        return 'point'
-    raise ValueError("Annotation type could not be inferred from the columns in the dataframe")
+def _write_annotations_by_relationship(df, relationship, output_dir, write_sharded):
+    rel_df = df[['id_buf', 'ann_buf', relationship]]
+    bufs_by_segment = (
+        rel_df[['id_buf', 'ann_buf', relationship]]
+        .dropna(subset=relationship)
+        .explode(relationship)
+        .groupby(relationship)
+        .agg({'id_buf': ['count', 'sum'], 'ann_buf': 'sum'})
+    )
+    bufs_by_segment.columns = ['count', 'id_buf', 'ann_buf']
+    bufs_by_segment['count_buf'] = _encode_uint64_series(bufs_by_segment['count'])
+    bufs_by_segment['combined_buf'] = bufs_by_segment[['count_buf', 'ann_buf', 'id_buf']].sum(axis=1)
+
+    metadata = {
+        "id": relationship,
+        "key": f"by_rel_{relationship}"
+    }
+
+    if not write_sharded:
+        shard_spec = None
+        bufs_by_segment.index = bufs_by_segment.index.astype(str)
+        kvstore = ts.KvStore.open(f"file://{output_dir}/by_rel_{relationship}/").result()
+    else:
+        shard_spec = choose_output_spec(
+            total_count=len(bufs_by_segment),
+            total_bytes=sum(bufs_by_segment['combined_buf'].apply(len).to_numpy()),  # fixme, too slow
+            hashtype='murmurhash3_x86_128',
+            gzip_compress=True
+        )
+        spec = {
+            "driver": "neuroglancer_uint64_sharded",
+            "metadata": shard_spec.to_json(),
+            "base": f"file://{output_dir}/by_rel_{relationship}",
+        }
+        kvstore = ts.KvStore.open(spec).result()
+        metadata['sharding'] = shard_spec.to_json()
+
+        # When writing sharded data, we must use encoded bigendian uint64 as the key
+        # https://github.com/google/neuroglancer/pull/522#issuecomment-1923137085
+        bufs_by_segment.index = _encode_uint64_series(bufs_by_segment.index, '>u8')
+
+    with ts.Transaction() as txn:
+        for segment_key, buf in tqdm(bufs_by_segment['combined_buf'].items(), total=len(bufs_by_segment)):
+            kvstore.with_transaction(txn)[segment_key] = buf
+
+    return metadata
 
 
 def test():
@@ -371,4 +388,4 @@ def test():
 
     #%load_ext line_profiler
     #%lprun -f write_annotations -f _encode_annotations -f _encode_geometries_and_properties -f _encode_relationships -f _encode_relationship -f _write_annotations_by_relationship -f _write_annotations_by_id
-    write_annotations(df, cs, 'line', ['kind'], ['pre_synaptic_body', 'post_synaptic_body'], '/tmp/test-annotations', use_sharding=True)
+    write_annotations(df, cs, 'line', ['kind'], ['pre_synaptic_body', 'post_synaptic_body'], '/tmp/test-annotations', write_sharded=True)
