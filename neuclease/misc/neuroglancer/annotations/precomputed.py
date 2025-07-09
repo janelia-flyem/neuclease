@@ -231,7 +231,7 @@ def _write_annotations_by_id(df, output_dir, write_sharded):
     else:
         shard_spec = choose_output_spec(
             total_count=len(df),
-            total_bytes=sum(df['ann_buf'].apply(len).to_numpy()),  # fixme, too slow
+            total_bytes=df['ann_buf'].map(len).sum(),  # fixme, might be slow
             hashtype='murmurhash3_x86_128',
             gzip_compress=True
         )
@@ -294,7 +294,7 @@ def _write_annotations_by_relationship(df, relationship, output_dir, write_shard
     else:
         shard_spec = choose_output_spec(
             total_count=len(bufs_by_segment),
-            total_bytes=sum(bufs_by_segment['combined_buf'].apply(len).to_numpy()),  # fixme, too slow
+            total_bytes=bufs_by_segment['combined_buf'].map(len).sum(),  # fixme, might be slow
             hashtype='murmurhash3_x86_128',
             gzip_compress=True
         )
