@@ -25,11 +25,14 @@ def write_annotations(
 ):
     property_specs = annotation_property_specs(df, properties)
 
-    id_bufs, ann_bufs, rel_bufs = _encode_annotations(df, coord_space, annotation_type, property_specs, relationships, output_dir)
-    df['id_buf'] = id_bufs
-    df['ann_buf'] = ann_bufs
-    if rel_bufs is not None:
-        df['rel_buf'] = rel_bufs
+    df = _encode_annotations(
+        df,
+        coord_space,
+        annotation_type,
+        property_specs,
+        relationships,
+        output_dir
+    )
 
     by_id_metadata = _write_annotations_by_id(
         df,
@@ -56,10 +59,22 @@ def write_annotations(
 
 
 def _encode_annotations(df, coord_space, annotation_type, property_specs, relationships, output_dir):
-    id_bufs = _encode_uint64_series(df.index)
-    ann_bufs = _encode_geometries_and_properties(df, coord_space, annotation_type, property_specs)
+    """
+    Returns a (shallow) copy of the dataframe with additional columns containing
+    buffers for each encoded annotation and its encoded id and encoded relationships.
+    """
+    df = df.copy(deep=False)
+
+    df['id_buf'] = _encode_uint64_series(df.index)
+    df['ann_buf'] = _encode_geometries_and_properties(
+        df, coord_space, annotation_type, property_specs
+    )
+
     rel_bufs = _encode_relationships(df, relationships)
-    return id_bufs, ann_bufs, rel_bufs
+    if rel_bufs is not None:
+        df['rel_buf'] = rel_bufs
+
+    return df
 
 
 def _encode_uint64_series(s, dtype='<u8'):
@@ -85,6 +100,8 @@ def _encode_geometries_and_properties(df, coord_space, annotation_type, property
         geometry_prop_df[f'__padding_{i}__'] = np.uint8(0)
 
     dtypes = {c: np.float32 for c in chain(*geometry_cols)}
+
+    # Convert category columns to their integer equivalents
     for p in property_specs:
         if df[p['id']].dtype == 'category':
             geometry_prop_df[p['id']] = geometry_prop_df[p['id']].cat.codes
