@@ -9,14 +9,10 @@ import tensorstore as ts
 from neuroglancer.coordinate_space import CoordinateSpace
 from neuroglancer.viewer_state import AnnotationPropertySpec
 
-from .util import annotation_property_specs
+from .util import annotation_property_specs, choose_output_spec
 
 
-# TODO:
-# - support more than just points
-# - Use tensorstore for writing
-# - accept a tensorstore KVStore or somehow let the user specify what they want.
-# - Refactor to make it easier to obtain the data for a single annotation/segment in isolation (for a web service)
+# TODO: Refactor to make it easier to obtain the data for a single annotation/segment in isolation (for a web service)
 
 def write_annotations(
     df: pd.DataFrame,
@@ -25,33 +21,25 @@ def write_annotations(
     properties: list[str] | list[AnnotationPropertySpec] | dict[str, AnnotationPropertySpec] | list[dict] = (),
     relationships: list[str] = (),
     output_dir: str = 'annotations',
-    sharding_spec=None
+    use_sharding: bool = False
 ):
     if annotation_type is None:
         annotation_type = _infer_annotation_type(df)
     
-        # spec = {
-        #     "driver": "neuroglancer_uint64_sharded",
-        #     "metadata": shard_spec.to_json(),
-        #     "base": f"file://{path}",
-        # }
-        # dataset = ts.KvStore.open(spec).result()
-        # txn = ts.Transaction()
+    property_specs = annotation_property_specs(df, properties)
 
-    properties = annotation_property_specs(df, properties)
-    _write_info(df, coord_space, annotation_type, properties, relationships, output_dir)
-
-    id_bufs, ann_bufs, rel_bufs = _encode_annotations(df, coord_space, annotation_type, properties, relationships, output_dir)
+    id_bufs, ann_bufs, rel_bufs = _encode_annotations(df, coord_space, annotation_type, property_specs, relationships, output_dir)
     df['id_buf'] = id_bufs
     df['ann_buf'] = ann_bufs
     if rel_bufs is not None:
         df['rel_buf'] = rel_bufs
 
-    _write_annotations_by_id(df, output_dir)
-    _write_annotations_by_relationship(df, relationships, output_dir)
+    by_id_metadata = _write_annotations_by_id(df, output_dir, use_sharding)
+    by_rel_metadata = _write_annotations_by_relationship(df, relationships, output_dir, use_sharding)
+    _write_metadata(df, coord_space, annotation_type, property_specs, by_id_metadata, by_rel_metadata, output_dir)
 
 
-def _write_info(df, coord_space, annotation_type, properties, relationships, output_dir):
+def _write_metadata(df, coord_space, annotation_type, property_specs, by_id_metadata, by_rel_metadata, output_dir):
     os.makedirs(output_dir, exist_ok=True)
 
     geometry_cols = _geometry_cols(coord_space.names, annotation_type)
@@ -68,20 +56,10 @@ def _write_info(df, coord_space, annotation_type, properties, relationships, out
         "lower_bound": lower_bound.tolist(),
         "upper_bound": upper_bound.tolist(),
         "annotation_type": annotation_type,
-        "properties": properties,
-        "relationships": [
-            {
-                "id": relationship,
-                "key": f"by_rel_{relationship}"
-            }
-            for relationship in relationships
-        ],
-        "by_id": {
-            "key": "by_id"
-        },
-
-        # TODO
-        "spatial": []
+        "properties": property_specs,
+        "by_id": by_id_metadata,
+        "relationships": by_rel_metadata,
+        "spatial": []  # TODO
     }
 
     with open(f"{output_dir}/info", 'w') as f:
@@ -127,15 +105,15 @@ def _geometry_cols(coord_names, annotation_type):
     raise ValueError(f"Annotation type {annotation_type} not supported")
 
 
-def _encode_annotations(df, coord_space, annotation_type, properties, relationships, output_dir):
+def _encode_annotations(df, coord_space, annotation_type, property_specs, relationships, output_dir):
     id_bufs = _encode_uint64_series(df.index)
-    ann_bufs = _encode_geometries_and_properties(df, coord_space, annotation_type, properties)
+    ann_bufs = _encode_geometries_and_properties(df, coord_space, annotation_type, property_specs)
     rel_bufs = _encode_relationships(df, relationships)
     return id_bufs, ann_bufs, rel_bufs
 
 
-def _encode_uint64_series(s):
-    id_buf = s.to_numpy(np.uint64).tobytes()
+def _encode_uint64_series(s, dtype='<u8'):
+    id_buf = s.to_numpy(dtype).tobytes()
     id_bufs = [
         id_buf[offset:(offset+8)]
         for offset in range(0, len(id_buf), 8)
@@ -143,21 +121,21 @@ def _encode_uint64_series(s):
     return np.array(id_bufs, dtype=object)
 
 
-def _encode_geometries_and_properties(df, coord_space, annotation_type, properties):
+def _encode_geometries_and_properties(df, coord_space, annotation_type, property_specs):
     geometry_cols = _geometry_cols(coord_space.names, annotation_type)
-    prop_cols = [p['id'] for p in properties]
+    prop_cols = [p['id'] for p in property_specs]
     geometry_prop_df = df[[*chain(*geometry_cols), *prop_cols]].copy(deep=False)
 
     property_widths = [
         {'rgb': 3, 'rgba': 4}.get(p['type'], np.dtype(p['type']).itemsize)
-        for p in properties
+        for p in property_specs
     ]
     property_padding = (4 - (sum(property_widths) % 4)) % 4
     for i in range(property_padding):
         geometry_prop_df[f'__padding_{i}__'] = np.uint8(0)
 
     dtypes = {c: np.float32 for c in chain(*geometry_cols)}
-    for p in properties:
+    for p in property_specs:
         if df[p['id']].dtype == 'category':
             geometry_prop_df[p['id']] = geometry_prop_df[p['id']].cat.codes
             dtypes[p['id']] = p['type']
@@ -247,25 +225,53 @@ def _encode_relationship(related_ids):
     return np.array(encoded_ids, dtype=object)
 
 
-def _write_annotations_by_id(df, output_dir):
-    os.makedirs(f"{output_dir}/by_id", exist_ok=True)
-
+def _write_annotations_by_id(df, output_dir, use_sharding):
     if 'rel_buf' in df.columns:
         ann_bufs = df['ann_buf'] + df['rel_buf']
     else:
         ann_bufs = df['ann_buf']
 
-    for ann_id, ann_buf in tqdm(ann_bufs.items()):
-        with open(f"{output_dir}/by_id/{ann_id}", 'wb') as f:
-            f.write(ann_buf)
+    metadata = {"key": "by_id"}
+
+    if not use_sharding:
+        shard_spec = None
+        kvstore = ts.KvStore.open(f"file://{output_dir}/by_id/").result()
+
+        # When writing unsharded data, we must use decimal string as the key
+        ann_bufs.index = ann_bufs.index.astype(str)
+    else:
+        shard_spec = choose_output_spec(
+            total_count=len(df),
+            total_bytes=sum(df['ann_buf'].apply(len).to_numpy()),  # fixme, too slow
+            hashtype='murmurhash3_x86_128',
+            gzip_compress=True
+        )
+
+        spec = {
+            "driver": "neuroglancer_uint64_sharded",
+            "metadata": shard_spec.to_json(),
+            "base": f"file://{output_dir}/by_id",
+        }
+        metadata['sharding'] = shard_spec.to_json()
+        kvstore = ts.KvStore.open(spec).result()
+
+        # When writing sharded data, we must use encoded bigendian uint64 as the key
+        # https://github.com/google/neuroglancer/pull/522#issuecomment-1923137085
+        ann_bufs.index = _encode_uint64_series(ann_bufs.index, '>u8')
+    
+    with ts.Transaction() as txn:
+        for ann_key, ann_buf in tqdm(ann_bufs.items(), total=len(ann_bufs)):
+            kvstore.with_transaction(txn)[ann_key] = ann_buf
+
+    return metadata
 
 
-def _write_annotations_by_relationship(df, relationships, output_dir):
+def _write_annotations_by_relationship(df, relationships, output_dir, use_sharding):
+    by_rel_metadata = []
     for relationship in relationships:
         rel_df = df[['id_buf', 'ann_buf', relationship]]
         bufs_by_segment = (
-            rel_df
-            [['id_buf', 'ann_buf', relationship]]
+            rel_df[['id_buf', 'ann_buf', relationship]]
             .dropna(subset=relationship)
             .explode(relationship)
             .groupby(relationship)
@@ -275,10 +281,41 @@ def _write_annotations_by_relationship(df, relationships, output_dir):
         bufs_by_segment['count_buf'] = _encode_uint64_series(bufs_by_segment['count'])
         bufs_by_segment['combined_buf'] = bufs_by_segment[['count_buf', 'ann_buf', 'id_buf']].sum(axis=1)
 
-        for segment, buf in tqdm(bufs_by_segment['combined_buf'].items()):
-            os.makedirs(f"{output_dir}/by_rel_{relationship}", exist_ok=True)
-            with open(f"{output_dir}/by_rel_{relationship}/{segment}", 'wb') as f:
-                f.write(buf)
+        metadata = {
+            "id": relationship,
+            "key": f"by_rel_{relationship}"
+        }
+
+        if not use_sharding:
+            shard_spec = None
+            bufs_by_segment.index = bufs_by_segment.index.astype(str)
+            kvstore = ts.KvStore.open(f"file://{output_dir}/by_rel_{relationship}/").result()
+        else:
+            shard_spec = choose_output_spec(
+                total_count=len(bufs_by_segment),
+                total_bytes=sum(bufs_by_segment['combined_buf'].apply(len).to_numpy()),  # fixme, too slow
+                hashtype='murmurhash3_x86_128',
+                gzip_compress=True
+            )
+            spec = {
+                "driver": "neuroglancer_uint64_sharded",
+                "metadata": shard_spec.to_json(),
+                "base": f"file://{output_dir}/by_rel_{relationship}",
+            }
+            kvstore = ts.KvStore.open(spec).result()
+            metadata['sharding'] = shard_spec.to_json()
+
+            # When writing sharded data, we must use encoded bigendian uint64 as the key
+            # https://github.com/google/neuroglancer/pull/522#issuecomment-1923137085
+            bufs_by_segment.index = _encode_uint64_series(bufs_by_segment.index, '>u8')
+
+        with ts.Transaction() as txn:
+            for segment_key, buf in tqdm(bufs_by_segment['combined_buf'].items(), total=len(bufs_by_segment)):
+                kvstore.with_transaction(txn)[segment_key] = buf
+
+        by_rel_metadata.append(metadata)
+
+    return by_rel_metadata
 
 
 def _infer_annotation_type(df):
@@ -307,10 +344,7 @@ def test():
 
     from neuroglancer.coordinate_space import CoordinateSpace
     from neuclease.misc.neuroglancer.annotations.precomputed import write_annotations
-    from neuclease.misc.neuroglancer.annotations.precomputed import (
-        write_annotations, _encode_annotations, _encode_geometries_and_properties, _encode_relationships, 
-        _encode_relationship, _write_annotations_by_relationship, _geometry_cols
-    )
+    from neuclease.misc.neuroglancer.annotations.precomputed import write_annotations, _encode_annotations, _encode_geometries_and_properties, _encode_relationships, _encode_relationship, _write_annotations_by_relationship, _geometry_cols, _write_annotations_by_id
 
     body = 11064
     _df, df = fetch_label(*brain_master, 'synapses', body, relationships=True, format='pandas')
@@ -336,5 +370,5 @@ def test():
     )
 
     #%load_ext line_profiler
-    #%lprun -f write_annotations -f _encode_annotations -f _encode_geometries_and_properties -f _encode_relationships -f _encode_relationship -f _write_annotations_by_relationship 
-    write_annotations(df, cs, 'line', ['kind'], ['pre_synaptic_body', 'post_synaptic_body'], '/tmp/test-annotations')
+    #%lprun -f write_annotations -f _encode_annotations -f _encode_geometries_and_properties -f _encode_relationships -f _encode_relationship -f _write_annotations_by_relationship -f _write_annotations_by_id
+    write_annotations(df, cs, 'line', ['kind'], ['pre_synaptic_body', 'post_synaptic_body'], '/tmp/test-annotations', use_sharding=True)
