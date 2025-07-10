@@ -7,12 +7,12 @@ import pandas as pd
 from ..util import parse_nglink
 from .util import annotation_property_specs
 
-def extract_annotations(link, *, link_index=None, user=None, visible_only=False):
+def extract_local_annotations(link, *, link_index=None, user=None, visible_only=False):
     """
     Extract local://annotations data from a neuroglancer link.
     The annotation coordinates (point, pointA, pointB, radii) are extracted
     into separate columns, named x,y,z/xa,ya,za/xb,yb,zb/rx,ry,rz
-    (consistent with annotation_layer_json() in this file).
+    (consistent with local_annotation_json() in this file).
 
     Args:
         link:
@@ -81,6 +81,9 @@ def extract_annotations(link, *, link_index=None, user=None, visible_only=False)
     return df
 
 
+# legacy name
+extract_annotations = extract_local_annotations
+
 # Tip: Here's a nice repo with lots of colormaps implemented in GLSL.
 # https://github.com/kbinani/colormap-shaders
 SHADER_FMT = dedent("""\
@@ -132,7 +135,7 @@ LOCAL_ANNOTATION_JSON = {
 }
 
 
-def annotation_layer_json(df, name="annotations", color="#ffff00", size=8.0, linkedSegmentationLayer=None,
+def local_annotation_json(df, name="annotations", color="#ffff00", size=8.0, linkedSegmentationLayer=None,
                           show_panel=False, properties=[], shader=None, res_nm_xyz=(8,8,8)):
     """
     Construct the JSON data for a neuroglancer local annotations layer.
@@ -241,12 +244,15 @@ def annotation_layer_json(df, name="annotations", color="#ffff00", size=8.0, lin
 
 
 # Deprecated name (now supports more than just points)
-point_annotation_layer_json = annotation_layer_json
+point_annotation_layer_json = local_annotation_json
+
+# Deprecated name
+annotation_layer_json = local_annotation_json
 
 
 def _annotation_list_json(df, linkedSegmentationLayer, properties):
     """
-    Helper for annotation_layer_json().
+    Helper for local_annotation_json().
 
     Generate the list of annotations for an annotation layer,
     assuming the input dataframe has already been pre-conditioned.
@@ -292,7 +298,7 @@ def _annotation_list_json(df, linkedSegmentationLayer, properties):
 
 def _standardize_annotation_dataframe(df):
     """
-    Helper for annotation_layer_json().
+    Helper for local_annotation_json().
     Add empty columns as needed until the dataframe
     has all possible annotation columns.
 
