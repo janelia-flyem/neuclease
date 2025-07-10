@@ -164,14 +164,14 @@ def _encode_relationships(df, relationships):
 
     encoded_relationships = {}
     for rel_col in relationships:
-        encoded_relationships[rel_col] = _encode_relationship(df[rel_col])
+        encoded_relationships[rel_col] = _encode_related_ids(df[rel_col])
 
     # concatenate buffers on each row
     rel_bufs = pd.DataFrame(encoded_relationships, index=df.index).sum(axis=1)
     return rel_bufs
 
 
-def _encode_relationship(related_ids):
+def _encode_related_ids(related_ids):
     """
     Given a Series containing lists of IDs, encode each list of IDs
     in the format neuroglancer expects for each relationship in an
@@ -238,39 +238,7 @@ def _write_annotations_by_id(df, output_dir, write_sharded):
     else:
         ann_bufs = df['ann_buf']
 
-    metadata = {"key": "by_id"}
-
-    # FIXME: Factor this into a separate function that can be used for both by_id and by_rel
-    if not write_sharded:
-        shard_spec = None
-        kvstore = ts.KvStore.open(f"file://{output_dir}/by_id/").result()
-
-        # When writing unsharded data, we must use decimal string as the key
-        ann_bufs.index = ann_bufs.index.astype(str)
-    else:
-        shard_spec = choose_output_spec(
-            total_count=len(df),
-            total_bytes=df['ann_buf'].map(len).sum(),  # fixme, might be slow
-            hashtype='murmurhash3_x86_128',
-            gzip_compress=True
-        )
-
-        spec = {
-            "driver": "neuroglancer_uint64_sharded",
-            "metadata": shard_spec.to_json(),
-            "base": f"file://{output_dir}/by_id",
-        }
-        metadata['sharding'] = shard_spec.to_json()
-        kvstore = ts.KvStore.open(spec).result()
-
-        # When writing sharded data, we must use encoded bigendian uint64 as the key
-        # https://github.com/google/neuroglancer/pull/522#issuecomment-1923137085
-        ann_bufs.index = _encode_uint64_series(ann_bufs.index, '>u8')
-    
-    with ts.Transaction() as txn:
-        for ann_key, ann_buf in tqdm(ann_bufs.items(), total=len(ann_bufs)):
-            kvstore.with_transaction(txn)[ann_key] = ann_buf
-
+    metadata = _write_buffers(ann_bufs, output_dir, "by_id", write_sharded)
     return metadata
 
 
@@ -301,42 +269,66 @@ def _write_annotations_by_relationship(df, relationship, output_dir, write_shard
     bufs_by_segment['count_buf'] = _encode_uint64_series(bufs_by_segment['count'])
     bufs_by_segment['combined_buf'] = bufs_by_segment[['count_buf', 'ann_buf', 'id_buf']].sum(axis=1)
 
-    metadata = {
-        "id": relationship,
-        "key": f"by_rel_{relationship}"
-    }
-
-    # FIXME: Factor this into a separate function that can be used for both by_id and by_rel
-    if not write_sharded:
-        shard_spec = None
-        bufs_by_segment.index = bufs_by_segment.index.astype(str)
-        kvstore = ts.KvStore.open(f"file://{output_dir}/by_rel_{relationship}/").result()
-    else:
-        shard_spec = choose_output_spec(
-            total_count=len(bufs_by_segment),
-            total_bytes=bufs_by_segment['combined_buf'].map(len).sum(),  # fixme, might be slow
-            hashtype='murmurhash3_x86_128',
-            gzip_compress=True
-        )
-        spec = {
-            "driver": "neuroglancer_uint64_sharded",
-            "metadata": shard_spec.to_json(),
-            "base": f"file://{output_dir}/by_rel_{relationship}",
-        }
-        kvstore = ts.KvStore.open(spec).result()
-        metadata['sharding'] = shard_spec.to_json()
-
-        # When writing sharded data, we must use encoded bigendian uint64 as the key
-        # https://github.com/google/neuroglancer/pull/522#issuecomment-1923137085
-        bufs_by_segment.index = _encode_uint64_series(bufs_by_segment.index, '>u8')
-
-    with ts.Transaction() as txn:
-        for segment_key, buf in tqdm(bufs_by_segment['combined_buf'].items(), total=len(bufs_by_segment)):
-            kvstore.with_transaction(txn)[segment_key] = buf
-
+    metadata = _write_buffers(
+        bufs_by_segment['combined_buf'],
+        output_dir,
+        f"by_rel_{relationship}",
+        write_sharded
+    )
+    metadata['id'] = relationship
     return metadata
 
 
+def _write_buffers(buf_series, output_dir, subdir, write_sharded):
+    if write_sharded:
+        return _write_buffers_sharded(buf_series, output_dir, subdir)
+    else:
+        return _write_buffers_unsharded(buf_series, output_dir, subdir)
+
+
+def _write_buffers_unsharded(buf_series, output_dir, subdir):
+    string_keys = buf_series.index.astype(str)
+    buf_series = buf_series.set_axis(string_keys)
+
+    kvstore = ts.KvStore.open(f"file://{output_dir}/{subdir}/").result()
+    with ts.Transaction() as txn:
+        for segment_key, buf in tqdm(buf_series.items(), total=len(buf_series)):
+            kvstore.with_transaction(txn)[segment_key] = buf
+
+    metadata = {"key": subdir}
+    return metadata
+
+
+def _write_buffers_sharded(buf_series, output_dir, subdir):
+    # When writing sharded data, we must use encoded bigendian uint64 as the key
+    # https://github.com/google/neuroglancer/pull/522#issuecomment-1923137085
+    bigendian_keys = _encode_uint64_series(buf_series.index, '>u8')
+    buf_series = buf_series.set_axis(bigendian_keys)
+
+    shard_spec = choose_output_spec(
+        total_count=len(buf_series),
+        total_bytes=buf_series.map(len).sum(),  # fixme, might be slow
+        hashtype='murmurhash3_x86_128',
+        gzip_compress=True
+    )
+    spec = {
+        "driver": "neuroglancer_uint64_sharded",
+        "metadata": shard_spec.to_json(),
+        "base": f"file://{output_dir}/{subdir}",
+    }
+    kvstore = ts.KvStore.open(spec).result()
+
+    with ts.Transaction() as txn:
+        for segment_key, buf in tqdm(buf_series.items(), total=len(buf_series)):
+            kvstore.with_transaction(txn)[segment_key] = buf
+
+    metadata = {
+        "key": subdir,
+        "sharding": shard_spec.to_json()
+    }
+    return metadata
+
+    
 def _write_metadata(df, coord_space, annotation_type, property_specs, by_id_metadata, by_rel_metadata, output_dir):
     """
     Write the top-level 'info' file for the annotation output directory.
