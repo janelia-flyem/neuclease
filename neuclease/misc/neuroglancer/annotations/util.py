@@ -44,7 +44,7 @@ def annotation_property_specs(df, properties):
         properties:
             list of column names from which to generate properties,
             or a dict-of-dicts containing pre-formulated property specs
-            as descrbed in the docstring for annotation_layer_json().
+            as descrbed in the docstring for local_annotation_json().
     Returns:
         JSON dict
     """
@@ -112,7 +112,7 @@ def _proptype(s):
         Either a numeric type (e.g. 'uint16') or a color type ('rgb' or 'rgba').
     """
     if s.dtype in (np.float64, np.int64, np.uint64):
-        raise RuntimeError('neuroglancer doesnt support 64-bit property types.')
+        raise RuntimeError("neuroglancer doesn't support 64-bit property types.")
     if s.dtype in (np.uint8, np.int8, np.uint16, np.int16, np.uint32, np.int32, np.float32):
         return str(s.dtype)
 
