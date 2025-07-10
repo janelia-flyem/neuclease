@@ -3,26 +3,106 @@ import json
 import pandas as pd
 import numpy as np
 from itertools import chain
+from typing import Literal
 
 from tqdm import tqdm
 import tensorstore as ts
-from neuroglancer.coordinate_space import CoordinateSpace
-from neuroglancer.viewer_state import AnnotationPropertySpec
+
+try:
+    from neuroglancer.coordinate_space import CoordinateSpace
+    from neuroglancer.viewer_state import AnnotationPropertySpec
+except ImportError:
+    # For now, we support importing this module without neuroglancer,
+    # even though these functions require it.
+    # We define these names here so the type hints below don't fail.
+    class CoordinateSpace:
+        pass
+    class AnnotationPropertySpec:
+        pass
 
 from .util import annotation_property_specs, choose_output_spec
 
 
-# TODO: Refactor to make it easier to obtain the data for a single annotation/segment in isolation (for a web service)
-
-def write_annotations(
+def write_precomputed_annotations(
     df: pd.DataFrame,
     coord_space: CoordinateSpace,
-    annotation_type: str,
+    annotation_type: Literal['point', 'line', 'ellipsoid', 'axis_aligned_bounding_box'],
     properties: list[str] | list[AnnotationPropertySpec] | dict[str, AnnotationPropertySpec] | list[dict] = (),
     relationships: list[str] = (),
     output_dir: str = 'annotations',
-    write_sharded: bool = False
+    write_sharded: bool = True
 ):
+    """
+    Export the data from a pandas DataFrame into neuroglancer's precomputed annotations format
+    as described in https://github.com/google/neuroglancer/blob/master/src/datasource/precomputed/annotations.md
+
+    A progress bar is shown when writing each portion of the export (annotation ID index, related ID indexes),
+    but there may be a significant amount of preprocessing time that occurs before the actual writing begins.
+
+    Limitations:
+
+        - This implementation does not yet support spatial sharding.
+          The annotations will be exported by ID and by related ID, but without any spatial index.
+        - We do not yet support rgb or rgba properties.
+          In a future version, we might support them via strings like '#ff0000' or via MultiIndex columns.
+
+    Args:
+        df:
+            DataFrame.
+            The required columns depend on the annotation_type and the coordinate space.
+            For example, assuming ``coord_space.names == ['x', 'y', 'z']``,
+            then provide the following columns:
+
+            - For point annotations, provide ['x', 'y', 'z']
+            - For line annotations or axis_aligned_bounding_box annotations,
+              provide ['xa', 'ya', 'za', 'xb', 'yb', 'zb']
+            - For ellipsoid annotations, provide ['x', 'y', 'z', 'rx', 'ry', 'rz']
+              for the center point and radii.
+
+            You may also provide additional columns to use as annotation properties,
+            in which case they should be listed in the 'properties' argument. (See below.)
+
+        coord_space:
+            CoordinateSpace.
+            The coordinate space of the annotations.
+            This is used to determine the geometry of the annotations.
+
+        annotation_type:
+            Literal['point', 'line', 'ellipsoid', 'axis_aligned_bounding_box']
+            The type of annotation to export. Note that the columns you provide in
+            the DataFrame depend on the annotation type.
+
+        properties:
+            If your dataframe contains columns that you want to use as annotation properties,
+            list the names of those columns here.
+            The full property spec for each property will be inferred from the column dtype,
+            but if you want to specify the property spec yourself, you can pass a list of
+            AnnotationPropertySpec objects here.
+
+        relationships:
+            list[str]
+            If your annotations have related segment IDs, such relationships can be provided
+            in the columns of your DataFrame. Each relationship should be listed in a single column,
+            whose values are lists of segment IDs.  In the special case where each annotation has
+            exactly one related segment, the column may have dtype=np.uint64 instead of containing lists.
+
+        output_dir:
+            str
+            The directory into which the exported annotations will be written.
+            Subdirectories will be created for the "annotation ID index" and each
+            "related object id index" as needed.
+
+        write_sharded:
+            bool
+            Whether to write the output as sharded files.
+            The sharded format is preferable for most use cases.
+            Without sharding, every annotation results in a separate file in the annotation ID index.
+            Similarly, every related ID results in a separate file in the related ID index.
+    """
+    # Verify that the neuroglancer package is available.
+    from neuroglancer.coordinate_space import CoordinateSpace
+    from neuroglancer.viewer_state import AnnotationPropertySpec
+
     annotation_type = annotation_type.lower()
     property_specs = annotation_property_specs(df, properties)
 
@@ -79,6 +159,10 @@ def _encode_annotations(df, coord_space, annotation_type, property_specs, relati
 
 
 def _encode_uint64_series(s, dtype='<u8'):
+    """
+    Encode a pandas Series (or Index) of N values
+    into a numpy array of N buffers (bytes objects).
+    """
     id_buf = s.to_numpy(dtype).tobytes()
     id_bufs = [
         id_buf[offset:(offset+8)]
@@ -88,6 +172,18 @@ def _encode_uint64_series(s, dtype='<u8'):
 
 
 def _encode_geometries_and_properties(df, coord_space, annotation_type, property_specs):
+    """
+    For each annotation in the given dataframe, encode its geometry columns (e.g. x,y,z)
+    and property columns into a buffer, plus any padding that was necessary to align the
+    buffer to a 4-byte boundary, per the neuroglancer spec.
+
+    (In the precomputed format, geometry and properties always appear together,
+    regardless of whether they're being written to the "Annotation ID Index",
+    the "Related Object ID Index" or the "Spatial Index".)
+
+    Returns:
+        pd.Series of dtype=object, containing one buffer for each annotation.
+    """
     geometry_cols = _geometry_cols(coord_space.names, annotation_type)
     prop_cols = [p['id'] for p in property_specs]
     geometry_prop_df = df[[*chain(*geometry_cols), *prop_cols]].copy(deep=False)
@@ -159,6 +255,13 @@ def _geometry_cols(coord_names, annotation_type):
 
 
 def _encode_relationships(df, relationships):
+    """
+    For each annotation in the given dataframe, encode the related IDs
+    for all relationships into a buffer according to the neuroglancer spec.
+
+    Returns:
+        pd.Series of dtype=object, containing one buffer for each annotation.
+    """
     if not relationships:
         return None
 
@@ -177,19 +280,9 @@ def _encode_related_ids(related_ids):
     in the format neuroglancer expects for each relationship in an
     annotation.
 
-    Each item in related_ids is a list, such as:
-
-        [7, 8, 9]
-
-    which gets encoded into buffer as <count><id_1><id_2><id_3>,
-    where <count> is uint32 and <id_1><id_2><id_3> are each uint64:
-
-        (
-            b'\x00\x00\x00\x03' +
-            b'\x00\x00\x00\x00\x00\x00\x00\x07' +
-            b'\x00\x00\x00\x00\x00\x00\x00\x08' +
-            b'\x00\x00\x00\x00\x00\x00\x00\x09'
-        )
+    Each item in related_ids is a list, which gets encoded as
+    <count><id_1><id_2><id_3>..., where <count> is uint32 and
+    <id_1><id_2><id_3>... are each uint64.
 
     Args:
         related_ids:
@@ -218,21 +311,29 @@ def _encode_related_ids(related_ids):
         return np.array(encoded_ids, dtype=object)
 
     # Otherwise, the relationship contains lists.
-    assert related_ids.dtype == object
-    counts = related_ids.map(len).to_numpy(np.uint32)
-    offsets = 8 * np.cumulative_sum(counts, include_initial=True)
+    else:
+        assert related_ids.dtype == object
+        counts = related_ids.map(len).to_numpy(np.uint32)
+        offsets = 8 * np.cumulative_sum(counts, include_initial=True)
 
-    ids_buf = np.concatenate(related_ids, dtype=np.uint64).tobytes()
-    counts_buf = counts.tobytes()
+        ids_buf = np.concatenate(related_ids, dtype=np.uint64).tobytes()
+        counts_buf = counts.tobytes()
 
-    encoded_ids = [
-        counts_buf[i*4:(i+1)*4] + ids_buf[start:end]
-        for i, (start, end) in enumerate(zip(offsets[:-1], offsets[1:]))
-    ]
-    return np.array(encoded_ids, dtype=object)
+        encoded_ids = [
+            counts_buf[i*4:(i+1)*4] + ids_buf[start:end]
+            for i, (start, end) in enumerate(zip(offsets[:-1], offsets[1:]))
+        ]
+        return np.array(encoded_ids, dtype=object)
 
 
 def _write_annotations_by_id(df, output_dir, write_sharded):
+    """
+    Write the annotations to the "Annotation ID Index", a subdirectory of output_dir.
+
+    Returns:
+        JSON metadata to be written under the 'by_id' key in the top-level 'info' file.
+        Currently, this is always {"key": "by_id"}
+    """
     if 'rel_buf' in df.columns:
         ann_bufs = df['ann_buf'] + df['rel_buf']
     else:
@@ -243,6 +344,14 @@ def _write_annotations_by_id(df, output_dir, write_sharded):
 
 
 def _write_annotations_by_relationships(df, relationships, output_dir, write_sharded):
+    """
+    Write the annotations to a "Related Object ID Index" for each relationship.
+    Each relationship is written to a separate subdirectory of output_dir.
+
+    Returns:
+        JSON metadata to be written under the 'relationships' key in the top-level 'info' file,
+        consisting of a list of JSON objects (one for each relationship).
+    """
     by_rel_metadata = []
     for relationship in relationships:
         metadata = _write_annotations_by_relationship(
@@ -257,6 +366,12 @@ def _write_annotations_by_relationships(df, relationships, output_dir, write_sha
 
 
 def _write_annotations_by_relationship(df, relationship, output_dir, write_sharded):
+    """
+    Write the annotations to a "Related Object ID Index" for a single relationship.
+
+    Returns:
+        JSON metadata for the relationship, including the key and sharding spec if applicable.
+    """
     rel_df = df[['id_buf', 'ann_buf', relationship]]
     bufs_by_segment = (
         rel_df[['id_buf', 'ann_buf', relationship]]
@@ -280,6 +395,32 @@ def _write_annotations_by_relationship(df, relationship, output_dir, write_shard
 
 
 def _write_buffers(buf_series, output_dir, subdir, write_sharded):
+    """
+    Write the buffers to the appropriate subdirectory of output_dir,
+    in sharded or unsharded format.
+
+    Args:
+        buf_series:
+            pd.Series of dtype=object, whose values are buffers (bytes objects).
+            The index of the series provides the keys under which each item is stored.
+
+        output_dir:
+            str
+            The directory into which the exported annotations will be written.
+
+        subdir:
+            str
+            The subdirectory into which the buffers will be written.
+
+        write_sharded:
+            bool
+            If True, write the buffers in sharded format.
+            If False, write the buffers in unsharded format, i.e. one file per item.
+
+    Returns:
+        JSON metadata for the written data, including the key (subdir)
+        and sharding spec if applicable.
+    """
     if write_sharded:
         return _write_buffers_sharded(buf_series, output_dir, subdir)
     else:
@@ -287,6 +428,17 @@ def _write_buffers(buf_series, output_dir, subdir, write_sharded):
 
 
 def _write_buffers_unsharded(buf_series, output_dir, subdir):
+    """
+    Write the buffers to the appropriate subdirectory of output_dir,
+    in unsharded format, i.e. one file per item.
+
+    The index of buf_series is used as the key for each item,
+    after being converted to a string (as decimal values).
+
+    Returns:
+        JSON metadata, always {"key": subdir}
+    """
+    # In the unsharded format, the keys are just strings of the decimal IDs.
     string_keys = buf_series.index.astype(str)
     buf_series = buf_series.set_axis(string_keys)
 
@@ -300,6 +452,16 @@ def _write_buffers_unsharded(buf_series, output_dir, subdir):
 
 
 def _write_buffers_sharded(buf_series, output_dir, subdir):
+    """
+    Write the buffers to the appropriate subdirectory of output_dir,
+    in sharded format.
+
+    The index of buf_series is used as the key for each item,
+    after being encoded as a bigendian uint64.
+
+    Returns:
+        JSON metadata, including the output "key" (subdir) and sharding spec.
+    """
     # When writing sharded data, we must use encoded bigendian uint64 as the key
     # https://github.com/google/neuroglancer/pull/522#issuecomment-1923137085
     bigendian_keys = _encode_uint64_series(buf_series.index, '>u8')
@@ -354,25 +516,43 @@ def _write_metadata(df, coord_space, annotation_type, property_specs, by_id_meta
 
 
 def _get_bounds(df, coord_space, annotation_type):
+    """
+    Inspect the geometry columns of the given dataframe to
+    determine the overall upper and lower bounds of the annotations.
+
+    Returns:
+        lower_bound, upper_bound
+        (both numpy arrays of length 3)
+    """
     geometry_cols = _geometry_cols(coord_space.names, annotation_type)
 
+    if annotation_type == 'point':
+        points = df[geometry_cols[0]]
+        return (
+            points.min(axis=0).to_numpy(),
+            points.max(axis=0).to_numpy()
+        )
+
+    if annotation_type in ('line', 'axis_aligned_bounding_box'):
+        points_a = df[geometry_cols[0]]
+        points_b = df[geometry_cols[1]]
+        return (
+            np.minimum(points_a.min().to_numpy(), points_b.min().to_numpy()),
+            np.maximum(points_a.max().to_numpy(), points_b.max().to_numpy())
+        )
+
     if annotation_type == 'ellipsoid':
-        center = df[geometry_cols[0]].to_numpy()
-        radii = df[geometry_cols[1]].to_numpy()
-        lower_bound = (center - radii).min(axis=0)
-        upper_bound = (center + radii).max(axis=0)
-        return lower_bound, upper_bound
+        center = df[geometry_cols[0]]
+        radii = df[geometry_cols[1]]
+        return (
+            (center - radii).min().to_numpy(),
+            (center + radii).max().to_numpy()
+        )
 
-    lower_bound = [np.inf] * len(coord_space.names)
-    upper_bound = [-np.inf] * len(coord_space.names)
-    for cols in geometry_cols:
-        lower_bound = np.minimum(lower_bound, df[cols].min().to_numpy())
-        upper_bound = np.maximum(upper_bound, df[cols].max().to_numpy())
-
-    return lower_bound, upper_bound
+    raise ValueError(f"Annotation type {annotation_type} not supported")
 
 
-def test():
+def _test():
     """
     pixi init
     pixi add nodejs
