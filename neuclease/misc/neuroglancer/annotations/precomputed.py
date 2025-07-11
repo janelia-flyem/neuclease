@@ -1,10 +1,11 @@
 import os
 import json
-import pandas as pd
-import numpy as np
+import logging
 from itertools import chain
 from typing import Literal
 
+import pandas as pd
+import numpy as np
 from tqdm import tqdm
 import tensorstore as ts
 
@@ -21,6 +22,8 @@ except ImportError:
         pass
 
 from .util import annotation_property_specs, choose_output_spec
+
+logger = logging.getLogger(__name__)
 
 
 def write_precomputed_annotations(
@@ -61,6 +64,8 @@ def write_precomputed_annotations(
 
             You may also provide additional columns to use as annotation properties,
             in which case they should be listed in the 'properties' argument. (See below.)
+
+            The index of the DataFrame is used as the annotation ID.
 
         coord_space:
             CoordinateSpace.
@@ -146,11 +151,15 @@ def _encode_annotations(df, coord_space, annotation_type, property_specs, relati
     """
     df = df.copy(deep=False)
 
+    logger.info("Encoding annotation IDs")
     df['id_buf'] = _encode_uint64_series(df.index)
+
+    logger.info("Encoding annotation geometries and properties")
     df['ann_buf'] = _encode_geometries_and_properties(
         df, coord_space, annotation_type, property_specs
     )
 
+    logger.info("Encoding relationships")
     rel_bufs = _encode_relationships(df, relationships)
     if rel_bufs is not None:
         df['rel_buf'] = rel_bufs
@@ -339,6 +348,7 @@ def _write_annotations_by_id(df, output_dir, write_sharded):
     else:
         ann_bufs = df['ann_buf']
 
+    logger.info("Writing annotations to 'by_id' index")
     metadata = _write_buffers(ann_bufs, output_dir, "by_id", write_sharded)
     return metadata
 
@@ -372,18 +382,20 @@ def _write_annotations_by_relationship(df, relationship, output_dir, write_shard
     Returns:
         JSON metadata for the relationship, including the key and sharding spec if applicable.
     """
-    rel_df = df[['id_buf', 'ann_buf', relationship]]
+    logger.info(f"Grouping annotations by relationship {relationship}")
     bufs_by_segment = (
-        rel_df[['id_buf', 'ann_buf', relationship]]
+        df[['id_buf', 'ann_buf', relationship]]
         .dropna(subset=relationship)
         .explode(relationship)
         .groupby(relationship)
         .agg({'id_buf': ['count', 'sum'], 'ann_buf': 'sum'})
     )
+    logger.info(f"Combining annotation and ID buffers for relationship '{relationship}'")
     bufs_by_segment.columns = ['count', 'id_buf', 'ann_buf']
     bufs_by_segment['count_buf'] = _encode_uint64_series(bufs_by_segment['count'])
     bufs_by_segment['combined_buf'] = bufs_by_segment[['count_buf', 'ann_buf', 'id_buf']].sum(axis=1)
 
+    logger.info(f"Writing annotations to 'by_rel_{relationship}' index")
     metadata = _write_buffers(
         bufs_by_segment['combined_buf'],
         output_dir,
