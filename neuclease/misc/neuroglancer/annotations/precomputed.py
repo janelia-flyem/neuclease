@@ -278,7 +278,10 @@ def _encode_relationships(df, relationships):
     for rel_col in relationships:
         encoded_relationships[rel_col] = _encode_related_ids(df[rel_col])
 
-    # concatenate buffers on each row
+    # Concatenate buffers on each row.
+    # Note:
+    #   Using sum() is O(N^2) in the number of relationships, but we generally
+    #   expect few relationships, so this is faster than df.apply(b''.join, axis=1)
     rel_bufs = pd.DataFrame(encoded_relationships, index=df.index).sum(axis=1)
     return rel_bufs
 
@@ -387,8 +390,9 @@ def _write_annotations_by_relationship(df, relationship, output_dir, write_shard
         df[['id_buf', 'ann_buf', relationship]]
         .dropna(subset=relationship)
         .explode(relationship)
-        .groupby(relationship)
-        .agg({'id_buf': ['count', 'sum'], 'ann_buf': 'sum'})
+        .groupby(relationship, sort=False)
+        # Use b''.join() instead of 'sum' to avoid O(N^2) performance for large groups.
+        .agg({'id_buf': ['count', b''.join], 'ann_buf': b''.join})
     )
     logger.info(f"Combining annotation and ID buffers for relationship '{relationship}'")
     bufs_by_segment.columns = ['count', 'id_buf', 'ann_buf']
