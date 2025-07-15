@@ -177,10 +177,10 @@ def choose_output_spec(
     MINISHARD_TARGET_COUNT = 1000
     SHARD_TARGET_SIZE = 50000000
 
-    if total_count == 1:
-        return None
-    if ts is None:
-        return None
+    # if total_count == 1:
+    #     return None
+    # if ts is None:
+    #     return None
 
     # test if hashtype is valid
     if hashtype not in ["murmurhash3_x86_128", "identity_hash"]:

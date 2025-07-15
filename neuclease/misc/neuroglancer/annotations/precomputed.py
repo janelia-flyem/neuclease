@@ -33,7 +33,8 @@ def write_precomputed_annotations(
     properties: list[str] | list[AnnotationPropertySpec] | dict[str, AnnotationPropertySpec] | list[dict] = (),
     relationships: list[str] = (),
     output_dir: str = 'annotations',
-    write_sharded: bool = True
+    write_sharded: bool = True,
+    write_single_spatial_level=False,
 ):
     """
     Export the data from a pandas DataFrame into neuroglancer's precomputed annotations format
@@ -44,8 +45,9 @@ def write_precomputed_annotations(
 
     Limitations:
 
-        - This implementation does not yet support spatial sharding.
-          The annotations will be exported by ID and by related ID, but without any spatial index.
+        - This implementation only supports a single spatial grid level, which means neuroglancer
+          will download all annotations at once if they are viewed without respect to a relationship.
+          This means that spatial indexing should not be used for large datasets (more than 1M annotations or so.)
         - We do not yet support rgb or rgba properties.
           In a future version, we might support them via strings like '#ff0000' or via MultiIndex columns.
 
@@ -103,21 +105,30 @@ def write_precomputed_annotations(
             The sharded format is preferable for most use cases.
             Without sharding, every annotation results in a separate file in the annotation ID index.
             Similarly, every related ID results in a separate file in the related ID index.
+
+        write_single_spatial_level:
+            bool
+            If True, write the spatial index as a single grid level. With a spatial index
+            all annotations can be viewed at once, independent of any relationships.
+            However, as the argument name suggests, we only support a single spatial grid level
+            (containing all annotations), which is not suitable for millions of annotations.
+            If False, no spatial index will be written at all.
     """
     # Verify that the neuroglancer package is available.
     from neuroglancer.coordinate_space import CoordinateSpace
     from neuroglancer.viewer_state import AnnotationPropertySpec
 
+    os.makedirs(output_dir, exist_ok=True)
     annotation_type = annotation_type.lower()
     property_specs = annotation_property_specs(df, properties)
+    lower_bound, upper_bound = _get_bounds(df, coord_space, annotation_type)
 
     df = _encode_annotations(
         df,
         coord_space,
         annotation_type,
         property_specs,
-        relationships,
-        output_dir
+        relationships
     )
 
     by_id_metadata = _write_annotations_by_id(
@@ -132,19 +143,105 @@ def write_precomputed_annotations(
         output_dir,
         write_sharded
     )
+
+    spatial_metadata = []
+    if write_single_spatial_level:
+        spatial_metadata = _write_annotations_spatial(df, lower_bound, upper_bound, output_dir, write_sharded)
     
-    _write_metadata(
-        df,
-        coord_space,
-        annotation_type,
-        property_specs,
-        by_id_metadata,
-        by_rel_metadata,
-        output_dir
-    )
+    # Write the top-level 'info' file for the annotation output directory.
+    info = {
+        "@type": "neuroglancer_annotations_v1",
+        "dimensions": coord_space.to_json(),
+        "lower_bound": lower_bound.tolist(),
+        "upper_bound": upper_bound.tolist(),
+        "annotation_type": annotation_type,
+        "properties": property_specs,
+        "by_id": by_id_metadata,
+        "relationships": by_rel_metadata,
+        "spatial": spatial_metadata,
+    }
+
+    with open(f"{output_dir}/info", 'w') as f:
+        json.dump(info, f)
 
 
-def _encode_annotations(df, coord_space, annotation_type, property_specs, relationships, output_dir):
+def _get_bounds(df, coord_space, annotation_type):
+    """
+    Inspect the geometry columns of the given dataframe to
+    determine the overall upper and lower bounds of the annotations.
+
+    Returns:
+        lower_bound, upper_bound
+        (both numpy arrays of length 3)
+    """
+    geometry_cols = _geometry_cols(coord_space.names, annotation_type)
+
+    if annotation_type == 'point':
+        points = df[geometry_cols[0]]
+        return (
+            points.min(axis=0).to_numpy(),
+            points.max(axis=0).to_numpy()
+        )
+
+    if annotation_type in ('line', 'axis_aligned_bounding_box'):
+        points_a = df[geometry_cols[0]]
+        points_b = df[geometry_cols[1]]
+        return (
+            np.minimum(points_a.min().to_numpy(), points_b.min().to_numpy()),
+            np.maximum(points_a.max().to_numpy(), points_b.max().to_numpy())
+        )
+
+    if annotation_type == 'ellipsoid':
+        center = df[geometry_cols[0]]
+        radii = df[geometry_cols[1]]
+        return (
+            (center - radii).min().to_numpy(),
+            (center + radii).max().to_numpy()
+        )
+
+    raise ValueError(f"Annotation type {annotation_type} not supported")
+
+
+def _geometry_cols(coord_names, annotation_type):
+    """
+    Determine the list of column groups that express
+    the geometry of annotations of the given type.
+    Point annotations have only one group,
+    but other annotation types have two.
+    
+    Examples:
+    
+        >>> _geometry_cols([*'xyz'], 'point')
+        [['x', 'y', 'z']]
+
+        >>> _geometry_cols([*'xyz'], 'ellipsoid')
+        [['x', 'y', 'z'], ['rx', 'ry', 'rz']]
+
+        >>> _geometry_cols([*'xyz'], 'line')
+        [['xa', 'ya', 'za'], ['xb', 'yb', 'zb']]
+
+        >>> _geometry_cols([*'xyz'], 'axis_aligned_bounding_box')
+        [['xa', 'ya', 'za'], ['xb', 'yb', 'zb']]
+    """
+    if annotation_type == 'point':
+        return [[c for c in coord_names]]
+
+    if annotation_type == 'ellipsoid':
+        return [
+            [c for c in coord_names],
+            [f'r{c}' for c in coord_names]
+        ]
+
+    if annotation_type in ('line', 'axis_aligned_bounding_box'):
+        return [
+            [f'{c}a' for c in coord_names],
+            [f'{c}b' for c in coord_names]
+        ]
+
+    raise ValueError(f"Annotation type {annotation_type} not supported")
+
+
+def _encode_annotations(df, coord_space, annotation_type, property_specs, relationships):
     """
     Returns a (shallow) copy of the dataframe with additional columns containing
     buffers for each encoded annotation and its encoded id and encoded relationships.
@@ -213,54 +310,18 @@ def _encode_geometries_and_properties(df, coord_space, annotation_type, property
             geometry_prop_df[p['id']] = geometry_prop_df[p['id']].cat.codes
             dtypes[p['id']] = p['type']
 
-    # vectorized serialization
+    # Vectorized serialization
     records = geometry_prop_df.to_records(index=False, column_dtypes=dtypes)
+    recsize = records.dtype.itemsize
     buf = records.tobytes()
 
+    # Reduce RAM usage
+    del records
+
     # extract bytes from the appropriate slice for each record
-    recsize = records.dtype.itemsize
-    encoded_annotations = [buf[i*recsize:(i+1)*recsize] for i in range(len(records))]
+    encoded_annotations = [buf[i*recsize:(i+1)*recsize] for i in range(len(df))]
     ann_bufs = pd.Series(encoded_annotations, index=df.index)
     return ann_bufs
-
-
-def _geometry_cols(coord_names, annotation_type):
-    """
-    Determine the list of column groups that express
-    the geometry of annotations of the given type.
-    Point annotations have only one group,
-    but other annotation types have two.
-    
-    Examples:
-    
-        >>> _geometry_cols([*'xyz'], 'point')
-        [['x', 'y', 'z']]
-
-        >>> _geometry_cols([*'xyz'], 'ellipsoid')
-        [['x', 'y', 'z'], ['rx', 'ry', 'rz']]
-
-        >>> _geometry_cols([*'xyz'], 'line')
-        [['xa', 'ya', 'za'], ['xb', 'yb', 'zb']]
-
-        >>> _geometry_cols([*'xyz'], 'axis_aligned_bounding_box')
-        [['xa', 'ya', 'za'], ['xb', 'yb', 'zb']]
-    """
-    if annotation_type == 'point':
-        return [[c for c in coord_names]]
-
-    if annotation_type == 'ellipsoid':
-        return [
-            [c for c in coord_names],
-            [f'r{c}' for c in coord_names]
-        ]
-
-    if annotation_type in ('line', 'axis_aligned_bounding_box'):
-        return [
-            [f'{c}a' for c in coord_names],
-            [f'{c}b' for c in coord_names]
-        ]
-
-    raise ValueError(f"Annotation type {annotation_type} not supported")
 
 
 def _encode_relationships(df, relationships):
@@ -410,6 +471,46 @@ def _write_annotations_by_relationship(df, relationship, output_dir, write_shard
     return metadata
 
 
+def _write_annotations_spatial(df, lower_bound, upper_bound, output_dir, write_sharded):
+    """
+    Write the annotations to the spatial index.
+    Currently, we only support a single spatial grid level,
+    resulting in a single shard (when using sharding).
+    """
+    count_buf = np.uint64(len(df)).tobytes()
+    all_annotations_buf = b''.join(df['ann_buf'])
+    all_ids_buf = b''.join(df['id_buf'])
+    combined_buf = b''.join([count_buf, all_annotations_buf, all_ids_buf])
+
+    logger.info(f"Writing annotations to spatial index")
+    key = '_'.join('0' for _ in lower_bound)
+    metadata = _write_buffers(
+        pd.Series([combined_buf], index=[key]),
+        output_dir,
+        "spatial0",
+        write_sharded
+    )
+
+    metadata = [
+        {
+            **metadata,
+            "grid_shape": [1] * len(lower_bound),
+            "chunk_size": np.maximum(upper_bound - lower_bound, 1).tolist(),
+
+            # According to jbms:
+            #   Neuroglancer "subsamples" by showing only a prefix of the list of
+            #   annotations according to the spacing setting.  If you set "limit" to 1 in
+            #   the info file, you won't get subsampling by default.  If you want the
+            #   subsampling to do something reasonable, then you can randomly shuffle the
+            #   order in which you write the annotations.
+            # Source:
+            #   https://github.com/google/neuroglancer/issues/227#issuecomment-651944575
+            "limit": 1,
+        },
+    ]
+    return metadata
+
+
 def _write_buffers(buf_series, output_dir, subdir, write_sharded):
     """
     Write the buffers to the appropriate subdirectory of output_dir,
@@ -505,67 +606,6 @@ def _write_buffers_sharded(buf_series, output_dir, subdir):
         "sharding": shard_spec.to_json()
     }
     return metadata
-
-    
-def _write_metadata(df, coord_space, annotation_type, property_specs, by_id_metadata, by_rel_metadata, output_dir):
-    """
-    Write the top-level 'info' file for the annotation output directory.
-    """
-    os.makedirs(output_dir, exist_ok=True)
-
-    lower_bound, upper_bound = _get_bounds(df, coord_space, annotation_type)
-
-    info = {
-        "@type": "neuroglancer_annotations_v1",
-        "dimensions": coord_space.to_json(),
-        "lower_bound": lower_bound.tolist(),
-        "upper_bound": upper_bound.tolist(),
-        "annotation_type": annotation_type,
-        "properties": property_specs,
-        "by_id": by_id_metadata,
-        "relationships": by_rel_metadata,
-        "spatial": []  # TODO
-    }
-
-    with open(f"{output_dir}/info", 'w') as f:
-        json.dump(info, f)
-
-
-def _get_bounds(df, coord_space, annotation_type):
-    """
-    Inspect the geometry columns of the given dataframe to
-    determine the overall upper and lower bounds of the annotations.
-
-    Returns:
-        lower_bound, upper_bound
-        (both numpy arrays of length 3)
-    """
-    geometry_cols = _geometry_cols(coord_space.names, annotation_type)
-
-    if annotation_type == 'point':
-        points = df[geometry_cols[0]]
-        return (
-            points.min(axis=0).to_numpy(),
-            points.max(axis=0).to_numpy()
-        )
-
-    if annotation_type in ('line', 'axis_aligned_bounding_box'):
-        points_a = df[geometry_cols[0]]
-        points_b = df[geometry_cols[1]]
-        return (
-            np.minimum(points_a.min().to_numpy(), points_b.min().to_numpy()),
-            np.maximum(points_a.max().to_numpy(), points_b.max().to_numpy())
-        )
-
-    if annotation_type == 'ellipsoid':
-        center = df[geometry_cols[0]]
-        radii = df[geometry_cols[1]]
-        return (
-            (center - radii).min().to_numpy(),
-            (center + radii).max().to_numpy()
-        )
-
-    raise ValueError(f"Annotation type {annotation_type} not supported")
 
 
 def _test():
