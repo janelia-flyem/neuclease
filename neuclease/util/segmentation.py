@@ -1249,12 +1249,14 @@ def thickest_point_in_mask(mask):
     return maxpoint, dt[maxpoint]
 
 
-def distance_transform_watershed(mask, smoothing=0.0, seed_mask=None, seed_labels=None, flood_from='interior'):
+def distance_transform_watershed(mask, smoothing=0.0, seed_mask=None, seed_labels=None, flood_from='interior', turbo_watershed=True):
     """
     Compute a watershed over the distance transform within a mask.
     You can either compute the watershed from inside-to-outside or outside-to-inside.
+    
     For the former, the watershed is seeded from the most interior points,
     and the distance transform is inverted so the watershed can proceed from low to high as usual.
+    
     For the latter, the distance transform is seeded from the voxels immediately outside the mask,
     using labels as found in the seed_labels volume. In this mode, the results effectively tell
     you which exterior segment (in the seed volume) is closest to any given point within the
@@ -1272,6 +1274,11 @@ def distance_transform_watershed(mask, smoothing=0.0, seed_mask=None, seed_label
         seed_mask:
         seed_labels:
         flood_from:
+
+        turbo_watershed:
+            If True, convert the distance map to uint8 (after renormalizing
+            to [0, 255]) and use vigra's "Turbo" watershed mode.
+            This loses precision, but is faster.
 
     Returns:
         dt, labeled_seeds, ws
@@ -1317,7 +1324,8 @@ def distance_transform_watershed(mask, smoothing=0.0, seed_mask=None, seed_label
             seed_mask = np.isnan(minima)
             del minima
 
-        dt = normalize_image_range(dt, np.uint8)
+        if turbo_watershed:
+            dt = normalize_image_range(dt, np.uint8)
     else:
         if seed_labels is None and seed_mask is None:
             logger.warning("Without providing your own seed mask and/or seed labels, "
@@ -1331,11 +1339,14 @@ def distance_transform_watershed(mask, smoothing=0.0, seed_mask=None, seed_label
         outer_edge_mask[:] |=  binary_edge_mask(outer_edge_mask | mask, 'outer')
 
         dt = distance_transform(mask, False, smoothing, negate=False)
-        dt = normalize_image_range(dt, np.uint8)
+        if turbo_watershed:
+            dt = normalize_image_range(dt, np.uint8)
 
     if seed_labels is None:
         seed_mask = vigra.taggedView(seed_mask, 'zyx')
-        labeled_seeds = vigra.analysis.labelMultiArrayWithBackground(seed_mask.view('uint8'))
+        if seed_mask.max() <= 255:
+            seed_mask = seed_mask.view('uint8')
+        labeled_seeds = vigra.analysis.labelMultiArrayWithBackground(seed_mask)
     else:
         labeled_seeds = np.where(seed_mask, seed_labels, 0)
 
@@ -1376,6 +1387,10 @@ def distance_transform_watershed(mask, smoothing=0.0, seed_mask=None, seed_label
 
     dt = vigra.taggedView(dt, 'zyx')
     ws_seeds = vigra.taggedView(ws_seeds, 'zyx')
+    if turbo_watershed:
+        method = 'Turbo'
+    else:
+        method = 'RegionGrowing'
     ws, max_id = vigra.analysis.watershedsNew(dt, seeds=ws_seeds, method='Turbo')
 
     # Areas that were unreachable without crossing over the border
