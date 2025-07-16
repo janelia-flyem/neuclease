@@ -477,6 +477,17 @@ def _write_annotations_spatial(df, lower_bound, upper_bound, output_dir, write_s
     Currently, we only support a single spatial grid level,
     resulting in a single shard (when using sharding).
     """
+    # According to the spec[1]:
+    #   "For the spatial index, the annotations should be ordered randomly."
+    #
+    # This probably doesn't matter here since we're using a limit of 1,
+    # but let's go ahead and follow the spec.
+    #
+    # [1]: https://github.com/google/neuroglancer/blob/master/src/datasource/precomputed/annotations.md
+    logger.info("Shuffling annotations for spatial index")
+    df = df.sample(frac=1)
+
+    logger.info("Concatenating all annotation buffers for the spatial index")
     count_buf = np.uint64(len(df)).tobytes()
     all_annotations_buf = b''.join(df['ann_buf'])
     all_ids_buf = b''.join(df['id_buf'])
