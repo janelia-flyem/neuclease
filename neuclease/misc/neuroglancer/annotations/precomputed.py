@@ -123,6 +123,8 @@ def write_precomputed_annotations(
     property_specs = annotation_property_specs(df, properties)
     lower_bound, upper_bound = _get_bounds(df, coord_space, annotation_type)
 
+    # Construct a buffer for each annotation and additional buffers
+    # for each annotation's relationships, stored in extra columns of df.
     df = _encode_annotations(
         df,
         coord_space,
@@ -146,7 +148,13 @@ def write_precomputed_annotations(
 
     spatial_metadata = []
     if write_single_spatial_level:
-        spatial_metadata = _write_annotations_spatial(df, lower_bound, upper_bound, output_dir, write_sharded)
+        spatial_metadata = _write_annotations_spatial(
+            df,
+            lower_bound,
+            upper_bound,
+            output_dir,
+            write_sharded
+        )
     
     # Write the top-level 'info' file for the annotation output directory.
     info = {
@@ -175,6 +183,11 @@ def _get_bounds(df, coord_space, annotation_type):
         (both numpy arrays of length 3)
     """
     geometry_cols = _geometry_cols(coord_space.names, annotation_type)
+    if (gc := set(chain(*geometry_cols))) > set(df.columns):
+        raise ValueError(
+            "Dataframe does not have all required geometry columns for the given coordinate space.\n"
+            f"Required columns: {gc}"
+        )
 
     if annotation_type == 'point':
         points = df[geometry_cols[0]]
@@ -475,7 +488,7 @@ def _write_annotations_spatial(df, lower_bound, upper_bound, output_dir, write_s
     """
     Write the annotations to the spatial index.
     Currently, we only support a single spatial grid level,
-    resulting in a single shard (when using sharding).
+    resulting in a single annotation list.
     """
     # According to the spec[1]:
     #   "For the spatial index, the annotations should be ordered randomly."
@@ -493,9 +506,10 @@ def _write_annotations_spatial(df, lower_bound, upper_bound, output_dir, write_s
     all_ids_buf = b''.join(df['id_buf'])
     combined_buf = b''.join([count_buf, all_annotations_buf, all_ids_buf])
 
+    # For now, just one big buffer.
     logger.info(f"Writing annotations to spatial index")
     key = '_'.join('0' for _ in lower_bound)
-    metadata = _write_buffers(
+    metadata_0 = _write_buffers(
         pd.Series([combined_buf], index=[key]),
         output_dir,
         "spatial0",
@@ -504,7 +518,7 @@ def _write_annotations_spatial(df, lower_bound, upper_bound, output_dir, write_s
 
     metadata = [
         {
-            **metadata,
+            **metadata_0,
             "grid_shape": [1] * len(lower_bound),
             "chunk_size": np.maximum(upper_bound - lower_bound, 1).tolist(),
 
@@ -560,17 +574,26 @@ def _write_buffers_unsharded(buf_series, output_dir, subdir):
     Write the buffers to the appropriate subdirectory of output_dir,
     in unsharded format, i.e. one file per item.
 
-    The index of buf_series is used as the key for each item,
-    after being converted to a string (as decimal values).
+    The index of buf_series is used as the key for each item, after being
+    converted to a string (as decimal values in the case of integer keys).
 
     Returns:
         JSON metadata, always {"key": subdir}
     """
-    # In the unsharded format, the keys are just strings of the decimal IDs.
+    # In the unsharded format, the keys are just strings (e.g. decimal IDs).
     string_keys = buf_series.index.astype(str)
     buf_series = buf_series.set_axis(string_keys)
 
+    # Since we're writing unsharded files, we could have just used
+    # standard Python open() and write() here for each key.
+    # Using tensorstore here is mostly just a matter of taste, but it will
+    # become useful if we ever support alternative storage backends such as gcs.
     kvstore = ts.KvStore.open(f"file://{output_dir}/{subdir}/").result()
+
+    # Using a transaction here is not necessary, at least for plain files.
+    # I'm not sure if it helps or hurts, but it probably doesn't matter much
+    # for small datasets, which is presumably what we're dealing with if the
+    # user has chosen the unsharded format.
     with ts.Transaction() as txn:
         for segment_key, buf in tqdm(buf_series.items(), total=len(buf_series)):
             kvstore.with_transaction(txn)[segment_key] = buf
@@ -590,7 +613,7 @@ def _write_buffers_sharded(buf_series, output_dir, subdir):
     Returns:
         JSON metadata, including the output "key" (subdir) and sharding spec.
     """
-    # When writing sharded data, we must use encoded bigendian uint64 as the key
+    # When writing sharded data, we must use encoded bigendian uint64 as the key.
     # https://github.com/google/neuroglancer/pull/522#issuecomment-1923137085
     bigendian_keys = _encode_uint64_series(buf_series.index, '>u8')
     buf_series = buf_series.set_axis(bigendian_keys)
@@ -608,6 +631,9 @@ def _write_buffers_sharded(buf_series, output_dir, subdir):
     }
     kvstore = ts.KvStore.open(spec).result()
 
+    # Note:
+    #   At the time of this writing, tensorstore uses a
+    #   surprising amount of RAM to perform the writes.
     with ts.Transaction() as txn:
         for segment_key, buf in tqdm(buf_series.items(), total=len(buf_series)):
             kvstore.with_transaction(txn)[segment_key] = buf
