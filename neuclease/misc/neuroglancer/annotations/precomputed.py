@@ -34,7 +34,10 @@ def write_precomputed_annotations(
     relationships: list[str] = (),
     output_dir: str = 'annotations',
     write_sharded: bool = True,
-    write_single_spatial_level=False,
+    *,
+    write_by_id: bool = True,
+    write_by_relationship: bool = True,
+    write_single_spatial_level: bool = False,
 ):
     """
     Export the data from a pandas DataFrame into neuroglancer's precomputed annotations format
@@ -106,6 +109,16 @@ def write_precomputed_annotations(
             Without sharding, every annotation results in a separate file in the annotation ID index.
             Similarly, every related ID results in a separate file in the related ID index.
 
+        write_by_id:
+            bool
+            Whether to write the annotations to the "Annotation ID Index".
+            If False, skip writing.
+
+        write_relationships:
+            bool
+            Whether to write the relationships to the "Related Object ID Index".
+            If False, skip writing.
+
         write_single_spatial_level:
             bool
             If True, write the spatial index as a single grid level. With a spatial index
@@ -133,18 +146,22 @@ def write_precomputed_annotations(
         relationships
     )
 
-    by_id_metadata = _write_annotations_by_id(
-        df,
-        output_dir,
-        write_sharded
-    )
-    
-    by_rel_metadata = _write_annotations_by_relationships(
-        df,
-        relationships,
-        output_dir,
-        write_sharded
-    )
+    by_id_metadata = {}
+    if write_by_id:
+        by_id_metadata = _write_annotations_by_id(
+            df,
+            output_dir,
+            write_sharded
+        )
+
+    by_rel_metadata = []
+    if write_by_relationship:    
+        by_rel_metadata = _write_annotations_by_relationships(
+            df,
+            relationships,
+            output_dir,
+            write_sharded
+        )
 
     spatial_metadata = []
     if write_single_spatial_level:
@@ -643,3 +660,11 @@ def _write_buffers_sharded(buf_series, output_dir, subdir):
         "sharding": shard_spec.to_json()
     }
     return metadata
+
+
+def _assign_spatial_grid(df, coord_space, annotation_type, lower_bound, upper_bound, max_grid_depth):
+    """
+    Assign each annotation to a spatial grid cell.
+    """
+    grid_shape = np.ceil((upper_bound - lower_bound) / 2**max_grid_depth)
+    
