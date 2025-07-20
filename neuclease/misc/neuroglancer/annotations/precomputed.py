@@ -333,6 +333,11 @@ def _encode_geometries_and_properties(df, coord_space, annotation_type, property
         geometry_prop_df[f'__padding_{i}__'] = np.uint8(0)
 
     dtypes = {c: np.float32 for c in chain(*geometry_cols)}
+    dtypes.update({
+        p['id']: p['type']
+        for p in property_specs
+        if df[p['id']].dtype != 'category' and p['type'] not in ('rgb', 'rgba')
+    })
 
     # Convert category columns to their integer equivalents
     for p in property_specs:
