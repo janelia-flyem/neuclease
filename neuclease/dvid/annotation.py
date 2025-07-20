@@ -468,6 +468,31 @@ def fetch_point_elements(server, uuid, instance, points, *, relationships=False,
     return _format_elements(elements, relationships, format)
 
 
+def fetch_point_elements_by_block(server, uuid, instance, point_df, *, block_size=64, relationships=False, format='pandas', threads=0,processes=0):
+    """
+    Fetch a list of elements, given by the points in the provided dataframe.
+
+    Calls /blocks repeatedly (once per block).  Since the block may contain more
+    elements than you requested, we discard the elements that were not listed in the
+    input dataframe.
+    """
+    assert isinstance(point_df, pd.DataFrame)
+    assert {*'xyz'} <= {*point_df.columns}
+    assert format == 'pandas', 'Only pandas format is supported for this function'
+    assert not relationships, 'Relationships are not supported for this function'
+
+    blocks = ((point_df[[*'zyx']] // block_size).drop_duplicates() * block_size).values
+    boxes = np.array((blocks, blocks + block_size)).transpose(1, 0, 2)
+
+    _fetch = partial(fetch_blocks, server, uuid, instance, format='blocks')
+    block_dicts = compute_parallel(_fetch, boxes, threads=threads, processes=processes)
+    block_elements = [*chain(*(chain(*b.values()) for b in block_dicts))]
+
+    block_df = load_elements_as_dataframe(block_elements, False)
+    df = point_df.merge(block_df, 'left', on=[*'zyx'])
+    return df
+
+
 def load_elements_as_dataframe(elements, relationships=False):
     """
     Convert the given elements from JSON to pandas DataFrame(s).
