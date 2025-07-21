@@ -247,6 +247,8 @@ def prepare_bookmark_assignment_setup(df, output_dir, bucket_path, csv_path, pre
         if batch_df.index.name == 'body':
             batch_df['body'] = batch_df.index
         tracking_df['bodies'] = batch_df.groupby('assignment')['body'].agg(list)
+        if 'synweight' in batch_df.columns:
+            tracking_df['first_synweight'] = batch_df.groupby('assignment')['synweight'].agg('first')
 
     tracking_df.to_csv(csv_path, index=False, header=True)
     return tracking_df
