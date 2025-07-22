@@ -1,19 +1,18 @@
 import copy
 from textwrap import indent, dedent
-from collections.abc import Mapping, Collection
 
 import numpy as np
 import pandas as pd
 
-from .util import parse_nglink
+from ..util import parse_nglink
+from .util import annotation_property_specs
 
-
-def extract_annotations(link, *, link_index=None, user=None, visible_only=False):
+def extract_local_annotations(link, *, link_index=None, user=None, visible_only=False):
     """
     Extract local://annotations data from a neuroglancer link.
     The annotation coordinates (point, pointA, pointB, radii) are extracted
     into separate columns, named x,y,z/xa,ya,za/xb,yb,zb/rx,ry,rz
-    (consistent with annotation_layer_json() in this file).
+    (consistent with local_annotation_json() in this file).
 
     Args:
         link:
@@ -82,6 +81,9 @@ def extract_annotations(link, *, link_index=None, user=None, visible_only=False)
     return df
 
 
+# legacy name
+extract_annotations = extract_local_annotations
+
 # Tip: Here's a nice repo with lots of colormaps implemented in GLSL.
 # https://github.com/kbinani/colormap-shaders
 SHADER_FMT = dedent("""\
@@ -133,7 +135,7 @@ LOCAL_ANNOTATION_JSON = {
 }
 
 
-def annotation_layer_json(df, name="annotations", color="#ffff00", size=8.0, linkedSegmentationLayer=None,
+def local_annotation_json(df, name="annotations", color="#ffff00", size=8.0, linkedSegmentationLayer=None,
                           show_panel=False, properties=[], shader=None, res_nm_xyz=(8,8,8)):
     """
     Construct the JSON data for a neuroglancer local annotations layer.
@@ -230,7 +232,7 @@ def annotation_layer_json(df, name="annotations", color="#ffff00", size=8.0, lin
     if not show_panel:
         del data['panels']
 
-    prop_specs = _annotation_property_specs(df, properties)
+    prop_specs = annotation_property_specs(df, properties)
     if prop_specs:
         data['annotationProperties'] = prop_specs
 
@@ -241,9 +243,16 @@ def annotation_layer_json(df, name="annotations", color="#ffff00", size=8.0, lin
     return data
 
 
+# Deprecated name (now supports more than just points)
+point_annotation_layer_json = local_annotation_json
+
+# Deprecated name
+annotation_layer_json = local_annotation_json
+
+
 def _annotation_list_json(df, linkedSegmentationLayer, properties):
     """
-    Helper for annotation_layer_json().
+    Helper for local_annotation_json().
 
     Generate the list of annotations for an annotation layer,
     assuming the input dataframe has already been pre-conditioned.
@@ -289,7 +298,7 @@ def _annotation_list_json(df, linkedSegmentationLayer, properties):
 
 def _standardize_annotation_dataframe(df):
     """
-    Helper for annotation_layer_json().
+    Helper for local_annotation_json().
     Add empty columns as needed until the dataframe
     has all possible annotation columns.
 
@@ -393,96 +402,3 @@ def _default_shader(annotation_types, default_size):
     """)
 
     return shader_main
-
-
-def _annotation_property_specs(df, properties):
-    """
-    Helper for annotation_layer_json().
-
-    Given an input dataframe for annotations and a list of columns
-    from which to generate annotation properties, generate a
-    JSON property type specification for inserting into the layer
-    JSON state in the 'annotationProperties' section.
-
-    The annotation property type is inferred from each column's dtype.
-    Categorical pandas columns result in neuroglancer enum annotation properties.
-
-    Args:
-        df:
-            DataFrame.  The property columns will be inspected to infer
-            the ultimate property types (numeric vs enum vs color).
-        properties:
-            list of column names from which to generate properties,
-            or a dict-of-dicts containing pre-formulated property specs
-            as descrbed in the docstring for annotation_layer_json().
-    Returns:
-        JSON dict
-    """
-    if isinstance(properties, Mapping):
-        property_specs = properties
-    else:
-        assert isinstance(properties, Collection)
-        property_specs = {col: {} for col in properties}
-
-    default_property_specs = {
-        col: {
-            'id': col,
-            'type': _proptype(df[col]),
-        }
-        for col in property_specs
-    }
-
-    for col in default_property_specs.keys():
-        if df[col].dtype == "category":
-            cats = df[col].cat.categories.tolist()
-            default_property_specs[col]['enum_values'] = [*range(len(cats))]
-            default_property_specs[col]['enum_labels'] = cats
-
-    property_specs = [
-        {**default_property_specs[col], **property_specs[col]}
-        for col in property_specs
-    ]
-
-    return property_specs
-
-
-# Deprecated name (now supports more than just points)
-point_annotation_layer_json = annotation_layer_json
-
-
-def _proptype(s):
-    """
-    Helper for _annotation_property_specs().
-    Given a Series, determine the corresponding neuroglancer property type.
-
-    Returns: str
-        Either a numeric type (e.g. 'uint16') or a color type ('rgb' or 'rgba').
-    """
-    if s.dtype in (np.float64, np.int64, np.uint64):
-        raise RuntimeError('neuroglancer doesnt support 64-bit property types.')
-    if s.dtype in (np.uint8, np.int8, np.uint16, np.int16, np.uint32, np.int32, np.float32):
-        return str(s.dtype)
-
-    if s.dtype == 'category':
-        num_cats = len(s.dtype.categories)
-        for utype in (np.uint8, np.uint16, np.uint32):
-            if num_cats <= 1 + np.iinfo(utype).max:
-                return str(np.dtype(utype))
-        raise RuntimeError(f"Column {s.name} has too many categories")
-
-    if s.dtype != object:
-        raise RuntimeError(f"Unsupported property dtype: {s.dtype} for column {s.name}")
-
-    is_str = s.map(lambda x: isinstance(x, str)).all()
-    is_color = is_str and s.str.startswith('#').all()
-    if not is_color:
-        msg = (
-            f"Column {s.name}: I don't know what to do with object dtype that isn't rbg or rgba.\n"
-            "If you want to create an enum property, then supply a pandas Categorical column."
-        )
-        raise RuntimeError(msg)
-    if (s.map(len) == len("#rrggbb")).all():
-        return 'rgb'
-    if (s.map(len) == len("#rrggbbaa")).all():
-        return 'rgba'
-    raise RuntimeError("Not valid RGB or RGBA colors")
