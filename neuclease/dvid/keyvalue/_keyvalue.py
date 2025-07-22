@@ -646,6 +646,8 @@ DEFAULT_BODY_STATUS_CATEGORIES = [
     'Finalized'
 ]
 
+DEFAULT_BODY_STATUS_DTYPE = pd.CategoricalDtype(DEFAULT_BODY_STATUS_CATEGORIES, ordered=True)
+
 
 @dvid_api_wrapper
 def fetch_body_annotations(server, uuid, instance='segmentation_annotations', bodies=None, *,

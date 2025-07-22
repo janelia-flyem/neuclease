@@ -468,6 +468,31 @@ def fetch_point_elements(server, uuid, instance, points, *, relationships=False,
     return _format_elements(elements, relationships, format)
 
 
+def fetch_point_elements_by_block(server, uuid, instance, point_df, *, block_size=64, relationships=False, format='pandas', threads=0,processes=0):
+    """
+    Fetch a list of elements, given by the points in the provided dataframe.
+
+    Calls /blocks repeatedly (once per block).  Since the block may contain more
+    elements than you requested, we discard the elements that were not listed in the
+    input dataframe.
+    """
+    assert isinstance(point_df, pd.DataFrame)
+    assert {*'xyz'} <= {*point_df.columns}
+    assert format == 'pandas', 'Only pandas format is supported for this function'
+    assert not relationships, 'Relationships are not supported for this function'
+
+    blocks = ((point_df[[*'zyx']] // block_size).drop_duplicates() * block_size).values
+    boxes = np.array((blocks, blocks + block_size)).transpose(1, 0, 2)
+
+    _fetch = partial(fetch_blocks, server, uuid, instance, format='blocks')
+    block_dicts = compute_parallel(_fetch, boxes, threads=threads, processes=processes)
+    block_elements = [*chain(*(chain(*b.values()) for b in block_dicts))]
+
+    block_df = load_elements_as_dataframe(block_elements, False)
+    df = point_df.merge(block_df, 'left', on=[*'zyx'])
+    return df
+
+
 def load_elements_as_dataframe(elements, relationships=False):
     """
     Convert the given elements from JSON to pandas DataFrame(s).
@@ -2078,7 +2103,8 @@ def _post_psd_chunk(server, uuid, instance, chunk_shape, merge_existing, c_zyx, 
 
 
 def process_partners_and_post_synapse_jsons(server, uuid, instance, full_partner_df,
-                                            processes=32, chunk_shape_zyx=(128, 128, 32768)):
+                                            processes=32, chunk_shape_zyx=(128, 128, 32768),
+                                            properties=[]):
     """
     Given a 'full partner' table (one row per PSD, with both pre- and
     post- columns for every row), generate and post the 'blocks' json
@@ -2123,6 +2149,15 @@ def process_partners_and_post_synapse_jsons(server, uuid, instance, full_partner
             The job will be divided and parallelized across user-specified chunk boundaries.
             The chunk shape must be a power of 2 in every dimention, and not smaller
             than 64 in any dimension.
+        
+        properties:
+            Which columns of full_partner_df correspond to properties which should
+            be included in the JSON for each synapse element.  (Except 'conf' and 'user',
+            which are included by default.)
+            Note:
+                All properties will be converted to strings in the JSON.
+                Traditionally we used strings for 'conf', and I don't know
+                if NeuTu/neu3 would barf if they encounter non-string properties.
     """
     if 'kind_pre' not in full_partner_df.columns:
         full_partner_df['kind_pre'] = "PreSyn"
@@ -2134,7 +2169,7 @@ def process_partners_and_post_synapse_jsons(server, uuid, instance, full_partner
         full_partner_df['user_post'] = ""
 
     with Timer("Constructing point-oriented partner table", logger):
-        point_rel_df = _construct_point_rel_df(full_partner_df)
+        point_rel_df = _construct_point_rel_df(full_partner_df, properties)
     logger.info(f"Table is {point_rel_df.memory_usage().sum() / 1e9:.1f} GB")
 
     cz, cy, cx = chunk_shape_zyx
@@ -2149,7 +2184,7 @@ def process_partners_and_post_synapse_jsons(server, uuid, instance, full_partner
 
     num_chunks = point_rel_df['chunk_id'].nunique()
     with Timer(f"Posting {num_chunks} chunks using {processes} processes", logger):
-        _post_chunk = partial(_post_point_rel_chunk, server, uuid, instance)
+        _post_chunk = partial(_post_point_rel_chunk, server, uuid, instance, properties=properties)
         point_rel_chunks = (df for _, df in point_rel_df.groupby('chunk_id', sort=False))
         block_counts = compute_parallel(_post_chunk, point_rel_chunks,
                                         total=num_chunks, processes=processes, ordered=True)
@@ -2158,7 +2193,7 @@ def process_partners_and_post_synapse_jsons(server, uuid, instance, full_partner
     logger.info(f"Posted {total_blocks} blocks in total via {num_chunks} posts")
 
 
-def _construct_point_rel_df(full_partner_df):
+def _construct_point_rel_df(full_partner_df, properties):
     """
     Helper for process_partners_and_post_synapse_jsons().
 
@@ -2173,11 +2208,14 @@ def _construct_point_rel_df(full_partner_df):
     To save RAM, we don't keep separate columns for the X,Y,Z coordinates.
     Instead, we use the encoded point_id form (uint64).
     """
+    properties = [p for p in properties if p not in ['conf', 'user']]
     compact_cols = [
         'pre_id', 'post_id',
         'kind_pre', 'kind_post',
         'conf_pre', 'conf_post',
-        'user_pre', 'user_post'
+        'user_pre', 'user_post',
+        *(f'{p}_pre' for p in properties),
+        *(f'{p}_post' for p in properties)
     ]
 
     compact_partner_df = full_partner_df[compact_cols].astype({
@@ -2195,7 +2233,8 @@ def _construct_point_rel_df(full_partner_df):
             'kind_pre': 'kind',
             'conf_pre': 'conf',
             'user_pre': 'user',
-            'post_id': 'rel_id'
+            'post_id': 'rel_id',
+            **{f'{p}_pre': p for p in properties}
         }
     )
 
@@ -2205,16 +2244,17 @@ def _construct_point_rel_df(full_partner_df):
             'kind_post': 'kind',
             'conf_post': 'conf',
             'user_post': 'user',
-            'pre_id': 'rel_id'
+            'pre_id': 'rel_id',
+            **{f'{p}_post': p for p in properties}
         }
     )
 
-    cols = ['point_id', 'rel_id', 'kind', 'conf', 'user']
+    cols = ['point_id', 'rel_id', 'kind', 'conf', 'user', *properties]
     point_rel_df = pd.concat((pre_points[cols], post_points[cols]), ignore_index=True)
     return point_rel_df
 
 
-def _post_point_rel_chunk(server, uuid, instance, point_rel_df):
+def _post_point_rel_chunk(server, uuid, instance, point_rel_df, properties):
     """
     Helper for process_partners_and_post_synapse_jsons().
 
@@ -2222,12 +2262,12 @@ def _post_point_rel_chunk(server, uuid, instance, point_rel_df):
     generate JSON data in DVID native 'blocks' format,
     and post it to DVID.
     """
-    blocks_json = _compute_point_rel_blocks_json(point_rel_df)
+    blocks_json = _compute_point_rel_blocks_json(point_rel_df, properties)
     post_blocks(server, uuid, instance, blocks_json)
     return len(blocks_json)
 
 
-def _compute_point_rel_blocks_json(point_rel_df):
+def _compute_point_rel_blocks_json(point_rel_df, properties):
     """
     Helper for process_partners_and_post_synapse_jsons().
 
@@ -2243,7 +2283,8 @@ def _compute_point_rel_blocks_json(point_rel_df):
             'kind': 'first',
             'conf': 'first',
             'user': 'first',
-            'rel_id': list
+            'rel_id': list,
+            **{p: 'first' for p in properties}
         })
     )
     elements_df['rel_zyx'] = elements_df['rel_id'].map(np.array).map(decode_coords_from_uint64)
@@ -2259,7 +2300,10 @@ def _compute_point_rel_blocks_json(point_rel_df):
                 "Pos": [row.x, row.y, row.z],
                 "Kind": row.kind,
                 "Tags": [],
-                "Prop": {"conf": str(row.conf), "user": row.user},
+                "Prop": {
+                    "conf": str(row.conf),
+                    **{p: str(getattr(row, p)) for p in properties}
+                },
                 "Rels": [{"Rel": f"{row.kind}To", "To": c[::-1]}
                          for c in row.rel_zyx.tolist()]
             })

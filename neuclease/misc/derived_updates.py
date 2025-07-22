@@ -13,6 +13,7 @@ from datetime import datetime
 
 import json
 from requests import HTTPError
+import pandas as pd
 from confiddler import load_config, dump_default_config
 
 from neuclease import PrefixFilter
@@ -20,7 +21,7 @@ from neuclease.util import switch_cwd, tqdm_proxy_config, Timer, tqdm_proxy
 from neuclease.dvid import (
     set_default_dvid_session_timeout, is_locked,
     fetch_branch_nodes, resolve_ref, fetch_repo_instances, find_repo_root,
-    create_instance, fetch_key, fetch_keys, post_key, delete_key, fetch_keyrange,
+    create_instance, fetch_key, fetch_keys, post_key, delete_key, fetch_keyrange, fetch_keyrangevalues,
     fetch_mapping,fetch_mutations, compute_affected_bodies, fetch_skeleton, fetch_lastmod, fetch_query
 )
 from neuclease.misc.bodymesh import update_body_mesh, BodyMeshParametersSchema, MeshChunkConfigSchema, create_and_upload_missing_supervoxel_meshes
@@ -302,6 +303,21 @@ def mutated_bodies_since_previous_update(dvid_server, uuid, seg_instance, derive
 
     affected = compute_affected_bodies(recent_muts)
     return prev_update, affected, last_mutid
+
+
+def fetch_all_update_receipts(dvid_server, uuid, seg_instance, derived_type):
+    if "derived-data-checkpoints" not in fetch_repo_instances(dvid_server, uuid):
+        return []
+
+    kv = fetch_keyrangevalues(
+        dvid_server,
+        uuid,
+        "derived-data-checkpoints",
+        f"{seg_instance}-{derived_type}-",
+        f"{seg_instance}-{derived_type}-a",
+        as_json=True
+    )
+    return pd.DataFrame(kv.values())
 
 
 def store_update_receipt(dvid_server, uuid, seg_instance, derived_type, mutid):
