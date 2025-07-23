@@ -262,14 +262,24 @@ def fetch_elements_for_bodies(server, uuid, instance, bodies, format='pandas', *
 
         processes:
             Number of processes to use for parallel fetching.
+    
+    Returns:
+        If format='list', return a dict of {body: element_list}
+        If format='pandas', return a single pandas DataFrame of all elements,
+        with an appended 'body' column.
     """
+    assert format in ('list', 'pandas')
+
     fn = partial(fetch_label, server, uuid, instance, session=session)
     element_lists = compute_parallel(fn, bodies, processes=processes)
-    elements = [*chain(*element_lists)]
     if format == 'pandas':
-        return load_elements_as_dataframe(elements, relationships=False)
+        element_dfs = compute_parallel(load_elements_as_dataframe, element_lists, processes=processes)
+        for body, df in zip(bodies, element_dfs):
+            if len(df) > 0:
+                df['body'] = body
+        return pd.concat(element_dfs, ignore_index=True)
     else:
-        return elements
+        return dict(zip(bodies, element_lists))
 
 
 @dvid_api_wrapper
