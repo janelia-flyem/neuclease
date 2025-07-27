@@ -85,9 +85,11 @@ def write_precomputed_annotations(
         properties:
             If your dataframe contains columns that you want to use as annotation properties,
             list the names of those columns here.
+            Categorical columns will be automatically converted to integers with associated
+            enum labels.
             The full property spec for each property will be inferred from the column dtype,
-            but if you want to specify the property spec yourself, you can pass a list of
-            AnnotationPropertySpec objects here.
+            but if you want to explicitly override any property specs yourself, you can pass
+            a list of AnnotationPropertySpec objects here.
 
         relationships:
             list[str]
@@ -134,7 +136,7 @@ def write_precomputed_annotations(
     os.makedirs(output_dir, exist_ok=True)
     annotation_type = annotation_type.lower()
     property_specs = annotation_property_specs(df, properties)
-    lower_bound, upper_bound = _get_bounds(df, coord_space, annotation_type)
+    bounds = _get_bounds(df, coord_space, annotation_type)
 
     # Construct a buffer for each annotation and additional buffers
     # for each annotation's relationships, stored in extra columns of df.
@@ -167,8 +169,7 @@ def write_precomputed_annotations(
     if write_single_spatial_level:
         spatial_metadata = _write_annotations_spatial(
             df,
-            lower_bound,
-            upper_bound,
+            bounds,
             output_dir,
             write_sharded
         )
@@ -177,8 +178,8 @@ def write_precomputed_annotations(
     info = {
         "@type": "neuroglancer_annotations_v1",
         "dimensions": coord_space.to_json(),
-        "lower_bound": lower_bound.tolist(),
-        "upper_bound": upper_bound.tolist(),
+        "lower_bound": bounds[0].tolist(),
+        "upper_bound": bounds[1].tolist(),
         "annotation_type": annotation_type,
         "properties": property_specs,
         "by_id": by_id_metadata,
@@ -505,8 +506,7 @@ def _write_annotations_by_relationship(df, relationship, output_dir, write_shard
     metadata['id'] = relationship
     return metadata
 
-
-def _write_annotations_spatial(df, lower_bound, upper_bound, output_dir, write_sharded):
+def _write_annotations_spatial(df, bounds, output_dir, write_sharded):
     """
     Write the annotations to the spatial index.
     Currently, we only support a single spatial grid level,
@@ -530,7 +530,7 @@ def _write_annotations_spatial(df, lower_bound, upper_bound, output_dir, write_s
 
     # For now, just one big buffer.
     logger.info(f"Writing annotations to spatial index")
-    key = '_'.join('0' for _ in lower_bound)
+    key = '_'.join('0' for _ in bounds[0])
     metadata_0 = _write_buffers(
         pd.Series([combined_buf], index=[key]),
         output_dir,
@@ -541,8 +541,8 @@ def _write_annotations_spatial(df, lower_bound, upper_bound, output_dir, write_s
     metadata = [
         {
             **metadata_0,
-            "grid_shape": [1] * len(lower_bound),
-            "chunk_size": np.maximum(upper_bound - lower_bound, 1).tolist(),
+            "grid_shape": [1] * len(bounds[0]),
+            "chunk_size": np.maximum(bounds[1] - bounds[0], 1).tolist(),
 
             # According to jbms:
             #   Neuroglancer "subsamples" by showing only a prefix of the list of
