@@ -21,7 +21,7 @@ except ImportError:
     class AnnotationPropertySpec:
         pass
 
-from .util import annotation_property_specs, choose_output_spec
+from ..util import annotation_property_specs, choose_output_spec
 
 logger = logging.getLogger(__name__)
 
