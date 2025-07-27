@@ -3888,7 +3888,7 @@ def recursive_sv_split_by_grid(server, uuid, instance, sv, init_grid=8192, final
 
     def _recursive_split(sv, rng, init_grid, new_svs, indent=0):
         # Determine split ranges for each block
-        with Timer(f"Computing grid RLEs [{tuple(init_grid)}]", logger):
+        with Timer(f"Computing grid RLEs [{tuple(init_grid.tolist())}]", logger):
             block_rng_df = split_ranges_for_grid(rng, init_grid)
             block_ids_and_ranges = list(block_rng_df.groupby(['Bz', 'By', 'Bx']))
             num_blocks = len(block_ids_and_ranges)
