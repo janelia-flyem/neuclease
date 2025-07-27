@@ -232,7 +232,7 @@ def fetch_label(server, uuid, instance, label, relationships=False, *, format='l
     if format == 'json':
         format = 'list'
     url = f'{server}/api/node/{uuid}/{instance}/label/{label}'
-    params = { 'relationships': str(bool(relationships)).lower() }
+    params = { 'relationships': str(relationships).lower() }
     return _fetch_elements(url, params, format, relationships, session)
 
 
