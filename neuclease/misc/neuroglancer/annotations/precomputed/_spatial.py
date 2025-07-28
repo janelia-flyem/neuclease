@@ -1,59 +1,287 @@
 import logging
+from itertools import chain
+
 import numpy as np
 import pandas as pd
+from numba import guvectorize
 
 from ._write_buffers import _write_buffers
+from ._util import _encode_uint64_series, _geometry_cols
 
 logger = logging.getLogger(__name__)
 
 
-def _write_annotations_spatial(df, bounds, output_dir, write_sharded):
+def _write_annotations_spatial(df, coord_space, annotation_type, bounds, num_levels, target_chunk_limit, output_dir, write_sharded):
     """
     Write the annotations to the spatial index.
     Currently, we only support a single spatial grid level,
     resulting in a single annotation list.
+
+    Returns:
+        JSON metadata to write into the 'spatial' key of the info file.
     """
-    # According to the spec[1]:
-    #   "For the spatial index, the annotations should be ordered randomly."
-    #
-    # This probably doesn't matter here since we're using a limit of 1,
-    # but let's go ahead and follow the spec.
-    #
-    # [1]: https://github.com/google/neuroglancer/blob/master/src/datasource/precomputed/annotations.md
-    logger.info("Shuffling annotations for spatial index")
-    df = df.sample(frac=1)
-
-    logger.info("Concatenating all annotation buffers for the spatial index")
-    count_buf = np.uint64(len(df)).tobytes()
-    all_annotations_buf = b''.join(df['ann_buf'])
-    all_ids_buf = b''.join(df['id_buf'])
-    combined_buf = b''.join([count_buf, all_annotations_buf, all_ids_buf])
-
-    # For now, just one big buffer.
-    logger.info(f"Writing annotations to spatial index")
-    key = '_'.join('0' for _ in bounds[0])
-    metadata_0 = _write_buffers(
-        pd.Series([combined_buf], index=[key]),
+    df, chunk_shapes, grid_shapes = _assign_spatial_chunks(
+        df,
+        coord_space,
+        annotation_type,
+        bounds,
+        num_levels,
+        target_chunk_limit
+    )
+    metadata = _write_annotations_by_spatial_grid(
+        df,
+        coord_space,
+        chunk_shapes,
+        grid_shapes,
         output_dir,
-        "spatial0",
         write_sharded
     )
-
-    metadata = [
-        {
-            **metadata_0,
-            "grid_shape": [1] * len(bounds[0]),
-            "chunk_size": np.maximum(bounds[1] - bounds[0], 1).tolist(),
-
-            # According to jbms:
-            #   Neuroglancer "subsamples" by showing only a prefix of the list of
-            #   annotations according to the spacing setting.  If you set "limit" to 1 in
-            #   the info file, you won't get subsampling by default.  If you want the
-            #   subsampling to do something reasonable, then you can randomly shuffle the
-            #   order in which you write the annotations.
-            # Source:
-            #   https://github.com/google/neuroglancer/issues/227#issuecomment-651944575
-            "limit": 1,
-        },
-    ]
     return metadata
+
+
+def _assign_spatial_chunks(df, coord_space, annotation_type, bounds, num_levels, target_chunk_limit: int):
+    """
+    Assign each annotation to a spatial grid cell.
+    If an annotation intersects multiple grid cells, we duplicate
+    its row so we can assign it to all of the intersecting cells.
+    """
+    geometry_cols = _geometry_cols(coord_space.names, annotation_type)
+    df = df.copy(deep=False)[[*chain(*geometry_cols), 'ann_buf', 'id_buf']]
+    chunk_shapes, grid_shapes = _define_spatial_grids(bounds, num_levels)
+    level_annotation_counts = _compute_target_annotations_per_level(len(df), grid_shapes, target_chunk_limit)
+
+    logger.info("Shuffling annotations before assigning spatial grid levels")
+    df = df.sample(frac=1.0)
+
+    logger.info("Assigning spatial grid chunks")
+    df['level'] = np.repeat(range(num_levels), level_annotation_counts)
+    if annotation_type == 'point':
+        df = _assign_point_spatial_chunks(df, coord_space.names, bounds, chunk_shapes, grid_shapes, level_annotation_counts)
+    else:
+        raise NotImplementedError(f"Spatial indexing for {annotation_type} annotations is not implemented")
+
+    logger.info("Done assigning spatial grid chunks")
+    return df, chunk_shapes, grid_shapes
+
+
+def _assign_point_spatial_chunks(df, coord_names, bounds, chunk_shapes, grid_shapes, level_annotation_counts):
+    grid_indices = (df[[*coord_names]] - bounds[0]) // chunk_shapes[df['level']]
+    grid_indices = grid_indices.astype(int)
+
+    # Make sure annotations at the exact upper bound get valid grid coordinates.
+    grid_indices = np.minimum(grid_indices, grid_shapes[df['level']] - 1)
+
+    df[[f'grid_{c}' for c in coord_names]] = grid_indices
+    return df
+
+
+def _define_spatial_grids(bounds, num_levels: int):
+    """
+    Compute suitable chunk shapes and grid shapes for each level 
+    of the spatial index, following the guidelines from the spec[1]:
+
+        Typically the grid_shape for level 0 should be a vector of all 1
+        (with chunk_size equal to upper_bound - lower_bound), and each component
+        of chunk_size of each successively level should be either equal to, or half of,
+        the corresponding component of the prior level chunk_size, whichever results
+        in a more spatially isotropic chunk.
+
+    [1]: https://github.com/google/neuroglancer/blob/master/src/datasource/precomputed/annotations.md#spatial-index
+
+    Args:
+        bounds:
+            np.ndarray, shape (2, D)
+            lower and upper bounds of the union of all annotations
+        num_levels:
+            The number of spatial index levels. Must be at least 1.
+
+    Returns:
+        chunk_shapes, grid_shapes
+    """
+    # Level 0 chunk shape and grid shape -- just one chunk.
+    chunk_shape = np.asarray(bounds[1], np.float64) - bounds[0]
+    grid_shape = np.ones_like(chunk_shape, dtype=int)
+
+    chunk_shapes = [chunk_shape]
+    grid_shapes = [grid_shape]
+
+    for level in range(1, num_levels):
+        chunk_shape = chunk_shape.copy()
+        grid_shape = grid_shape.copy()
+
+        max_dim = np.argmax(chunk_shape)
+        target_width = chunk_shape[max_dim] / 2
+
+        for dim, dim_width in enumerate(chunk_shape):
+            if dim == max_dim:
+                # Always split across the widest dimension.
+                chunk_shape[dim] = target_width
+                grid_shape[dim] *= 2
+            elif (dim_width / target_width) > 1.5:
+                # Split across this dimension to make it more isotropic.
+                chunk_shape[dim] = dim_width / 2
+                grid_shape[dim] *= 2
+            else:
+                # Splitting would make it less isotropic,
+                # so leave this dimension unsplit.
+                chunk_shape[dim] = dim_width
+                grid_shape[dim] *= 1
+
+        chunk_shapes.append(chunk_shape)
+        grid_shapes.append(grid_shape)
+
+    return np.array(chunk_shapes), np.array(grid_shapes)
+
+
+def _compute_target_annotations_per_level(num_annotations, grid_shapes, target_chunk_limit: int):
+    """
+    Compute the TOTAL number of annotations at each level of the spatial index.
+    The target_chunk_limit is how many annotations we aim to place in each chunk
+    (regardless of the level).
+    
+    Since the spatial annotations are not distributed uniformly in space,
+    we will likely end up undershooting and overshooting the target for various
+    chunks within a level.
+
+    Furthermore, since the number of annotations passed in here is based on the
+    table BEFORE duplicating annotations which span multiple chunks, the number
+    of annotations at each level will eventually be more than what is returned here,
+    after the appropriate duplications.
+
+    Returns:
+        np.ndarray, shape (num_levels,)
+    """
+    num_levels = len(grid_shapes)
+    chunk_counts_by_level = np.prod(grid_shapes, axis=1)
+    annotation_counts = chunk_counts_by_level * target_chunk_limit
+    
+    # Clamp to total number of annotations remaining after earlier levels
+    for level in range(num_levels - 1):
+        annotation_counts[level] = min(
+            annotation_counts[level],
+            num_annotations - sum(annotation_counts[:level])
+        )
+
+    # Last level gets all remaining annotations, if any.
+    annotation_counts[-1] = num_annotations - sum(annotation_counts[:-1])
+
+    return annotation_counts
+
+
+def _write_annotations_by_spatial_grid(df, coord_space, chunk_shapes, grid_shapes, output_dir, write_sharded):
+    """
+    Write the spatial index, given a dataframe in which the 'level'
+    and grid coordinates for each annotation have already been assigned.
+
+    Returns:
+        JSON metadata to write into the 'spatial' key of the info file.
+    """
+    grid_cols = [f'grid_{c}' for c in coord_space.names]
+    bufs_by_grid = (
+        df[['level', *grid_cols, 'id_buf', 'ann_buf']]
+        .groupby(['level', *grid_cols], sort=False)
+        .agg({'id_buf': ['count', b''.join], 'ann_buf': b''.join})
+    )
+    logger.info(f"Combining annotation and ID buffers for spatial index")
+    bufs_by_grid.columns = ['count', 'id_buf', 'ann_buf']
+    bufs_by_grid['count_buf'] = _encode_uint64_series(bufs_by_grid['count'])
+    bufs_by_grid['combined_buf'] = bufs_by_grid[['count_buf', 'ann_buf', 'id_buf']].sum(axis=1)
+
+    bufs_by_grid = bufs_by_grid.reset_index()
+
+    metadata = []
+    for level, level_bufs in bufs_by_grid.groupby('level'):
+        logger.info(f"Writing annotations to 'by_spatial_level_{level}' index")
+
+        if write_sharded:
+            # Sharded key is the compressed morton code of the grid coordinate.
+            grid_coords = level_bufs[grid_cols].to_numpy()
+            level_bufs.index = compressed_morton_code(grid_coords, grid_shapes[level])
+        else:
+            # Unsharded key is string, e.g. '0_0_0'
+            level_bufs.index = level_bufs[grid_cols].astype(str).apply('_'.join, axis=1)
+
+        level_metadata = _write_buffers(
+            level_bufs['combined_buf'],
+            output_dir,
+            f"by_spatial_level_{level}",
+            write_sharded
+        )
+        level_metadata['chunk_size'] = chunk_shapes[level].tolist()
+        level_metadata['grid_shape'] = grid_shapes[level].tolist()
+        level_metadata['limit'] = int(level_bufs['count'].max())
+        metadata.append(level_metadata)
+
+    return metadata
+
+
+def compressed_morton_code(grid_coord, grid_shape):
+    """
+    Return the compressed morton code[1] for a grid coordinate
+    that resides in a grid with the given shape.
+
+    [1]: https://github.com/google/neuroglancer/blob/master/src/datasource/precomputed/volume.md#compressed-morton-code
+
+    This implementation uses numba.guvectorize().
+    Multiple coordinates and/or grid shapes can be provided simultaneously,
+    and they will be broadcasted together to produce an output of the appropriate shape.
+
+    Examples:
+
+        In [10]: compressed_morton_code(
+            ...:     [1,5,3],
+            ...:     [3, 16, 5]
+            ...: )
+        Out[10]: array(143, dtype=uint64)
+
+        In [11]: compressed_morton_code(
+            ...:     [[1,5,3], [2, 3, 4]],
+            ...:     [3, 16, 5]
+            ...: )
+        Out[11]: array([143, 114], dtype=uint64)
+
+        In [12]: compressed_morton_code(
+            ...:     [1,5,3],
+            ...:     [[3, 16, 5], [6, 32, 10]]
+            ...: )
+        Out[12]: array([143, 143], dtype=uint64)
+
+        In [13]: compressed_morton_code(
+            ...:     [[1,5,3], [2, 3, 4]],
+            ...:     [[3, 16, 5], [6, 32, 10]]
+            ...: )
+        Out[13]: array([143, 114], dtype=uint64)
+    """
+    grid_coord = np.asarray(grid_coord, np.uint64)
+    grid_shape = np.asarray(grid_shape, np.uint64)
+    if (grid_coord >= grid_shape).any():
+        raise ValueError(f'grid_coord contains out-of-bounds values relative to grid_shape')
+    
+    axis_bits = np.ceil(np.log2(grid_shape)).astype(np.int8)
+    output_shape = np.broadcast(grid_shape, grid_coord).shape[:-1]
+    output_code = np.zeros(output_shape, dtype=np.uint64)
+    __compressed_morton_code(grid_coord, axis_bits, output_code)
+    return output_code
+
+
+@guvectorize('(d),(d)->()', nopython=True)
+def __compressed_morton_code(grid_coord, axis_bits, result):
+    D = len(axis_bits)
+    curr_axis_pos = np.zeros(D, dtype=np.uint64)
+    curr_axis = 0
+    output_pos = np.uint64(0)
+    output_code = np.uint64(0)
+
+    for _ in range(D * 64):
+        curr_axis = (curr_axis - 1) % D
+        if curr_axis_pos[curr_axis] >= axis_bits[curr_axis]:
+            continue
+
+        input_pos = curr_axis_pos[curr_axis]
+        output_code |= ((grid_coord[curr_axis] >> input_pos) & np.uint64(1)) << output_pos
+        output_pos += np.uint64(1)
+        curr_axis_pos[curr_axis] += 1
+
+    # With guvectorize, we treat a scalar output as if it had a single element.
+    # https://numba.readthedocs.io/en/stable/user/vectorize.html#scalar-return-values
+    result[0] = output_code

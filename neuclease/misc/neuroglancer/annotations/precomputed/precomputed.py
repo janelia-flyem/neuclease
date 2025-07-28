@@ -21,7 +21,7 @@ except ImportError:
 
 from ..util import annotation_property_specs
 
-from ._util import _encode_uint64_series
+from ._util import _encode_uint64_series, _geometry_cols
 from ._id import _write_annotations_by_id
 from ._relationships import _write_annotations_by_relationships, _encode_relationships
 from ._spatial import _write_annotations_spatial
@@ -40,7 +40,9 @@ def write_precomputed_annotations(
     *,
     write_by_id: bool = True,
     write_by_relationship: bool = True,
-    write_single_spatial_level: bool = False,
+    write_by_spatial: bool = True,
+    num_spatial_levels: int = 7,
+    target_chunk_limit: int = 10_000,
 ):
     """
     Export the data from a pandas DataFrame into neuroglancer's precomputed annotations format
@@ -124,13 +126,19 @@ def write_precomputed_annotations(
             Whether to write the relationships to the "Related Object ID Index".
             If False, skip writing.
 
-        write_single_spatial_level:
+        write_by_spatial:
             bool
-            If True, write the spatial index as a single grid level. With a spatial index
-            all annotations can be viewed at once, independent of any relationships.
-            However, as the argument name suggests, we only support a single spatial grid level
-            (containing all annotations), which is not suitable for millions of annotations.
-            If False, no spatial index will be written at all.
+            Whether to write the spatial index.
+
+        num_spatial_levels:
+            int
+            The maximum number of spatial index levels to write.
+            If not all levels are needed (because all annotations fit within the first N levels),
+            then the actual number of levels written will be less than this value.
+
+        target_chunk_limit:
+            int
+            For the spatial index, how many annotations we aim to place in each chunk (regardless of the level).
     """
     # Verify that the neuroglancer package is available.
     from neuroglancer.coordinate_space import CoordinateSpace
@@ -169,10 +177,14 @@ def write_precomputed_annotations(
         )
 
     spatial_metadata = []
-    if write_single_spatial_level:
+    if write_by_spatial:
         spatial_metadata = _write_annotations_spatial(
             df,
+            coord_space,
+            annotation_type,
             bounds,
+            num_spatial_levels,
+            target_chunk_limit,
             output_dir,
             write_sharded
         )
@@ -232,45 +244,6 @@ def _get_bounds(df, coord_space, annotation_type):
             (center - radii).min().to_numpy(),
             (center + radii).max().to_numpy()
         )
-
-    raise ValueError(f"Annotation type {annotation_type} not supported")
-
-
-def _geometry_cols(coord_names, annotation_type):
-    """
-    Determine the list of column groups that express
-    the geometry of annotations of the given type.
-    Point annotations have only one group,
-    but other annotation types have two.
-    
-    Examples:
-    
-        >>> _geometry_cols([*'xyz'], 'point')
-        [['x', 'y', 'z']]
-
-        >>> _geometry_cols([*'xyz'], 'ellipsoid')
-        [['x', 'y', 'z'], ['rx', 'ry', 'rz']]
-
-        >>> _geometry_cols([*'xyz'], 'line')
-        [['xa', 'ya', 'za'], ['xb', 'yb', 'zb']]
-
-        >>> _geometry_cols([*'xyz'], 'axis_aligned_bounding_box')
-        [['xa', 'ya', 'za'], ['xb', 'yb', 'zb']]
-    """
-    if annotation_type == 'point':
-        return [[c for c in coord_names]]
-
-    if annotation_type == 'ellipsoid':
-        return [
-            [c for c in coord_names],
-            [f'r{c}' for c in coord_names]
-        ]
-
-    if annotation_type in ('line', 'axis_aligned_bounding_box'):
-        return [
-            [f'{c}a' for c in coord_names],
-            [f'{c}b' for c in coord_names]
-        ]
 
     raise ValueError(f"Annotation type {annotation_type} not supported")
 
@@ -348,5 +321,3 @@ def _encode_geometries_and_properties(df, coord_space, annotation_type, property
     encoded_annotations = [buf[i*recsize:(i+1)*recsize] for i in range(len(df))]
     ann_bufs = pd.Series(encoded_annotations, index=df.index)
     return ann_bufs
-
-
