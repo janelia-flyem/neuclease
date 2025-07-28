@@ -7,7 +7,7 @@ import tensorstore as ts
 from ._util import _encode_uint64_series
 
 
-def _write_buffers (buf_series, output_dir, subdir, write_sharded):
+def _write_buffers(buf_series, output_dir, subdir, write_sharded):
     """
     Write the buffers to the appropriate subdirectory of output_dir,
     in sharded or unsharded format.

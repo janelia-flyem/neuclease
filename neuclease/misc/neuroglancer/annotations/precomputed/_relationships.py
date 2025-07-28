@@ -52,7 +52,7 @@ def _encode_related_ids(related_ids):
     Returns:
         A numpy array with N entries, where each entry is a buffer as shown above.
     """
-    # Special case if the relationship contains only a single ID.
+    # Special case if the relationship contains only a single ID for each annotation.
     if np.issubdtype(related_ids.dtype, np.integer):
         buf = (
             pd.DataFrame({'count': np.uint32(1), 'id': related_ids})
