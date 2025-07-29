@@ -118,6 +118,10 @@ def _write_buffers_sharded(buf_series, output_dir, subdir):
 
 @dataclass
 class ShardSpec:
+    """
+    Copied from Forrest Collman's PR:
+    https://github.com/google/neuroglancer/pull/522
+    """
     type: str
     hash: Literal["murmurhash3_x86_128", "identity_hash"]
     preshift_bits: int

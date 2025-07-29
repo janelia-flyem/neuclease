@@ -24,7 +24,7 @@ from ..util import annotation_property_specs
 from ._util import _encode_uint64_series, _geometry_cols
 from ._id import _write_annotations_by_id
 from ._relationships import _write_annotations_by_relationships, _encode_relationships
-from ._spatial import _write_annotations_spatial
+from ._spatial import _write_annotations_by_spatial_chunk
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +40,7 @@ def write_precomputed_annotations(
     *,
     write_by_id: bool = True,
     write_by_relationship: bool = True,
-    write_by_spatial: bool = True,
+    write_by_spatial_chunk: bool = True,
     num_spatial_levels: int = 7,
     target_chunk_limit: int = 10_000,
 ):
@@ -126,7 +126,7 @@ def write_precomputed_annotations(
             Whether to write the relationships to the "Related Object ID Index".
             If False, skip writing.
 
-        write_by_spatial:
+        write_by_spatial_chunk:
             bool
             Whether to write the spatial index.
 
@@ -177,8 +177,8 @@ def write_precomputed_annotations(
         )
 
     spatial_metadata = []
-    if write_by_spatial:
-        spatial_metadata = _write_annotations_spatial(
+    if write_by_spatial_chunk:
+        spatial_metadata = _write_annotations_by_spatial_chunk(
             df,
             coord_space,
             annotation_type,

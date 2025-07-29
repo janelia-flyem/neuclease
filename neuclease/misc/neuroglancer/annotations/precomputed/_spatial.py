@@ -1,17 +1,20 @@
 import logging
 from itertools import chain
+from typing import NamedTuple
 
 import numpy as np
-import pandas as pd
-from numba import guvectorize
+from numba import njit, guvectorize
+from numba.typed import List
 
 from ._write_buffers import _write_buffers
-from ._util import _encode_uint64_series, _geometry_cols
+from ._util import _encode_uint64_series, _geometry_cols, _ndindex_array
 
 logger = logging.getLogger(__name__)
 
+GridSpec = NamedTuple("GridSpec", [('chunk_shapes', np.ndarray), ('grid_shapes', np.ndarray)])
 
-def _write_annotations_spatial(df, coord_space, annotation_type, bounds, num_levels, target_chunk_limit, output_dir, write_sharded):
+
+def _write_annotations_by_spatial_chunk(df, coord_space, annotation_type, bounds, num_levels, target_chunk_limit, output_dir, write_sharded):
     """
     Write the annotations to the spatial index.
     Currently, we only support a single spatial grid level,
@@ -20,7 +23,7 @@ def _write_annotations_spatial(df, coord_space, annotation_type, bounds, num_lev
     Returns:
         JSON metadata to write into the 'spatial' key of the info file.
     """
-    df, chunk_shapes, grid_shapes = _assign_spatial_chunks(
+    df, gridspec = _assign_spatial_chunks(
         df,
         coord_space,
         annotation_type,
@@ -28,11 +31,9 @@ def _write_annotations_spatial(df, coord_space, annotation_type, bounds, num_lev
         num_levels,
         target_chunk_limit
     )
-    metadata = _write_annotations_by_spatial_grid(
+    metadata = __write_annotations_by_spatial_chunk(
         df,
-        coord_space,
-        chunk_shapes,
-        grid_shapes,
+        gridspec,
         output_dir,
         write_sharded
     )
@@ -46,36 +47,69 @@ def _assign_spatial_chunks(df, coord_space, annotation_type, bounds, num_levels,
     its row so we can assign it to all of the intersecting cells.
     """
     geometry_cols = _geometry_cols(coord_space.names, annotation_type)
-    df = df.copy(deep=False)[[*chain(*geometry_cols), 'ann_buf', 'id_buf']]
-    chunk_shapes, grid_shapes = _define_spatial_grids(bounds, num_levels)
-    level_annotation_counts = _compute_target_annotations_per_level(len(df), grid_shapes, target_chunk_limit)
+    df = df[[*chain(*geometry_cols), 'ann_buf', 'id_buf']].copy(deep=False)
+    gridspec = _define_spatial_grids(bounds, num_levels)
+    level_annotation_counts = _compute_target_annotations_per_level(len(df), gridspec, target_chunk_limit)
 
     logger.info("Shuffling annotations before assigning spatial grid levels")
     df = df.sample(frac=1.0)
 
     logger.info("Assigning spatial grid chunks")
-    df['level'] = np.repeat(range(num_levels), level_annotation_counts)
+    df['level'] = np.repeat(range(num_levels), level_annotation_counts.astype(int)).astype(np.uint64)
     if annotation_type == 'point':
-        df = _assign_point_spatial_chunks(df, coord_space.names, bounds, chunk_shapes, grid_shapes, level_annotation_counts)
+        df = _assign_point_spatial_chunks(df, coord_space.names, bounds, gridspec)
+    elif annotation_type == 'axis_aligned_bounding_box':
+        df = _assign_axis_aligned_bounding_box_spatial_chunks(df, geometry_cols, bounds, gridspec)
     else:
         raise NotImplementedError(f"Spatial indexing for {annotation_type} annotations is not implemented")
 
     logger.info("Done assigning spatial grid chunks")
-    return df, chunk_shapes, grid_shapes
+    return df, gridspec
 
 
-def _assign_point_spatial_chunks(df, coord_names, bounds, chunk_shapes, grid_shapes, level_annotation_counts):
-    grid_indices = (df[[*coord_names]] - bounds[0]) // chunk_shapes[df['level']]
+def _assign_point_spatial_chunks(df, coord_names, bounds, gridspec):
+    grid_indices = (df[[*coord_names]] - bounds[0]) // gridspec.chunk_shapes[df['level']]
     grid_indices = grid_indices.astype(int)
 
     # Make sure annotations at the exact upper bound get valid grid coordinates.
-    grid_indices = np.minimum(grid_indices, grid_shapes[df['level']] - 1)
+    grid_indices = np.minimum(grid_indices, gridspec.grid_shapes[df['level']] - 1)
 
-    df[[f'grid_{c}' for c in coord_names]] = grid_indices
+    df['chunk_code'] = compressed_morton_code(grid_indices, gridspec.grid_shapes[df['level']])
     return df
 
 
-def _define_spatial_grids(bounds, num_levels: int):
+def _assign_axis_aligned_bounding_box_spatial_chunks(df, geometry_cols, bounds, gridspec):
+    boxes = df[[*geometry_cols[0], *geometry_cols[1]]].to_numpy().reshape(len(df), 2, -1)
+
+    # Ensure start < end
+    swap_mask = (boxes[:, 0, :] > boxes[:, 1, :])[:, None, :]
+    swap_mask = np.concatenate([swap_mask, swap_mask], axis=1)
+    boxes[swap_mask] = boxes[:, ::-1, :][swap_mask]
+
+    # Offset to start at lower bound
+    boxes = boxes - bounds[0]
+
+    grid_boxes = np.zeros_like(boxes, np.uint64)
+    grid_boxes[:, 0] = np.floor(boxes[:, 0] / gridspec.chunk_shapes[df['level']]).astype(np.uint64)
+    grid_boxes[:, 1] = np.ceil(boxes[:, 1] / gridspec.chunk_shapes[df['level']]).astype(np.uint64)
+    df[f'chunk_code'] = grid_box_codes(grid_boxes, gridspec.grid_shapes[df['level']])
+
+    # Duplicate the annotations which span multiple chunks.
+    df = df.explode('chunk_code')
+    return df
+
+
+@njit
+def grid_box_codes(grid_boxes, grid_shapes):
+    lists = List()
+    for grid_box, grid_shape in zip(grid_boxes, grid_shapes):
+        grid_indices = _ndindex_array(grid_box[1] - grid_box[0]) + grid_box[0]
+        codes = _compressed_morton_code_pairwise(grid_indices, grid_shape)
+        lists.append(List(codes))
+    return lists
+
+
+def _define_spatial_grids(bounds, num_levels: int) -> GridSpec:
     """
     Compute suitable chunk shapes and grid shapes for each level 
     of the spatial index, following the guidelines from the spec[1]:
@@ -100,7 +134,7 @@ def _define_spatial_grids(bounds, num_levels: int):
     """
     # Level 0 chunk shape and grid shape -- just one chunk.
     chunk_shape = np.asarray(bounds[1], np.float64) - bounds[0]
-    grid_shape = np.ones_like(chunk_shape, dtype=int)
+    grid_shape = np.ones_like(chunk_shape, dtype=np.uint64)
 
     chunk_shapes = [chunk_shape]
     grid_shapes = [grid_shape]
@@ -130,10 +164,13 @@ def _define_spatial_grids(bounds, num_levels: int):
         chunk_shapes.append(chunk_shape)
         grid_shapes.append(grid_shape)
 
-    return np.array(chunk_shapes), np.array(grid_shapes)
+    return GridSpec(
+        chunk_shapes=np.array(chunk_shapes, dtype=np.float64),
+        grid_shapes=np.array(grid_shapes, dtype=np.uint64)
+    )
 
 
-def _compute_target_annotations_per_level(num_annotations, grid_shapes, target_chunk_limit: int):
+def _compute_target_annotations_per_level(num_annotations, gridspec, target_chunk_limit: int):
     """
     Compute the TOTAL number of annotations at each level of the spatial index.
     The target_chunk_limit is how many annotations we aim to place in each chunk
@@ -151,8 +188,8 @@ def _compute_target_annotations_per_level(num_annotations, grid_shapes, target_c
     Returns:
         np.ndarray, shape (num_levels,)
     """
-    num_levels = len(grid_shapes)
-    chunk_counts_by_level = np.prod(grid_shapes, axis=1)
+    num_levels = len(gridspec.grid_shapes)
+    chunk_counts_by_level = np.prod(gridspec.grid_shapes, axis=1)
     annotation_counts = chunk_counts_by_level * target_chunk_limit
     
     # Clamp to total number of annotations remaining after earlier levels
@@ -168,18 +205,17 @@ def _compute_target_annotations_per_level(num_annotations, grid_shapes, target_c
     return annotation_counts
 
 
-def _write_annotations_by_spatial_grid(df, coord_space, chunk_shapes, grid_shapes, output_dir, write_sharded):
+def __write_annotations_by_spatial_chunk(df, gridspec, output_dir, write_sharded):
     """
     Write the spatial index, given a dataframe in which the 'level'
-    and grid coordinates for each annotation have already been assigned.
+    and grid chunk codes for each annotation have already been assigned.
 
     Returns:
         JSON metadata to write into the 'spatial' key of the info file.
     """
-    grid_cols = [f'grid_{c}' for c in coord_space.names]
     bufs_by_grid = (
-        df[['level', *grid_cols, 'id_buf', 'ann_buf']]
-        .groupby(['level', *grid_cols], sort=False)
+        df[['level', 'chunk_code', 'id_buf', 'ann_buf']]
+        .groupby(['level', 'chunk_code'], sort=False)
         .agg({'id_buf': ['count', b''.join], 'ann_buf': b''.join})
     )
     logger.info(f"Combining annotation and ID buffers for spatial index")
@@ -195,11 +231,11 @@ def _write_annotations_by_spatial_grid(df, coord_space, chunk_shapes, grid_shape
 
         if write_sharded:
             # Sharded key is the compressed morton code of the grid coordinate.
-            grid_coords = level_bufs[grid_cols].to_numpy()
-            level_bufs.index = compressed_morton_code(grid_coords, grid_shapes[level])
+            level_bufs.index = level_bufs['chunk_code']
         else:
-            # Unsharded key is string, e.g. '0_0_0'
-            level_bufs.index = level_bufs[grid_cols].astype(str).apply('_'.join, axis=1)
+            # Unsharded key is string of the grid coordinate, e.g. '0_0_0'
+            grid_coords = reverse_morton_code(level_bufs['chunk_code'].to_numpy(), gridspec.grid_shapes[level])
+            level_bufs.index = [map('_'.join, grid_coords.astype(str))]
 
         level_metadata = _write_buffers(
             level_bufs['combined_buf'],
@@ -207,8 +243,8 @@ def _write_annotations_by_spatial_grid(df, coord_space, chunk_shapes, grid_shape
             f"by_spatial_level_{level}",
             write_sharded
         )
-        level_metadata['chunk_size'] = chunk_shapes[level].tolist()
-        level_metadata['grid_shape'] = grid_shapes[level].tolist()
+        level_metadata['chunk_size'] = gridspec.chunk_shapes[level].tolist()
+        level_metadata['grid_shape'] = gridspec.grid_shapes[level].tolist()
         level_metadata['limit'] = int(level_bufs['count'].max())
         metadata.append(level_metadata)
 
@@ -256,9 +292,9 @@ def compressed_morton_code(grid_coord, grid_shape):
     grid_shape = np.asarray(grid_shape, np.uint64)
     if (grid_coord >= grid_shape).any():
         raise ValueError(f'grid_coord contains out-of-bounds values relative to grid_shape')
-    
+
     axis_bits = np.ceil(np.log2(grid_shape)).astype(np.int8)
-    output_shape = np.broadcast(grid_shape, grid_coord).shape[:-1]
+    output_shape = np.broadcast_shapes(grid_shape.shape, grid_coord.shape)[:-1]
     output_code = np.zeros(output_shape, dtype=np.uint64)
     __compressed_morton_code(grid_coord, axis_bits, output_code)
     return output_code
@@ -285,3 +321,49 @@ def __compressed_morton_code(grid_coord, axis_bits, result):
     # With guvectorize, we treat a scalar output as if it had a single element.
     # https://numba.readthedocs.io/en/stable/user/vectorize.html#scalar-return-values
     result[0] = output_code
+
+
+@njit
+def _compressed_morton_code_pairwise(grid_coord, grid_shape):
+    """
+    Same as compressed_morton_code(), but for when both grid_coord
+    is known to have shape (N,D) and both arguments have dtype np.uint64,
+    and therefore this whole function can be wrapped with @njit.
+    This function can be called from within other jit-compiled functions.
+    """
+    axis_bits = np.ceil(np.log2(grid_shape)).astype(np.int8)
+    output_code = np.zeros(len(grid_coord), dtype=np.uint64)
+    __compressed_morton_code(grid_coord, axis_bits, output_code)
+    return output_code
+
+
+def reverse_morton_code(morton_code, grid_shape):
+    morton_code = np.asarray(morton_code, np.uint64)
+    grid_shape = np.asarray(grid_shape, np.uint64)
+
+    D = grid_shape.shape[-1]
+    axis_bits = np.ceil(np.log2(grid_shape)).astype(np.int8)
+    output_shape = np.broadcast_shapes(morton_code.shape, grid_shape.shape[:-1]) + (D,)
+    output_grid_coord = np.zeros(output_shape, dtype=np.uint64)
+    __reverse_morton_code(morton_code, axis_bits, output_grid_coord)
+    return output_grid_coord
+
+
+@guvectorize('(),(d)->(d)', nopython=True)
+def __reverse_morton_code(morton_code, axis_bits, grid_coord):
+    D = len(axis_bits)
+    curr_axis_pos = np.zeros(D, dtype=np.uint64)
+    curr_axis = 0
+    
+    input_pos = np.uint64(0)
+    grid_coord[:] = np.uint64(0)
+
+    for _ in range(D * 64):
+        curr_axis = (curr_axis - 1) % D
+        if curr_axis_pos[curr_axis] >= axis_bits[curr_axis]:
+            continue
+
+        output_pos = curr_axis_pos[curr_axis]
+        grid_coord[curr_axis] |= ((morton_code >> input_pos) & np.uint64(1)) << output_pos
+        input_pos += np.uint64(1)
+        curr_axis_pos[curr_axis] += 1
