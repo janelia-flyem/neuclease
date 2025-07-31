@@ -79,7 +79,7 @@ def _assign_spatial_chunks_for_points(df, coord_names, bounds, gridspec):
     grid_indices = np.minimum(grid_indices, gridspec.grid_shapes[df['level']] - 1)
 
     df['chunk_code'] = compressed_morton_code(grid_indices, gridspec.grid_shapes[df['level']])
-    return df
+    return df[['level', 'chunk_code', 'id_buf', 'ann_buf']]
 
 
 def _assign_spatial_chunks_for_axis_aligned_bounding_boxes(df, geometry_cols, bounds, gridspec):
@@ -100,7 +100,7 @@ def _assign_spatial_chunks_for_axis_aligned_bounding_boxes(df, geometry_cols, bo
     df[f'chunk_code'] = _box_grid_codes(grid_spans, gridspec.grid_shapes[df['level']])
 
     # Duplicate the annotations which span multiple chunks.
-    df = df.explode('chunk_code')
+    df = df[['level', 'chunk_code', 'id_buf', 'ann_buf']].explode('chunk_code')
     return df
 
 
@@ -131,7 +131,7 @@ def _assign_spatial_chunks_for_ellipsoids(df, geometry_cols, bounds, gridspec):
     )
 
     # Duplicate the annotations which span multiple chunks.
-    df = df.explode('chunk_code')
+    df = df[['level', 'chunk_code', 'id_buf', 'ann_buf']].explode('chunk_code')
     return df
 
 
@@ -205,7 +205,7 @@ def _assign_spatial_chunks_for_lines(df, geometry_cols, bounds, gridspec):
     )
 
     # Duplicate the annotations which span multiple chunks.
-    df = df.explode('chunk_code')
+    df = df[['level', 'chunk_code', 'id_buf', 'ann_buf']].explode('chunk_code')
     return df
 
 
