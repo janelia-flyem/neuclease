@@ -79,7 +79,18 @@ def _assign_spatial_chunks_for_points(df, geometry_cols, bounds, gridspec):
     # Make sure annotations at the exact upper bound get valid grid coordinates.
     grid_indices = np.minimum(grid_indices, gridspec.grid_shapes[df['level']].astype(np.int32) - 1)
 
-    df['chunk_code'] = compressed_morton_code(grid_indices, gridspec.grid_shapes[df['level']])
+    # Switch to C order before computing compressed morton code.
+    df['chunk_code'] = compressed_morton_code(
+        grid_indices.to_numpy()[:, ::-1],
+        gridspec.grid_shapes[df['level']][:, ::-1]
+    )
+    
+    # import pyarrow.feather as feather
+    # df[[f'grid_{c}' for c in coord_names]] = grid_indices
+    # df[[f'{c}a' for c in coord_names]] =  grid_indices * gridspec.chunk_shapes[df['level']] + bounds[0]
+    # df[[f'{c}b' for c in coord_names]] = (grid_indices + 1) * gridspec.chunk_shapes[df['level']] + bounds[0]
+    # feather.write_feather(df.drop(columns=['id_buf', 'ann_buf']), '/tmp/points.feather')
+    
     return df[['level', 'chunk_code', 'id_buf', 'ann_buf']]
 
 
@@ -110,7 +121,9 @@ def _box_grid_codes(grid_spans, grid_shapes):
     lists = List()
     for grid_span, grid_shape in zip(grid_spans, grid_shapes):
         grid_indices = grid_span[0] + _ndindex_array(grid_span[1] - grid_span[0])
-        codes = _compressed_morton_code_pairwise(grid_indices, grid_shape)
+
+        # Switch to C order before computing compressed morton code.
+        codes = _compressed_morton_code_pairwise(grid_indices[:, ::-1], grid_shape[::-1])
         lists.append(List(codes))
     return lists
 
@@ -152,7 +165,8 @@ def _ellipsoid_grid_codes(centroids, radii, levels, grid_origin, grid_shapes, ch
         codes = List()
         for grid_index in grid_indices:
             if _ellipsoid_chunk_overlap(centroid, radius, grid_origin, chunk_shape, grid_index):
-                code = _compressed_morton_code_pairwise(grid_index, grid_shape)
+                # Switch to C order before computing compressed morton code.
+                code = _compressed_morton_code_pairwise(grid_index[::-1], grid_shape[::-1])
                 codes.append(code)
         lists.append(codes)
     return lists
@@ -226,7 +240,8 @@ def _line_grid_codes(endpoints, levels, grid_origin, grid_shapes, chunk_shapes):
         grid_indices = grid_span[0] + _ndindex_array(grid_span[1] - grid_span[0])
         for grid_index in grid_indices:
             if _line_chunk_overlap(point_a, point_b, grid_origin, chunk_shape, grid_index):
-                code = _compressed_morton_code_pairwise(grid_index, grid_shape)
+                # Switch to C order before computing compressed morton code.
+                code = _compressed_morton_code_pairwise(grid_index[::-1], grid_shape[::-1])
                 codes.append(code)
         lists.append(codes)
     return lists
@@ -426,7 +441,7 @@ def __write_assigned_annotations_by_spatial_chunk(df, gridspec, output_dir, writ
     return metadata
 
 
-def compressed_morton_code(grid_coord, grid_shape):
+def compressed_morton_code(grid_coord_c_order, grid_shape_c_order):
     """
     Return the compressed morton code[1] for a grid coordinate
     that resides in a grid with the given shape.
@@ -436,6 +451,13 @@ def compressed_morton_code(grid_coord, grid_shape):
     This implementation uses numba.guvectorize().
     Multiple coordinates and/or grid shapes can be provided simultaneously,
     and they will be broadcasted together to produce an output of the appropriate shape.
+
+    Important:
+    
+        This function expects the grid coordinate to be in C order,
+        i.e. the fastest-changing stride is listed last.
+        For typical 3D arrays, C-order indexing is [z, y, x],
+        so pass your grid coordinates here in [z, y, x] order, too.
 
     Examples:
 
@@ -463,8 +485,8 @@ def compressed_morton_code(grid_coord, grid_shape):
             ...: )
         Out[13]: array([143, 114], dtype=uint64)
     """
-    grid_coord = np.asarray(grid_coord, np.uint64)
-    grid_shape = np.asarray(grid_shape, np.uint64)
+    grid_coord = np.asarray(grid_coord_c_order, np.uint64)
+    grid_shape = np.asarray(grid_shape_c_order, np.uint64)
     if (grid_coord >= grid_shape).any():
         raise ValueError(f'grid_coord contains out-of-bounds values relative to grid_shape')
 
@@ -499,7 +521,7 @@ def __compressed_morton_code(grid_coord, axis_bits, result):
 
 
 @njit
-def _compressed_morton_code_pairwise(grid_coord, grid_shape):
+def _compressed_morton_code_pairwise(grid_coord_c_order, grid_shape_c_order):
     """
     Same as compressed_morton_code(), but for when both grid_coord
     and grid_shape are known to have shape ndim 1 or 2 and both arguments
@@ -509,6 +531,9 @@ def _compressed_morton_code_pairwise(grid_coord, grid_shape):
     Therefore this whole function can be wrapped with @njit,
     and can be called from within other jit-compiled functions.
     """
+    grid_coord = grid_coord_c_order
+    grid_shape = grid_shape_c_order
+
     axis_bits = np.ceil(np.log2(grid_shape)).astype(np.int8)
     if grid_coord.ndim == 1:
         output_code = np.zeros(1, dtype=np.uint64)
@@ -520,9 +545,9 @@ def _compressed_morton_code_pairwise(grid_coord, grid_shape):
         return output_code
 
 
-def reverse_morton_code(morton_code, grid_shape):
+def reverse_morton_code(morton_code, grid_shape_c_order):
     morton_code = np.asarray(morton_code, np.uint64)
-    grid_shape = np.asarray(grid_shape, np.uint64)
+    grid_shape = np.asarray(grid_shape_c_order, np.uint64)
 
     D = grid_shape.shape[-1]
     axis_bits = np.ceil(np.log2(grid_shape)).astype(np.int8)
@@ -533,13 +558,13 @@ def reverse_morton_code(morton_code, grid_shape):
 
 
 @guvectorize('(),(d)->(d)', nopython=True)
-def __reverse_morton_code(morton_code, axis_bits, grid_coord):
+def __reverse_morton_code(morton_code, axis_bits, grid_coord_c_order):
     D = len(axis_bits)
     curr_axis_pos = np.zeros(D, dtype=np.uint64)
     curr_axis = 0
     
     input_pos = np.uint64(0)
-    grid_coord[:] = np.uint64(0)
+    grid_coord_c_order[:] = np.uint64(0)
 
     for _ in range(D * 64):
         curr_axis = (curr_axis - 1) % D
@@ -547,6 +572,6 @@ def __reverse_morton_code(morton_code, axis_bits, grid_coord):
             continue
 
         output_pos = curr_axis_pos[curr_axis]
-        grid_coord[curr_axis] |= ((morton_code >> input_pos) & np.uint64(1)) << output_pos
+        grid_coord_c_order[curr_axis] |= ((morton_code >> input_pos) & np.uint64(1)) << output_pos
         input_pos += np.uint64(1)
         curr_axis_pos[curr_axis] += 1
