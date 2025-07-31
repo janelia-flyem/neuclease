@@ -57,9 +57,13 @@ def _assign_spatial_chunks(df, coord_space, annotation_type, bounds, num_levels,
     logger.info("Assigning spatial grid chunks")
     df['level'] = np.repeat(range(num_levels), level_annotation_counts.astype(int)).astype(np.uint64)
     if annotation_type == 'point':
-        df = _assign_point_spatial_chunks(df, coord_space.names, bounds, gridspec)
+        df = _assign_spatial_chunks_for_points(df, coord_space.names, bounds, gridspec)
     elif annotation_type == 'axis_aligned_bounding_box':
-        df = _assign_axis_aligned_bounding_box_spatial_chunks(df, geometry_cols, bounds, gridspec)
+        df = _assign_spatial_chunks_for_axis_aligned_bounding_boxes(df, geometry_cols, bounds, gridspec)
+    elif annotation_type == 'ellipsoid':
+        df = _assign_spatial_chunks_for_ellipsoids(df, geometry_cols, bounds, gridspec)
+    elif annotation_type == 'line':
+        df = _assign_spatial_chunks_for_lines(df, geometry_cols, bounds, gridspec)
     else:
         raise NotImplementedError(f"Spatial indexing for {annotation_type} annotations is not implemented")
 
@@ -67,7 +71,7 @@ def _assign_spatial_chunks(df, coord_space, annotation_type, bounds, num_levels,
     return df, gridspec
 
 
-def _assign_point_spatial_chunks(df, coord_names, bounds, gridspec):
+def _assign_spatial_chunks_for_points(df, coord_names, bounds, gridspec):
     grid_indices = (df[[*coord_names]] - bounds[0]) // gridspec.chunk_shapes[df['level']]
     grid_indices = grid_indices.astype(int)
 
@@ -78,7 +82,7 @@ def _assign_point_spatial_chunks(df, coord_names, bounds, gridspec):
     return df
 
 
-def _assign_axis_aligned_bounding_box_spatial_chunks(df, geometry_cols, bounds, gridspec):
+def _assign_spatial_chunks_for_axis_aligned_bounding_boxes(df, geometry_cols, bounds, gridspec):
     boxes = df[[*geometry_cols[0], *geometry_cols[1]]].to_numpy().reshape(len(df), 2, -1)
 
     # Ensure start < end
@@ -86,13 +90,14 @@ def _assign_axis_aligned_bounding_box_spatial_chunks(df, geometry_cols, bounds, 
     swap_mask = np.concatenate([swap_mask, swap_mask], axis=1)
     boxes[swap_mask] = boxes[:, ::-1, :][swap_mask]
 
-    # Offset to start at lower bound
-    boxes = boxes - bounds[0]
+    chunk_shapes = gridspec.chunk_shapes[df['level']]
 
-    grid_boxes = np.zeros_like(boxes, np.uint64)
-    grid_boxes[:, 0] = np.floor(boxes[:, 0] / gridspec.chunk_shapes[df['level']]).astype(np.uint64)
-    grid_boxes[:, 1] = np.ceil(boxes[:, 1] / gridspec.chunk_shapes[df['level']]).astype(np.uint64)
-    df[f'chunk_code'] = grid_box_codes(grid_boxes, gridspec.grid_shapes[df['level']])
+    # FIXME: would be faster to compute the spans in _grid_box_codes()
+    grid_spans = np.zeros_like(boxes, np.uint64)
+    grid_spans[:, 0] = np.floor((boxes[:, 0] - bounds[0]) / chunk_shapes).astype(np.uint64)
+    grid_spans[:, 1] = np.ceil((boxes[:, 1] - bounds[0]) / chunk_shapes).astype(np.uint64)
+
+    df[f'chunk_code'] = _box_grid_codes(grid_spans, gridspec.grid_shapes[df['level']])
 
     # Duplicate the annotations which span multiple chunks.
     df = df.explode('chunk_code')
@@ -100,13 +105,177 @@ def _assign_axis_aligned_bounding_box_spatial_chunks(df, geometry_cols, bounds, 
 
 
 @njit
-def grid_box_codes(grid_boxes, grid_shapes):
+def _box_grid_codes(grid_spans, grid_shapes):
     lists = List()
-    for grid_box, grid_shape in zip(grid_boxes, grid_shapes):
-        grid_indices = _ndindex_array(grid_box[1] - grid_box[0]) + grid_box[0]
+    for grid_span, grid_shape in zip(grid_spans, grid_shapes):
+        grid_indices = grid_span[0] + _ndindex_array(grid_span[1] - grid_span[0])
         codes = _compressed_morton_code_pairwise(grid_indices, grid_shape)
         lists.append(List(codes))
     return lists
+
+
+def _assign_spatial_chunks_for_ellipsoids(df, geometry_cols, bounds, gridspec):
+    centroids = df[geometry_cols[0]].to_numpy()
+    radii = df[geometry_cols[1]].to_numpy()
+
+    boxes = np.concatenate([centroids - radii, centroids + radii], axis=1).reshape(len(df), 2, -1)
+    boxes = boxes - bounds[0]
+
+    df[f'chunk_code'] = _ellipsoid_grid_codes(
+        centroids,
+        radii,
+        df['level'].to_numpy(),
+        bounds[0],
+        gridspec.grid_shapes,
+        gridspec.chunk_shapes
+    )
+
+    # Duplicate the annotations which span multiple chunks.
+    df = df.explode('chunk_code')
+    return df
+
+
+@njit
+def _ellipsoid_grid_codes(centroids, radii, levels, grid_origin, grid_shapes, chunk_shapes):
+    D = len(grid_shapes[0])
+    lists = List()
+    for centroid, radius, level in zip(centroids, radii, levels):
+        grid_shape = grid_shapes[level]
+        chunk_shape = chunk_shapes[level]
+
+        grid_span = np.zeros((2, D), np.uint64)
+        grid_span[0] = np.floor((centroid - radius - grid_origin) / chunk_shape)
+        grid_span[1] = np.ceil((centroid + radius - grid_origin) / chunk_shape)
+
+        grid_indices = grid_span[0] + _ndindex_array(grid_span[1] - grid_span[0])
+        codes = List()
+        for grid_index in grid_indices:
+            if _ellipsoid_chunk_overlap(centroid, radius, grid_origin, chunk_shape, grid_index):
+                code = _compressed_morton_code_pairwise(grid_index, grid_shape)
+                codes.append(code)
+        lists.append(codes)
+    return lists
+
+
+@njit
+def _ellipsoid_chunk_overlap(center, radii, grid_origin, cell_shape, grid_index):
+    """
+    Ported from the C++ implementation[1] by jbms, except that we just return
+    a boolean indicating whether the ellipsoid and cell have any overlap (True)
+    or are completely disjoint (False).
+
+    [1]: https://github.com/google/neuroglancer/pull/522#issuecomment-1940516294
+    """
+    rank = len(center)
+    min_sum = 0.0
+
+    for i in range(rank):
+        cell_size = cell_shape[i]
+        cell_start = grid_index[i] * cell_size + grid_origin[i]
+        cell_end = cell_start + cell_size
+        center_pos = center[i]
+        
+        start_dist = abs(cell_start - center_pos)
+        end_dist = abs(cell_end - center_pos)
+        
+        if center_pos >= cell_start and center_pos <= cell_end:
+            min_distance = 0.0
+        else:
+            min_distance = min(start_dist, end_dist)
+        
+        min_sum += min_distance**2 / radii[i]**2
+    
+    return min_sum <= 1.0
+
+
+def _assign_spatial_chunks_for_lines(df, geometry_cols, bounds, gridspec):
+    endpoints = df[[*geometry_cols[0], *geometry_cols[1]]].to_numpy().reshape(len(df), 2, -1)
+
+    # Ensure start < end
+    swap_mask = (endpoints[:, 0, :] > endpoints[:, 1, :])[:, None, :]
+    swap_mask = np.concatenate([swap_mask, swap_mask], axis=1)
+    endpoints[swap_mask] = endpoints[:, ::-1, :][swap_mask]
+
+    df[f'chunk_code'] = _line_grid_codes(
+        endpoints,
+        df['level'].to_numpy(),
+        bounds[0],
+        gridspec.grid_shapes,
+        gridspec.chunk_shapes
+    )
+
+    # Duplicate the annotations which span multiple chunks.
+    df = df.explode('chunk_code')
+    return df
+
+
+@njit
+def _line_grid_codes(endpoints, levels, grid_origin, grid_shapes, chunk_shapes):
+    D = len(grid_shapes[0])
+    lists = List()
+    for (point_a, point_b), level in zip(endpoints, levels):
+        grid_shape = grid_shapes[level]
+        chunk_shape = chunk_shapes[level]
+
+        grid_span = np.zeros((2, D), np.uint64)
+        grid_span[0] = np.floor((point_a - grid_origin) / chunk_shape)
+        grid_span[1] = np.ceil((point_b - grid_origin) / chunk_shape)
+
+        codes = List()
+        grid_indices = grid_span[0] + _ndindex_array(grid_span[1] - grid_span[0])
+        for grid_index in grid_indices:
+            if _line_chunk_overlap(point_a, point_b, grid_origin, chunk_shape, grid_index):
+                code = _compressed_morton_code_pairwise(grid_index, grid_shape)
+                codes.append(code)
+        lists.append(codes)
+    return lists
+
+
+@njit
+def _line_chunk_overlap(point_a, point_b, grid_origin, cell_shape, grid_index):
+    """
+    Ported from the C++ implementation[1] by jbms.
+    Returns True if the line intersects the cell, False otherwise.
+
+    [1]: https://github.com/google/neuroglancer/pull/522#issuecomment-1940516294
+    """
+    rank = len(point_a)
+    min_t = 0.0
+    max_t = 1.0
+    
+    for i in range(rank):
+        a = point_a[i]
+        b = point_b[i]
+        line_lower = min(a, b)
+        line_upper = max(a, b)
+        box_lower = grid_origin[i] + cell_shape[i] * grid_index[i]
+        box_upper = box_lower + cell_shape[i]
+        
+        line_range = line_upper - line_lower
+        
+        if box_lower > line_lower:
+            if line_range == 0.0:
+                # Line is a point, check if it's outside the box
+                if line_lower < box_lower:
+                    return False
+            else:
+                t = (box_lower - line_lower) / line_range
+                if t > 1:
+                    return False
+                min_t = max(min_t, t)
+        
+        if box_upper < line_upper:
+            if line_range == 0.0:
+                # Line is a point, check if it's outside the box
+                if line_lower > box_upper:
+                    return False
+            else:
+                t = (box_upper - line_lower) / line_range
+                if t < 0:
+                    return False
+                max_t = min(max_t, t)
+    
+    return max_t >= min_t
 
 
 def _define_spatial_grids(bounds, coord_space, num_levels: int) -> GridSpec:
@@ -332,14 +501,22 @@ def __compressed_morton_code(grid_coord, axis_bits, result):
 def _compressed_morton_code_pairwise(grid_coord, grid_shape):
     """
     Same as compressed_morton_code(), but for when both grid_coord
-    is known to have shape (N,D) and both arguments have dtype np.uint64,
-    and therefore this whole function can be wrapped with @njit.
-    This function can be called from within other jit-compiled functions.
+    and grid_shape are known to have shape ndim 1 or 2 and both arguments
+    have dtype np.uint64, which allows us to easily predict the output
+    shape without needing to call np.broadcast_shapes().
+
+    Therefore this whole function can be wrapped with @njit,
+    and can be called from within other jit-compiled functions.
     """
     axis_bits = np.ceil(np.log2(grid_shape)).astype(np.int8)
-    output_code = np.zeros(len(grid_coord), dtype=np.uint64)
-    __compressed_morton_code(grid_coord, axis_bits, output_code)
-    return output_code
+    if grid_coord.ndim == 1:
+        output_code = np.zeros(1, dtype=np.uint64)
+        __compressed_morton_code(grid_coord, axis_bits, output_code)
+        return output_code[0]
+    else:
+        output_code = np.zeros(len(grid_coord), dtype=np.uint64)
+        __compressed_morton_code(grid_coord, axis_bits, output_code)
+        return output_code
 
 
 def reverse_morton_code(morton_code, grid_shape):
