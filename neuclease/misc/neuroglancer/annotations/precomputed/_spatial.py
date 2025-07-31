@@ -57,7 +57,7 @@ def _assign_spatial_chunks(df, coord_space, annotation_type, bounds, num_levels,
     logger.info("Assigning spatial grid chunks")
     df['level'] = np.repeat(range(num_levels), level_annotation_counts.astype(int)).astype(np.uint64)
     if annotation_type == 'point':
-        df = _assign_spatial_chunks_for_points(df, coord_space.names, bounds, gridspec)
+        df = _assign_spatial_chunks_for_points(df, geometry_cols, bounds, gridspec)
     elif annotation_type == 'axis_aligned_bounding_box':
         df = _assign_spatial_chunks_for_axis_aligned_bounding_boxes(df, geometry_cols, bounds, gridspec)
     elif annotation_type == 'ellipsoid':
@@ -71,7 +71,8 @@ def _assign_spatial_chunks(df, coord_space, annotation_type, bounds, num_levels,
     return df, gridspec
 
 
-def _assign_spatial_chunks_for_points(df, coord_names, bounds, gridspec):
+def _assign_spatial_chunks_for_points(df, geometry_cols, bounds, gridspec):
+    coord_names = geometry_cols[0]
     grid_indices = (df[[*coord_names]] - bounds[0]) // gridspec.chunk_shapes[df['level']]
     grid_indices = grid_indices.astype(int)
 
