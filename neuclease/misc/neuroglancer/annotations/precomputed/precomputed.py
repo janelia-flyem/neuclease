@@ -43,6 +43,7 @@ def write_precomputed_annotations(
     write_by_spatial_chunk: bool = True,
     num_spatial_levels: int = 7,
     target_chunk_limit: int = 10_000,
+    description: str = "",
 ):
     """
     Export the data from a pandas DataFrame into neuroglancer's precomputed annotations format
@@ -139,6 +140,10 @@ def write_precomputed_annotations(
         target_chunk_limit:
             int
             For the spatial index, how many annotations we aim to place in each chunk (regardless of the level).
+        
+        description:
+            str
+            A description of the annotation collection.
     """
     # Verify that the neuroglancer package is available.
     from neuroglancer.coordinate_space import CoordinateSpace
@@ -201,6 +206,9 @@ def write_precomputed_annotations(
         "relationships": by_rel_metadata,
         "spatial": spatial_metadata,
     }
+
+    if description:
+        info['description'] = description
 
     with open(f"{output_dir}/info", 'w') as f:
         json.dump(info, f)
