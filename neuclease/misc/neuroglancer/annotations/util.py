@@ -45,6 +45,9 @@ def annotation_property_specs(df, properties):
             as descrbed in the docstring for local_annotation_json().
     Returns:
         JSON dict
+        The order of the properties may not be the same as what you passed in.
+        They are sorted according to the layout rules of neuroglancer's
+        precomputed annotation format.
     """
     try:
         from neuroglancer.viewer_state import AnnotationPropertySpec

@@ -235,7 +235,8 @@ def local_annotation_json(df, name="annotations", color="#ffff00", size=8.0, lin
     prop_specs = annotation_property_specs(df, properties)
     if prop_specs:
         data['annotationProperties'] = prop_specs
-
+        properties = [p['id'] for p in prop_specs]
+    
     data['annotations'].clear()
     data['annotations'] = _annotation_list_json(
         df, linkedSegmentationLayer, properties
