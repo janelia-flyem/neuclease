@@ -1,3 +1,5 @@
+import os
+import shutil
 from dataclasses import dataclass
 from typing import Literal
 
@@ -34,6 +36,9 @@ def _write_buffers(buf_series, output_dir, subdir, write_sharded):
         JSON metadata for the written data, including the key (subdir)
         and sharding spec if applicable.
     """
+    if os.path.exists(f"{output_dir}/{subdir}"):
+        shutil.rmtree(f"{output_dir}/{subdir}")
+
     if write_sharded:
         return _write_buffers_sharded(buf_series, output_dir, subdir)
     else:
