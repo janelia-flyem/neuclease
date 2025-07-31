@@ -353,11 +353,11 @@ def _define_spatial_grids(bounds, coord_space, num_levels: int) -> GridSpec:
         chunk_shapes.append(chunk_shape)
         grid_shapes.append(grid_shape)
 
-    return GridSpec(
-        # Convert from physical units back to coordinate units.
-        chunk_shapes=np.array(chunk_shapes, dtype=np.float64) / coord_space.scales,
-        grid_shapes=np.array(grid_shapes, dtype=np.uint64)
-    )
+    # Convert from physical units back to coordinate units.
+    chunk_shapes = np.array(chunk_shapes, dtype=np.float64) / coord_space.scales
+    grid_shapes = np.array(grid_shapes, dtype=np.uint64)
+
+    return GridSpec(chunk_shapes, grid_shapes)
 
 
 def _compute_target_annotations_per_level(num_annotations, gridspec, target_chunk_limit: int):
