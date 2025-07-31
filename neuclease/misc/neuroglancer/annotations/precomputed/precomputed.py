@@ -246,12 +246,12 @@ def _get_bounds(df, coord_space, annotation_type):
         )
 
     if annotation_type == 'ellipsoid':
-        center = df[geometry_cols[0]]
-        radii = df[geometry_cols[1]]
-        return (
-            (center - radii).min().to_numpy(),
-            (center + radii).max().to_numpy()
-        )
+        center = df[geometry_cols[0]].to_numpy()
+        radii = df[geometry_cols[1]].to_numpy()
+        return np.asarray([
+            (center - radii).min(axis=0),
+            (center + radii).max(axis=0)
+        ])
 
     raise ValueError(f"Annotation type {annotation_type} not supported")
 
