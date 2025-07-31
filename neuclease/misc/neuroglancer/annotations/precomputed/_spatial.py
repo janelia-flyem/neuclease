@@ -48,7 +48,7 @@ def _assign_spatial_chunks(df, coord_space, annotation_type, bounds, num_levels,
     """
     geometry_cols = _geometry_cols(coord_space.names, annotation_type)
     df = df[[*chain(*geometry_cols), 'ann_buf', 'id_buf']].copy(deep=False)
-    gridspec = _define_spatial_grids(bounds, num_levels)
+    gridspec = _define_spatial_grids(bounds, coord_space, num_levels)
     level_annotation_counts = _compute_target_annotations_per_level(len(df), gridspec, target_chunk_limit)
 
     logger.info("Shuffling annotations before assigning spatial grid levels")
@@ -109,7 +109,7 @@ def grid_box_codes(grid_boxes, grid_shapes):
     return lists
 
 
-def _define_spatial_grids(bounds, num_levels: int) -> GridSpec:
+def _define_spatial_grids(bounds, coord_space, num_levels: int) -> GridSpec:
     """
     Compute suitable chunk shapes and grid shapes for each level 
     of the spatial index, following the guidelines from the spec[1]:
@@ -133,7 +133,11 @@ def _define_spatial_grids(bounds, num_levels: int) -> GridSpec:
         chunk_shapes, grid_shapes
     """
     # Level 0 chunk shape and grid shape -- just one chunk.
-    chunk_shape = np.asarray(bounds[1], np.float64) - bounds[0]
+    bounds = np.asarray(bounds, np.float64)
+
+    # We want roughly isotropic chunks in physical units, so we'll multiply
+    # by the coordinate scales and then divide the scales out at the end.
+    chunk_shape = (bounds[1] - bounds[0]) * coord_space.scales
     grid_shape = np.ones_like(chunk_shape, dtype=np.uint64)
 
     chunk_shapes = [chunk_shape]
@@ -165,7 +169,8 @@ def _define_spatial_grids(bounds, num_levels: int) -> GridSpec:
         grid_shapes.append(grid_shape)
 
     return GridSpec(
-        chunk_shapes=np.array(chunk_shapes, dtype=np.float64),
+        # Convert from physical units back to coordinate units.
+        chunk_shapes=np.array(chunk_shapes, dtype=np.float64) / coord_space.scales,
         grid_shapes=np.array(grid_shapes, dtype=np.uint64)
     )
 
