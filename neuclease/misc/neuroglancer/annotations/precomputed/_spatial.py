@@ -55,17 +55,22 @@ def _assign_spatial_chunks(df, coord_space, annotation_type, bounds, num_levels,
     df = df.sample(frac=1.0)
 
     logger.info("Assigning spatial grid chunks")
-    df['level'] = np.repeat(range(num_levels), level_annotation_counts.astype(int)).astype(np.uint64)
-    if annotation_type == 'point':
-        df = _assign_spatial_chunks_for_points(df, geometry_cols, bounds, gridspec)
-    elif annotation_type == 'axis_aligned_bounding_box':
-        df = _assign_spatial_chunks_for_axis_aligned_bounding_boxes(df, geometry_cols, bounds, gridspec)
-    elif annotation_type == 'ellipsoid':
-        df = _assign_spatial_chunks_for_ellipsoids(df, geometry_cols, bounds, gridspec)
-    elif annotation_type == 'line':
-        df = _assign_spatial_chunks_for_lines(df, geometry_cols, bounds, gridspec)
-    else:
-        raise NotImplementedError(f"Spatial indexing for {annotation_type} annotations is not implemented")
+    df['level'] = np.repeat(
+        range(num_levels),
+        level_annotation_counts.astype(int)
+    ).astype(np.uint64)
+    
+    match annotation_type:
+        case 'point':
+            df = _assign_spatial_chunks_for_points(df, geometry_cols, bounds, gridspec)
+        case 'axis_aligned_bounding_box':
+            df = _assign_spatial_chunks_for_axis_aligned_bounding_boxes(df, geometry_cols, bounds, gridspec)
+        case 'ellipsoid':
+            df = _assign_spatial_chunks_for_ellipsoids(df, geometry_cols, bounds, gridspec)
+        case 'line':
+            df = _assign_spatial_chunks_for_lines(df, geometry_cols, bounds, gridspec)
+        case _:
+            raise NotImplementedError(f"Spatial indexing for {annotation_type} annotations is not implemented")
 
     logger.info("Done assigning spatial grid chunks")
     return df, gridspec
