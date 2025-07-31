@@ -74,10 +74,10 @@ def _assign_spatial_chunks(df, coord_space, annotation_type, bounds, num_levels,
 def _assign_spatial_chunks_for_points(df, geometry_cols, bounds, gridspec):
     coord_names = geometry_cols[0]
     grid_indices = (df[[*coord_names]] - bounds[0]) // gridspec.chunk_shapes[df['level']]
-    grid_indices = grid_indices.astype(int)
+    grid_indices = grid_indices.astype(np.int32)
 
     # Make sure annotations at the exact upper bound get valid grid coordinates.
-    grid_indices = np.minimum(grid_indices, gridspec.grid_shapes[df['level']] - 1)
+    grid_indices = np.minimum(grid_indices, gridspec.grid_shapes[df['level']].astype(np.int32) - 1)
 
     df['chunk_code'] = compressed_morton_code(grid_indices, gridspec.grid_shapes[df['level']])
     return df[['level', 'chunk_code', 'id_buf', 'ann_buf']]
