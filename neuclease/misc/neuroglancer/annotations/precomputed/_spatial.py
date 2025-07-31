@@ -46,6 +46,15 @@ def _assign_spatial_chunks(df, coord_space, annotation_type, bounds, num_levels,
     Assign each annotation to a spatial grid cell.
     If an annotation intersects multiple grid cells, we duplicate
     its row so we can assign it to all of the intersecting cells.
+
+    Returns:
+        df, gridspec
+
+        - df is a (shallow) copy of the input df with all columns removed except
+          'ann_buf' and 'id_buf', and with additional columns for 'level' and 'chunk_code'.
+          Some rows from the original dataframe may be duplicated if those annotations
+          span across multiple chunks (at the level we selected them to reside in).
+        - gridspec: chunk_shapes and grid_shapes.  See _define_spatial_grids() for details.
     """
     geometry_cols = _geometry_cols(coord_space.names, annotation_type)
     df = df[[*chain(*geometry_cols), 'ann_buf', 'id_buf']].copy(deep=False)
@@ -98,7 +107,16 @@ def _define_spatial_grids(bounds, coord_space, num_levels: int) -> GridSpec:
             The number of spatial index levels. Must be at least 1.
 
     Returns:
-        chunk_shapes, grid_shapes
+        GridSpec(chunk_shapes, grid_shapes)
+
+        - chunk_shapes is the array (for N levels) of the size of each
+          grid cell at the corresponding level, in coordinate units.
+        - grid_shapes is the array (for N levels) of the number of grid cells
+          along each dimension at the corresponding level.
+
+        For instance, level 0 consists of a single chunk encompassing the entire
+        volume occupied by the annotations, so its chunk_shape is the entire bounds
+        (offset by the lower bound) and its grid_shape is [1,1,...].
     """
     # Level 0 chunk shape and grid shape -- just one chunk.
     bounds = np.asarray(bounds, np.float64)

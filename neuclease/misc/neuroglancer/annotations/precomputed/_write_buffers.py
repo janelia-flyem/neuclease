@@ -22,6 +22,7 @@ def _write_buffers(buf_series, output_dir, subdir, write_sharded):
         output_dir:
             str
             The directory into which the exported annotations will be written.
+            If it already exists, it will be deleted before we (re)create it.
 
         subdir:
             str

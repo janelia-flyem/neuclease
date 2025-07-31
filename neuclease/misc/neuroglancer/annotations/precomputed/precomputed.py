@@ -155,7 +155,7 @@ def write_precomputed_annotations(
     bounds = _get_bounds(df, coord_space, annotation_type)
 
     # Construct a buffer for each annotation and additional buffers
-    # for each annotation's relationships, stored in extra columns of df.
+    # for each annotation's relationships, stored in new columns of df.
     df = _encode_annotations(
         df,
         coord_space,
