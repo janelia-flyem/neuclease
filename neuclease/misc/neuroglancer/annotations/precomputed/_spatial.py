@@ -31,7 +31,7 @@ def _write_annotations_by_spatial_chunk(df, coord_space, annotation_type, bounds
         num_levels,
         target_chunk_limit
     )
-    metadata = __write_annotations_by_spatial_chunk(
+    metadata = __write_assigned_annotations_by_spatial_chunk(
         df,
         gridspec,
         output_dir,
@@ -205,7 +205,7 @@ def _compute_target_annotations_per_level(num_annotations, gridspec, target_chun
     return annotation_counts
 
 
-def __write_annotations_by_spatial_chunk(df, gridspec, output_dir, write_sharded):
+def __write_assigned_annotations_by_spatial_chunk(df, gridspec, output_dir, write_sharded):
     """
     Write the spatial index, given a dataframe in which the 'level'
     and grid chunk codes for each annotation have already been assigned.
