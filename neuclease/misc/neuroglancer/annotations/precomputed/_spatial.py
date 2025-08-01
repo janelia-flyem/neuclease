@@ -6,7 +6,7 @@ import numpy as np
 from numba import njit
 from numba.typed import List
 
-from .compressed_morton import compressed_morton_code, reverse_morton_code, _compressed_morton_code_pairwise
+from .compressed_morton import compressed_morton_code, compressed_morton_decode, compressed_morton_code_no_broadcast
 from ._write_buffers import _write_buffers
 from ._util import _encode_uint64_series, _geometry_cols, _ndindex_array
 
@@ -32,7 +32,7 @@ def _write_annotations_by_spatial_chunk(df, coord_space, annotation_type, bounds
         num_levels,
         target_chunk_limit
     )
-    metadata = __write_assigned_annotations_by_spatial_chunk(
+    metadata = _write_assigned_annotations_by_spatial_chunk(
         df,
         gridspec,
         output_dir,
@@ -249,7 +249,7 @@ def _box_grid_codes(grid_spans, grid_shapes):
         grid_indices = grid_span[0] + _ndindex_array(grid_span[1] - grid_span[0])
 
         # Switch to C order before computing compressed morton code.
-        codes = _compressed_morton_code_pairwise(grid_indices[:, ::-1], grid_shape[::-1])
+        codes = compressed_morton_code_no_broadcast(grid_indices[:, ::-1], grid_shape[::-1])
         lists.append(List(codes))
     return lists
 
@@ -292,7 +292,7 @@ def _ellipsoid_grid_codes(centroids, radii, levels, grid_origin, grid_shapes, ch
         for grid_index in grid_indices:
             if _ellipsoid_chunk_overlap(centroid, radius, grid_origin, chunk_shape, grid_index):
                 # Switch to C order before computing compressed morton code.
-                code = _compressed_morton_code_pairwise(grid_index[::-1], grid_shape[::-1])
+                code = compressed_morton_code_no_broadcast(grid_index[::-1], grid_shape[::-1])
                 codes.append(code)
         lists.append(codes)
     return lists
@@ -367,7 +367,7 @@ def _line_grid_codes(endpoints, levels, grid_origin, grid_shapes, chunk_shapes):
         for grid_index in grid_indices:
             if _line_chunk_overlap(point_a, point_b, grid_origin, chunk_shape, grid_index):
                 # Switch to C order before computing compressed morton code.
-                code = _compressed_morton_code_pairwise(grid_index[::-1], grid_shape[::-1])
+                code = compressed_morton_code_no_broadcast(grid_index[::-1], grid_shape[::-1])
                 codes.append(code)
         lists.append(codes)
     return lists
@@ -420,7 +420,7 @@ def _line_chunk_overlap(point_a, point_b, grid_origin, cell_shape, grid_index):
     return max_t >= min_t
 
 
-def __write_assigned_annotations_by_spatial_chunk(df, gridspec, output_dir, write_sharded):
+def _write_assigned_annotations_by_spatial_chunk(df, gridspec, output_dir, write_sharded):
     """
     Write the spatial index, given a dataframe in which the 'level'
     and grid chunk codes for each annotation have already been assigned.
@@ -449,7 +449,7 @@ def __write_assigned_annotations_by_spatial_chunk(df, gridspec, output_dir, writ
             level_bufs.index = level_bufs['chunk_code']
         else:
             # Unsharded key is string of the grid coordinate, e.g. '0_0_0'
-            grid_coords = reverse_morton_code(level_bufs['chunk_code'].to_numpy(), gridspec.grid_shapes[level])
+            grid_coords = compressed_morton_decode(level_bufs['chunk_code'].to_numpy(), gridspec.grid_shapes[level])
             level_bufs.index = [map('_'.join, grid_coords.astype(str))]
 
         level_metadata = _write_buffers(

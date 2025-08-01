@@ -82,7 +82,7 @@ def __compressed_morton_code(grid_coord, axis_bits, result):
 
 
 @njit
-def _compressed_morton_code_pairwise(grid_coord_c_order, grid_shape_c_order):
+def compressed_morton_code_no_broadcast(grid_coord_c_order, grid_shape_c_order):
     """
     Same as compressed_morton_code(), but for when both grid_coord
     and grid_shape are known to have shape ndim 1 or 2 and both arguments
@@ -106,7 +106,7 @@ def _compressed_morton_code_pairwise(grid_coord_c_order, grid_shape_c_order):
         return output_code
 
 
-def reverse_morton_code(morton_code, grid_shape_c_order):
+def compressed_morton_decode(morton_code, grid_shape_c_order):
     morton_code = np.asarray(morton_code, np.uint64)
     grid_shape = np.asarray(grid_shape_c_order, np.uint64)
 
@@ -114,12 +114,12 @@ def reverse_morton_code(morton_code, grid_shape_c_order):
     axis_bits = np.ceil(np.log2(grid_shape)).astype(np.int8)
     output_shape = np.broadcast_shapes(morton_code.shape, grid_shape.shape[:-1]) + (D,)
     output_grid_coord = np.zeros(output_shape, dtype=np.uint64)
-    __reverse_morton_code(morton_code, axis_bits, output_grid_coord)
+    __compressed_morton_decode(morton_code, axis_bits, output_grid_coord)
     return output_grid_coord
 
 
 @guvectorize('(),(d)->(d)', nopython=True)
-def __reverse_morton_code(morton_code, axis_bits, grid_coord_c_order):
+def __compressed_morton_decode(morton_code, axis_bits, grid_coord_c_order):
     D = len(axis_bits)
     curr_axis_pos = np.zeros(D, dtype=np.uint64)
     curr_axis = 0
