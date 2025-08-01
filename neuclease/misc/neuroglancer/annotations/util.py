@@ -77,16 +77,28 @@ def annotation_property_specs(df, properties):
             else:
                 raise ValueError(f"Invalid property spec: {spec}")
 
-    default_property_specs = {
-        col: {
-            'id': col,
-            'type': _proptype(df[col]),
-        }
-        for col in property_specs
-    }
+    default_property_specs = {}
+    for propname in property_specs:
+        if propname in df.columns:
+            default_property_specs[propname] = {
+                'id': propname,
+                'type': _proptype(df[propname]),
+            }
+        elif {f'{propname}_{channel}' for channel in 'rgba'} <= set(df.columns):
+            default_property_specs[propname] = {
+                'id': propname,
+                'type': 'rgba',
+            }
+        elif {f'{propname}_{channel}' for channel in 'rgb'} <= set(df.columns):
+            default_property_specs[propname] = {
+                'id': propname,
+                'type': 'rgb',
+            }
+        else:
+            raise ValueError(f"Property '{propname}' not found in dataframe")
 
     for col in default_property_specs.keys():
-        if df[col].dtype == "category":
+        if col in df and df[col].dtype == "category":
             cats = df[col].cat.categories.tolist()
             default_property_specs[col]['enum_values'] = [*range(len(cats))]
             default_property_specs[col]['enum_labels'] = cats

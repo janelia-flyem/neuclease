@@ -52,14 +52,6 @@ def write_precomputed_annotations(
     A progress bar is shown when writing each portion of the export (annotation ID index, related ID indexes),
     but there may be a significant amount of preprocessing time that occurs before the actual writing begins.
 
-    Limitations:
-
-        - This implementation only supports a single spatial grid level, which means neuroglancer
-          will download all annotations at once if they are viewed without respect to a relationship.
-          This means that spatial indexing should not be used for large datasets (more than 1M annotations or so.)
-        - We do not yet support rgb or rgba properties.
-          In a future version, we might support them via strings like '#ff0000' or via MultiIndex columns.
-
     Args:
         df:
             DataFrame.
@@ -91,8 +83,14 @@ def write_precomputed_annotations(
         properties:
             If your dataframe contains columns that you want to use as annotation properties,
             list the names of those columns here.
+
             Categorical columns will be automatically converted to integers with associated
             enum labels.
+
+            To provide an rgb or rgba property such as 'mycolor', provide separate columns
+            in your dataframe named 'mycolor_r', 'mycolor_g', 'mycolor_b' and 'mycolor_a',
+            and then list 'mycolor' as a property in this argument.
+
             The full property spec for each property will be inferred from the column dtype,
             but if you want to explicitly override any property specs yourself, you can pass
             a list of AnnotationPropertySpec objects here.
@@ -293,29 +291,55 @@ def _encode_geometries_and_properties(df, coord_space, annotation_type, property
         pd.Series of dtype=object, containing one buffer for each annotation.
     """
     geometry_cols = _geometry_cols(coord_space.names, annotation_type)
-    prop_cols = [p['id'] for p in property_specs]
+    
+    # Note that the property specs are already sorted by
+    # dtype in the order neuroglancer requires.
+    # Order our columns accordingly before we encode them as records below.
+    prop_cols = []
+    for spec in property_specs:
+        p = spec['id']
+        if spec['type'] == 'rgb':
+            prop_cols.extend([f'{p}_r', f'{p}_g', f'{p}_b'])
+        elif spec['type'] == 'rgba':
+            prop_cols.extend([f'{p}_r', f'{p}_g', f'{p}_b', f'{p}_a'])
+        else:
+            prop_cols.append(p)
     geometry_prop_df = df[[*chain(*geometry_cols), *prop_cols]].copy(deep=False)
 
-    property_widths = [
-        {'rgb': 3, 'rgba': 4}.get(p['type'], np.dtype(p['type']).itemsize)
-        for p in property_specs
-    ]
-    property_padding = (4 - (sum(property_widths) % 4)) % 4
+    # Calculate padding as required by neuroglancer.
+    property_widths = {}
+    for spec in property_specs:
+        if spec['type'] == 'rgb':
+            property_widths[spec['id']] = 3
+        elif spec['type'] == 'rgba':
+            property_widths[spec['id']] = 4
+        else:
+            property_widths[spec['id']] = np.dtype(spec['type']).itemsize
+
+    property_padding = (4 - (sum(property_widths.values()) % 4)) % 4
     for i in range(property_padding):
         geometry_prop_df[f'__padding_{i}__'] = np.uint8(0)
 
+    # Convert our column dtypes to match property specs.
     dtypes = {c: np.float32 for c in chain(*geometry_cols)}
-    dtypes.update({
-        p['id']: p['type']
-        for p in property_specs
-        if df[p['id']].dtype != 'category' and p['type'] not in ('rgb', 'rgba')
-    })
+    for spec in property_specs:
+        p = spec['id']
+        if spec['type'] in ('rgb', 'rgba'):
+            dtypes.update({
+                f'{p}_{channel}': np.uint8
+                for channel in spec['type']
+            })
+        else:
+            dtypes[p] = spec['type']
 
     # Convert category columns to their integer equivalents
-    for p in property_specs:
-        if df[p['id']].dtype == 'category':
-            geometry_prop_df[p['id']] = geometry_prop_df[p['id']].cat.codes
-            dtypes[p['id']] = p['type']
+    for spec in property_specs:
+        p = spec['id']
+        if spec['type'] in ('rgb', 'rgba'):
+            continue
+        if df[p].dtype == 'category':
+            geometry_prop_df[p] = geometry_prop_df[p].cat.codes
+            dtypes[p] = spec['type']
 
     # Vectorized serialization
     records = geometry_prop_df.to_records(index=False, column_dtypes=dtypes)
