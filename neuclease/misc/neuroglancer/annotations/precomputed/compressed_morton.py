@@ -85,7 +85,7 @@ def __compressed_morton_code(grid_coord, axis_bits, result):
 def compressed_morton_code_no_broadcast(grid_coord_c_order, grid_shape_c_order):
     """
     Same as compressed_morton_code(), but for when both grid_coord
-    and grid_shape are known to have shape ndim 1 or 2 and both arguments
+    and grid_shape are known to have ndim 1 or 2 and both arguments
     have dtype np.uint64, which allows us to easily predict the output
     shape without needing to call np.broadcast_shapes().
 

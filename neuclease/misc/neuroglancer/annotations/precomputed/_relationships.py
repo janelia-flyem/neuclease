@@ -25,8 +25,10 @@ def _encode_relationships(df, relationships):
 
     # Concatenate buffers on each row.
     # Note:
-    #   Using sum() is O(N^2) in the number of relationships, but we generally
-    #   expect few relationships, so this is faster than df.apply(b''.join, axis=1)
+    #   Using sum() is O(R^2) in the number of relationships R, but we generally
+    #   expect few relationships, so this is faster than df.apply(b''.join, axis=1),
+    #   since .sum() uses a single C call whereas using b''.join() would
+    #   use many Python calls.
     rel_bufs = pd.DataFrame(encoded_relationships, index=df.index).sum(axis=1)
     return rel_bufs
 
@@ -88,6 +90,20 @@ def _write_annotations_by_relationships(df, relationships, output_dir, write_sha
     Write the annotations to a "Related Object ID Index" for each relationship.
     Each relationship is written to a separate subdirectory of output_dir.
 
+    Args:
+        df:
+            DataFrame with columns ['id_buf', 'ann_buf', *relationships].
+
+        relationships:
+            List of relationship column names.
+
+        output_dir:
+            Directory to write the annotations to.
+            Each relationship is written to a separate subdirectory of output_dir.
+
+        write_sharded:
+            Whether to write the annotations in sharded format.
+
     Returns:
         JSON metadata to be written under the 'relationships' key in the top-level 'info' file,
         consisting of a list of JSON objects (one for each relationship).
@@ -100,6 +116,7 @@ def _write_annotations_by_relationships(df, relationships, output_dir, write_sha
             output_dir,
             write_sharded
         )
+        df = df.drop(columns=[relationship])
         by_rel_metadata.append(metadata)
 
     return by_rel_metadata
@@ -121,6 +138,7 @@ def _write_annotations_by_relationship(df, relationship, output_dir, write_shard
         # Use b''.join() instead of 'sum' to avoid O(N^2) performance for large groups.
         .agg({'id_buf': ['count', b''.join], 'ann_buf': b''.join})
     )
+
     logger.info(f"Combining annotation and ID buffers for relationship '{relationship}'")
     bufs_by_segment.columns = ['count', 'id_buf', 'ann_buf']
     bufs_by_segment['count_buf'] = _encode_uint64_series(bufs_by_segment['count'])

@@ -52,9 +52,21 @@ def write_precomputed_annotations(
     A progress bar is shown when writing each portion of the export (annotation ID index, related ID indexes),
     but there may be a significant amount of preprocessing time that occurs before the actual writing begins.
 
+    Note:
+
+        Internally, the data will be copied during processing and again 
+        during writing, incurring significant RAM usage for large datasets.
+
+    TODO:
+        We might be able to reduce our RAM usage somewhat by allowing callers
+        to "move" the data into this function via some sort of proxy container,
+        and then we could delete the original data immediately before writing.
+        We should at least do that when we pass the data around internally.
+
     Args:
         df:
             DataFrame.
+            The index of the DataFrame is used as the annotation ID, so it must be unique.
             The required columns depend on the annotation_type and the coordinate space.
             For example, assuming ``coord_space.names == ['x', 'y', 'z']``,
             then provide the following columns:
@@ -67,8 +79,6 @@ def write_precomputed_annotations(
 
             You may also provide additional columns to use as annotation properties,
             in which case they should be listed in the 'properties' argument. (See below.)
-
-            The index of the DataFrame is used as the annotation ID.
 
         coord_space:
             CoordinateSpace.

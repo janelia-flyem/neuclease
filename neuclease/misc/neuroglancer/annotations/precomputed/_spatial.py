@@ -18,8 +18,56 @@ GridSpec = NamedTuple("GridSpec", [('chunk_shapes', np.ndarray), ('grid_shapes',
 def _write_annotations_by_spatial_chunk(df, coord_space, annotation_type, bounds, num_levels, target_chunk_limit, output_dir, write_sharded):
     """
     Write the annotations to the spatial index.
-    Currently, we only support a single spatial grid level,
-    resulting in a single annotation list.
+
+    TODO:
+        It might be nice to provide an option to assign larger annotations
+        (long lines, large ellipsoids, large boxes) to coarser spatial levels.
+        Then larger annotations would be more likely to be visible in neuroglancer
+        when the camera is zoomed out, which is arguably more intuitive than seeing
+        an unbiased sample. It would also have the side benefit of reducing the number
+        of times large annotations need to be duplicated across multiple chunks in
+        the finer spatial grids.
+        We might also consider allowing the caller to explicitly specify the spatial
+        level for each annotation if they provide the 'level' column themselves.
+
+    Args:
+        df:
+            DataFrame with columns ['id_buf', 'ann_buf', *geometry_cols].
+            Internally, the data will be copied during processing and again 
+            during writing, incurring significant RAM usage for large datasets.
+
+        coord_space:
+            CoordinateSpace.
+            The coordinate space of the annotations.
+
+        annotation_type:
+            Literal['point', 'axis_aligned_bounding_box', 'ellipsoid', 'line']
+            The type of annotation to export.
+
+        bounds:
+            np.ndarray, shape (2, D)
+            Lower and upper bounds of the union of all annotations.
+            The bounds are in coordinate units.
+
+        num_levels:
+            The number of spatial index levels. Must be at least 1.
+
+        target_chunk_limit:
+            The maximum number of annotations to place in each chunk.
+            (The same target is used for all levels.)
+            Since the spatial annotations are not distributed uniformly in space,
+            we will likely end up undershooting and overshooting the target for various
+            chunks within a level.
+            The final maximum number of annotations per chunk we end up with at each
+            level will be emitted in the the 'limit' setting of the metadata for each level.
+
+        output_dir:
+            Directory to write the annotations to.
+            Subdirectories for each level of the spatial index will be created in output_dir,
+            named 'by_spatial_level_<level>'.
+
+        write_sharded:
+            Whether to write the annotations in sharded format.
 
     Returns:
         JSON metadata to write into the 'spatial' key of the info file.
@@ -50,7 +98,7 @@ def _assign_spatial_chunks(df, coord_space, annotation_type, bounds, num_levels,
     Returns:
         df, gridspec
 
-        - df is a (shallow) copy of the input df with all columns removed except
+        - df is a shuffled copy of the input df with all columns removed except
           'ann_buf' and 'id_buf', and with additional columns for 'level' and 'chunk_code'.
           Some rows from the original dataframe may be duplicated if those annotations
           span across multiple chunks (at the level we selected them to reside in).
@@ -91,11 +139,11 @@ def _define_spatial_grids(bounds, coord_space, num_levels: int) -> GridSpec:
     Compute suitable chunk shapes and grid shapes for each level 
     of the spatial index, following the guidelines from the spec[1]:
 
-        Typically the grid_shape for level 0 should be a vector of all 1
-        (with chunk_size equal to upper_bound - lower_bound), and each component
-        of chunk_size of each successively level should be either equal to, or half of,
-        the corresponding component of the prior level chunk_size, whichever results
-        in a more spatially isotropic chunk.
+        > Typically the grid_shape for level 0 should be a vector of all 1
+        > (with chunk_size equal to upper_bound - lower_bound), and each component
+        > of chunk_size of each successively level should be either equal to, or half of,
+        > the corresponding component of the prior level chunk_size, whichever results
+        > in a more spatially isotropic chunk.
 
     [1]: https://github.com/google/neuroglancer/blob/master/src/datasource/precomputed/annotations.md#spatial-index
 

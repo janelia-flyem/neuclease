@@ -110,7 +110,7 @@ def _write_buffers_sharded(buf_series, output_dir, subdir):
 
     # Note:
     #   At the time of this writing, tensorstore uses a
-    #   surprising amount of RAM to perform the writes.
+    #   surprising amount of RAM to perform these writes.
     with ts.Transaction() as txn:
         for segment_key, buf in tqdm(buf_series.items(), total=len(buf_series)):
             kvstore.with_transaction(txn)[segment_key] = buf
