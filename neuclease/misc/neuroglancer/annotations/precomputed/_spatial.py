@@ -8,14 +8,14 @@ from numba.typed import List
 
 from .compressed_morton import compressed_morton_code, compressed_morton_decode, compressed_morton_code_no_broadcast
 from ._write_buffers import _write_buffers
-from ._util import _encode_uint64_series, _geometry_cols, _ndindex_array
+from ._util import _encode_uint64_series, _geometry_cols, _ndindex_array, TableHandle
 
 logger = logging.getLogger(__name__)
 
 GridSpec = NamedTuple("GridSpec", [('chunk_shapes', np.ndarray), ('grid_shapes', np.ndarray)])
 
 
-def _write_annotations_by_spatial_chunk(df, coord_space, annotation_type, bounds, num_levels, target_chunk_limit, output_dir, write_sharded):
+def _write_annotations_by_spatial_chunk(df_handle: TableHandle, coord_space, annotation_type, bounds, num_levels, target_chunk_limit, output_dir, write_sharded):
     """
     Write the annotations to the spatial index.
 
@@ -27,14 +27,22 @@ def _write_annotations_by_spatial_chunk(df, coord_space, annotation_type, bounds
         an unbiased sample. It would also have the side benefit of reducing the number
         of times large annotations need to be duplicated across multiple chunks in
         the finer spatial grids.
+
         We might also consider allowing the caller to explicitly specify the spatial
         level for each annotation if they provide the 'level' column themselves.
+        Alternatively, we could give an option to just not shuffle the users annotations before
+        before assigning spatial levels, which would cause earlier annotations to be assigned
+        assigned coarser spatial levels.  Plus, when neuroglancer shows a subset of annotations
+        *within* a level, it adds them to the view according to the order in the file.
 
     Args:
-        df:
-            DataFrame with columns ['id_buf', 'ann_buf', *geometry_cols].
-            Internally, the data will be copied during processing and again 
+        df_handle:
+            TableHandle.  The handle's reference will be unset before this function returns.
+            The enclosed DataFrame must have columns ['id_buf', 'ann_buf', *geometry_cols].
+            Internally, the data will be copied during processing and again
             during writing, incurring significant RAM usage for large datasets.
+            The caller can save some RAM by deleting their own reference to the input
+            after constructing the TableHandle (but before calling this function).
 
         coord_space:
             CoordinateSpace.
@@ -72,16 +80,17 @@ def _write_annotations_by_spatial_chunk(df, coord_space, annotation_type, bounds
     Returns:
         JSON metadata to write into the 'spatial' key of the info file.
     """
-    df, gridspec = _assign_spatial_chunks(
-        df,
+    df_handle, gridspec = _assign_spatial_chunks(
+        df_handle,
         coord_space,
         annotation_type,
         bounds,
         num_levels,
         target_chunk_limit
     )
+
     metadata = _write_assigned_annotations_by_spatial_chunk(
-        df,
+        df_handle,
         gridspec,
         output_dir,
         write_sharded
@@ -89,11 +98,16 @@ def _write_annotations_by_spatial_chunk(df, coord_space, annotation_type, bounds
     return metadata
 
 
-def _assign_spatial_chunks(df, coord_space, annotation_type, bounds, num_levels, target_chunk_limit: int):
+def _assign_spatial_chunks(df_handle: TableHandle, coord_space, annotation_type, bounds, num_levels, target_chunk_limit: int):
     """
     Assign each annotation to a spatial grid cell.
     If an annotation intersects multiple grid cells, we duplicate
     its row so we can assign it to all of the intersecting cells.
+
+    Args:
+        df_handle:
+            TableHandle.  The handle's reference will be unset before this function returns.
+        ...
 
     Returns:
         df, gridspec
@@ -104,6 +118,9 @@ def _assign_spatial_chunks(df, coord_space, annotation_type, bounds, num_levels,
           span across multiple chunks (at the level we selected them to reside in).
         - gridspec: chunk_shapes and grid_shapes.  See _define_spatial_grids() for details.
     """
+    df = df_handle.df
+    df_handle.df = None
+
     geometry_cols = _geometry_cols(coord_space.names, annotation_type)
     df = df[[*chain(*geometry_cols), 'ann_buf', 'id_buf']].copy(deep=False)
     gridspec = _define_spatial_grids(bounds, coord_space, num_levels)
@@ -131,7 +148,7 @@ def _assign_spatial_chunks(df, coord_space, annotation_type, bounds, num_levels,
             raise NotImplementedError(f"Spatial indexing for {annotation_type} annotations is not implemented")
 
     logger.info("Done assigning spatial grid chunks")
-    return df, gridspec
+    return TableHandle(df), gridspec
 
 
 def _define_spatial_grids(bounds, coord_space, num_levels: int) -> GridSpec:
@@ -468,19 +485,35 @@ def _line_chunk_overlap(point_a, point_b, grid_origin, cell_shape, grid_index):
     return max_t >= min_t
 
 
-def _write_assigned_annotations_by_spatial_chunk(df, gridspec, output_dir, write_sharded):
+def _write_assigned_annotations_by_spatial_chunk(df_handle, gridspec, output_dir, write_sharded):
     """
     Write the spatial index, given a dataframe in which the 'level'
     and grid chunk codes for each annotation have already been assigned.
 
+    Args:
+        df_handle:
+            TableHandle.  The handle's reference will be unset before this function returns.
+        gridspec:
+            GridSpec object defining the spatial index.
+        output_dir:
+            Directory to write the annotations to.
+            Subdirectories will be created for each level of the spatial index.
+        write_sharded:
+            Whether to write the annotations in sharded format.
+
     Returns:
         JSON metadata to write into the 'spatial' key of the info file.
     """
+    logger.info(f"Concatenating annotations by spatial chunk")
     bufs_by_grid = (
-        df[['level', 'chunk_code', 'id_buf', 'ann_buf']]
+        df_handle.df[['level', 'chunk_code', 'id_buf', 'ann_buf']]
         .groupby(['level', 'chunk_code'], sort=False)
         .agg({'id_buf': ['count', b''.join], 'ann_buf': b''.join})
     )
+    # We're done with the original input; delete it to save
+    # RAM before writing (which takes a lot of RAM).
+    df_handle.df = None
+
     logger.info(f"Combining annotation and ID buffers for spatial index")
     bufs_by_grid.columns = ['count', 'id_buf', 'ann_buf']
     bufs_by_grid['count_buf'] = _encode_uint64_series(bufs_by_grid['count'])

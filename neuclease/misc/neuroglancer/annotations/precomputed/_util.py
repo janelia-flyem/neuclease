@@ -1,5 +1,13 @@
-import numpy as np
+from dataclasses import dataclass
+
 from numba import njit
+import numpy as np
+import pandas as pd
+
+
+@dataclass
+class TableHandle:
+    df: pd.DataFrame | None = None
 
 
 def _encode_uint64_series(s, dtype='<u8'):

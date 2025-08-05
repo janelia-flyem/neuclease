@@ -2,7 +2,7 @@ import logging
 import numpy as np
 import pandas as pd
 
-from ._util import _encode_uint64_series
+from ._util import _encode_uint64_series, TableHandle
 from ._write_buffers import _write_buffers
 
 logger = logging.getLogger(__name__)
@@ -85,14 +85,15 @@ def _encode_related_ids(related_ids):
         return np.array(encoded_ids, dtype=object)
 
 
-def _write_annotations_by_relationships(df, relationships, output_dir, write_sharded):
+def _write_annotations_by_relationships(df_handle: TableHandle, relationships, output_dir, write_sharded):
     """
     Write the annotations to a "Related Object ID Index" for each relationship.
     Each relationship is written to a separate subdirectory of output_dir.
 
     Args:
-        df:
-            DataFrame with columns ['id_buf', 'ann_buf', *relationships].
+        df_handle:
+            TableHandle holding a DataFrame with columns ['id_buf', 'ann_buf', *relationships].
+            The handle's reference will be unset before this function returns.
 
         relationships:
             List of relationship column names.
@@ -108,21 +109,25 @@ def _write_annotations_by_relationships(df, relationships, output_dir, write_sha
         JSON metadata to be written under the 'relationships' key in the top-level 'info' file,
         consisting of a list of JSON objects (one for each relationship).
     """
+    handles = {
+        r: TableHandle(df_handle.df) for r in relationships
+    }
+    df_handle.df = None
+
     by_rel_metadata = []
-    for relationship in relationships:
+    for relationship, df_handle in handles.items():
         metadata = _write_annotations_by_relationship(
-            df,
+            df_handle,
             relationship,
             output_dir,
             write_sharded
         )
-        df = df.drop(columns=[relationship])
         by_rel_metadata.append(metadata)
 
     return by_rel_metadata
 
 
-def _write_annotations_by_relationship(df, relationship, output_dir, write_sharded):
+def _write_annotations_by_relationship(df_handle: TableHandle, relationship, output_dir, write_sharded):
     """
     Write the annotations to a "Related Object ID Index" for a single relationship.
 
@@ -131,13 +136,14 @@ def _write_annotations_by_relationship(df, relationship, output_dir, write_shard
     """
     logger.info(f"Grouping annotations by relationship {relationship}")
     bufs_by_segment = (
-        df[['id_buf', 'ann_buf', relationship]]
+        df_handle.df[['id_buf', 'ann_buf', relationship]]
         .dropna(subset=relationship)
         .explode(relationship)
         .groupby(relationship, sort=False)
         # Use b''.join() instead of 'sum' to avoid O(N^2) performance for large groups.
         .agg({'id_buf': ['count', b''.join], 'ann_buf': b''.join})
     )
+    df_handle.df = None
 
     logger.info(f"Combining annotation and ID buffers for relationship '{relationship}'")
     bufs_by_segment.columns = ['count', 'id_buf', 'ann_buf']

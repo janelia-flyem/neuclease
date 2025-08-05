@@ -1,6 +1,7 @@
 import os
 import json
 import logging
+from dataclasses import dataclass
 from itertools import chain
 from typing import Literal
 
@@ -21,16 +22,15 @@ except ImportError:
 
 from ..util import annotation_property_specs
 
-from ._util import _encode_uint64_series, _geometry_cols
+from ._util import _encode_uint64_series, _geometry_cols, TableHandle
 from ._id import _write_annotations_by_id
 from ._relationships import _write_annotations_by_relationships, _encode_relationships
 from ._spatial import _write_annotations_by_spatial_chunk
 
 logger = logging.getLogger(__name__)
 
-
 def write_precomputed_annotations(
-    df: pd.DataFrame,
+    df: pd.DataFrame | TableHandle,
     coord_space: CoordinateSpace,
     annotation_type: Literal['point', 'line', 'ellipsoid', 'axis_aligned_bounding_box'],
     properties: list[str] | list[AnnotationPropertySpec] | dict[str, AnnotationPropertySpec] | list[dict] = (),
@@ -56,16 +56,15 @@ def write_precomputed_annotations(
 
         Internally, the data will be copied during processing and again 
         during writing, incurring significant RAM usage for large datasets.
-
-    TODO:
-        We might be able to reduce our RAM usage somewhat by allowing callers
-        to "move" the data into this function via some sort of proxy container,
-        and then we could delete the original data immediately before writing.
-        We should at least do that when we pass the data around internally.
+        To save at least some RAM, you can wrap your dataframe in a TableHandle
+        and then delete your own reference to the dataframe before calling this function.
+        The TableHandle's reference will be deleted internally as soon as possible
+        (after the data is transformed for writing, before this function returns).
 
     Args:
         df:
-            DataFrame.
+            DataFrame or TableHandle.
+            If a TableHandle, the handle's reference will be unset before this function returns.
             The index of the DataFrame is used as the annotation ID, so it must be unique.
             The required columns depend on the annotation_type and the coordinate space.
             For example, assuming ``coord_space.names == ['x', 'y', 'z']``,
@@ -157,6 +156,10 @@ def write_precomputed_annotations(
     from neuroglancer.coordinate_space import CoordinateSpace
     from neuroglancer.viewer_state import AnnotationPropertySpec
 
+    if isinstance(df, TableHandle):
+        handle, df = df, df.df
+        handle.df = None
+
     os.makedirs(output_dir, exist_ok=True)
     annotation_type = annotation_type.lower()
     property_specs = annotation_property_specs(df, properties)
@@ -180,10 +183,20 @@ def write_precomputed_annotations(
             write_sharded
         )
 
+    if write_by_relationship:
+        df_handle_for_rel = TableHandle(df)
+
+    if write_by_spatial_chunk:
+        df_handle_for_spatial = TableHandle(df)
+
+    # Delete our reference to df.
+    # The TableHandles own the data now.
+    del df
+
     by_rel_metadata = []
     if write_by_relationship:    
         by_rel_metadata = _write_annotations_by_relationships(
-            df,
+            df_handle_for_rel,
             relationships,
             output_dir,
             write_sharded
@@ -192,7 +205,7 @@ def write_precomputed_annotations(
     spatial_metadata = []
     if write_by_spatial_chunk:
         spatial_metadata = _write_annotations_by_spatial_chunk(
-            df,
+            df_handle_for_spatial,
             coord_space,
             annotation_type,
             bounds,
