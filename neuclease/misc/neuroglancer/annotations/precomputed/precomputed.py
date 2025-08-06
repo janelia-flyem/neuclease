@@ -245,10 +245,10 @@ def _get_bounds(df, coord_space, annotation_type):
         (both numpy arrays of length 3)
     """
     geometry_cols = _geometry_cols(coord_space.names, annotation_type)
-    if (gc := set(chain(*geometry_cols))) > set(df.columns):
+    if not (required_cols := set(chain(*geometry_cols))) <= set(df.columns):
         raise ValueError(
             "Dataframe does not have all required geometry columns for the given coordinate space.\n"
-            f"Required columns: {gc}"
+            f"Required columns: {required_cols}"
         )
 
     if annotation_type == 'point':
