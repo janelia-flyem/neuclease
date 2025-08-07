@@ -43,6 +43,7 @@ def write_precomputed_annotations(
     write_by_spatial_chunk: bool = True,
     num_spatial_levels: int = 7,
     target_chunk_limit: int = 10_000,
+    shuffle_before_assigning_spatial_levels: bool = True,
     description: str = "",
 ):
     """
@@ -147,6 +148,17 @@ def write_precomputed_annotations(
         target_chunk_limit:
             int
             For the spatial index, how many annotations we aim to place in each chunk (regardless of the level).
+
+        shuffle_before_assigning_spatial_levels:
+            bool
+            Whether to shuffle the annotations before assigning spatial levels.
+            By default, we shuffle the annotations to avoid any bias in the spatial
+            assignment, which is what the neuroglancer spec recommends.
+            However, in some use-cases, a bias may be desirable (e.g. showing larger
+            annotations when zoomed out).
+            So if this is False, the annotations will be assigned to spatial levels in
+            the order they appear in the input dataframe, with earlier annotations
+            assigned to coarser spatial levels.
         
         description:
             str
@@ -211,6 +223,7 @@ def write_precomputed_annotations(
             bounds,
             num_spatial_levels,
             target_chunk_limit,
+            shuffle_before_assigning_spatial_levels,
             output_dir,
             write_sharded
         )

@@ -15,25 +15,18 @@ logger = logging.getLogger(__name__)
 GridSpec = NamedTuple("GridSpec", [('chunk_shapes', np.ndarray), ('grid_shapes', np.ndarray)])
 
 
-def _write_annotations_by_spatial_chunk(df_handle: TableHandle, coord_space, annotation_type, bounds, num_levels, target_chunk_limit, output_dir, write_sharded):
+def _write_annotations_by_spatial_chunk(
+        df_handle: TableHandle,
+        coord_space,
+        annotation_type,
+        bounds, num_levels,
+        target_chunk_limit,
+        shuffle_before_assigning_spatial_levels,
+        output_dir,
+        write_sharded
+):
     """
     Write the annotations to the spatial index.
-
-    TODO:
-        It might be nice to provide an option to assign larger annotations
-        (long lines, large ellipsoids, large boxes) to coarser spatial levels.
-        Then larger annotations would be more likely to be visible in neuroglancer
-        when the camera is zoomed out, which is arguably more intuitive than seeing
-        an unbiased sample. It would also have the side benefit of reducing the number
-        of times large annotations need to be duplicated across multiple chunks in
-        the finer spatial grids.
-
-        We might also consider allowing the caller to explicitly specify the spatial
-        level for each annotation if they provide the 'level' column themselves.
-        Alternatively, we could give an option to just not shuffle the users annotations before
-        before assigning spatial levels, which would cause earlier annotations to be assigned
-        assigned coarser spatial levels.  Plus, when neuroglancer shows a subset of annotations
-        *within* a level, it adds them to the view according to the order in the file.
 
     Args:
         df_handle:
@@ -69,6 +62,14 @@ def _write_annotations_by_spatial_chunk(df_handle: TableHandle, coord_space, ann
             The final maximum number of annotations per chunk we end up with at each
             level will be emitted in the the 'limit' setting of the metadata for each level.
 
+        shuffle_before_assigning_spatial_levels:
+            Whether to shuffle the annotations before assigning spatial levels.
+            If False, the annotations will be assigned to spatial levels in the order
+            they appear in the input dataframe, with earlier annotations assigned to
+            coarser spatial levels.
+            By default, we shuffle the annotations to avoid any bias in the spatial
+            assignment, which is what the neuroglancer spec recommends.
+
         output_dir:
             Directory to write the annotations to.
             Subdirectories for each level of the spatial index will be created in output_dir,
@@ -86,7 +87,8 @@ def _write_annotations_by_spatial_chunk(df_handle: TableHandle, coord_space, ann
         annotation_type,
         bounds,
         num_levels,
-        target_chunk_limit
+        target_chunk_limit,
+        shuffle_before_assigning_spatial_levels
     )
 
     metadata = _write_assigned_annotations_by_spatial_chunk(
@@ -98,7 +100,15 @@ def _write_annotations_by_spatial_chunk(df_handle: TableHandle, coord_space, ann
     return metadata
 
 
-def _assign_spatial_chunks(df_handle: TableHandle, coord_space, annotation_type, bounds, num_levels, target_chunk_limit: int):
+def _assign_spatial_chunks(
+        df_handle: TableHandle,
+        coord_space,
+        annotation_type,
+        bounds,
+        num_levels,
+        target_chunk_limit,
+        shuffle_before_assigning_spatial_levels
+):
     """
     Assign each annotation to a spatial grid cell.
     If an annotation intersects multiple grid cells, we duplicate
@@ -126,8 +136,9 @@ def _assign_spatial_chunks(df_handle: TableHandle, coord_space, annotation_type,
     gridspec = _define_spatial_grids(bounds, coord_space, num_levels)
     level_annotation_counts = _compute_target_annotations_per_level(len(df), gridspec, target_chunk_limit)
 
-    logger.info("Shuffling annotations before assigning spatial grid levels")
-    df = df.sample(frac=1.0)
+    if shuffle_before_assigning_spatial_levels:
+        logger.info("Shuffling annotations before assigning spatial grid levels")
+        df = df.sample(frac=1.0)
 
     logger.info("Assigning spatial grid chunks")
     df['level'] = np.repeat(
