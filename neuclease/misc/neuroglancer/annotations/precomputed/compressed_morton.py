@@ -23,25 +23,25 @@ def compressed_morton_code(grid_coord_c_order, grid_shape_c_order):
     Examples:
 
         In [10]: compressed_morton_code(
-            ...:     [1,5,3],
+            ...:     [1, 5, 3],
             ...:     [3, 16, 5]
             ...: )
         Out[10]: array(143, dtype=uint64)
 
         In [11]: compressed_morton_code(
-            ...:     [[1,5,3], [2, 3, 4]],
+            ...:     [[1, 5, 3], [2, 3, 4]],
             ...:     [3, 16, 5]
             ...: )
         Out[11]: array([143, 114], dtype=uint64)
 
         In [12]: compressed_morton_code(
-            ...:     [1,5,3],
+            ...:     [1, 5, 3],
             ...:     [[3, 16, 5], [6, 32, 10]]
             ...: )
         Out[12]: array([143, 143], dtype=uint64)
 
         In [13]: compressed_morton_code(
-            ...:     [[1,5,3], [2, 3, 4]],
+            ...:     [[1, 5, 3], [2, 3, 4]],
             ...:     [[3, 16, 5], [6, 32, 10]]
             ...: )
         Out[13]: array([143, 114], dtype=uint64)

@@ -179,6 +179,10 @@ def _define_spatial_grids(bounds, coord_space, num_levels: int) -> GridSpec:
         bounds:
             np.ndarray, shape (2, D)
             lower and upper bounds of the union of all annotations
+
+        coord_space:
+            Needed to aim for roughly isotropic chunks in physical units.
+
         num_levels:
             The number of spatial index levels. Must be at least 1.
 
@@ -243,7 +247,7 @@ def _compute_target_annotations_per_level(num_annotations, gridspec, target_chun
     The target_chunk_limit is how many annotations we aim to place in each chunk
     (regardless of the level).
     
-    Since the spatial annotations are not distributed uniformly in space,
+    Since the spatial annotations are not necessarily distributed uniformly in space,
     we will likely end up undershooting and overshooting the target for various
     chunks within a level.
 
@@ -521,6 +525,7 @@ def _write_assigned_annotations_by_spatial_chunk(df_handle, gridspec, output_dir
         .groupby(['level', 'chunk_code'], sort=False)
         .agg({'id_buf': ['count', b''.join], 'ann_buf': b''.join})
     )
+
     # We're done with the original input; delete it to save
     # RAM before writing (which takes a lot of RAM).
     df_handle.df = None
@@ -541,7 +546,10 @@ def _write_assigned_annotations_by_spatial_chunk(df_handle, gridspec, output_dir
             level_bufs.index = level_bufs['chunk_code']
         else:
             # Unsharded key is string of the grid coordinate, e.g. '0_0_0'
-            grid_coords = compressed_morton_decode(level_bufs['chunk_code'].to_numpy(), gridspec.grid_shapes[level])
+            grid_coords = compressed_morton_decode(
+                level_bufs['chunk_code'].to_numpy(),
+                gridspec.grid_shapes[level]
+            )
             level_bufs.index = [map('_'.join, grid_coords.astype(str))]
 
         level_metadata = _write_buffers(

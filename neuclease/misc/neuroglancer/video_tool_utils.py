@@ -60,7 +60,6 @@ import urllib.parse
 import warnings
 from collections import namedtuple
 
-import gspread
 import pandas as pd
 
 ScriptItem = namedtuple('ScriptItem', ['comment', 'transition_duration', 'link', 'state', 'link_line_number'])
@@ -174,6 +173,12 @@ def write_tsv(item_df: pd.DataFrame, output_tsv_path: str):
 
 
 def overwrite_google_sheet(item_df: pd.DataFrame, sheet_url: str):
+    """
+    Overwrite a Google Sheet with the given DataFrame.
+    Requires the gspread package.
+    """
+    import gspread
+
     gid = re.search(r'gid=(\d+)', sheet_url).group(1)
 
     gc = gspread.service_account(os.environ['GOOGLE_APPLICATION_CREDENTIALS'])

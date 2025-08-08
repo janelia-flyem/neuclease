@@ -31,7 +31,7 @@ def _write_buffers(buf_series, output_dir, subdir, write_sharded):
         write_sharded:
             bool
             If True, write the buffers in sharded format.
-            If False, write the buffers in unsharded format, i.e. one file per item.
+            If False, write one file per item.
 
     Returns:
         JSON metadata for the written data, including the key (subdir)
