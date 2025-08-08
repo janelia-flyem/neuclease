@@ -39,8 +39,38 @@ def hex_string_from_segment_id(color_seed, segment_id):
     return f"#{packed_color:06x}"
 
 
-@njit
 def rgb_from_segment_id(color_seed, segment_id):
+    """
+    Hash the segment_id to an RGB array of uint8 according to the given color_seed.
+
+    If color_seed and/or segment_id is an array, then they'll be
+    broadcasted together and a list of colors will be returned.
+    """
+    packed_color = packed_color_from_segment_id(color_seed, segment_id)
+    return unpack_color(packed_color)
+
+
+def unpack_color(packed_color):
+    """
+    Unpack an array of packed colors with shape (...,) into an
+    array of shape (..., 3) with r,g,b in the last dimension.
+    Also works for a single packed color scalar.
+    """
+    r = packed_color >> 16
+    g = (packed_color >> 8) & 0xFF
+    b = packed_color & 0xFF
+    return np.concatenate(
+        [
+            r[..., None],
+            g[..., None],
+            b[..., None],
+        ],
+        axis=-1
+    )
+
+
+@njit
+def _rgb_from_segment_id(color_seed, segment_id):
     segment_id = int(segment_id)  # necessary since segment_id is 64 bit originally
     result = hash_function(state=color_seed,value=segment_id)
     newvalue = segment_id >> 32
@@ -114,5 +144,5 @@ def hsv_to_rgb(h,s,v):
 
 @vectorize("int64(int64, int64)", nopython=True)
 def packed_color_from_segment_id(color_seed, segment_id):
-    rgb = rgb_from_segment_id(color_seed, segment_id)
+    rgb = _rgb_from_segment_id(color_seed, segment_id)
     return pack_color(rgb_vec=rgb)
