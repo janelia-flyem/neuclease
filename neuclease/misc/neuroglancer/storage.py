@@ -1,17 +1,13 @@
 """
 Utility functions related to storing neuroglancer states in cloud storage.
 
-This module relies on special dependencies, such as the
-google SDK and neuclease utility functions.
-
-Perhaps someday this subpackage will be properly distributed on its own,
-but for now we use local import statements as a convenience for those who
-with to use parts of this subpackage without installing all dependencies.
+Except for `download_ngstate()`, these functions require the google-cloud-storage package.
 """
 import json
 import argparse
 import tempfile
 import subprocess
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 
 
 def download_ngstate(link):
@@ -40,9 +36,12 @@ def upload_ngstates(bucket_dir, states, threads=0, processes=0, disable_cache=Fa
     between multithreading or multiprocessing (not a combination of the two).
 
     For the return values, neuroglancer links are returned (using the given prefix).
-    If no prerix is given, then the URLs to the uploaded files are returned.
+    If no prefix is given, then the URLs to the uploaded files are returned.
     """
     assert bucket_dir.startswith('gs://')
+    assert processes == 0 or threads == 0, \
+        "Pick multiprocessing or multithreading (or neither), but not both."
+
     bucket_dir = bucket_dir[len('gs://'):]
     bucket = bucket_dir.split('/')[0]
     dirpath = bucket_dir[1 + len(bucket):]
@@ -54,8 +53,15 @@ def upload_ngstates(bucket_dir, states, threads=0, processes=0, disable_cache=Fa
         for blobname, blob in zip(blob_names, blobs)
     ]
 
-    from neuclease.util import compute_parallel
-    urls = compute_parallel(upload_to_bucket, args, starmap=True, threads=threads, processes=processes)
+    if processes > 0:
+        with ProcessPoolExecutor(max_workers=processes) as executor:
+            urls = list(executor.map(lambda args: upload_to_bucket(*args), args))
+    elif threads > 0:
+        with ThreadPoolExecutor(max_workers=threads) as executor:
+            urls = list(executor.map(lambda args: upload_to_bucket(*args), args))
+    else:
+        # Sequential execution
+        urls = [upload_to_bucket(*arg_tuple) for arg_tuple in args]
 
     if return_prefix:
         old_prefix = 'https://storage.googleapis.com/'

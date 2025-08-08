@@ -1,7 +1,5 @@
 """
 neuroglancer-related utility functions
-
-See also: neuclease/notebooks/hemibrain-neuroglancer-video-script.txt
 """
 from .storage import download_ngstate, upload_ngstate, upload_ngstates, upload_json, upload_to_bucket, make_bucket_public
 from .util import parse_nglink, format_nglink, layer_dict, layer_state
