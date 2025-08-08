@@ -1,3 +1,4 @@
+import re
 from collections.abc import Mapping, Collection
 
 import numpy as np
@@ -112,6 +113,11 @@ def annotation_property_specs(df, properties):
     # must be sorted in the following order:
     # 32-bit properties, 16-bit properties, 8-bit-properties (including rgb and rgba)
     property_specs.sort(key=lambda x: -_PROPERTY_DTYPES[x['type']][1])
+
+    # Validate the property names according to the neuroglancer spec.
+    for prop in property_specs:
+        if not re.match(r'^[a-z][a-zA-Z0-9_]*$', prop['id']):
+            raise ValueError(f"Invalid property name: {prop}")
 
     return property_specs
 

@@ -48,7 +48,9 @@ def write_precomputed_annotations(
 ):
     """
     Export the data from a pandas DataFrame into neuroglancer's precomputed annotations format
-    as described in https://github.com/google/neuroglancer/blob/master/src/datasource/precomputed/annotations.md
+    as described in the neuroglancer spec[1].
+
+    [1]:  https://github.com/google/neuroglancer/blob/master/src/datasource/precomputed/annotations.md
 
     A progress bar is shown when writing each portion of the export (annotation ID index, related ID indexes),
     but there may be a significant amount of preprocessing time that occurs before the actual writing begins.
@@ -91,19 +93,22 @@ def write_precomputed_annotations(
             the DataFrame depend on the annotation type.
 
         properties:
-            If your dataframe contains columns that you want to use as annotation properties,
+            If your dataframe contains columns for annotation properties,
             list the names of those columns here.
 
             Categorical columns will be automatically converted to integers with associated
             enum labels.
 
             To provide an rgb or rgba property such as 'mycolor', provide separate columns
-            in your dataframe named 'mycolor_r', 'mycolor_g', 'mycolor_b' and 'mycolor_a',
-            and then list 'mycolor' as a property in this argument.
+            in your dataframe named 'mycolor_r', 'mycolor_g', 'mycolor_b' (and 'mycolor_a'),
+            and then include 'mycolor' in the properties list here.
 
             The full property spec for each property will be inferred from the column dtype,
             but if you want to explicitly override any property specs yourself, you can pass
-            a list of AnnotationPropertySpec objects here.
+            a list of AnnotationPropertySpec objects here instead of just listing column names.
+
+            Property names must start with a lowercase letter and may contain only letters,
+            numbers, and underscores.
 
         relationships:
             list[str]
@@ -147,15 +152,19 @@ def write_precomputed_annotations(
 
         target_chunk_limit:
             int
-            For the spatial index, how many annotations we aim to place in each chunk (regardless of the level).
+            For the spatial index, this is how many annotations we aim to place in each
+            chunk (regardless of the level).
+            If there are more annotations than fit within the specified num_spacial_levels
+            while (approximately) adhering to the target_chunk_limit at each level, then the
+            extra annotations will be assigned to the last level.
 
         shuffle_before_assigning_spatial_levels:
             bool
             Whether to shuffle the annotations before assigning spatial levels.
             By default, we shuffle the annotations to avoid any bias in the spatial
             assignment, which is what the neuroglancer spec recommends.
-            However, in some use-cases, a bias may be desirable (e.g. showing larger
-            annotations when zoomed out).
+            However, in some use-cases a bias may be desirable (e.g. deliberately
+            preferring to show larger annotations when zoomed out).
             So if this is False, the annotations will be assigned to spatial levels in
             the order they appear in the input dataframe, with earlier annotations
             assigned to coarser spatial levels.
