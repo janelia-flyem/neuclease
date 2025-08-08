@@ -1,27 +1,16 @@
 import os
 import json
 import logging
-from dataclasses import dataclass
 from itertools import chain
 from typing import Literal
 
 import pandas as pd
 import numpy as np
 
-try:
-    from neuroglancer.coordinate_space import CoordinateSpace
-    from neuroglancer.viewer_state import AnnotationPropertySpec
-except ImportError:
-    # For now, we support importing this module without neuroglancer,
-    # even though these functions require it.
-    # We define these names here so the type hints below don't fail.
-    class CoordinateSpace:
-        pass
-    class AnnotationPropertySpec:
-        pass
+from neuroglancer.coordinate_space import CoordinateSpace
+from neuroglancer.viewer_state import AnnotationPropertySpec
 
 from ..util import annotation_property_specs
-
 from ._util import _encode_uint64_series, _geometry_cols, TableHandle
 from ._id import _write_annotations_by_id
 from ._relationships import _write_annotations_by_relationships, _encode_relationships
@@ -29,9 +18,10 @@ from ._spatial import _write_annotations_by_spatial_chunk
 
 logger = logging.getLogger(__name__)
 
+
 def write_precomputed_annotations(
     df: pd.DataFrame | TableHandle,
-    coord_space: CoordinateSpace,
+    coord_space: CoordinateSpace | str | list[str] | dict[str, list],
     annotation_type: Literal['point', 'line', 'ellipsoid', 'axis_aligned_bounding_box'],
     properties: list[str] | list[AnnotationPropertySpec] | dict[str, AnnotationPropertySpec] | list[dict] = (),
     relationships: list[str] = (),
@@ -79,13 +69,36 @@ def write_precomputed_annotations(
             - For ellipsoid annotations, provide ['x', 'y', 'z', 'rx', 'ry', 'rz']
               for the center point and radii.
 
-            You may also provide additional columns to use as annotation properties,
-            in which case they should be listed in the 'properties' argument. (See below.)
+            You may also provide additional columns to use as annotation properties, in which
+            case their column names should be listed in the 'properties' argument. (See below.)
 
         coord_space:
-            CoordinateSpace.
+            CoordinateSpace or equivalent.
             The coordinate space of the annotations.
-            This is used to determine the geometry of the annotations.
+            Among other things, this determines which input columns represent the annotation geometry.
+            For convenience, we accept a couple different formats for the coordinate space,
+            assuming a default scale of 1 nm if no scale/units are provided.
+
+            Examples (all equivalent):
+
+                - "xyz"
+                - ['x', 'y', 'z']
+                - {"names": ['x', 'y', 'z']}
+                - {
+                    "names": ['x', 'y', 'z'],
+                    "units": ['nm', 'nm', 'nm'],
+                    "scales": [1, 1, 1]
+                  }
+                - {
+                    "x": [1, "nm"],
+                    "y": [1, "nm"],
+                    "z": [1, "nm"],
+                }
+                - CoordinateSpace(
+                    names=['x', 'y', 'z'],
+                    scales=[1.0, 1.0, 1.0],
+                    units=['nm', 'nm', 'nm'],
+                  )
 
         annotation_type:
             Literal['point', 'line', 'ellipsoid', 'axis_aligned_bounding_box']
@@ -173,18 +186,16 @@ def write_precomputed_annotations(
             str
             A description of the annotation collection.
     """
-    # Verify that the neuroglancer package is available.
-    from neuroglancer.coordinate_space import CoordinateSpace
-    from neuroglancer.viewer_state import AnnotationPropertySpec
-
     if isinstance(df, TableHandle):
+        # Take ownership of the dataframe.
         handle, df = df, df.df
         handle.df = None
 
-    os.makedirs(output_dir, exist_ok=True)
+    coord_space = _construct_coord_space(coord_space)
     annotation_type = annotation_type.lower()
     property_specs = annotation_property_specs(df, properties)
     bounds = _get_bounds(df, coord_space, annotation_type)
+    os.makedirs(output_dir, exist_ok=True)
 
     # Construct a buffer for each annotation and additional buffers
     # for each annotation's relationships, stored in new columns of df.
@@ -255,6 +266,52 @@ def write_precomputed_annotations(
 
     with open(f"{output_dir}/info", 'w') as f:
         json.dump(info, f)
+
+
+def _construct_coord_space(coord_space):
+    """
+    This function produces a CoordinateSpace object from any of our accepted
+    formats as explained in the docs for write_precomputed_annotations().
+
+    Returns:
+        CoordinateSpace
+    """
+    if isinstance(coord_space, CoordinateSpace):
+        return coord_space
+
+    if isinstance(coord_space, str):
+        if coord_space != coord_space.lower() or len(set(coord_space)) != len(coord_space):
+            raise ValueError(f"Invalid coordinate space: {coord_space!r}.")
+        return CoordinateSpace(
+            names=list(coord_space),
+            units=['nm']*len(coord_space),
+            scales=[1]*len(coord_space),
+        )
+
+    if isinstance(coord_space, list):
+        if not all(isinstance(c, str) and c == c.lower() for c in coord_space):
+            raise ValueError(f"Invalid coordinate space: {coord_space!r}.")
+        return CoordinateSpace(
+            names=coord_space,
+            units=['nm']*len(coord_space),
+            scales=[1]*len(coord_space),
+        )
+
+    if isinstance(coord_space, dict):
+        if 'names' not in coord_space:
+            return CoordinateSpace(json=coord_space)
+
+        if not (coord_space.keys() <= {'names', 'units', 'scales', 'coordinate_arrays'}):
+            raise ValueError(f"Invalid coordinate space: {coord_space!r}.")
+
+        default_coord_space = {
+            'names': coord_space['names'],
+            'units': ['nm']*len(coord_space['names']),
+            'scales': [1]*len(coord_space['names']),
+        }
+        return CoordinateSpace(**(default_coord_space | coord_space))
+
+    raise ValueError(f"Invalid coordinate space: {coord_space!r}.")
 
 
 def _get_bounds(df, coord_space, annotation_type):
