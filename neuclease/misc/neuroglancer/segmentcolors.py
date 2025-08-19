@@ -24,6 +24,8 @@ This version is lightly refactored and uses numba to JIT-compile and vectorize i
 import numpy as np
 from numba import njit, vectorize
 
+# Random note: Some ID pairs such as [818314, 800181] seem to have very close colors regardless of seed.
+
 
 def hex_string_from_segment_id(color_seed, segment_id):
     """
