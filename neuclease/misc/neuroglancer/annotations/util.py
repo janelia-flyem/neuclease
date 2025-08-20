@@ -1,5 +1,4 @@
-from dataclasses import dataclass
-from typing import Literal
+import re
 from collections.abc import Mapping, Collection
 
 import numpy as np
@@ -47,6 +46,9 @@ def annotation_property_specs(df, properties):
             as descrbed in the docstring for local_annotation_json().
     Returns:
         JSON dict
+        The order of the properties may not be the same as what you passed in.
+        They are sorted according to the layout rules of neuroglancer's
+        precomputed annotation format.
     """
     try:
         from neuroglancer.viewer_state import AnnotationPropertySpec
@@ -76,16 +78,28 @@ def annotation_property_specs(df, properties):
             else:
                 raise ValueError(f"Invalid property spec: {spec}")
 
-    default_property_specs = {
-        col: {
-            'id': col,
-            'type': _proptype(df[col]),
-        }
-        for col in property_specs
-    }
+    default_property_specs = {}
+    for propname in property_specs:
+        if propname in df.columns:
+            default_property_specs[propname] = {
+                'id': propname,
+                'type': _proptype(df[propname]),
+            }
+        elif {f'{propname}_{channel}' for channel in 'rgba'} <= set(df.columns):
+            default_property_specs[propname] = {
+                'id': propname,
+                'type': 'rgba',
+            }
+        elif {f'{propname}_{channel}' for channel in 'rgb'} <= set(df.columns):
+            default_property_specs[propname] = {
+                'id': propname,
+                'type': 'rgb',
+            }
+        else:
+            raise ValueError(f"Property '{propname}' not found in dataframe")
 
     for col in default_property_specs.keys():
-        if df[col].dtype == "category":
+        if col in df and df[col].dtype == "category":
             cats = df[col].cat.categories.tolist()
             default_property_specs[col]['enum_values'] = [*range(len(cats))]
             default_property_specs[col]['enum_labels'] = cats
@@ -99,6 +113,11 @@ def annotation_property_specs(df, properties):
     # must be sorted in the following order:
     # 32-bit properties, 16-bit properties, 8-bit-properties (including rgb and rgba)
     property_specs.sort(key=lambda x: -_PROPERTY_DTYPES[x['type']][1])
+
+    # Validate the property names according to the neuroglancer spec.
+    for prop in property_specs:
+        if not re.match(r'^[a-z][a-zA-Z0-9_]*$', prop['id']):
+            raise ValueError(f"Invalid property name: {prop}")
 
     return property_specs
 
@@ -139,83 +158,3 @@ def _proptype(s):
     if (s.map(len) == len("#rrggbbaa")).all():
         return 'rgba'
     raise RuntimeError("Not valid RGB or RGBA colors")
-
-
-@dataclass
-class ShardSpec:
-    type: str
-    hash: Literal["murmurhash3_x86_128", "identity_hash"]
-    preshift_bits: int
-    shard_bits: int
-    minishard_bits: int
-    data_encoding: Literal["raw", "gzip"]
-    minishard_index_encoding: Literal["raw", "gzip"]
-
-    def to_json(self):
-        return {
-            "@type": self.type,
-            "hash": self.hash,
-            "preshift_bits": self.preshift_bits,
-            "shard_bits": self.shard_bits,
-            "minishard_bits": self.minishard_bits,
-            "data_encoding": str(self.data_encoding),
-            "minishard_index_encoding": str(self.minishard_index_encoding),
-        }
-
-
-def choose_output_spec(
-    total_count,
-    total_bytes,
-    hashtype: Literal["murmurhash3_x86_128", "identity_hash"] = "murmurhash3_x86_128",
-    gzip_compress=True,
-):
-    """
-    Copied from Forrest Collman's PR:
-    https://github.com/google/neuroglancer/pull/522
-    """
-    import tensorstore as ts
-    MINISHARD_TARGET_COUNT = 1000
-    SHARD_TARGET_SIZE = 50000000
-
-    # if total_count == 1:
-    #     return None
-    # if ts is None:
-    #     return None
-
-    # test if hashtype is valid
-    if hashtype not in ["murmurhash3_x86_128", "identity_hash"]:
-        raise ValueError(
-            f"Invalid hashtype {hashtype}."
-            "Must be one of 'murmurhash3_x86_128' "
-            "or 'identity_hash'"
-        )
-
-    total_minishard_bits = 0
-    while (total_count >> total_minishard_bits) > MINISHARD_TARGET_COUNT:
-        total_minishard_bits += 1
-
-    shard_bits = 0
-    while (total_bytes >> shard_bits) > SHARD_TARGET_SIZE:
-        shard_bits += 1
-
-    preshift_bits = 0
-    while MINISHARD_TARGET_COUNT >> preshift_bits:
-        preshift_bits += 1
-
-    minishard_bits = total_minishard_bits - min(total_minishard_bits, shard_bits)
-    data_encoding: Literal["raw", "gzip"] = "raw"
-    minishard_index_encoding: Literal["raw", "gzip"] = "raw"
-
-    if gzip_compress:
-        data_encoding = "gzip"
-        minishard_index_encoding = "gzip"
-
-    return ShardSpec(
-        type="neuroglancer_uint64_sharded_v1",
-        hash=hashtype,
-        preshift_bits=preshift_bits,
-        shard_bits=shard_bits,
-        minishard_bits=minishard_bits,
-        data_encoding=data_encoding,
-        minishard_index_encoding=minishard_index_encoding,
-    )

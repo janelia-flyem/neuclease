@@ -145,7 +145,7 @@ def decimate_existing_mesh(server, uuid, instance, body_id, fraction, max_vertic
 
     fraction = min(fraction, max_vertices / len(mesh.vertices_zyx))    
     with Timer(f"Body: {body_id}: Decimating at {fraction:.2f}", logger):
-        mesh.simplify(fraction, in_memory=True)
+        mesh.simplify(fraction)
 
     mesh_mb = mesh.uncompressed_size() / 1e6
     logger.info(f"Body: {body_id}: Final mesh has {len(mesh.vertices_zyx)} vertices and {len(mesh.faces)} faces ({mesh_mb:.1f} MB)")

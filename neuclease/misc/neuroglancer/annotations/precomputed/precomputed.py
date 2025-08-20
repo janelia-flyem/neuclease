@@ -1,0 +1,457 @@
+import os
+import json
+import logging
+from itertools import chain
+from typing import Literal
+
+import pandas as pd
+import numpy as np
+
+from neuroglancer.coordinate_space import CoordinateSpace
+from neuroglancer.viewer_state import AnnotationPropertySpec
+
+from ..util import annotation_property_specs
+from ._util import _encode_uint64_series, _geometry_cols, TableHandle
+from ._id import _write_annotations_by_id
+from ._relationships import _write_annotations_by_relationships, _encode_relationships
+from ._spatial import _write_annotations_by_spatial_chunk
+
+logger = logging.getLogger(__name__)
+
+
+def write_precomputed_annotations(
+    df: pd.DataFrame | TableHandle,
+    coord_space: CoordinateSpace | str | list[str] | dict[str, list],
+    annotation_type: Literal['point', 'line', 'ellipsoid', 'axis_aligned_bounding_box'],
+    properties: list[str] | list[AnnotationPropertySpec] | dict[str, AnnotationPropertySpec] | list[dict] = (),
+    relationships: list[str] = (),
+    output_dir: str = 'annotations',
+    write_sharded: bool = True,
+    *,
+    write_by_id: bool = True,
+    write_by_relationship: bool = True,
+    write_by_spatial_chunk: bool = True,
+    num_spatial_levels: int = 7,
+    target_chunk_limit: int = 10_000,
+    shuffle_before_assigning_spatial_levels: bool = True,
+    description: str = "",
+):
+    """
+    Export the data from a pandas DataFrame into neuroglancer's precomputed annotations format
+    as described in the neuroglancer spec[1].
+
+    [1]:  https://github.com/google/neuroglancer/blob/master/src/datasource/precomputed/annotations.md
+
+    A progress bar is shown when writing each portion of the export (annotation ID index, related ID indexes),
+    but there may be a significant amount of preprocessing time that occurs before the actual writing begins.
+
+    Note:
+
+        Internally, the data will be copied during processing and again 
+        during writing, incurring significant RAM usage for large datasets.
+        To save at least some RAM, you can wrap your dataframe in a TableHandle
+        and then delete your own reference to the dataframe before calling this function.
+        The TableHandle's reference will be deleted internally as soon as possible
+        (after the data is transformed for writing, before this function returns).
+
+    Args:
+        df:
+            DataFrame or TableHandle.
+            If a TableHandle, the handle's reference will be unset before this function returns.
+            The index of the DataFrame is used as the annotation ID, so it must be unique.
+            The required columns depend on the annotation_type and the coordinate space.
+            For example, assuming ``coord_space.names == ['x', 'y', 'z']``,
+            then provide the following columns:
+
+            - For point annotations, provide ['x', 'y', 'z']
+            - For line annotations or axis_aligned_bounding_box annotations,
+              provide ['xa', 'ya', 'za', 'xb', 'yb', 'zb']
+            - For ellipsoid annotations, provide ['x', 'y', 'z', 'rx', 'ry', 'rz']
+              for the center point and radii.
+
+            You may also provide additional columns to use as annotation properties, in which
+            case their column names should be listed in the 'properties' argument. (See below.)
+
+        coord_space:
+            CoordinateSpace or equivalent.
+            The coordinate space of the annotations.
+            Among other things, this determines which input columns represent the annotation geometry.
+            For convenience, we accept a couple different formats for the coordinate space,
+            assuming a default scale of 1 nm if no scale/units are provided.
+
+            Examples (all equivalent):
+
+                - "xyz"
+                - ['x', 'y', 'z']
+                - {"names": ['x', 'y', 'z']}
+                - {
+                    "names": ['x', 'y', 'z'],
+                    "units": ['nm', 'nm', 'nm'],
+                    "scales": [1, 1, 1]
+                  }
+                - {
+                    "x": [1, "nm"],
+                    "y": [1, "nm"],
+                    "z": [1, "nm"],
+                }
+                - CoordinateSpace(
+                    names=['x', 'y', 'z'],
+                    scales=[1.0, 1.0, 1.0],
+                    units=['nm', 'nm', 'nm'],
+                  )
+
+        annotation_type:
+            Literal['point', 'line', 'ellipsoid', 'axis_aligned_bounding_box']
+            The type of annotation to export. Note that the columns you provide in
+            the DataFrame depend on the annotation type.
+
+        properties:
+            If your dataframe contains columns for annotation properties,
+            list the names of those columns here.
+
+            Categorical columns will be automatically converted to integers with associated
+            enum labels.
+
+            To provide an rgb or rgba property such as 'mycolor', provide separate columns
+            in your dataframe named 'mycolor_r', 'mycolor_g', 'mycolor_b' (and 'mycolor_a'),
+            and then include 'mycolor' in the properties list here.
+
+            The full property spec for each property will be inferred from the column dtype,
+            but if you want to explicitly override any property specs yourself, you can pass
+            a list of AnnotationPropertySpec objects here instead of just listing column names.
+
+            Property names must start with a lowercase letter and may contain only letters,
+            numbers, and underscores.
+
+        relationships:
+            list[str]
+            If your annotations have related segment IDs, such relationships can be provided
+            in the columns of your DataFrame. Each relationship should be listed in a single column,
+            whose values are lists of segment IDs.  In the special case where each annotation has
+            exactly one related segment, the column may have dtype=np.uint64 instead of containing lists.
+
+        output_dir:
+            str
+            The directory into which the exported annotations will be written.
+            Subdirectories will be created for the "annotation ID index" and each
+            "related object id index" as needed.
+
+        write_sharded:
+            bool
+            Whether to write the output as sharded files.
+            The sharded format is preferable for most use cases.
+            Without sharding, every annotation results in a separate file in the annotation ID index.
+            Similarly, every related ID results in a separate file in the related ID index.
+
+        write_by_id:
+            bool
+            Whether to write the annotations to the "Annotation ID Index".
+            If False, skip writing.
+
+        write_relationships:
+            bool
+            Whether to write the relationships to the "Related Object ID Index".
+            If False, skip writing.
+
+        write_by_spatial_chunk:
+            bool
+            Whether to write the spatial index.
+
+        num_spatial_levels:
+            int
+            The maximum number of spatial index levels to write.
+            If not all levels are needed (because all annotations fit within the first N levels),
+            then the actual number of levels written will be less than this value.
+
+        target_chunk_limit:
+            int
+            For the spatial index, this is how many annotations we aim to place in each
+            chunk (regardless of the level).
+            If there are more annotations than fit within the specified num_spacial_levels
+            while (approximately) adhering to the target_chunk_limit at each level, then the
+            extra annotations will be assigned to the last level.
+
+        shuffle_before_assigning_spatial_levels:
+            bool
+            Whether to shuffle the annotations before assigning spatial levels.
+            By default, we shuffle the annotations to avoid any bias in the spatial
+            assignment, which is what the neuroglancer spec recommends.
+            However, in some use-cases a bias may be desirable (e.g. deliberately
+            preferring to show larger annotations when zoomed out).
+            So if this is False, the annotations will be assigned to spatial levels in
+            the order they appear in the input dataframe, with earlier annotations
+            assigned to coarser spatial levels.
+        
+        description:
+            str
+            A description of the annotation collection.
+    """
+    if isinstance(df, TableHandle):
+        # Take ownership of the dataframe.
+        handle, df = df, df.df
+        handle.df = None
+
+    coord_space = _construct_coord_space(coord_space)
+    annotation_type = annotation_type.lower()
+    property_specs = annotation_property_specs(df, properties)
+    bounds = _get_bounds(df, coord_space, annotation_type)
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Construct a buffer for each annotation and additional buffers
+    # for each annotation's relationships, stored in new columns of df.
+    df = _encode_annotations(
+        df,
+        coord_space,
+        annotation_type,
+        property_specs,
+        relationships
+    )
+
+    by_id_metadata = {}
+    if write_by_id:
+        by_id_metadata = _write_annotations_by_id(
+            df,
+            output_dir,
+            write_sharded
+        )
+
+    if write_by_relationship:
+        df_handle_for_rel = TableHandle(df)
+
+    if write_by_spatial_chunk:
+        df_handle_for_spatial = TableHandle(df)
+
+    # Delete our reference to df.
+    # The TableHandles own the data now.
+    del df
+
+    by_rel_metadata = []
+    if write_by_relationship:    
+        by_rel_metadata = _write_annotations_by_relationships(
+            df_handle_for_rel,
+            relationships,
+            output_dir,
+            write_sharded
+        )
+
+    spatial_metadata = []
+    if write_by_spatial_chunk:
+        spatial_metadata = _write_annotations_by_spatial_chunk(
+            df_handle_for_spatial,
+            coord_space,
+            annotation_type,
+            bounds,
+            num_spatial_levels,
+            target_chunk_limit,
+            shuffle_before_assigning_spatial_levels,
+            output_dir,
+            write_sharded
+        )
+    
+    # Write the top-level 'info' file for the annotation output directory.
+    info = {
+        "@type": "neuroglancer_annotations_v1",
+        "dimensions": coord_space.to_json(),
+        "lower_bound": bounds[0].tolist(),
+        "upper_bound": bounds[1].tolist(),
+        "annotation_type": annotation_type,
+        "properties": property_specs,
+        "by_id": by_id_metadata,
+        "relationships": by_rel_metadata,
+        "spatial": spatial_metadata,
+    }
+
+    if description:
+        info['description'] = description
+
+    with open(f"{output_dir}/info", 'w') as f:
+        json.dump(info, f)
+
+
+def _construct_coord_space(coord_space):
+    """
+    This function produces a CoordinateSpace object from any of our accepted
+    formats as explained in the docs for write_precomputed_annotations().
+
+    Returns:
+        CoordinateSpace
+    """
+    if isinstance(coord_space, CoordinateSpace):
+        return coord_space
+
+    if isinstance(coord_space, str):
+        if coord_space != coord_space.lower() or len(set(coord_space)) != len(coord_space):
+            raise ValueError(f"Invalid coordinate space: {coord_space!r}.")
+        return CoordinateSpace(
+            names=list(coord_space),
+            units=['nm']*len(coord_space),
+            scales=[1]*len(coord_space),
+        )
+
+    if isinstance(coord_space, list):
+        if not all(isinstance(c, str) and c == c.lower() for c in coord_space):
+            raise ValueError(f"Invalid coordinate space: {coord_space!r}.")
+        return CoordinateSpace(
+            names=coord_space,
+            units=['nm']*len(coord_space),
+            scales=[1]*len(coord_space),
+        )
+
+    if isinstance(coord_space, dict):
+        if 'names' not in coord_space:
+            return CoordinateSpace(json=coord_space)
+
+        if not (coord_space.keys() <= {'names', 'units', 'scales', 'coordinate_arrays'}):
+            raise ValueError(f"Invalid coordinate space: {coord_space!r}.")
+
+        default_coord_space = {
+            'names': coord_space['names'],
+            'units': ['nm']*len(coord_space['names']),
+            'scales': [1]*len(coord_space['names']),
+        }
+        return CoordinateSpace(**(default_coord_space | coord_space))
+
+    raise ValueError(f"Invalid coordinate space: {coord_space!r}.")
+
+
+def _get_bounds(df, coord_space, annotation_type):
+    """
+    Inspect the geometry columns of the given dataframe to
+    determine the overall upper and lower bounds of the annotations.
+
+    Returns:
+        lower_bound, upper_bound
+        (both numpy arrays of length 3)
+    """
+    geometry_cols = _geometry_cols(coord_space.names, annotation_type)
+    if not (required_cols := set(chain(*geometry_cols))) <= set(df.columns):
+        raise ValueError(
+            "Dataframe does not have all required geometry columns for the given coordinate space.\n"
+            f"Required columns: {required_cols}"
+        )
+
+    if annotation_type == 'point':
+        points = df[geometry_cols[0]]
+        return (
+            points.min(axis=0).to_numpy(),
+            points.max(axis=0).to_numpy()
+        )
+
+    if annotation_type in ('line', 'axis_aligned_bounding_box'):
+        points_a = df[geometry_cols[0]]
+        points_b = df[geometry_cols[1]]
+        return (
+            np.minimum(points_a.min().to_numpy(), points_b.min().to_numpy()),
+            np.maximum(points_a.max().to_numpy(), points_b.max().to_numpy())
+        )
+
+    if annotation_type == 'ellipsoid':
+        center = df[geometry_cols[0]].to_numpy()
+        radii = df[geometry_cols[1]].to_numpy()
+        return np.asarray([
+            (center - radii).min(axis=0),
+            (center + radii).max(axis=0)
+        ])
+
+    raise ValueError(f"Annotation type {annotation_type} not supported")
+
+
+def _encode_annotations(df, coord_space, annotation_type, property_specs, relationships):
+    """
+    Returns a (shallow) copy of the dataframe with additional columns containing
+    buffers for each encoded annotation and its encoded id and encoded relationships.
+    """
+    df = df.copy(deep=False)
+
+    logger.info("Encoding annotation IDs")
+    df['id_buf'] = _encode_uint64_series(df.index)
+
+    logger.info("Encoding annotation geometries and properties")
+    df['ann_buf'] = _encode_geometries_and_properties(
+        df, coord_space, annotation_type, property_specs
+    )
+
+    logger.info("Encoding relationships")
+    rel_bufs = _encode_relationships(df, relationships)
+    if rel_bufs is not None:
+        df['rel_buf'] = rel_bufs
+
+    return df
+
+
+def _encode_geometries_and_properties(df, coord_space, annotation_type, property_specs):
+    """
+    For each annotation in the given dataframe, encode its geometry columns (e.g. x,y,z)
+    and property columns into a buffer, plus any padding that was necessary to align the
+    buffer to a 4-byte boundary, per the neuroglancer spec.
+
+    (In the precomputed format, geometry and properties always appear together,
+    regardless of whether they're being written to the "Annotation ID Index",
+    the "Related Object ID Index" or the "Spatial Index".)
+
+    Returns:
+        pd.Series of dtype=object, containing one buffer for each annotation.
+    """
+    geometry_cols = _geometry_cols(coord_space.names, annotation_type)
+    
+    # Note that the property specs are already sorted by
+    # dtype in the order neuroglancer requires.
+    # Order our columns accordingly before we encode them as records below.
+    prop_cols = []
+    for spec in property_specs:
+        p = spec['id']
+        if spec['type'] == 'rgb':
+            prop_cols.extend([f'{p}_r', f'{p}_g', f'{p}_b'])
+        elif spec['type'] == 'rgba':
+            prop_cols.extend([f'{p}_r', f'{p}_g', f'{p}_b', f'{p}_a'])
+        else:
+            prop_cols.append(p)
+    geometry_prop_df = df[[*chain(*geometry_cols), *prop_cols]].copy(deep=False)
+
+    # Calculate padding as required by neuroglancer.
+    property_widths = {}
+    for spec in property_specs:
+        if spec['type'] == 'rgb':
+            property_widths[spec['id']] = 3
+        elif spec['type'] == 'rgba':
+            property_widths[spec['id']] = 4
+        else:
+            property_widths[spec['id']] = np.dtype(spec['type']).itemsize
+
+    property_padding = (4 - (sum(property_widths.values()) % 4)) % 4
+    for i in range(property_padding):
+        geometry_prop_df[f'__padding_{i}__'] = np.uint8(0)
+
+    # Convert our column dtypes to match property specs.
+    dtypes = {c: np.float32 for c in chain(*geometry_cols)}
+    for spec in property_specs:
+        p = spec['id']
+        if spec['type'] in ('rgb', 'rgba'):
+            dtypes.update({
+                f'{p}_{channel}': np.uint8
+                for channel in spec['type']
+            })
+        else:
+            dtypes[p] = spec['type']
+
+    # Convert category columns to their integer equivalents
+    for spec in property_specs:
+        p = spec['id']
+        if spec['type'] in ('rgb', 'rgba'):
+            continue
+        if df[p].dtype == 'category':
+            geometry_prop_df[p] = geometry_prop_df[p].cat.codes
+            dtypes[p] = spec['type']
+
+    # Vectorized serialization
+    records = geometry_prop_df.to_records(index=False, column_dtypes=dtypes)
+    recsize = records.dtype.itemsize
+    buf = records.tobytes()
+
+    # Reduce RAM usage
+    del records
+
+    # extract bytes from the appropriate slice for each record
+    encoded_annotations = [buf[i*recsize:(i+1)*recsize] for i in range(len(df))]
+    ann_bufs = pd.Series(encoded_annotations, index=df.index)
+    return ann_bufs

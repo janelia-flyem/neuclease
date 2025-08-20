@@ -117,9 +117,26 @@ def find_missing_adjacencies(server, uuid, instance, body, known_edges=None, cc=
     if orig_num_cc == 1:
         return np.zeros((0,2), np.uint64), orig_num_cc, final_num_cc, pd.DataFrame(columns=BLOCK_TABLE_COLS)
 
-    labelindex = fetch_labelindex(server, uuid, instance, body, format='protobuf')
-    encoded_block_coords = np.fromiter(labelindex.blocks.keys(), np.uint64, len(labelindex.blocks))
-    coords_zyx = decode_labelindex_blocks(encoded_block_coords)
+    block_df = fetch_labelindex(server, uuid, instance, body, format='pandas').blocks
+
+    # Since we are fetching a halo around each block we need to know the set of SVs in the neighboring blocks.
+    offsets = np.array([[0, 0, 0], [0, 0, 1], [0, 1, 0], [1, 0, 0], [0, 0, -1], [0, -1, 0], [-1, 0, 0]])
+    offsets *= 64
+    offsets = pd.DataFrame(offsets, columns=['dz', 'dy', 'dx'])
+
+    # This will be a ton of RAM for large bodies.
+    cross_df = block_df[[*'zyx']].merge(offsets, 'cross')
+    cross_df[['dz', 'dy', 'dx']] += cross_df[[*'zyx']].values
+    cross_df = (
+        cross_df.merge(
+            block_df.drop(columns=['count'])
+            .rename(columns={c: f'd{c}' for c in 'zyx'}),
+            'inner',
+            on=['dz', 'dy', 'dx']
+        )
+    )
+    block_df = cross_df.groupby([*'zyx'])['sv'].agg('unique')
+    del cross_df
 
     cc_mapper = LabelMapper(svs, cc)
     sv_adj_found = []
@@ -128,10 +145,10 @@ def find_missing_adjacencies(server, uuid, instance, body, known_edges=None, cc=
     block_tables = {}
     searched_block_svs = {}
 
-    for coord_zyx, sv_counts in zip(coords_zyx, labelindex.blocks.values()):
-        # Given the supervoxels in this block, what CC adjacencies
+    for coord_zyx, block_svs in block_df.items():
+        # Given the supervoxels in this block (plus halo), what CC adjacencies
         # MIGHT we find if we were to inspect the segmentation?
-        block_svs = np.fromiter(sv_counts.counts.keys(), np.uint64)
+        assert block_svs.dtype == np.uint64
         block_ccs = cc_mapper.apply(block_svs)
         possible_cc_adjacencies = set(combinations(sorted(set(block_ccs)), 2))
 
@@ -240,13 +257,21 @@ def find_missing_adjacencies(server, uuid, instance, body, known_edges=None, cc=
     return new_edges, int(orig_num_cc), int(final_num_cc), block_table
 
 
-def fetch_block_vol(server, uuid, instance, coord_zyx, svs_set=None):
+def fetch_block_vol(server, uuid, instance, coord_zyx, svs_set=None, halo=1):
     """
-    Fetch a block of segmentation starting at the given coordinate.
+    Fetch a block of segmentation starting at the given coordinate (expanded for the halo).
     Optionally filter out (set to 0) any supervoxels that do not belong to the given svs_set.
+
+    We now fetch a halo since many supervoxels were split at block boundaries,
+    and without a halo we would miss their adjacencies.
+    This potentially increases the number of blocks DVID has to fetch by 8x,
+    but a more efficient strategy would take more time to implement than I have right now,
+    and the proofreaders need usability over speed.
     """
     block_box = coord_zyx + np.array([[0,0,0], [64,64,64]])
+    block_box += [[-halo, -halo, -halo], [halo, halo, halo]]
     block_vol = fetch_labelarray_voxels(server, uuid, instance, block_box, supervoxels=True, scale=0)
+    block_vol = np.asarray(block_vol, order='C')
 
     if svs_set is None:
         return block_vol

@@ -57,6 +57,13 @@ def fetch_json_schema(server, uuid, instance, *, session=None):
 
 
 @dvid_api_wrapper
+def post_json_schema(server, uuid, instance, schema, *, session=None):
+    assert '$schema' in schema
+    r = session.post(f"{server}/api/node/{uuid}/{instance}/json_schema", json=schema)
+    r.raise_for_status()
+
+
+@dvid_api_wrapper
 def fetch_schema_batch(server, uuid, instance, *, session=None):
     r = session.get(f"{server}/api/node/{uuid}/{instance}/schema_batch")
     r.raise_for_status()

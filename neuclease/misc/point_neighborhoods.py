@@ -244,7 +244,7 @@ def process_point(seg_src, seg_dst, point, radius, src_body, dst_body):
 
     # Mesh needs to be written in nm, hence 8x
     mesh = Mesh.from_binary_vol(mask, 8*src_box, smoothing_rounds=2)
-    mesh.simplify(0.05, in_memory=True)
+    mesh.simplify(0.05)
     post_key(*seg_dst[:2], f'{seg_dst[2]}_meshes', f'{dst_body}.ngmesh', mesh.serialize(fmt='ngmesh'))
 
     centroid = src_box[0] + mask_centroid(mask, True)

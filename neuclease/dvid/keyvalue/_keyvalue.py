@@ -637,6 +637,7 @@ DEFAULT_BODY_STATUS_CATEGORIES = [
     'Partially traced',
     'Leaves',
     'PRT Orphan',
+    'Reviewed',
     'Prelim Roughly traced',
     'RT Hard to trace',
     'RT Orphan',
