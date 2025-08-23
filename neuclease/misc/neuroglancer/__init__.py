@@ -10,5 +10,5 @@ from .annotations.local import (
     extract_annotations, annotation_layer_json, point_annotation_layer_json
 )
 from .annotations.precomputed import write_precomputed_annotations
-from .segmentprops import segment_properties_json
+from .segmentprops import segment_properties_json, segment_properties_to_dataframe
 from .segmentcolors import hex_string_from_segment_id
