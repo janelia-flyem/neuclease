@@ -614,7 +614,7 @@ def extend_list_value(server, uuid, instance, key, new_list, *, session=None):
         post_key(server, uuid, instance, key, json=new_list, session=session)
 
 
-# Copied from the following URL, but I inserted the empty status ("").
+# Copied from the following URL, with additions (e.g. the "" (empty) status).
 # http://emdata5.janelia.org:8400/api/node/b31220/neutu_config/key/body_status_v2
 DEFAULT_BODY_STATUS_CATEGORIES = [
     'Unimportant',
@@ -630,6 +630,7 @@ DEFAULT_BODY_STATUS_CATEGORIES = [
     '0.5assign',
     'Anchor',
     'Cleaved Anchor',
+    'Will be merged',
     'Sensory Anchor',
     'Cervical Anchor',
     'Soma Anchor',
