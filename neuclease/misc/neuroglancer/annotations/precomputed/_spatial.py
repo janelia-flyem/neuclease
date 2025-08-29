@@ -19,7 +19,8 @@ def _write_annotations_by_spatial_chunk(
         df_handle: TableHandle,
         coord_space,
         annotation_type,
-        bounds, num_levels,
+        bounds,
+        num_levels,
         target_chunk_limit,
         shuffle_before_assigning_spatial_levels,
         output_dir,
@@ -62,6 +63,10 @@ def _write_annotations_by_spatial_chunk(
             The final maximum number of annotations per chunk we end up with at each
             level will be emitted in the the 'limit' setting of the metadata for each level.
 
+            Note:
+                Instead of specifying a valid limit here, you can disable subsampling in neuroglancer
+                by setting this to the special value of 0.  This is only valid when num_levels=1.
+
         shuffle_before_assigning_spatial_levels:
             Whether to shuffle the annotations before assigning spatial levels.
             If False, the annotations will be assigned to spatial levels in the order
@@ -94,6 +99,7 @@ def _write_annotations_by_spatial_chunk(
     metadata = _write_assigned_annotations_by_spatial_chunk(
         df_handle,
         gridspec,
+        (target_chunk_limit == 0),
         output_dir,
         write_sharded
     )
@@ -101,13 +107,13 @@ def _write_annotations_by_spatial_chunk(
 
 
 def _assign_spatial_chunks(
-        df_handle: TableHandle,
-        coord_space,
-        annotation_type,
-        bounds,
-        num_levels,
-        target_chunk_limit,
-        shuffle_before_assigning_spatial_levels
+    df_handle: TableHandle,
+    coord_space,
+    annotation_type,
+    bounds,
+    num_levels,
+    target_chunk_limit,
+    shuffle_before_assigning_spatial_levels
 ):
     """
     Assign each annotation to a spatial grid cell.
@@ -261,7 +267,14 @@ def _compute_target_annotations_per_level(num_annotations, gridspec, target_chun
     """
     num_levels = len(gridspec.grid_shapes)
     chunk_counts_by_level = np.prod(gridspec.grid_shapes, axis=1)
-    annotation_counts = chunk_counts_by_level * target_chunk_limit
+
+    if target_chunk_limit != 0:
+        annotation_counts = chunk_counts_by_level * target_chunk_limit
+    else:
+        assert num_levels == 1, \
+            "The special target_chunk_limit of 0 is only permitted when num_spatial_levels=1"
+        assert chunk_counts_by_level.tolist() == [1]
+        annotation_counts = np.array([num_annotations])
     
     # Clamp to total number of annotations remaining after earlier levels
     for level in range(num_levels - 1):
@@ -500,7 +513,7 @@ def _line_chunk_overlap(point_a, point_b, grid_origin, cell_shape, grid_index):
     return max_t >= min_t
 
 
-def _write_assigned_annotations_by_spatial_chunk(df_handle, gridspec, output_dir, write_sharded):
+def _write_assigned_annotations_by_spatial_chunk(df_handle, gridspec, disable_subsampling, output_dir, write_sharded):
     """
     Write the spatial index, given a dataframe in which the 'level'
     and grid chunk codes for each annotation have already been assigned.
@@ -510,6 +523,9 @@ def _write_assigned_annotations_by_spatial_chunk(df_handle, gridspec, output_dir
             TableHandle.  The handle's reference will be unset before this function returns.
         gridspec:
             GridSpec object defining the spatial index.
+        disable_subsampling:
+            Whether to disable subsampling by seeting "limit" to 1 in the info file.
+            (See inline comments.)
         output_dir:
             Directory to write the annotations to.
             Subdirectories will be created for each level of the spatial index.
@@ -560,7 +576,19 @@ def _write_assigned_annotations_by_spatial_chunk(df_handle, gridspec, output_dir
         )
         level_metadata['chunk_size'] = gridspec.chunk_shapes[level].tolist()
         level_metadata['grid_shape'] = gridspec.grid_shapes[level].tolist()
-        level_metadata['limit'] = int(level_bufs['count'].max())
+
+        if disable_subsampling:
+            # To be honest, I don't completely understand why this
+            # disables subsampling, but according to jbms[1]:
+            #
+            #   > Neuroglancer "subsamples" by showing only a prefix of the list of
+            #   > annotations according to the spacing setting.  If you set "limit" to 1 in
+            #   > the info file, you won't get subsampling by default.
+            #
+            # [1]: https://github.com/google/neuroglancer/issues/227#issuecomment-651944575
+            level_metadata['limit'] = 1
+        else:
+            level_metadata['limit'] = int(level_bufs['count'].max())
         metadata.append(level_metadata)
 
     return metadata

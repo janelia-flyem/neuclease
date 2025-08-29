@@ -171,6 +171,11 @@ def write_precomputed_annotations(
             while (approximately) adhering to the target_chunk_limit at each level, then the
             extra annotations will be assigned to the last level.
 
+            Note:
+                Instead of specifying a valid limit here, you can disable subsampling in neuroglancer
+                by setting this to the special value of 0.  In our implementation, this is only valid
+                when num_spatial_levels=1.
+
         shuffle_before_assigning_spatial_levels:
             bool
             Whether to shuffle the annotations before assigning spatial levels.
