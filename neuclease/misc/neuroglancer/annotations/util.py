@@ -100,6 +100,9 @@ def annotation_property_specs(df, properties):
 
     for col in default_property_specs.keys():
         if col in df and df[col].dtype == "category":
+            if df[col].isnull().any():
+                raise ValueError(f"Column {col} can't be used for an enum property because it has null values")
+
             cats = df[col].cat.categories.tolist()
             default_property_specs[col]['enum_values'] = [*range(len(cats))]
             default_property_specs[col]['enum_labels'] = cats
