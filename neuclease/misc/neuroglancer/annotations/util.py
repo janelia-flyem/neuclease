@@ -140,10 +140,14 @@ def _proptype(s):
 
     if s.dtype == 'category':
         num_cats = len(s.dtype.categories)
-        for utype in (np.uint8, np.uint16, np.uint32):
-            if num_cats <= 1 + np.iinfo(utype).max:
-                return str(np.dtype(utype))
-        raise RuntimeError(f"Column {s.name} has too many categories")
+        if s.cat.codes.dtype == np.int8:
+            # Old versions of neuroglancer had a bug for int8 property types,
+            # so we store them as uint8.
+            # https://github.com/google/neuroglancer/pull/830
+            return 'uint8'
+
+        # Pandas already stores categorical codes with a minimal-width dtype
+        return str(np.dtype(s.cat.codes.dtype))
 
     if s.dtype != object:
         raise RuntimeError(f"Unsupported property dtype: {s.dtype} for column {s.name}")

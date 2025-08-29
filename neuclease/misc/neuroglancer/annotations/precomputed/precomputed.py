@@ -434,6 +434,12 @@ def _encode_geometries_and_properties(df, coord_space, annotation_type, property
         else:
             dtypes[p] = spec['type']
 
+    if any(dt == np.int8 for dt in dtypes.values()):
+        logger.warning(
+            "Old versions of neuroglancer don't support int8 properties, "
+            "so consider casting to uint8 or int16 if your annotations don't load."
+        )
+
     # Convert category columns to their integer equivalents
     for spec in property_specs:
         p = spec['id']
