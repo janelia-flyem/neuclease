@@ -146,8 +146,8 @@ def _target_type_strengths(orphan, orphan_upstream_types, orphan_downstream_type
 
     bodies_downstream_of_upstream = bodies_downstream_of_upstream.query('bodyId != @orphan')
     bodies_upstream_of_downstream = bodies_upstream_of_downstream.query('bodyId != @orphan')
-    conn_upstream_of_downstream = conn_upstream_of_downstream.query('bodyId_pre != @orphan and bodyId_post != @orphan')
-    conn_downstream_of_upstream = conn_downstream_of_upstream.query('bodyId_pre != @orphan and bodyId_post != @orphan')
+    conn_upstream_of_downstream = conn_upstream_of_downstream.query('bodyId_pre != @orphan and bodyId_post != @orphan').copy()
+    conn_downstream_of_upstream = conn_downstream_of_upstream.query('bodyId_pre != @orphan and bodyId_post != @orphan').copy()
 
     conn_downstream_of_upstream['type_pre'] = conn_downstream_of_upstream['bodyId_pre'].map(bodies_downstream_of_upstream.set_index('bodyId')['type'])
     conn_upstream_of_downstream['type_post'] = conn_upstream_of_downstream['bodyId_post'].map(bodies_upstream_of_downstream.set_index('bodyId')['type'])
