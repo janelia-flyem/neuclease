@@ -48,6 +48,8 @@ def main():
     urls = []
     targets = []
     for orphan, orphan_roi, targets_df, url in results:
+        if orphan_roi is None:
+            continue
         targets.append(targets_df)
         urls.append((orphan, orphan_roi, url))
 
@@ -62,6 +64,8 @@ def main():
 
 def _process_orphan(threshold_strength, max_target_types, template_link, bucket_dir, client, show_progress, orphan):
     orphan_roi, targets_df = fetch_orphan_targets(orphan, threshold_strength, client, show_progress)
+    if orphan_roi is None:
+        return orphan, None, None, None
     url = _neuroglancer_link(orphan, max_target_types, template_link, targets_df, bucket_dir, client)
     return orphan, orphan_roi, targets_df, url
 
@@ -69,7 +73,10 @@ def _process_orphan(threshold_strength, max_target_types, template_link, bucket_
 def fetch_orphan_targets(orphan, threshold_strength, client, show_progress):
     _, orphan_syndist = fetch_neurons(orphan, client=client)
     orphan_syndist['synweight'] = orphan_syndist.eval('upstream + downstream')
-    orphan_roi = orphan_syndist.query('roi in @client.primary_rois').sort_values('synweight', ascending=False)['roi'].iloc[0]
+    orphan_rois = orphan_syndist.query('roi in @client.primary_rois').sort_values('synweight', ascending=False)['roi']
+    if len(orphan_rois) == 0:
+        return None, None
+    orphan_roi = orphan_rois.iloc[0]
 
     orphan_type_strengths, orphan_upstream_types, orphan_downstream_types = _orphan_type_strengths(orphan, orphan_roi, client)
     target_type_strengths = _target_type_strengths(orphan_upstream_types, orphan_downstream_types, orphan_roi, client)
