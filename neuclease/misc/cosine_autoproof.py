@@ -23,14 +23,16 @@ def main():
     parser.add_argument('template_link', type=str)
     parser.add_argument('bucket_dir', type=str)
     parser.add_argument('orphans_csv', type=str)
-    parser.add_argument('output_targets_csv', type=str, default='')
-    parser.add_argument('output_links_csv', type=str, default='')
+    parser.add_argument('output_targets_csv', type=str, nargs='?')
+    parser.add_argument('output_links_csv', type=str, nargs='?')
 
     args = parser.parse_args()
 
     c = Client(args.neuprint_server, args.neuprint_dataset, progress=False)
     threshold_strength = args.ignore_connections_below
-    orphans = pd.read_csv(args.orphans_csv)['body'].tolist()
+    orphan_df = pd.read_csv(args.orphans_csv)
+    orphans_df = orphan_df.rename(columns={'body': 'orphan', 'bodyId': 'orphan'})
+    orphans = orphans_df['orphan'].tolist()
 
     if not args.output_targets_csv:
         args.output_targets_csv = args.orphans_csv.replace('.csv', '_targets.csv')
@@ -54,10 +56,12 @@ def main():
         urls.append((orphan, orphan_roi, url))
 
     targets_df = pd.concat(targets, ignore_index=True)
+    targets_df = orphans_df.merge(targets_df, 'inner', on='orphan')
     targets_df.to_csv(args.output_targets_csv, index=False)
     print(f"Wrote {len(targets_df)} targets to {args.output_targets_csv}")
 
     url_df = pd.DataFrame(urls, columns=['orphan', 'orphan_roi', 'url'])
+    url_df = orphans_df.merge(url_df, 'inner', on='orphan')
     url_df.to_csv(args.output_links_csv, index=False)
     print(f"Wrote {len(urls)} links to {args.output_links_csv}")
 
