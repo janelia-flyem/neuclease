@@ -180,7 +180,7 @@ def _improvements(orphan, orphan_type_strengths, target_type_strengths, threshol
                 ))
                 progress.update(1)
 
-    columns = ['orphan', 'target', 'type', 'similar_body_connections', 'similar_type_connections', 'score']
+    columns = ['orphan', 'target', 'type', 'score', 'similar_body_connections', 'similar_type_connections']
     improvements = (
         pd.DataFrame(improvements, columns=columns)
         .sort_values(['similar_body_connections', 'similar_type_connections', 'score'], ascending=False)
