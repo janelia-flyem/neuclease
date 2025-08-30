@@ -5,11 +5,10 @@ import numpy as np
 import pandas as pd
 from functools import partial
 
-from tqdm.auto import tqdm, trange
 from sklearn.metrics.pairwise import cosine_similarity
 
 from neuprint import Client, fetch_neurons, fetch_adjacencies, fetch_mean_synapses, NeuronCriteria as NC, NotNull
-from neuclease.util import compute_parallel
+from neuclease.util import compute_parallel, tqdm_proxy
 from neuclease.misc.neuroglancer import parse_nglink, layer_dict, segment_properties_json, upload_to_bucket, upload_ngstate
 
 
@@ -27,6 +26,9 @@ def main():
     parser.add_argument('output_links_csv', type=str, nargs='?')
 
     args = parser.parse_args()
+
+    from neuclease import configure_default_logging
+    configure_default_logging()
 
     c = Client(args.neuprint_server, args.neuprint_dataset, progress=False)
     threshold_strength = args.ignore_connections_below
@@ -142,7 +144,7 @@ def _target_type_strengths(orphan_upstream_types, orphan_downstream_types, orpha
 
 def _improvements(orphan, orphan_type_strengths, target_type_strengths, threshold_strength, show_progress):
     improvements = []
-    progress = tqdm(total=len(target_type_strengths), leave=False, disable=not show_progress)
+    progress = tqdm_proxy(total=len(target_type_strengths), leave=False, disable=not show_progress)
     with progress:
         for t, ts in target_type_strengths.groupby('type'):
             if len(ts) == 1:
