@@ -28,7 +28,7 @@ def main():
 
     args = parser.parse_args()
 
-    c = Client(args.neuprint_server, args.neuprint_dataset)
+    c = Client(args.neuprint_server, args.neuprint_dataset, progress=False)
     threshold_strength = args.ignore_connections_below
     orphans = pd.read_csv(args.orphans_csv)['body'].tolist()
 
