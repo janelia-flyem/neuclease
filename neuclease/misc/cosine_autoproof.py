@@ -1,16 +1,18 @@
 import argparse
 import copy
 import json
-import numpy as np
-import pandas as pd
+import logging
 from functools import partial
 
+import numpy as np
+import pandas as pd
 from sklearn.metrics.pairwise import cosine_similarity
 
 from neuprint import Client, fetch_neurons, fetch_adjacencies, fetch_mean_synapses, NeuronCriteria as NC, NotNull
 from neuclease.util import compute_parallel, tqdm_proxy
 from neuclease.misc.neuroglancer import parse_nglink, layer_dict, segment_properties_json, upload_to_bucket, upload_ngstate
 
+logger = logging.getLogger(__name__)
 
 def main():
     parser = argparse.ArgumentParser()
@@ -85,7 +87,14 @@ def fetch_orphan_targets(orphan, threshold_strength, client, show_progress):
     orphan_roi = orphan_rois.iloc[0]
 
     orphan_type_strengths, orphan_upstream_types, orphan_downstream_types = _orphan_type_strengths(orphan, orphan_roi, client)
-    target_type_strengths = _target_type_strengths(orphan_upstream_types, orphan_downstream_types, orphan_roi, client)
+    try:
+        target_type_strengths = _target_type_strengths(orphan, orphan_upstream_types, orphan_downstream_types, orphan_roi, client)
+    except Exception as e:
+        logger.error(f"Error fetching target type strengths for {orphan}, {orphan_roi}: {e}")
+        return None, None
+
+    if len(target_type_strengths) == 0:
+        return None, None
 
     # If the orphan connects to some cell type that none of the targets connect to,
     # then the orphan table (just one row) will have column(s) for that type that
@@ -119,15 +128,34 @@ def _orphan_type_strengths(orphan, orphan_roi, client):
     return orphan_type_strengths, orphan_upstream_types, orphan_downstream_types
 
 
-def _target_type_strengths(orphan_upstream_types, orphan_downstream_types, orphan_roi, client):
-    bodies_downstream_of_upstream, conn_downstream_of_upstream = fetch_adjacencies(NC(type=orphan_upstream_types), NC(type=NotNull), rois=orphan_roi, client=client)
-    bodies_upstream_of_downstream, conn_upstream_of_downstream = fetch_adjacencies(NC(type=NotNull), NC(type=orphan_downstream_types), rois=orphan_roi, client=client)
+def _target_type_strengths(orphan, orphan_upstream_types, orphan_downstream_types, orphan_roi, client):
+    if len(orphan_upstream_types) == 0:
+        bodies_downstream_of_upstream = pd.DataFrame({'bodyId': [], 'type': []})
+        conn_downstream_of_upstream = pd.DataFrame({'bodyId_pre': [], 'bodyId_post': [], 'weight': [], 'type_pre': [], 'type_post': []})
+    else:
+        bodies_downstream_of_upstream, conn_downstream_of_upstream = fetch_adjacencies(NC(type=orphan_upstream_types), NC(type=NotNull), rois=orphan_roi, client=client)
+
+    if len(orphan_downstream_types) == 0:
+        bodies_upstream_of_downstream = pd.DataFrame({'bodyId': [], 'type': []})
+        conn_upstream_of_downstream = pd.DataFrame({'bodyId_pre': [], 'bodyId_post': [], 'weight': [], 'type_pre': [], 'type_post': []})
+    else:
+        bodies_upstream_of_downstream, conn_upstream_of_downstream = fetch_adjacencies(NC(type=NotNull), NC(type=orphan_downstream_types), rois=orphan_roi, client=client)
+
+    if len(bodies_downstream_of_upstream) == 0 and len(bodies_upstream_of_downstream) == 0:
+        return pd.DataFrame({'type': [], 'type_pre': [], 'type_post': []})
+
+    bodies_downstream_of_upstream = bodies_downstream_of_upstream.query('bodyId != @orphan')
+    bodies_upstream_of_downstream = bodies_upstream_of_downstream.query('bodyId != @orphan')
+    conn_upstream_of_downstream = conn_upstream_of_downstream.query('bodyId_pre != @orphan and bodyId_post != @orphan')
+    conn_downstream_of_upstream = conn_downstream_of_upstream.query('bodyId_pre != @orphan and bodyId_post != @orphan')
 
     conn_downstream_of_upstream['type_pre'] = conn_downstream_of_upstream['bodyId_pre'].map(bodies_downstream_of_upstream.set_index('bodyId')['type'])
     conn_upstream_of_downstream['type_post'] = conn_upstream_of_downstream['bodyId_post'].map(bodies_upstream_of_downstream.set_index('bodyId')['type'])
 
-    assert set(conn_downstream_of_upstream['type_pre'].unique()) <= set(orphan_upstream_types)
-    assert set(conn_upstream_of_downstream['type_post'].unique()) <= set(orphan_downstream_types)
+    assert set(conn_downstream_of_upstream['type_pre'].unique()) <= set(orphan_upstream_types), \
+        f"{orphan}, {orphan_roi}: {set(conn_downstream_of_upstream['type_pre'].unique())} <= {set(orphan_upstream_types)}"
+    assert set(conn_upstream_of_downstream['type_post'].unique()) <= set(orphan_downstream_types), \
+        f"{orphan}, {orphan_roi}: {set(conn_upstream_of_downstream['type_post'].unique())} <= {set(orphan_downstream_types)}"
 
     downstream_of_upstream_types_conn = conn_downstream_of_upstream.groupby(['bodyId_post', 'type_pre'])['weight'].sum().unstack()
     upstream_of_downstream_types_conn = conn_upstream_of_downstream.groupby(['bodyId_pre', 'type_post'])['weight'].sum().unstack()
