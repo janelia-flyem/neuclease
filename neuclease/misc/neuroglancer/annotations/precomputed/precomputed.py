@@ -57,7 +57,6 @@ def write_precomputed_annotations(
     Args:
         df:
             DataFrame or TableHandle.
-            If a TableHandle, the handle's reference will be unset before this function returns.
             The index of the DataFrame is used as the annotation ID, so it must be unique.
             The required columns depend on the annotation_type and the coordinate space.
             For example, assuming ``coord_space.names == ['x', 'y', 'z']``,
@@ -71,6 +70,10 @@ def write_precomputed_annotations(
 
             You may also provide additional columns to use as annotation properties, in which
             case their column names should be listed in the 'properties' argument. (See below.)
+
+            If you provide a TableHandle, the handle's reference will be unset before this
+            function returns, deleting your data if you didn't retain a reference to it yourself.
+            (If you do retain a reference, it defeats the point of using a TableHandle in the first place.)
 
         coord_space:
             CoordinateSpace or equivalent.
