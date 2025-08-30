@@ -401,7 +401,22 @@ def _encode_geometries_and_properties(df, coord_space, annotation_type, property
         pd.Series of dtype=object, containing one buffer for each annotation.
     """
     geometry_cols = _geometry_cols(coord_space.names, annotation_type)
-    
+    geometry_prop_df = _geometry_prop_df(df, geometry_cols, property_specs)
+    buf, recsize = _encode_geometry_prop_df(geometry_prop_df, geometry_cols, property_specs)
+    del geometry_prop_df
+
+    # extract bytes from the appropriate slice for each record
+    encoded_annotations = [buf[i*recsize:(i+1)*recsize] for i in range(len(df))]
+    ann_bufs = pd.Series(encoded_annotations, index=df.index)
+    return ann_bufs
+
+
+def _geometry_prop_df(df, geometry_cols, property_specs):
+    """
+    Select the subset of columns that specify the geometry and properties
+    of the annotations, and append columns for padding that will ensure
+    our encoded records have a width that is a multiple of 4 bytes.
+    """
     # Note that the property specs are already sorted by
     # dtype in the order neuroglancer requires.
     # Order our columns accordingly before we encode them as records below.
@@ -414,6 +429,7 @@ def _encode_geometries_and_properties(df, coord_space, annotation_type, property
             prop_cols.extend([f'{p}_r', f'{p}_g', f'{p}_b', f'{p}_a'])
         else:
             prop_cols.append(p)
+
     geometry_prop_df = df[[*chain(*geometry_cols), *prop_cols]].copy(deep=False)
 
     # Calculate padding as required by neuroglancer.
@@ -430,6 +446,15 @@ def _encode_geometries_and_properties(df, coord_space, annotation_type, property
     for i in range(property_padding):
         geometry_prop_df[f'__padding_{i}__'] = np.uint8(0)
 
+    return geometry_prop_df
+
+
+def _encode_geometry_prop_df(geometry_prop_df, geometry_cols, property_specs):
+    """
+    Encode the geometry and properties of the annotations into a single buffer.
+
+    Note: Replaces category columns of geometry_prop_df with their integer equivalents.
+    """
     # Convert our column dtypes to match property specs.
     dtypes = {c: np.float32 for c in chain(*geometry_cols)}
     for spec in property_specs:
@@ -453,7 +478,7 @@ def _encode_geometries_and_properties(df, coord_space, annotation_type, property
         p = spec['id']
         if spec['type'] in ('rgb', 'rgba'):
             continue
-        if df[p].dtype == 'category':
+        if geometry_prop_df[p].dtype == 'category':
             geometry_prop_df[p] = geometry_prop_df[p].cat.codes
             dtypes[p] = spec['type']
 
@@ -461,11 +486,4 @@ def _encode_geometries_and_properties(df, coord_space, annotation_type, property
     records = geometry_prop_df.to_records(index=False, column_dtypes=dtypes)
     recsize = records.dtype.itemsize
     buf = records.tobytes()
-
-    # Reduce RAM usage
-    del records
-
-    # extract bytes from the appropriate slice for each record
-    encoded_annotations = [buf[i*recsize:(i+1)*recsize] for i in range(len(df))]
-    ann_bufs = pd.Series(encoded_annotations, index=df.index)
-    return ann_bufs
+    return buf, recsize
