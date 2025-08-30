@@ -214,6 +214,9 @@ def _neuroglancer_link(orphan, max_target_types, template_link, target_df, bucke
     state = parse_nglink(template_link)
     state['title'] = f"Orphan {orphan}: Proposed targets"
     state["position"] = mean_position
+    state["layerListPanel"] = {
+        "visible": True
+    }
     
     layers = layer_dict(state)
     if 'orphan' not in layers or 'targets' not in layers:
@@ -237,6 +240,10 @@ def _neuroglancer_link(orphan, max_target_types, template_link, target_df, bucke
     orphan_layer['name'] = f"orphan-{orphan}"
     orphan_layer['segments'] = [str(orphan)]
     orphan_layer['segmentQuery'] = str(orphan)
+
+    layers['orphan-synapses']["linkedSegmentationLayer"] = {
+        "segments": orphan_layer['name']
+      }
 
     targets_layer = layers['targets']
     targets_position = list(layers.keys()).index('targets')
