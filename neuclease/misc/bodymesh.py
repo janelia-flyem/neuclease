@@ -401,7 +401,7 @@ def create_supervoxel_mesh(server, uuid, seg_instance, sv, smoothing=3, decimati
     """
     with resource_mgr.access_context(server, True, 1, 0):
         try:
-            rng = fetch_sparsevol(server, uuid, seg_instance, sv, scale=SV_MESH_SCALE, format='ranges')
+            rng = fetch_sparsevol(server, uuid, seg_instance, sv, scale=SV_MESH_SCALE, supervoxels=True, format='ranges')
         except HTTPError as ex:
             # If the supervoxel has been split already, then we can't generate a mesh for it.
             if ex.response.status_code == 404:
