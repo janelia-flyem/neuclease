@@ -1275,6 +1275,9 @@ def downsample_mask(mask, factor, method='or'):
     return f(v, axis=last_axes)
 
 
+class IncompleteLabelNamesError(RuntimeError):
+    pass
+
 def extract_labels_from_volume(points_df, volume, box_zyx=None, vol_scale=0, label_names=None, name_col=None, *, skip_index_check=False):
     """
     Given a list of point coordinates and a label volume, assign a
@@ -1390,22 +1393,25 @@ def extract_labels_from_volume(points_df, volume, box_zyx=None, vol_scale=0, lab
     # Since the IDs in label_names might not be consecutive,
     # we can't necessarily create a Categorical directly.
     # Here we construct a mapping from the user's values to Categorical codes.
-    label_codes = pd.DataFrame(
+    name_codes = pd.DataFrame(
         enumerate(label_names.values()),
         columns=['code', 'name'],
         index=label_names.keys()
     )
 
-    if (label_codes['code'] == label_codes.index).all():
+    if (name_codes['code'] == name_codes.index).all():
         # The user's values are consecutive, so we can use them as Categorical codes.
         point_codes = points_df['label'].values
     else:
         # Map from the user's values to consecutive Categorical codes.
-        point_codes = points_df['label'].map(label_codes['code']).values
+        point_codes = points_df['label'].map(name_codes['code']).values
+
+    if point_codes.max() >= len(name_codes):
+        raise IncompleteLabelNamesError("The passed label_names is incomplete for the set of label values extracted from the volume")
 
     points_df['label_name'] = pd.Categorical.from_codes(
         point_codes,
-        label_codes['name'].values,
+        name_codes['name'].values,
         ordered=True
     )
 
