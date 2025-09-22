@@ -34,7 +34,13 @@ def main():
 
     c = Client(args.neuprint_server, args.neuprint_dataset, progress=False)
     threshold_strength = args.ignore_connections_below
-    orphan_df = pd.read_csv(args.orphans_csv)
+
+    if not args.orphans_csv.endswith('.csv') and str.isalnum(args.orphans_csv):
+        orphan_df = pd.DataFrame({'orphan': [int(args.orphans_csv)]})
+        args.orphans_csv = args.orphans_csv + '.csv'
+    else:
+        orphan_df = pd.read_csv(args.orphans_csv)
+
     orphans_df = orphan_df.rename(columns={'body': 'orphan', 'bodyId': 'orphan'})
     orphans = orphans_df['orphan'].tolist()
 
