@@ -148,3 +148,77 @@ def hsv_to_rgb(h,s,v):
 def packed_color_from_segment_id(color_seed, segment_id):
     rgb = _rgb_from_segment_id(color_seed, segment_id)
     return pack_color(rgb_vec=rgb)
+
+
+# For annotation shaders, here's a WebGL implementation (which only supports 32-bit segment IDs):
+_SHADER_IMPLEMENTATION_ = """\
+#uicontrol int color_seed slider(min=0, max=4294967295, default=0);
+#uicontrol int segment_id slider(min=0, max=4294967295, default=1);
+
+uint hash_function(uint state, uint value) {
+    uint k1 = 0xcc9e2d51u;
+    uint k2 = 0x1b873593u;
+
+    value = value * k1;
+    value = (value << 15) | (value >> 17);
+    value = value * k2;
+    state = state ^ value;
+    state = (state << 13) | (state >> 19);
+    state = state * 5u + 0xe6546b64u;
+
+    return state;
+}
+
+vec3 hsv_to_rgb(float h, float s, float v) {
+    h *= 6.0;
+    float hue_index = floor(h);
+    float remainder = h - hue_index;
+    float val1 = v * (1.0 - s);
+    float val2 = v * (1.0 - (s * remainder));
+    float val3 = v * (1.0 - (s * (1.0 - remainder)));
+
+    int hue_remainder = int(hue_index) % 6;
+
+    if (hue_remainder == 0) {
+        return vec3(v, val3, val1);
+    } else if (hue_remainder == 1) {
+        return vec3(val2, v, val1);
+    } else if (hue_remainder == 2) {
+        return vec3(val1, v, val3);
+    } else if (hue_remainder == 3) {
+        return vec3(val1, val2, v);
+    } else if (hue_remainder == 4) {
+        return vec3(val3, val1, v);
+    } else { // hue_remainder == 5
+        return vec3(v, val1, val2);
+    }
+}
+
+vec3 color_from_segment_id(uint color_seed, uint segment_id) {
+    uint result = hash_function(color_seed, segment_id);
+
+    // We only support 32-bit segment IDs, so newvalue is always 0,
+    // and (id >> 32) would be undefined behavior!
+    // uint newvalue = id >> 32;
+
+    uint newvalue = 0u;
+    uint result2 = hash_function(result, newvalue);
+
+    float c0 = float(result2 & 0xFFu) / 255.0;
+    float c1 = float((result2 >> 8) & 0xFFu) / 255.0;
+
+    float h = c0;
+    float s = 0.5 + 0.5 * c1;
+    float v = 1.0;
+
+    return hsv_to_rgb(h, s, v);
+}
+
+void main() {
+  setPointMarkerSize(10.0);
+  setPointMarkerBorderColor(vec4(0, 0, 0, 1.0));
+
+  vec3 hash_color = color_from_segment_id(uint(color_seed), uint(segment_id));
+  setColor(vec4(hash_color, 1.0));
+}
+"""
