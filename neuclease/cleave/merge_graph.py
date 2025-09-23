@@ -1,5 +1,6 @@
 import re
 import os
+import atexit
 import logging
 import threading
 from socket import getfqdn
@@ -116,6 +117,9 @@ class LabelmapMergeGraphBase(ABC):
         self._edge_cache_key_locks = defaultdict(threading.Lock)
 
         self._pool = Pool(16, maxtasksperchild=1)
+
+        # Register cleanup for the pool
+        atexit.register(self._cleanup_pool)
 
     def get_key_lock(self, repo_uuid, instance, body_id, mutid):
         """
@@ -273,6 +277,17 @@ class LabelmapMergeGraphBase(ABC):
                 ignore_index=True
             )
 
+    def _cleanup_pool(self):
+        """Cleanup multiprocessing pool to prevent file descriptor leaks."""
+        try:
+            if hasattr(self, '_pool') and self._pool is not None:
+                self._pool.close()
+                self._pool.join()
+                self._pool = None
+        except Exception:
+            # Ignore cleanup errors during shutdown
+            pass
+
     @abstractmethod
     def _extract_stored_edges(self, server, uuid, instance, body_id, session, logger):
         raise NotImplementedError()
@@ -348,8 +363,34 @@ class LabelmapMergeGraphBigQuery(LabelmapMergeGraphBase):
         if debug_export_dir:
             os.makedirs(debug_export_dir, exist_ok=True)
 
+        # BigQuery client management to prevent file descriptor leaks
+        self._bigquery_client = None
+        self._bigquery_lock = threading.Lock()
+        atexit.register(self._cleanup_bigquery_client)
+
+    @property
+    def bigquery_client(self):
+        """Get or create a singleton BigQuery client instance."""
+        if self._bigquery_client is None:
+            with self._bigquery_lock:
+                if self._bigquery_client is None:
+                    from google.cloud import bigquery
+                    bq_project = self.table.split('.')[0]
+                    self._bigquery_client = bigquery.Client(project=bq_project)
+        return self._bigquery_client
+
+    def _cleanup_bigquery_client(self):
+        """Cleanup BigQuery client to prevent file descriptor leaks."""
+        try:
+            if self._bigquery_client is not None:
+                self._bigquery_client.close()
+                self._bigquery_client = None
+        except Exception:
+            # Ignore cleanup errors during shutdown
+            pass
+
     @classmethod
-    def fetch_bq_edges(cls, server, uuid, instance, body_id, snapshot_table, snapshot_uuid, *, session=None, logger=None):
+    def fetch_bq_edges(cls, server, uuid, instance, body_id, snapshot_table, snapshot_uuid, *, client=None, session=None, logger=None):
         """
         Fetch stored edges from BigQuery for the given body.
 
@@ -403,7 +444,12 @@ class LabelmapMergeGraphBigQuery(LabelmapMergeGraphBase):
         """)
         msg = f"Fetching edges for {len(snapshot_bodies)} body(s) from BigQuery snapshot"
         with Timer(msg, logger):
-            df = perform_bigquery(q, project=bq_project)
+            # Use provided client to avoid creating new clients and file descriptor leaks
+            if client is not None:
+                df = perform_bigquery(q, client=client, project=bq_project)
+            else:
+                # Fallback: create client (will cause FD leak but maintains compatibility)
+                df = perform_bigquery(q, project=bq_project)
             if len(df) == 0:
                 df = df.astype({
                     'sv_a': np.int64,
@@ -448,7 +494,7 @@ class LabelmapMergeGraphBigQuery(LabelmapMergeGraphBase):
         dvid_supervoxels, edges = self.fetch_bq_edges(
             server, uuid, instance, body_id,
             self.table, self.primary_uuid,
-            session=session, logger=logger
+            client=self.bigquery_client, session=session, logger=logger
         )
         # Revert to the idiosyncratic column names used
         # by the other cleave server implementation.
