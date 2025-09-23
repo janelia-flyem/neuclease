@@ -79,8 +79,8 @@ def _default_dvid_session_template():
     adapter = DefaultTimeoutHTTPAdapter(
         max_retries=retries,
         timeout=DEFAULT_DVID_TIMEOUT,
-        pool_connections=5,    # Limit connection pools per host
-        pool_maxsize=10        # Limit max connections per pool
+        pool_connections=30,   # More pools per host for high-performance DVID
+        pool_maxsize=50        # Higher connection limit per pool for 256-core server
     )
 
     s = requests.Session()
