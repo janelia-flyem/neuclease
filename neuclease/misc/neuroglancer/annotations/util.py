@@ -100,6 +100,9 @@ def annotation_property_specs(df, properties):
 
     for col in default_property_specs.keys():
         if col in df and df[col].dtype == "category":
+            if df[col].isnull().any():
+                raise ValueError(f"Column {col} can't be used for an enum property because it has null values")
+
             cats = df[col].cat.categories.tolist()
             default_property_specs[col]['enum_values'] = [*range(len(cats))]
             default_property_specs[col]['enum_labels'] = cats
@@ -137,10 +140,14 @@ def _proptype(s):
 
     if s.dtype == 'category':
         num_cats = len(s.dtype.categories)
-        for utype in (np.uint8, np.uint16, np.uint32):
-            if num_cats <= 1 + np.iinfo(utype).max:
-                return str(np.dtype(utype))
-        raise RuntimeError(f"Column {s.name} has too many categories")
+        if s.cat.codes.dtype == np.int8:
+            # Old versions of neuroglancer had a bug for int8 property types,
+            # so we store them as uint8.
+            # https://github.com/google/neuroglancer/pull/830
+            return 'uint8'
+
+        # Pandas already stores categorical codes with a minimal-width dtype
+        return str(np.dtype(s.cat.codes.dtype))
 
     if s.dtype != object:
         raise RuntimeError(f"Unsupported property dtype: {s.dtype} for column {s.name}")

@@ -1,17 +1,18 @@
 import argparse
 import copy
 import json
-import numpy as np
-import pandas as pd
+import logging
 from functools import partial
 
-from tqdm.auto import tqdm, trange
+import numpy as np
+import pandas as pd
 from sklearn.metrics.pairwise import cosine_similarity
 
 from neuprint import Client, fetch_neurons, fetch_adjacencies, fetch_mean_synapses, NeuronCriteria as NC, NotNull
-from neuclease.util import compute_parallel
+from neuclease.util import compute_parallel, tqdm_proxy
 from neuclease.misc.neuroglancer import parse_nglink, layer_dict, segment_properties_json, upload_to_bucket, upload_ngstate
 
+logger = logging.getLogger(__name__)
 
 def main():
     parser = argparse.ArgumentParser()
@@ -23,14 +24,25 @@ def main():
     parser.add_argument('template_link', type=str)
     parser.add_argument('bucket_dir', type=str)
     parser.add_argument('orphans_csv', type=str)
-    parser.add_argument('output_targets_csv', type=str, default='')
-    parser.add_argument('output_links_csv', type=str, default='')
+    parser.add_argument('output_targets_csv', type=str, nargs='?')
+    parser.add_argument('output_links_csv', type=str, nargs='?')
 
     args = parser.parse_args()
 
-    c = Client(args.neuprint_server, args.neuprint_dataset)
+    from neuclease import configure_default_logging
+    configure_default_logging()
+
+    c = Client(args.neuprint_server, args.neuprint_dataset, progress=False)
     threshold_strength = args.ignore_connections_below
-    orphans = pd.read_csv(args.orphans_csv)['body'].tolist()
+
+    if not args.orphans_csv.endswith('.csv') and str.isalnum(args.orphans_csv):
+        orphan_df = pd.DataFrame({'orphan': [int(args.orphans_csv)]})
+        args.orphans_csv = args.orphans_csv + '.csv'
+    else:
+        orphan_df = pd.read_csv(args.orphans_csv)
+
+    orphans_df = orphan_df.rename(columns={'body': 'orphan', 'bodyId': 'orphan'})
+    orphans = orphans_df['orphan'].tolist()
 
     if not args.output_targets_csv:
         args.output_targets_csv = args.orphans_csv.replace('.csv', '_targets.csv')
@@ -48,20 +60,26 @@ def main():
     urls = []
     targets = []
     for orphan, orphan_roi, targets_df, url in results:
+        if orphan_roi is None:
+            continue
         targets.append(targets_df)
         urls.append((orphan, orphan_roi, url))
 
     targets_df = pd.concat(targets, ignore_index=True)
+    targets_df = orphans_df.merge(targets_df, 'inner', on='orphan')
     targets_df.to_csv(args.output_targets_csv, index=False)
     print(f"Wrote {len(targets_df)} targets to {args.output_targets_csv}")
 
     url_df = pd.DataFrame(urls, columns=['orphan', 'orphan_roi', 'url'])
+    url_df = orphans_df.merge(url_df, 'inner', on='orphan')
     url_df.to_csv(args.output_links_csv, index=False)
     print(f"Wrote {len(urls)} links to {args.output_links_csv}")
 
 
 def _process_orphan(threshold_strength, max_target_types, template_link, bucket_dir, client, show_progress, orphan):
     orphan_roi, targets_df = fetch_orphan_targets(orphan, threshold_strength, client, show_progress)
+    if orphan_roi is None:
+        return orphan, None, None, None
     url = _neuroglancer_link(orphan, max_target_types, template_link, targets_df, bucket_dir, client)
     return orphan, orphan_roi, targets_df, url
 
@@ -69,10 +87,20 @@ def _process_orphan(threshold_strength, max_target_types, template_link, bucket_
 def fetch_orphan_targets(orphan, threshold_strength, client, show_progress):
     _, orphan_syndist = fetch_neurons(orphan, client=client)
     orphan_syndist['synweight'] = orphan_syndist.eval('upstream + downstream')
-    orphan_roi = orphan_syndist.query('roi in @client.primary_rois').sort_values('synweight', ascending=False)['roi'].iloc[0]
+    orphan_rois = orphan_syndist.query('roi in @client.primary_rois').sort_values('synweight', ascending=False)['roi']
+    if len(orphan_rois) == 0:
+        return None, None
+    orphan_roi = orphan_rois.iloc[0]
 
     orphan_type_strengths, orphan_upstream_types, orphan_downstream_types = _orphan_type_strengths(orphan, orphan_roi, client)
-    target_type_strengths = _target_type_strengths(orphan_upstream_types, orphan_downstream_types, orphan_roi, client)
+    try:
+        target_type_strengths = _target_type_strengths(orphan, orphan_upstream_types, orphan_downstream_types, orphan_roi, client)
+    except Exception as e:
+        logger.error(f"Error fetching target type strengths for {orphan}, {orphan_roi}: {e}")
+        return None, None
+
+    if len(target_type_strengths) == 0:
+        return None, None
 
     # If the orphan connects to some cell type that none of the targets connect to,
     # then the orphan table (just one row) will have column(s) for that type that
@@ -106,15 +134,34 @@ def _orphan_type_strengths(orphan, orphan_roi, client):
     return orphan_type_strengths, orphan_upstream_types, orphan_downstream_types
 
 
-def _target_type_strengths(orphan_upstream_types, orphan_downstream_types, orphan_roi, client):
-    bodies_downstream_of_upstream, conn_downstream_of_upstream = fetch_adjacencies(NC(type=orphan_upstream_types), NC(type=NotNull), rois=orphan_roi, client=client)
-    bodies_upstream_of_downstream, conn_upstream_of_downstream = fetch_adjacencies(NC(type=NotNull), NC(type=orphan_downstream_types), rois=orphan_roi, client=client)
+def _target_type_strengths(orphan, orphan_upstream_types, orphan_downstream_types, orphan_roi, client):
+    if len(orphan_upstream_types) == 0:
+        bodies_downstream_of_upstream = pd.DataFrame({'bodyId': [], 'type': []})
+        conn_downstream_of_upstream = pd.DataFrame({'bodyId_pre': [], 'bodyId_post': [], 'weight': [], 'type_pre': [], 'type_post': []})
+    else:
+        bodies_downstream_of_upstream, conn_downstream_of_upstream = fetch_adjacencies(NC(type=orphan_upstream_types), NC(type=NotNull), rois=orphan_roi, client=client)
+
+    if len(orphan_downstream_types) == 0:
+        bodies_upstream_of_downstream = pd.DataFrame({'bodyId': [], 'type': []})
+        conn_upstream_of_downstream = pd.DataFrame({'bodyId_pre': [], 'bodyId_post': [], 'weight': [], 'type_pre': [], 'type_post': []})
+    else:
+        bodies_upstream_of_downstream, conn_upstream_of_downstream = fetch_adjacencies(NC(type=NotNull), NC(type=orphan_downstream_types), rois=orphan_roi, client=client)
+
+    if len(bodies_downstream_of_upstream) == 0 and len(bodies_upstream_of_downstream) == 0:
+        return pd.DataFrame({'type': [], 'type_pre': [], 'type_post': []})
+
+    bodies_downstream_of_upstream = bodies_downstream_of_upstream.query('bodyId != @orphan')
+    bodies_upstream_of_downstream = bodies_upstream_of_downstream.query('bodyId != @orphan')
+    conn_upstream_of_downstream = conn_upstream_of_downstream.query('bodyId_pre != @orphan and bodyId_post != @orphan').copy()
+    conn_downstream_of_upstream = conn_downstream_of_upstream.query('bodyId_pre != @orphan and bodyId_post != @orphan').copy()
 
     conn_downstream_of_upstream['type_pre'] = conn_downstream_of_upstream['bodyId_pre'].map(bodies_downstream_of_upstream.set_index('bodyId')['type'])
     conn_upstream_of_downstream['type_post'] = conn_upstream_of_downstream['bodyId_post'].map(bodies_upstream_of_downstream.set_index('bodyId')['type'])
 
-    assert set(conn_downstream_of_upstream['type_pre'].unique()) <= set(orphan_upstream_types)
-    assert set(conn_upstream_of_downstream['type_post'].unique()) <= set(orphan_downstream_types)
+    assert set(conn_downstream_of_upstream['type_pre'].unique()) <= set(orphan_upstream_types), \
+        f"{orphan}, {orphan_roi}: {set(conn_downstream_of_upstream['type_pre'].unique())} <= {set(orphan_upstream_types)}"
+    assert set(conn_upstream_of_downstream['type_post'].unique()) <= set(orphan_downstream_types), \
+        f"{orphan}, {orphan_roi}: {set(conn_upstream_of_downstream['type_post'].unique())} <= {set(orphan_downstream_types)}"
 
     downstream_of_upstream_types_conn = conn_downstream_of_upstream.groupby(['bodyId_post', 'type_pre'])['weight'].sum().unstack()
     upstream_of_downstream_types_conn = conn_upstream_of_downstream.groupby(['bodyId_pre', 'type_post'])['weight'].sum().unstack()
@@ -131,7 +178,7 @@ def _target_type_strengths(orphan_upstream_types, orphan_downstream_types, orpha
 
 def _improvements(orphan, orphan_type_strengths, target_type_strengths, threshold_strength, show_progress):
     improvements = []
-    progress = tqdm(total=len(target_type_strengths), leave=False, disable=not show_progress)
+    progress = tqdm_proxy(total=len(target_type_strengths), leave=False, disable=not show_progress)
     with progress:
         for t, ts in target_type_strengths.groupby('type'):
             if len(ts) == 1:
@@ -169,7 +216,7 @@ def _improvements(orphan, orphan_type_strengths, target_type_strengths, threshol
                 ))
                 progress.update(1)
 
-    columns = ['orphan', 'target', 'type', 'similar_body_connections', 'similar_type_connections', 'score']
+    columns = ['orphan', 'target', 'type', 'score', 'similar_body_connections', 'similar_type_connections']
     improvements = (
         pd.DataFrame(improvements, columns=columns)
         .sort_values(['similar_body_connections', 'similar_type_connections', 'score'], ascending=False)
@@ -203,6 +250,9 @@ def _neuroglancer_link(orphan, max_target_types, template_link, target_df, bucke
     state = parse_nglink(template_link)
     state['title'] = f"Orphan {orphan}: Proposed targets"
     state["position"] = mean_position
+    state["layerListPanel"] = {
+        "visible": True
+    }
     
     layers = layer_dict(state)
     if 'orphan' not in layers or 'targets' not in layers:
@@ -226,6 +276,10 @@ def _neuroglancer_link(orphan, max_target_types, template_link, target_df, bucke
     orphan_layer['name'] = f"orphan-{orphan}"
     orphan_layer['segments'] = [str(orphan)]
     orphan_layer['segmentQuery'] = str(orphan)
+
+    layers['orphan-synapses']["linkedSegmentationLayer"] = {
+        "segments": orphan_layer['name']
+      }
 
     targets_layer = layers['targets']
     targets_position = list(layers.keys()).index('targets')
