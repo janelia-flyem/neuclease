@@ -1,10 +1,10 @@
 from functools import wraps
 from . import dvid_api_wrapper
-from .keyvalue._keyvalue import _body_annotations_dataframe
+from .keyvalue._keyvalue import _body_annotations_dataframe, DEFAULT_BODY_STATUS_CATEGORIES
 
 
 @dvid_api_wrapper
-def _fetch_query(server, uuid, instance='segmentation_annotations', query=None, endpoint='query', *, show=None, fields=None, status_categories=None, format='pandas', session=None):
+def _fetch_query(server, uuid, instance='segmentation_annotations', query=None, endpoint='query', *, show=None, fields=None, status_categories=DEFAULT_BODY_STATUS_CATEGORIES, format='pandas', session=None):
     assert endpoint in ('all', 'query')
     assert show in ('user', 'time', 'all', None)
     assert format in ('pandas', 'json')
