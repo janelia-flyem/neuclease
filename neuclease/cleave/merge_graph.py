@@ -585,7 +585,7 @@ class LabelmapMergeGraphLocalTable(LabelmapMergeGraphBase):
         self.merge_table_df = pd.concat((self.merge_table_df, focused_merges), ignore_index=True, copy=False)
         return len(focused_merges)
 
-    def append_edges_for_split_supervoxels(self, instance_info, parent_sv_handling='unmap', read_from='kafka', kafka_msgs=None):
+    def append_edges_for_split_supervoxels(self, instance_info, parent_sv_handling='unmap', read_from='dvid', kafka_msgs=None):
         """
         Append edges to the merge table for the given split supervoxels (do not remove edges for their parents).
 
