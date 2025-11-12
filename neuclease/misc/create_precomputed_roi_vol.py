@@ -141,6 +141,8 @@ def construct_ng_precomputed_layer_from_roi_seg(roi_vol, roi_names, bucket_name,
         localdir = tempfile.mkdtemp()
     os.makedirs(localdir, exist_ok=True)
 
+    scale_0_res = np.asarray(scale_0_res)
+
     # First, verify that we have permission to edit the bucket.
     with open(f"{localdir}/test-file.txt", 'w') as f:
         f.write("Just testing my bucket access...\n")
