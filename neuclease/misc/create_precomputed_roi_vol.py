@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd
 
 from vol2mesh import Mesh
-from neuclease.util import tqdm_proxy as tqdm, dump_json, compute_parallel, region_features, box_to_slicing, compute_nonzero_box
+from neuclease.util import tqdm_proxy as tqdm, dump_json, compute_parallel, region_boxes, box_to_slicing, compute_nonzero_box
 from neuclease.dvid import fetch_combined_roi_volume
 
 logger = logging.getLogger()
@@ -241,8 +241,10 @@ def create_precomputed_ngmeshes(vol, vol_fullres_box, names, bucket_name, bucket
     logger.info("Generating meshes")
     num_labels = len(set(pd.unique(vol.reshape(-1))) - {0})
 
-    feats = region_features(vol)
-    boxes = feats['Box'].loc[(feats['Count'] > 0)]
+    boxes = region_boxes(vol)
+    valid = (boxes[:, 0, :] < boxes[:, 1, :]).all(axis=1)
+    valid[0] = False  # skip label 0
+    boxes = pd.Series(boxes.tolist()).iloc[valid]
 
     def _gen_masks():
         for label, box in boxes.items():
