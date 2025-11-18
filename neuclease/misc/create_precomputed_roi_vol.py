@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd
 
 from vol2mesh import Mesh
-from neuclease.util import tqdm_proxy as tqdm, dump_json, compute_parallel, region_features, box_to_slicing, compute_nonzero_box
+from neuclease.util import tqdm_proxy as tqdm, dump_json, compute_parallel, region_boxes, box_to_slicing, compute_nonzero_box
 from neuclease.dvid import fetch_combined_roi_volume
 
 logger = logging.getLogger()
@@ -141,6 +141,8 @@ def construct_ng_precomputed_layer_from_roi_seg(roi_vol, roi_names, bucket_name,
         localdir = tempfile.mkdtemp()
     os.makedirs(localdir, exist_ok=True)
 
+    scale_0_res = np.asarray(scale_0_res)
+
     # First, verify that we have permission to edit the bucket.
     with open(f"{localdir}/test-file.txt", 'w') as f:
         f.write("Just testing my bucket access...\n")
@@ -192,7 +194,8 @@ def create_precomputed_roi_vol(roi_vol, bucket_name, bucket_path, max_scale=3, r
     if not isinstance(resolution_nm, Collection):
         resolution_nm = 3 * (resolution_nm,)
 
-    resolution_nm = np.asarray(resolution_nm)
+    resolution_nm = np.asarray(resolution_nm)[::-1]
+    
     for scale in tqdm(range(1 + max_scale)):
         res = resolution_nm * 2**scale
         store = ts.open({
@@ -239,8 +242,10 @@ def create_precomputed_ngmeshes(vol, vol_fullres_box, names, bucket_name, bucket
     logger.info("Generating meshes")
     num_labels = len(set(pd.unique(vol.reshape(-1))) - {0})
 
-    feats = region_features(vol)
-    boxes = feats['Box'].loc[(feats['Count'] > 0)]
+    boxes = region_boxes(vol)
+    valid = (boxes[:, 0, :] < boxes[:, 1, :]).all(axis=1)
+    valid[0] = False  # skip label 0
+    boxes = pd.Series(boxes.tolist()).iloc[valid]
 
     def _gen_masks():
         for label, box in boxes.items():

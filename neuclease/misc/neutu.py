@@ -191,6 +191,24 @@ def prepare_bookmark_assignment_setup(df, output_dir, bucket_path, csv_path, pre
             (and followed with an assignment number, e.g. bookmarks-001.json)
         batch_size:
             How many bodies per assignment
+        default_text:
+            The default text to use for bookmarks that don't have a 'text' column.
+        grayscale:
+            The grayscale source URL to list in the assignment for Clio users.
+            Not necessary if 'dataset' is provided.
+        segmentation:
+            The segmentation source URL to list in the assignment for Clio users.
+            Not necessary if 'dataset' is provided.
+        dvid_src:
+            The DVID source URL to list in the assignment for Clio users, for storing results.
+        dataset:
+            The Clio dataset name.  Not necessarily the the same as what appears in the Clio dropdown menu.
+        layers:
+            Optional additional neuroglancer layer states to include in the neuroglancer view for Clio users.
+        include_bodylist:
+            If True, the assignment CSV will include a 'bodies' column, which lists all the bodies in the assignment.
+            Also, if a 'synweight' column is present, the assignment CSV will include a 'first_synweight' column,
+            which lists the synweight of the first body in the assignment.
 
     Returns:
         The assignment CSV data.
