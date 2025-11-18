@@ -195,6 +195,7 @@ def create_precomputed_roi_vol(roi_vol, bucket_name, bucket_path, max_scale=3, r
         resolution_nm = 3 * (resolution_nm,)
 
     resolution_nm = np.asarray(resolution_nm)[::-1]
+    
     for scale in tqdm(range(1 + max_scale)):
         res = resolution_nm * 2**scale
         store = ts.open({
