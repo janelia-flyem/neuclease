@@ -2,7 +2,7 @@ from itertools import combinations
 
 import numpy as np
 import pandas as pd
-from skimage.morphology import dilation
+from scipy.ndimage import grey_dilation
 
 from dvidutils import LabelMapper
 
@@ -171,8 +171,7 @@ def find_missing_adjacencies(server, uuid, instance, body, known_edges=None, cc=
             # speed over cleaner dilation.
             # footprint = skimage.morphology.ball(dilation)
             radius = search_distance // 2
-            footprint = np.ones(3*(1+2*radius,), np.uint8)
-            dilated_block_vol = dilation(block_vol, footprint)
+            dilated_block_vol = _box_dilate_labels(block_vol, radius)
 
             # Since dilation is a max-filter, we might have accidentally
             # erased small, low-valued supervoxels, erasing the adjacendies.
@@ -255,6 +254,21 @@ def find_missing_adjacencies(server, uuid, instance, body, known_edges=None, cc=
         new_edges = new_edges.astype({'sv_a': np.uint64, 'sv_b': np.uint64})
 
     return new_edges, int(orig_num_cc), int(final_num_cc), block_table
+
+
+def _box_dilate_labels(vol, radius):
+    """
+    Irritatingly, some segmentations include labels above 2**53.
+    Equally irritatingly, both scikit-image and scipy.ndimage lose
+    precision when dilating such label images, even if you're very
+    careful about the dtypes used in the inputs.
+    """
+    nz_mask = vol > 0
+    min_label = vol[nz_mask].min()
+    lowered_vol = np.where(nz_mask, vol - min_label + 1, vol.dtype.type(0))
+
+    dilated_lowered_vol = grey_dilation(lowered_vol, size=1+2*radius)
+    return np.where(dilated_lowered_vol > 0, dilated_lowered_vol + min_label - 1, 0)
 
 
 def fetch_block_vol(server, uuid, instance, coord_zyx, svs_set=None, halo=1):

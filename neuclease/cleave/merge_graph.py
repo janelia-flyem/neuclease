@@ -7,7 +7,10 @@ from textwrap import dedent
 from collections import defaultdict
 from contextlib import contextmanager
 from abc import ABC, abstractmethod
+
 from multiprocessing import Pool
+import multiprocessing.pool
+
 from functools import cache
 
 import numpy as np
@@ -22,6 +25,8 @@ from .merge_table import MERGE_TABLE_DTYPE, load_mapping, load_merge_table, norm
 from .adjacency import find_missing_adjacencies
 
 _logger = logging.getLogger(__name__)
+
+_NO_MULTIPROCESSING = False
 
 
 @contextmanager
@@ -115,7 +120,11 @@ class LabelmapMergeGraphBase(ABC):
         # (but requesting edges for different bodies in parallel is OK).
         self._edge_cache_key_locks = defaultdict(threading.Lock)
 
-        self._pool = Pool(16, maxtasksperchild=1)
+        if _NO_MULTIPROCESSING:
+            # Useful for interactive debugging.
+            self._pool = multiprocessing.pool.ThreadPool(16)
+        else:
+            self._pool = Pool(16, maxtasksperchild=1)
 
     def get_key_lock(self, repo_uuid, instance, body_id, mutid):
         """

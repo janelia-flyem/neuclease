@@ -2307,7 +2307,7 @@ def perform_bigquery(q, client=None, project='janelia-flyem', downgrade_nullable
     assert 'GOOGLE_APPLICATION_CREDENTIALS' in os.environ
 
     if client is None:
-        assert project in os.environ['GOOGLE_APPLICATION_CREDENTIALS'], \
+        assert project.lower() in os.environ['GOOGLE_APPLICATION_CREDENTIALS'].lower(), \
             "Usually the credentials file name mentions the project name.  It looks like you have the wrong credentials loaded."
         client = bigquery.Client(project)
 
@@ -2331,7 +2331,7 @@ def perform_bigquery_upload(df, full_table_name, client=None):
     project, dataset, table = full_table_name.split('.')
 
     if client is None:
-        assert project in os.environ['GOOGLE_APPLICATION_CREDENTIALS'], \
+        assert project.lower() in os.environ['GOOGLE_APPLICATION_CREDENTIALS'].lower(), \
             "Usually the credentials file name mentions the project name.  It looks like you have the wrong credentials loaded."
         client = bigquery.Client(project)
     else:
@@ -2416,7 +2416,7 @@ def perform_bigquery_and_write_table(q, full_table_name, client=None):
     project, dataset, table = full_table_name.split('.')
 
     if client is None:
-        assert project in os.environ['GOOGLE_APPLICATION_CREDENTIALS'], \
+        assert project.lower() in os.environ['GOOGLE_APPLICATION_CREDENTIALS'].lower(), \
             "Usually the credentials file name mentions the project name.  It looks like you have the wrong credentials loaded."
         client = bigquery.Client(project)
     else:
@@ -2445,7 +2445,7 @@ def extract_bigquery_table_to_gbucket(full_table_name, gbucket_dir, gbucket_subd
     project, dataset, table = full_table_name.split('.')
 
     if client is None:
-        assert project in os.environ['GOOGLE_APPLICATION_CREDENTIALS'], \
+        assert project.lower() in os.environ['GOOGLE_APPLICATION_CREDENTIALS'].lower(), \
             "Usually the credentials file name mentions the project name.  It looks like you have the wrong credentials loaded."
         client = bigquery.Client(project)
     else:
