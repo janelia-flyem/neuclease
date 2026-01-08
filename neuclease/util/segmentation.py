@@ -1462,6 +1462,11 @@ def region_boxes(vol):
     """
     Determine the bounding boxes of all label regions (segments) in a label volume.
 
+    This function is similar to scipy.ndimage.find_objects(), except:
+
+        - This function includes label 0 in the result.
+        - This function returns the boxes as a numpy array, not a list of slices.
+
     Note:
         Since the result is indexed by segment ID, this function is only
         suitable for volumes in which the maximum label ID is relatively low.
