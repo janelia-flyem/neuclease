@@ -61,6 +61,7 @@ import warnings
 from collections import namedtuple
 
 import pandas as pd
+from ngsidekick.state_utils import encode_ngstate
 
 ScriptItem = namedtuple('ScriptItem', ['comment', 'transition_duration', 'link', 'state', 'link_line_number'])
 
@@ -206,7 +207,7 @@ def load_from_google_sheet(worksheet_url: str, output_script_path: str, include_
     df = pd.read_csv(export_url, header=None, dtype=str).set_index(0).fillna('').T
     df['comment'] = df['comment'].str.strip()
     df['state'] = df.loc[:, '0':].sum(axis=1).map(json.loads)
-    df['link'] = df['state'].map(lambda state: format_nglink(ng_server, state))
+    df['link'] = df['state'].map(lambda state: encode_ngstate(ng_server, state))
 
     print(f"Writing script to {output_script_path}")
     with open(output_script_path, 'w') as f:
@@ -218,17 +219,6 @@ def load_from_google_sheet(worksheet_url: str, output_script_path: str, include_
             f.write(f'{row.link}\n')
             if include_comments:
                 f.write('\n')
-
-
-def parse_nglink(link):
-    _, pseudo_json = link.split('#!')
-    pseudo_json = urllib.parse.unquote(pseudo_json)
-    data = json.loads(pseudo_json)
-    return data
-
-
-def format_nglink(ng_server, link_json_settings):
-    return ng_server + '/#!' + urllib.parse.quote(json.dumps(link_json_settings))
 
 
 def list_nested_keys(obj):
