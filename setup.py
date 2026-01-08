@@ -40,7 +40,8 @@ setup(
             'supervoxel_meshes_for_body = neuclease.misc.supervoxel_meshes_for_body:main',
             'sparse_connectome = neuclease.misc.sparse_connectome:main',
             'make_bucket_public = neuclease.misc.neuroglancer:make_bucket_public',
-            'derived-updates = neuclease.misc.derived_updates:main'
+            'derived-updates = neuclease.misc.derived_updates:main',
+            'dvid_virtual_n5_server = neuclease.bin.virtual_n5_server_main:main'
         ]
     }
 )
