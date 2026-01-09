@@ -9,7 +9,9 @@ in N5 format without storing anything on disk.
 Usage:
     dvid_virtual_n5_server emdata3:8900 abc123 segmentation --port 8000
 
-Then open in neuroglancer with source: n5://http://localhost:8000
+Then open in neuroglancer with source:
+    n5://http://localhost:8000        # body IDs (default)
+    n5://http://localhost:8000/sv     # supervoxel IDs
 """
 import argparse
 import logging
@@ -58,8 +60,7 @@ def create_app(dvid_config):
     app = Flask(__name__)
     CORS(app)
 
-    @app.route('/attributes.json')
-    def top_level_attributes():
+    def _get_top_level_attributes():
         """Return top-level N5 attributes describing the volume."""
         max_scale = DVID_CONFIG['max_scale']
         voxel_size = DVID_CONFIG['voxel_size']
@@ -81,8 +82,7 @@ def create_app(dvid_config):
         }
         return jsonify(attr), HTTPStatus.OK
 
-    @app.route("/s<int:scale>/attributes.json")
-    def scale_attributes(scale):
+    def _get_scale_attributes(scale):
         """Return attributes for a specific scale level."""
         if scale > DVID_CONFIG['max_scale']:
             return jsonify({"error": f"Scale {scale} exceeds max scale {DVID_CONFIG['max_scale']}"}), HTTPStatus.NOT_FOUND
@@ -114,8 +114,7 @@ def create_app(dvid_config):
         }
         return jsonify(attr), HTTPStatus.OK
 
-    @app.route("/s<int:scale>/<int:chunk_x>/<int:chunk_y>/<int:chunk_z>")
-    def serve_chunk(scale, chunk_x, chunk_y, chunk_z):
+    def _serve_chunk(scale, chunk_x, chunk_y, chunk_z, supervoxels):
         """
         Serve a single chunk at the requested scale and location.
 
@@ -160,7 +159,7 @@ def create_app(dvid_config):
                 DVID_CONFIG['instance'],
                 clipped_box_zyx,
                 scale=scale,
-                supervoxels=DVID_CONFIG['supervoxels']
+                supervoxels=supervoxels
             )
         except Exception as e:
             logger.error(f"Failed to fetch chunk s{scale}/{chunk_x}/{chunk_y}/{chunk_z}: {e}")
@@ -191,6 +190,32 @@ def create_app(dvid_config):
             HTTPStatus.OK,
             {'Content-Type': 'application/octet-stream'}
         )
+
+    # Routes for body IDs (default)
+    @app.route('/attributes.json')
+    def top_level_attributes():
+        return _get_top_level_attributes()
+
+    @app.route("/s<int:scale>/attributes.json")
+    def scale_attributes(scale):
+        return _get_scale_attributes(scale)
+
+    @app.route("/s<int:scale>/<int:chunk_x>/<int:chunk_y>/<int:chunk_z>")
+    def serve_chunk(scale, chunk_x, chunk_y, chunk_z):
+        return _serve_chunk(scale, chunk_x, chunk_y, chunk_z, supervoxels=False)
+
+    # Routes for supervoxel IDs (via /sv prefix)
+    @app.route('/sv/attributes.json')
+    def top_level_attributes_sv():
+        return _get_top_level_attributes()
+
+    @app.route("/sv/s<int:scale>/attributes.json")
+    def scale_attributes_sv(scale):
+        return _get_scale_attributes(scale)
+
+    @app.route("/sv/s<int:scale>/<int:chunk_x>/<int:chunk_y>/<int:chunk_z>")
+    def serve_chunk_sv(scale, chunk_x, chunk_y, chunk_z):
+        return _serve_chunk(scale, chunk_x, chunk_y, chunk_z, supervoxels=True)
 
     return app
 
@@ -277,10 +302,6 @@ def parse_args():
         help="Maximum scale level (default: auto-detect from DVID)"
     )
     parser.add_argument(
-        '--supervoxels', action='store_true',
-        help="Fetch supervoxel IDs instead of body IDs"
-    )
-    parser.add_argument(
         '-d', '--debug', action='store_true',
         help="Run in debug mode"
     )
@@ -309,20 +330,19 @@ def main(debug_mode=False):
         'server': args.dvid_server,
         'uuid': args.uuid,
         'instance': args.instance,
-        'supervoxels': args.supervoxels,
         **metadata
     }
 
     logger.info(f"Volume bounds (XYZ): {dvid_config['volume_box_xyz'].tolist()}")
     logger.info(f"Voxel size: {dvid_config['voxel_size']} {dvid_config['voxel_units']}")
     logger.info(f"Max scale: {dvid_config['max_scale']}")
-    logger.info(f"Supervoxels: {dvid_config['supervoxels']}")
 
     # Create and run app
     app = create_app(dvid_config)
 
     logger.info(f"Starting server on port {args.port}")
     logger.info(f"Open in neuroglancer with source: n5://http://localhost:{args.port}")
+    logger.info(f"  For supervoxel IDs, use: n5://http://localhost:{args.port}/sv")
 
     app.run(
         host='0.0.0.0',
