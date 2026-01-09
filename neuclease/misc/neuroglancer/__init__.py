@@ -1,8 +1,8 @@
 """
 neuroglancer-related utility functions
 """
-from .storage import download_ngstate, upload_ngstate, upload_ngstates, upload_json, upload_to_bucket, make_bucket_public
-from .util import parse_nglink, format_nglink, layer_dict, layer_state
+from .storage import upload_ngstate, upload_ngstates, upload_json, upload_to_bucket, make_bucket_public
+from .util import parse_nglink, format_nglink, layer_dict, layer_state, download_ngstate
 from .annotations.local import (
     local_annotation_json, extract_local_annotations,
 

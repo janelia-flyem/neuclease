@@ -1,32 +1,11 @@
 """
 Utility functions related to storing neuroglancer states in cloud storage.
-
-Except for `download_ngstate()`, these functions require the google-cloud-storage package.
 """
 import json
 import argparse
 import tempfile
 import subprocess
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
-
-
-def download_ngstate(link):
-    import requests
-    if link.startswith('gs://'):
-        url = f'https://storage.googleapis.com/{link[len("gs://"):]}'
-        return requests.get(url, timeout=10).json()
-
-    if not link.startswith('http'):
-        raise ValueError(f"Don't understand state link: {link}")
-
-    if link.count('://') == 1:
-        return requests.get(link, timeout=10).json()
-
-    if link.count('://') == 2:
-        url = f'https://storage.googleapis.com/{link.split("://")[2]}'
-        return requests.get(url, timeout=10).json()
-
-    raise ValueError(f"Don't understand state link: {link}")
 
 
 def upload_ngstates(bucket_dir, states, threads=0, processes=0, disable_cache=False, return_prefix='https://neuroglancer-demo.appspot.com'):
@@ -37,6 +16,25 @@ def upload_ngstates(bucket_dir, states, threads=0, processes=0, disable_cache=Fa
 
     For the return values, neuroglancer links are returned (using the given prefix).
     If no prefix is given, then the URLs to the uploaded files are returned.
+
+    Args:
+        bucket_dir: str
+            The bucket directory to upload the states to, such as 'gs://mybucket/mydir'
+        states: dict
+            A dictionary of neuroglancer states, keyed by the filename.
+        threads: int
+            The number of threads to use for uploading.
+        processes: int
+            The number of processes to use for uploading.
+        disable_cache: bool
+            If True, set `public, no-store` metadata on the uploaded files to disable caching.
+        return_prefix: str
+            If provided, return neuroglancer links using the given neuroglancer deployment.
+            If None, then return the direct URLs to the uploaded files in google storage.
+
+    Returns:
+        list of str
+            A list of links.
     """
     assert bucket_dir.startswith('gs://')
     assert processes == 0 or threads == 0, \
@@ -78,6 +76,23 @@ def upload_ngstate(bucket_path, state, disable_cache=False, return_prefix='https
 
     For the return value, a neuroglancer link is returned (using the given prefix).
     If no prerix is given, then the URL to the uploaded file is returned.
+
+    Args:
+        bucket_path: str
+            The bucket directory to upload the state to, such as 'gs://mybucket/mydir'
+        state: dict
+            The neuroglancer state to upload.
+        disable_cache: bool
+            If True, set `public, no-store` metadata on the uploaded file to disable caching.
+        return_prefix: str
+            If provided, return neuroglancer links using the given neuroglancer deployment.
+            If None, then return the direct URLs to the uploaded files in google storage.
+
+    Returns:
+        str
+            A neuroglancer link to the uploaded file or the direct URL to the
+            uploaded file in google storage, depending on whether `return_prefix`
+            was provided.
     """
     assert bucket_path.startswith('gs://')
     bucket_path = bucket_path[len('gs://'):]
@@ -96,7 +111,7 @@ def upload_ngstate(bucket_path, state, disable_cache=False, return_prefix='https
 
 def upload_json(obj, bucket_path, disable_cache=True):
     """
-    Upload the given JSON file to a gbucket location,
+    Upload the given JSON data to a gbucket location,
     such as 'gs://flyem-user-links/short/foobar.json'
     """
     assert bucket_path.startswith('gs://')
@@ -111,6 +126,14 @@ def upload_json(obj, bucket_path, disable_cache=True):
 def upload_to_bucket(bucket, blob_name, blob_contents, content_type='application/json', disable_cache=False):
     """
     Upload a blob of data to the specified google storage bucket.
+
+    Args:
+        bucket: str or google.cloud.storage.Bucket
+            The bucket to upload the data to.
+        blob_name: str
+            The name of the blob to upload.
+        blob_contents: str
+            The data to upload.
     """
     if isinstance(bucket, str):
         from google.cloud import storage
@@ -125,12 +148,30 @@ def upload_to_bucket(bucket, blob_name, blob_contents, content_type='application
 
 
 def make_bucket_public(bucket=None):
+    """
+    To host data in google storage for neuroglancer for general access,
+    you need to make the bucket public and configure permissive CORS settings.
+
+    This function does that.
+
+    This feature is also installed along with ngsidekick as a command-line tool:
+
+        ..code-block:: bash
+
+            make-bucket-public gs://mybucket/mydir
+
+    Args:
+        bucket: str or None
+            The bucket to make public, such as 'gs://mybucket/mydir'
+            If None, then the bucket is read from the command line.
+    """
     if bucket is None:
         parser = argparse.ArgumentParser()
         parser.add_argument('bucket')
         bucket = parser.parse_args().bucket
     if bucket.startswith('gs://'):
         bucket = bucket[len('gs://'):]
+
     subprocess.run(f'gsutil iam ch allUsers:objectViewer gs://{bucket}', shell=True, check=True)
 
     with tempfile.NamedTemporaryFile('w') as f:

@@ -3,6 +3,8 @@ import sys
 import neuclease.cleave.cleave_server
 
 def main():
+    import os
+
     debug_mode = False  # flask debug mode
     stdout_logging = True
     ## DEBUG
@@ -33,10 +35,41 @@ def main():
 #         --skip-focused-merge-update \
 #         --skip-split-sv-update \
 # """.split()
-    import os
-    os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = '/opt/miniforge/envs/flyem-312/etc/conda/activate.d/janelia-flyem-0523020aea5e.json'
-    cmd_args = "--bigquery-table janelia-flyem.yakuba_vnc_seg_2311117_32fb16fb_fill8_v2_grid1k.top200k-bodies-intrabody-edges-2024-10-01-a6f8e7f --port 7500 --log-dir /Users/bergs/workspace/neuclease/yakuba-test/logs --primary-dvid-server emdata7.int.janelia.org:8700 --primary-uuid a6f8e7f422f94cbaa71ce8ef58350c43 --primary-labelmap-instance segmentation --max-cached-bodies=100000"
-    sys.argv += cmd_args.split()
+
+    os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = '/Users/bergs/workspace/envs/flyem-312/.pixi/envs/default/etc/conda/activate.d/janelia-flyem-0523020aea5e.json'
+    CLEAVE_PORT=5050
+    DVID_SERVER='emdata6.int.janelia.org'
+    DVID_PORT=9000
+    PRIMARY_UUID='41d6ec06b9554b1383a236cacef8185f'
+    BIGQUERY_TABLE='janelia-flyem.cns_uploads.intrabody-edges-2023-07-30-41d6ec'
+    LOG_DIR='/tmp/logs/cns-full-cleave'
+
+    # os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = '/Users/bergs/workspace/envs/flyem-312/.pixi/envs/default/etc/conda/activate.d/FlyEM-Private-dba1ad5c11e4.json'
+    # CLEAVE_PORT=7601
+    # DVID_SERVER='emdata7.int.janelia.org'
+    # DVID_PORT=8600
+    # PRIMARY_UUID='e699fedabdac4802b0f95ae141e2054f'
+    # LOG_DIR='/tmp/logs/cns-full-cleave'
+
+    # See notebook in /groups/flyem/data/scratchspace/flyemflows/beyene/dish4/
+    #BIGQUERY_TABLE='flyem-private.beyene.dish4-segmentation-intrabody-edges-2025-11-07-e699fe'
+
+    # CLEAVE_TABLES_DIR=/groups/flyem/data/scratchspace/flyemflows/cns-brain/cleave-server-files
+    # CLEAVE_TABLE=${CLEAVE_TABLES_DIR}/full-vnc-intrabody-cleave-edges-with-cost-scores.npy
+
+    sys.argv += list(map(str, [ 
+        "--bigquery-table", BIGQUERY_TABLE,
+        "--port", CLEAVE_PORT,
+        "--log-dir", f"/tmp/logs/cns-full-cleave.log",
+        "--primary-dvid-server", f"{DVID_SERVER}:{DVID_PORT}",
+        "--primary-uuid", PRIMARY_UUID,
+        "--primary-labelmap-instance", "segmentation",
+        "--max-cached-bodies=100000"
+    ]))
+
+    #os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = '/opt/miniforge/envs/flyem-312/etc/conda/activate.d/janelia-flyem-0523020aea5e.json'
+    #cmd_args = "--bigquery-table janelia-flyem.yakuba_vnc_seg_2311117_32fb16fb_fill8_v2_grid1k.top200k-bodies-intrabody-edges-2024-10-01-a6f8e7f --port 7500 --log-dir /Users/bergs/workspace/neuclease/yakuba-test/logs --primary-dvid-server emdata7.int.janelia.org:8700 --primary-uuid a6f8e7f422f94cbaa71ce8ef58350c43 --primary-labelmap-instance segmentation --max-cached-bodies=100000"
+    #sys.argv += cmd_args.split()
 
     neuclease.cleave.cleave_server.main(debug_mode, stdout_logging)
 

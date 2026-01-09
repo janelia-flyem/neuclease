@@ -3497,7 +3497,7 @@ def labelmap_kafka_msgs_to_df(kafka_msgs, default_timestamp=DEFAULT_TIMESTAMP, c
             target_sv = []
             child_split_sv = []
             child_remain_sv = []
-            for t, sr in msg['SVSplits'].items():
+            for t, sr in msg.get('SVSplits', {}).items():
                 target_sv.append(int(t))
                 child_split_sv.append(sr['Split'])
                 child_remain_sv.append(sr['Remain'])
@@ -3592,7 +3592,12 @@ def labelmap_kafka_msgs_to_df(kafka_msgs, default_timestamp=DEFAULT_TIMESTAMP, c
     # message JSON contains all the info that the corresponding trigger
     # message contained..
     for _, tx_df in df.groupby('transaction_id'):
-        assert len(tx_df) == 2
+        if len(tx_df) != 2:
+            logger.warning(
+                f"Not auto-filling completion message for mutation ID {tx_df['mutid'].iloc[0]} "
+                f"because it belongs to a transaction with {len(tx_df)} messages."
+            )
+            continue
         first, second = tx_df['msg'].values
         for k, v in first.items():
             second.setdefault(k, v)
@@ -3606,7 +3611,12 @@ def labelmap_kafka_msgs_to_df(kafka_msgs, default_timestamp=DEFAULT_TIMESTAMP, c
 
     df = df.copy()
     df['target_body'] = df['target_body'].fillna(0).astype(np.uint64)
-    df['target_sv'] = df['target_sv'].fillna(0).astype(np.uint64)
+    df['target_sv'] = df['target_sv'].fillna(0)
+    try:
+        df['target_sv'].astype(np.uint64)
+    except TypeError:
+        logger.warning("target_sv could not be converted to uint64 because it contains lists.")
+
     df['mutid'] = df['mutid'].fillna(-1).astype(int)
     return df[FINAL_COLUMNS]
 
