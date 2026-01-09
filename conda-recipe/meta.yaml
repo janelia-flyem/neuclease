@@ -40,6 +40,9 @@ requirements:
     - protobuf >=5.28.3,<5.29
     - confiddler
     - python-cityhash
+    - zarr
+    - numcodecs
+    - flask-cors
 
     # Optional dependencies
     #- graph-tool  # <-- Faster connected-components for very large graphs
