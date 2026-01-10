@@ -300,6 +300,25 @@ def create_app(dvid_config, mappers=None):
             return jsonify({"error": f"Unknown mapping column: {target_col}"}), HTTPStatus.NOT_FOUND
         return _serve_chunk(scale, chunk_x, chunk_y, chunk_z, supervoxels=True, mapping_col=target_col)
 
+    # /sv/<target_col>/... alias for /supervoxels/<target_col>/...
+    @app.route('/sv/<target_col>/attributes.json')
+    def top_level_attributes_sv_mapped_short(target_col):
+        if not _validate_mapping_col(target_col):
+            return jsonify({"error": f"Unknown mapping column: {target_col}"}), HTTPStatus.NOT_FOUND
+        return _get_top_level_attributes()
+
+    @app.route("/sv/<target_col>/s<int:scale>/attributes.json")
+    def scale_attributes_sv_mapped_short(target_col, scale):
+        if not _validate_mapping_col(target_col):
+            return jsonify({"error": f"Unknown mapping column: {target_col}"}), HTTPStatus.NOT_FOUND
+        return _get_scale_attributes(scale)
+
+    @app.route("/sv/<target_col>/s<int:scale>/<int:chunk_x>/<int:chunk_y>/<int:chunk_z>")
+    def serve_chunk_sv_mapped_short(target_col, scale, chunk_x, chunk_y, chunk_z):
+        if not _validate_mapping_col(target_col):
+            return jsonify({"error": f"Unknown mapping column: {target_col}"}), HTTPStatus.NOT_FOUND
+        return _serve_chunk(scale, chunk_x, chunk_y, chunk_z, supervoxels=True, mapping_col=target_col)
+
     return app
 
 
