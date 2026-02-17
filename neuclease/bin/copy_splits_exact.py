@@ -9,6 +9,7 @@ import networkx as nx
 
 from neuclease import configure_default_logging
 from neuclease.util import tqdm_proxy, write_json_list, parse_timestamp
+from neuclease.dvid import set_default_dvid_session_timeout
 from neuclease.dvid.rle import combine_sparsevol_rle_responses, extract_rle_size_and_first_coord
 from neuclease.dvid.kafka import read_kafka_messages, filter_kafka_msgs_by_timerange
 from neuclease.dvid.labelmap import (
@@ -22,6 +23,7 @@ def main():
     configure_default_logging()
     
     parser = argparse.ArgumentParser()
+    parser.add_argument('--dvid-session-timeout', type=float, default=1200.0)  # 12 minutes
     parser.add_argument('--mutation-log', action='store_true')
     parser.add_argument('--kafka-log')
     parser.add_argument('--kafka-servers')
@@ -41,6 +43,8 @@ def main():
     src_seg = (args.src_server, args.src_uuid, args.src_labelmap_instance)
     dest_seg = (args.dest_server, args.dest_uuid, args.dest_labelmap_instance)
     
+    set_default_dvid_session_timeout(args.dvid_session_timeout)
+
     # Fetch kafka log from src if none was provided from the command line
     if args.mutation_log:
         kafka_msgs = fetch_mutations(*src_seg)
