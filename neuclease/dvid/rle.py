@@ -981,7 +981,7 @@ def blockwise_masks_from_ranges(ranges, block_shape, halo=0):
 
     def gen_masks():
         for (Bz, By, Bx), block_df in groups:
-            block_ranges = block_df[['z', 'y', 'x1', 'x2']].values
+            block_ranges = block_df[['z', 'y', 'x1', 'x2']].to_numpy(copy=True)
 
             Z_offset = Bz * BZ - halo
             Y_offset = By * BY - halo
