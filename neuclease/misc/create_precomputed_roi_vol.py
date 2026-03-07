@@ -397,7 +397,7 @@ def create_legacy_mesh_info(mesh_dir, names=None):
         mesh_dir:
             Path to a local directory containing mesh files
         names:
-            Optional.  A dict of {label: name}, which will be used to
+            Optional.  A dict of {name: label}, which will be used to
             determine which mesh file corresponds to which label ID.
             The name should not include the .ngmesh file extension.
             If not provided, the mesh files must be named like '123.ngmesh'
@@ -405,14 +405,25 @@ def create_legacy_mesh_info(mesh_dir, names=None):
     paths = sorted(glob.glob(f'{mesh_dir}/*.ngmesh'))
 
     if names is None:
-        names = [p.split('/')[-1][:-len('.ngmesh')] for p in paths]
-        labels = {int(name): name for name in names}
+        names = [
+            p.split('/')[-1][:-len('.ngmesh')]
+            for p in paths
+        ]
+        names = {
+            name: int(name)
+            for name in names
+        }
     else:
-        labels = {label: name for name, label in names.items()}
+        names = {
+            os.path.splitext(name)[0].split('/')[-1]: int(label)
+            for name, label in names.items()
+        }
 
     dump_json({"@type": "neuroglancer_legacy_mesh"}, f"{mesh_dir}/info")
 
     for path in tqdm(sorted(paths)):
         name = os.path.splitext(path)[0].split('/')[-1]
-        label = int(labels.get(name, name))
-        dump_json({"fragments": [f"{name}.ngmesh"]}, f"{mesh_dir}/{label}:0")
+        dump_json(
+            {"fragments": [f"{name}.ngmesh"]},
+            f"{mesh_dir}/{names[name]}:0"
+        )
