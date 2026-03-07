@@ -23,7 +23,7 @@ def main():
     configure_default_logging()
     
     parser = argparse.ArgumentParser()
-    parser.add_argument('--dvid-session-timeout', type=float, default=1200.0)  # 12 minutes
+    parser.add_argument('--dvid-session-timeout', type=float, default=1200.0)  # 20 minutes
     parser.add_argument('--mutation-log', action='store_true')
     parser.add_argument('--kafka-log')
     parser.add_argument('--kafka-servers')
