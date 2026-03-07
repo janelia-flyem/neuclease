@@ -1249,25 +1249,30 @@ def thickest_point_in_mask(mask):
     return maxpoint, dt[maxpoint]
 
 
-def distance_transform_watershed(dt_mask, *, smoothing=0.0, seed_labels=None, flood_from='interior', turbo_watershed=True):
+def distance_transform_watershed(dt_mask, *, smoothing=0.0, seed_labels=None, flood_from='interior', turbo_watershed=False):
     """
-    Compute a watershed over the distance transform within a mask, where the distance transform
-    represents distance from points in the interior of the mask to the exterior of the mask.
+    Compute a watershed over a distance transform within a mask.
+    The ``flood_from`` parameter controls the direction and the distance metric.
 
-    You can either compute the watershed from inside-to-outside or outside-to-inside.
-    
-    For the former, the watershed is seeded from the most interior points,
-    and the distance transform is inverted so the watershed can proceed from low to high as usual.
-    
-    For the latter, the distance transform is seeded from the voxels immediately outside the mask,
-    using labels as found in the seed_labels volume.  This requires that your seed_labels volume
-    has labels outside the mask. In this mode, the results effectively tell you which exterior
-    segment (in the seed volume) is closest to any given point within the interior of the mask.
+    When flooding from 'interior', the distance transform measures each voxel's
+    Euclidean distance to the nearest seed, producing a Voronoi-like partition of
+    the mask. Seeds are at distance 0 (natural minima), so the watershed floods
+    outward from seeds toward the mask boundary.  If no seed_labels are provided,
+    seeds are auto-generated at the most interior points of the mask (local minima
+    of the boundary distance transform).
+
+    When flooding from 'exterior', the distance transform measures each interior
+    voxel's distance to the mask boundary. Seeds are placed just outside the mask
+    using labels from the seed_labels volume, and the watershed floods inward.
+    The result tells you which exterior segment is closest to any given interior point.
 
     Args:
         dt_mask:
-            The distance transform is computed for every voxel
-            in the masked area to the nearest voxel outside the mask.
+            Boolean mask defining the region of interest.
+            When flood_from='interior', the distance transform measures distance
+            from each masked voxel to the nearest seed.
+            When flood_from='exterior', it measures distance from each masked
+            voxel to the nearest point outside the mask.
 
         smoothing:
             If non-zero, run gaussian smoothing on the distance transform with the
@@ -1280,10 +1285,12 @@ def distance_transform_watershed(dt_mask, *, smoothing=0.0, seed_labels=None, fl
             and only those seed voxels which are directly adjacent to the dt_mask region will be used.
         
         flood_from:
-            Use 'exterior' if your seeds are on the exterior of the dt_mask region and you want them to grow inward toward the interior of the mask.
-            Use 'interior' if your seeds are on the interior of the dt_mask region and you want them to grow outward toward the boundary of the mask.
-            In the 'interior' case, the distance transform is inverted before the watershed step so that
-            the most interior points become the deepest minima.
+            Either 'interior' or 'exterior'.
+            Use 'interior' for seeds within the dt_mask that grow outward toward the
+            mask boundary. The distance transform is computed from the seeds, giving
+            each voxel its Euclidean distance to the nearest seed (a Voronoi-like partition).
+            Use 'exterior' for seeds outside the dt_mask that grow inward. The distance
+            transform is computed from the mask boundary.
 
         turbo_watershed:
             If True, convert the distance map to uint8 (after renormalizing
@@ -1294,11 +1301,12 @@ def distance_transform_watershed(dt_mask, *, smoothing=0.0, seed_labels=None, fl
         dt, seed_labels, ws
         where:
         
-        - 'dt' is the distance transform (inverted if flood_from='interior'),
+        - 'dt' is the distance transform (from seeds if flood_from='interior',
+           from the mask boundary if flood_from='exterior'),
            possibly renormalized and quantized to uint8 if turbo_watershed=True.
         - 'seed_labels' is the label volume used to seed the watershed step.
            If you supplied no seed_labels, this volume is generated from the local
-           minima of the distance transform.
+           minima of the boundary distance transform.
            Otherwise, we return a copy of your input seed_labels except that it has been
            zeroed out to discard seeds outside the mask (when flood_from='interior')
            or to discard seeds except those immediately adjacent to the mask
@@ -1328,16 +1336,11 @@ def distance_transform_watershed(dt_mask, *, smoothing=0.0, seed_labels=None, fl
 
     assert flood_from in ('interior', 'exterior')
 
-    # If flooding from the interior, negate the distance transform result
-    # since the watershed must start at minima, not maxima.
-    dt = distance_transform(dt_mask, False, smoothing, negate=(flood_from == 'interior'))
-
     dt_mask_peel = binary_edge_mask(dt_mask, 'outer')
 
-    # Dilate the dt_mask once more and invert.
-    # Our 'dummy' seeds will go here and will be separated by a buffer in which
-    # the distance transform is maxxed out, so the dummy seeds won't bleed into
-    # the interior mask.
+    # Our 'dummy' seeds will go beyond a two-ring buffer outside dt_mask.
+    # The buffer ensures the dummy seeds won't bleed through gaps in the outer edge
+    # (where seed_labels might be zero) into the interior mask.
     dummy_seed_mask = ~(
         dt_mask | dt_mask_peel | binary_edge_mask(dt_mask | dt_mask_peel, 'outer')
     )
@@ -1346,25 +1349,33 @@ def distance_transform_watershed(dt_mask, *, smoothing=0.0, seed_labels=None, fl
         if seed_labels is not None:
             seed_labels = seed_labels.copy()
             seed_labels[~dt_mask] = 0
-            seed_mask = (seed_labels != 0)
         else:
-            # Auto-populate seed_labels from the minima of the distance transform.
-            if dt.ndim == 2:
+            # Auto-generate seeds at the most interior points of the mask,
+            # identified as local minima of the (negated) boundary distance transform.
+            boundary_dt = distance_transform(dt_mask, False, smoothing, negate=True)
+            if boundary_dt.ndim == 2:
                 minima = vigra.analysis.localMinima(
-                    dt, marker=np.nan, neighborhood=8,
+                    boundary_dt, marker=np.nan, neighborhood=8,
                     allowAtBorder=True, allowPlateaus=False
                 )
             else:
                 minima = vigra.analysis.localMinima3D(
-                    dt, marker=np.nan, neighborhood=26,
+                    boundary_dt, marker=np.nan, neighborhood=26,
                     allowAtBorder=True, allowPlateaus=False
                 )
+            del boundary_dt
             seed_mask = np.isnan(minima)
             del minima
             seed_mask = vigra.taggedView(seed_mask, 'zyx')
             if seed_mask.max() <= 255:
                 seed_mask = seed_mask.view('uint8')
             seed_labels = vigra.analysis.labelMultiArrayWithBackground(seed_mask)
+
+        seed_mask = (seed_labels != 0)
+
+        # Distance from each voxel to its nearest seed.
+        # Seeds are at distance 0, providing natural minima for the watershed.
+        dt = distance_transform(seed_mask, True, smoothing)
     else:
         if seed_labels is None:
             raise ValueError(
@@ -1374,8 +1385,11 @@ def distance_transform_watershed(dt_mask, *, smoothing=0.0, seed_labels=None, fl
                 "Is that what you meant?"
             )
 
+        # Distance from each interior voxel to the mask boundary.
+        dt = distance_transform(dt_mask, False, smoothing)
+
         seed_mask = dt_mask_peel.copy()
-        
+
         # Keep only the seeds *just* outside the mask.
         seed_labels = seed_labels.copy()
         seed_labels[~dt_mask_peel] = 0
