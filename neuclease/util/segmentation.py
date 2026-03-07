@@ -1249,31 +1249,41 @@ def thickest_point_in_mask(mask):
     return maxpoint, dt[maxpoint]
 
 
-def distance_transform_watershed(mask, smoothing=0.0, seed_mask=None, seed_labels=None, flood_from='interior', turbo_watershed=True):
+def distance_transform_watershed(dt_mask, *, smoothing=0.0, seed_labels=None, flood_from='interior', turbo_watershed=True):
     """
-    Compute a watershed over the distance transform within a mask.
+    Compute a watershed over the distance transform within a mask, where the distance transform
+    represents distance from points in the interior of the mask to the exterior of the mask.
+
     You can either compute the watershed from inside-to-outside or outside-to-inside.
     
     For the former, the watershed is seeded from the most interior points,
     and the distance transform is inverted so the watershed can proceed from low to high as usual.
     
     For the latter, the distance transform is seeded from the voxels immediately outside the mask,
-    using labels as found in the seed_labels volume. In this mode, the results effectively tell
-    you which exterior segment (in the seed volume) is closest to any given point within the
-    interior of the mask.
-
-    Or you can provide your own seeds if you think you know what you're doing.
+    using labels as found in the seed_labels volume.  This requires that your seed_labels volume
+    has labels outside the mask. In this mode, the results effectively tell you which exterior
+    segment (in the seed volume) is closest to any given point within the interior of the mask.
 
     Args:
-        mask:
-            Only the masked area will be processed
+        dt_mask:
+            The distance transform is computed for every voxel
+            in the masked area to the nearest voxel outside the mask.
+
         smoothing:
             If non-zero, run gaussian smoothing on the distance transform with the
             given sigma before defining seed points or running the watershed.
 
-        seed_mask:
         seed_labels:
+            A label volume to seed the watershed step.
+            If using flood_from='interior', the non-zero seeds should reside within the dt_mask region.
+            If using flood_from='exterior', the non-zero seeds should reside outside the dt_mask region,
+            and only those seed voxels which are directly adjacent to the dt_mask region will be used.
+        
         flood_from:
+            Use 'exterior' if your seeds are on the exterior of the dt_mask region and you want them to grow inward toward the interior of the mask.
+            Use 'interior' if your seeds are on the interior of the dt_mask region and you want them to grow outward toward the boundary of the mask.
+            In the 'interior' case, the distance transform is inverted before the watershed step so that
+            the most interior points become the deepest minima.
 
         turbo_watershed:
             If True, convert the distance map to uint8 (after renormalizing
@@ -1281,7 +1291,19 @@ def distance_transform_watershed(mask, smoothing=0.0, seed_mask=None, seed_label
             This loses precision, but is faster.
 
     Returns:
-        dt, labeled_seeds, ws
+        dt, seed_labels, ws
+        where:
+        
+        - 'dt' is the distance transform (inverted if flood_from='interior'),
+           possibly renormalized and quantized to uint8 if turbo_watershed=True.
+        - 'seed_labels' is the label volume used to seed the watershed step.
+           If you supplied no seed_labels, this volume is generated from the local
+           minima of the distance transform.
+           Otherwise, we return a copy of your input seed_labels except that it has been
+           zeroed out to discard seeds outside the mask (when flood_from='interior')
+           or to discard seeds except those immediately adjacent to the mask
+           (when flood_from='exterior').
+        - 'ws' is the final watershed result
 
     Notes:
         This function provides a subset of the options that can be found in other
@@ -1296,82 +1318,85 @@ def distance_transform_watershed(mask, smoothing=0.0, seed_mask=None, seed_label
         https://github.com/imglib/imglib2-algorithm/tree/master/src/main/java/net/imglib2/algorithm/morphology/distance
         http://www.theoryofcomputing.org/articles/v008a019/
     """
-    mask = mask.astype(bool, copy=False)
-    mask = vigra.taggedView(mask, 'zyx').astype(np.uint32)
+    dt_mask = dt_mask.astype(bool, copy=False)
+    dt_mask = vigra.taggedView(dt_mask, 'zyx')
 
     # Widen seeds dtype if necessary
     # (The 64-bit case is handled below, with a mapping.)
     if seed_labels is not None and seed_labels.dtype in (np.uint8, np.uint16, np.int8, np.int16, np.int32):
         seed_labels = seed_labels.astype(np.uint32)
 
-    imask = np.logical_not(mask)
-    outer_edge_mask = binary_edge_mask(mask, 'outer')
-
     assert flood_from in ('interior', 'exterior')
-    if flood_from == 'interior':
-        # Negate the distance transform result,
-        # since watershed must start at minima, not maxima.
-        # Convert to uint8 to benefit from 'turbo' watershed mode
-        # (uses a bucket queue).
-        dt = distance_transform(mask, False, smoothing, negate=True)
 
-        if seed_mask is None:
-            # requires float32 input for some reason
+    # If flooding from the interior, negate the distance transform result
+    # since the watershed must start at minima, not maxima.
+    dt = distance_transform(dt_mask, False, smoothing, negate=(flood_from == 'interior'))
+
+    if flood_from == 'interior':
+        if seed_labels is not None:
+            seed_labels = seed_labels.copy()
+            seed_labels[~dt_mask] = 0
+            seed_mask = (seed_labels != 0)
+        else:
+            # Auto-populate seed_labels from the minima of the distance transform.
             if dt.ndim == 2:
-                minima = vigra.analysis.localMinima(dt, marker=np.nan, neighborhood=8, allowAtBorder=True, allowPlateaus=False)
+                minima = vigra.analysis.localMinima(
+                    dt, marker=np.nan, neighborhood=8,
+                    allowAtBorder=True, allowPlateaus=False
+                )
             else:
-                minima = vigra.analysis.localMinima3D(dt, marker=np.nan, neighborhood=26, allowAtBorder=True, allowPlateaus=False)
+                minima = vigra.analysis.localMinima3D(
+                    dt, marker=np.nan, neighborhood=26,
+                    allowAtBorder=True, allowPlateaus=False
+                )
             seed_mask = np.isnan(minima)
             del minima
-
-        if turbo_watershed:
-            dt = normalize_image_range(dt, np.uint8)
+            seed_mask = vigra.taggedView(seed_mask, 'zyx')
+            if seed_mask.max() <= 255:
+                seed_mask = seed_mask.view('uint8')
+            seed_labels = vigra.analysis.labelMultiArrayWithBackground(seed_mask)
     else:
-        if seed_labels is None and seed_mask is None:
-            logger.warning("Without providing your own seed mask and/or seed labels, "
-                           "the watershed operation will simply be the same as a "
-                           "connected components operation.  Is that what you meant?")
+        if seed_labels is None:
+            raise ValueError(
+                "Without providing your own seed labels, "
+                "the flood_from='exterior' mode would simply be the same as a "
+                "connected components operation (with background).  "
+                "Is that what you meant?"
+            )
 
-        if seed_mask is None:
-            seed_mask = outer_edge_mask.copy()
+        dt_mask_peel = binary_edge_mask(dt_mask, 'outer')
+        seed_mask = dt_mask_peel.copy()
+        
+        # Keep only the seeds *just* outside the mask.
+        seed_labels = seed_labels.copy()
+        seed_labels[~dt_mask_peel] = 0
 
-        # Dilate the mask once more.
-        outer_edge_mask[:] |=  binary_edge_mask(outer_edge_mask | mask, 'outer')
+        # Dilate the dt_mask once more and invert.
+        # Our 'dummy' seeds will go here and will be separated by a buffer in which
+        # the distance transform is maxxed out, so the dummy seeds won't bleed into
+        # the interior mask.
+        dummy_seed_mask = ~(
+            dt_mask | dt_mask_peel | binary_edge_mask(dt_mask | dt_mask_peel, 'outer')
+        )
 
-        dt = distance_transform(mask, False, smoothing, negate=False)
-        if turbo_watershed:
-            dt = normalize_image_range(dt, np.uint8)
+    if turbo_watershed:
+        dt = normalize_image_range(dt, np.uint8)
 
-    if seed_labels is None:
-        seed_mask = vigra.taggedView(seed_mask, 'zyx')
-        if seed_mask.max() <= 255:
-            seed_mask = seed_mask.view('uint8')
-        labeled_seeds = vigra.analysis.labelMultiArrayWithBackground(seed_mask)
-    else:
-        labeled_seeds = np.where(seed_mask, seed_labels, 0)
-
-    # Make sure seed_mask matches labeled_seeds,
-    # Even if some seed_labels were zero-valued
-    seed_mask = (labeled_seeds != 0)
-
-    # Must remap to uint32 before calling vigra's watershed.
     seed_mapper = None
     seed_values = None
-    if labeled_seeds.dtype in (np.uint64, np.int64):
-        labeled_seeds = labeled_seeds.astype(np.uint64)
-        seed_values = np.sort(pd.unique(labeled_seeds.reshape(-1)))
+    if seed_labels.dtype not in (np.uint64, np.int64):
+        ws_seeds = seed_labels
+    else:
+        # Must remap to uint32 before calling vigra's watershed.
+        seed_values = np.sort(pd.unique(seed_labels.reshape(-1))).astype(np.uint64)
         if seed_values[0] != 0:
             seed_values = np.array([0] + list(seed_values), np.uint64)
-
         assert seed_values.dtype == np.uint64
-        assert labeled_seeds.dtype == np.uint64
 
         ws_seed_values = np.arange(len(seed_values), dtype=np.uint32)
         seed_mapper = LabelMapper(seed_values, ws_seed_values)
-        ws_seeds = seed_mapper.apply(labeled_seeds)
+        ws_seeds = seed_mapper.apply(seed_labels.astype(np.uint64))
         assert ws_seeds.dtype == np.uint32
-    else:
-        ws_seeds = labeled_seeds
 
     # Fill the non-masked area with one big seed,
     # except for a thin border around the mask.
@@ -1379,10 +1404,25 @@ def distance_transform_watershed(mask, smoothing=0.0, seed_mask=None, seed_label
     # since these voxels now don't need to be
     # consumed in the watershed.
     dummy_seed = ws_seeds.max()+np.uint32(1)
-    ws_seeds[np.logical_not(mask | outer_edge_mask)] = dummy_seed
-    ws_seeds[outer_edge_mask & ~seed_mask] = 0
+    if flood_from == 'interior':
+        ws_mask = dt_mask
+        ws_seeds[~ws_mask] = dummy_seed
+        if turbo_watershed:
+            dt[~dt_mask] = 255
+        else:
+            dt[~dt_mask] = dt.max()
+    else:
+        ws_seeds[dummy_seed_mask] = dummy_seed
 
-    dt[outer_edge_mask] = 255
+        ws_mask = (dt_mask | dt_mask_peel)
+        if turbo_watershed:
+            dt[~ws_mask] = 255
+        else:
+            dt[~ws_mask] = dt.max()
+
+    # Ensure that every seed always claims at least its own starting
+    # voxels in the watershed result, even if it doesn't reside on
+    # a minima in the distance transform.
     dt[seed_mask] = 0
 
     dt = vigra.taggedView(dt, 'zyx')
@@ -1391,19 +1431,22 @@ def distance_transform_watershed(mask, smoothing=0.0, seed_mask=None, seed_label
         method = 'Turbo'
     else:
         method = 'RegionGrowing'
-    ws, max_id = vigra.analysis.watershedsNew(dt, seeds=ws_seeds, method='Turbo')
+
+    ws, max_id = vigra.analysis.watershedsNew(dt, seeds=ws_seeds, method=method)
 
     # Areas that were unreachable without crossing over the border
-    # could end up with the dummy seed.
+    # (due to discontiguous dt_mask) could end up with the dummy seed.
     # We treat such areas as if they are outside of the mask.
     ws[ws == dummy_seed] = 0
-    ws_seeds[imask] = 0
+
+    # Zero out all watershed results outside the user's original mask.
+    ws[~dt_mask] = 0
 
     # If we converted from uint64 to uint32 to perform the watershed,
     # convert back before returning.
     if seed_mapper is not None:
         ws = seed_values[ws]
-    return dt, labeled_seeds, ws
+    return dt, seed_labels, ws
 
 
 SEGMENTATION_FEATURE_NAMES = [
