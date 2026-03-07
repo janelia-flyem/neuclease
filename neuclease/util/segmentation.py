@@ -1332,6 +1332,16 @@ def distance_transform_watershed(dt_mask, *, smoothing=0.0, seed_labels=None, fl
     # since the watershed must start at minima, not maxima.
     dt = distance_transform(dt_mask, False, smoothing, negate=(flood_from == 'interior'))
 
+    dt_mask_peel = binary_edge_mask(dt_mask, 'outer')
+
+    # Dilate the dt_mask once more and invert.
+    # Our 'dummy' seeds will go here and will be separated by a buffer in which
+    # the distance transform is maxxed out, so the dummy seeds won't bleed into
+    # the interior mask.
+    dummy_seed_mask = ~(
+        dt_mask | dt_mask_peel | binary_edge_mask(dt_mask | dt_mask_peel, 'outer')
+    )
+
     if flood_from == 'interior':
         if seed_labels is not None:
             seed_labels = seed_labels.copy()
@@ -1364,20 +1374,11 @@ def distance_transform_watershed(dt_mask, *, smoothing=0.0, seed_labels=None, fl
                 "Is that what you meant?"
             )
 
-        dt_mask_peel = binary_edge_mask(dt_mask, 'outer')
         seed_mask = dt_mask_peel.copy()
         
         # Keep only the seeds *just* outside the mask.
         seed_labels = seed_labels.copy()
         seed_labels[~dt_mask_peel] = 0
-
-        # Dilate the dt_mask once more and invert.
-        # Our 'dummy' seeds will go here and will be separated by a buffer in which
-        # the distance transform is maxxed out, so the dummy seeds won't bleed into
-        # the interior mask.
-        dummy_seed_mask = ~(
-            dt_mask | dt_mask_peel | binary_edge_mask(dt_mask | dt_mask_peel, 'outer')
-        )
 
     if turbo_watershed:
         dt = normalize_image_range(dt, np.uint8)
@@ -1404,26 +1405,21 @@ def distance_transform_watershed(dt_mask, *, smoothing=0.0, seed_labels=None, fl
     # since these voxels now don't need to be
     # consumed in the watershed.
     dummy_seed = ws_seeds.max()+np.uint32(1)
+    ws_seeds[dummy_seed_mask] = dummy_seed
     if flood_from == 'interior':
         ws_mask = dt_mask
-        ws_seeds[~ws_mask] = dummy_seed
-        if turbo_watershed:
-            dt[~dt_mask] = 255
-        else:
-            dt[~dt_mask] = dt.max()
     else:
-        ws_seeds[dummy_seed_mask] = dummy_seed
-
         ws_mask = (dt_mask | dt_mask_peel)
-        if turbo_watershed:
-            dt[~ws_mask] = 255
-        else:
-            dt[~ws_mask] = dt.max()
+
+    if turbo_watershed:
+        dt[~ws_mask] = 255
+    else:
+        dt[~ws_mask] = dt.max()
 
     # Ensure that every seed always claims at least its own starting
     # voxels in the watershed result, even if it doesn't reside on
     # a minima in the distance transform.
-    dt[seed_mask] = 0
+    dt[seed_mask] = dt.min()
 
     dt = vigra.taggedView(dt, 'zyx')
     ws_seeds = vigra.taggedView(ws_seeds, 'zyx')
