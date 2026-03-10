@@ -1561,6 +1561,42 @@ def region_boxes(vol):
     return boxes
 
 
+def region_boxes_2(vol):
+    """
+    Similar to region_boxes(), but based on scipy.ndimage.find_objects instead of numba,
+    except it ignores label 0 and returns a different type (Series instead of ndarray).
+
+    This is mostly just for reference, to see how the scipy-based implementation
+    compares to the numba based one.
+
+    Args:
+        vol: Labeled volume array
+
+    Returns:
+        pd.Series with segment IDs as index and bounding boxes as values.
+        Each box is [(z0, y0, x0), (z1, y1, x1)].
+        Segments with no voxels (None in find_objects output) are excluded.
+    """
+    import scipy.ndimage as ndi
+    slices = ndi.find_objects(vol)
+    # Segment IDs start at 1
+    segment_ids = np.arange(1, len(slices) + 1)
+    mask = [s is not None for s in slices]
+    boxes = [
+        [
+            tuple(s.start for s in sl),
+            tuple(s.stop for s in sl)
+        ]
+        for sl in slices if sl is not None
+    ]
+    return pd.Series(
+        boxes,
+        index=segment_ids[mask],
+        dtype=object,
+        name='box'
+    )
+
+
 @njit
 def region_centroids(vol):
     """
