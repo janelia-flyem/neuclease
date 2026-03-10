@@ -636,6 +636,68 @@ def contingency_table(left_vol, right_vol):
     return sizes
 
 
+@njit
+def _bincount_2d(left, right, n_right, n_bins):
+    counts = np.zeros(n_bins, dtype=np.int64)
+    for i in range(len(left)):
+        counts[left[i] * n_right + right[i]] += 1
+    return counts
+
+
+def contingency_table_small_ids(left_vol, right_vol, max_bins=int(1e9)):
+    """
+    An alternative implementation of contingency_table() that is
+    much faster, but allocates RAM in proportion to the *product*
+    of the max IDs in the two input volumes,
+    and only works for unsigned integers.
+
+    Args:
+        left_vol, right_vol:
+            np.ndarrays of equal shape
+        max_bins:
+            The maximum number of bins to allocate.
+            If the product of the max IDs in the two input volumes
+            is greater than max_bins, an error is raised.
+    """
+    assert np.issubdtype(left_vol.dtype, np.integer)
+    assert np.issubdtype(right_vol.dtype, np.integer)
+    if not np.issubdtype(left_vol.dtype, np.unsignedinteger):
+        if left_vol.min() < 0:
+            raise ValueError("left_vol contains negative values")
+    if not np.issubdtype(right_vol.dtype, np.unsignedinteger):
+        if right_vol.min() < 0:
+            raise ValueError("right_vol contains negative values")
+
+    assert left_vol.shape == right_vol.shape
+    left = left_vol.ravel()
+    right = right_vol.ravel()
+
+    n_left = int(left.max()) + 1
+    n_right = int(right.max()) + 1
+    n_bins = n_left * n_right
+
+    if n_bins > max_bins:
+        raise ValueError(
+            "The product of the max IDs in the two input volumes "
+            f"is greater than max_bins: {n_bins} > {max_bins}, which would"
+            "require a lot of RAM. Try using contingency_table() instead."
+        )
+
+    counts = _bincount_2d(left, right, n_right, n_bins)
+
+    nz = counts.nonzero()[0]
+    left_labels = (nz // n_right).astype(left_vol.dtype)
+    right_labels = (nz % n_right).astype(right_vol.dtype)
+    voxel_counts = counts[nz]
+
+    order = np.argsort(voxel_counts)[::-1]
+    idx = pd.MultiIndex.from_arrays(
+        [left_labels[order], right_labels[order]],
+        names=["left", "right"],
+    )
+    return pd.Series(voxel_counts[order], index=idx, name="voxel_count")
+
+
 def fill_holes_in_mask(mask, inplace=False):
     """
     Find the "bubbles" in the mask and fill them.
