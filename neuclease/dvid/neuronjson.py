@@ -1,4 +1,8 @@
+import re
 from functools import wraps
+
+import pandas as pd
+
 from . import dvid_api_wrapper
 from .keyvalue._keyvalue import _body_annotations_dataframe, DEFAULT_BODY_STATUS_CATEGORIES
 
@@ -32,10 +36,38 @@ def _fetch_query(server, uuid, instance='segmentation_annotations', query=None, 
         return sorted(values, key=lambda d: d['bodyid'])
 
 
-@wraps(_fetch_query)
-def fetch_all(*args, **kwargs):
-    return _fetch_query(*args, **kwargs, endpoint='all')
+def _parse_column_name(col):
+    """
+    Parse column names into (field, attribute) tuples
+    """
+    # Match patterns like 'a', 'a_user', 'a_time'
+    match = re.match(r'^(.*?)(?:_(user|time))?$', col)
+    if match:
+        field = match.group(1)
+        attr = match.group(2) if match.group(2) else 'value'
+        return (field, attr)
+    return (col, 'value')
 
+
+def _melt_all(df):
+    df = df.drop(columns=['bodyid', 'json'], errors='ignore')
+
+    # Create MultiIndex columns
+    df.columns = pd.MultiIndex.from_tuples(
+        [_parse_column_name(c) for c in df.columns],
+        names=['field', 'attribute']
+    )
+    df = df.stack(level='field', future_stack=True).reset_index()
+    return df
+
+
+def fetch_all(server, uuid, instance='segmentation_annotations', show=None, fields=None, melt=False, status_categories=DEFAULT_BODY_STATUS_CATEGORIES, format='pandas', session=None):
+    assert format == 'pandas' or not melt, \
+        'melt=True is only supported when format="pandas"'
+    df = _fetch_query(server, uuid, instance, show=show, fields=fields, status_categories=status_categories, format=format, session=session, endpoint='all')
+    if melt:
+        df = _melt_all(df)
+    return df
 
 @wraps(_fetch_query)
 def fetch_query(server, uuid, instance='segmentation_annotations', query=None, **kwargs):
