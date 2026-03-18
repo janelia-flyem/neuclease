@@ -1,12 +1,16 @@
+import logging
 import networkx as nx
 
 from ._dvid import dvid_api_wrapper
 from .repo import resolve_ref_range, resolve_ref, fetch_repo_dag
+from .node import fetch_blob
 from .kafka import kafka_msgs_to_df
+
+logger = logging.getLogger(__name__)
 
 
 @dvid_api_wrapper
-def fetch_generic_mutations(server, uuid, instance, userid=None, *, action_filter=None, dag_filter='leaf-and-parents', format='pandas', session=None):
+def fetch_generic_mutations(server, uuid, instance, userid=None, *, action_filter=None, dag_filter='leaf-and-parents', format='pandas', chase_datarefs=False, session=None):
     """
     Fetch the log of successfully completed mutations.
     The log is returned in the same format as the kafka log.
@@ -64,6 +68,12 @@ def fetch_generic_mutations(server, uuid, instance, userid=None, *, action_filte
             - 'leaf-and-parents' (only messages matching the given uuid or its ancestors), or
             - None (no filtering by UUID).
 
+        chase_datarefs:
+            If a mutation log message would be very long, DVID emits an abbreviated message
+            and includes a 'DataRef' key which can be used to fetch the full message from the blobstore.
+            If chase_datarefs is True, this function will fetch the full message from the blobstore
+            in such cases.
+
         format:
             How to return the data. Either 'pandas' or 'json'.
 
@@ -104,6 +114,14 @@ def fetch_generic_mutations(server, uuid, instance, userid=None, *, action_filte
     if action_filter is not None:
         action_filter = {*action_filter}
         msgs = [*filter(lambda m: m['Action'] in action_filter, msgs)]
+
+    if chase_datarefs:
+        for msg in msgs:
+            if 'DataRef' in msg:
+                try:
+                    msg.update(fetch_blob(server, uuid, instance, msg['DataRef'], as_json=True))
+                except Exception as e:
+                    raise RuntimeError(f"Error fetching blob for mutation {msg['Action']}: {e}") from e
 
     if format == 'pandas':
         return kafka_msgs_to_df(msgs)

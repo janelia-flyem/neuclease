@@ -3225,7 +3225,7 @@ def resolve_snapshot_tag(server, uuid, instance, *, session=None):
 
 
 @dvid_api_wrapper
-def fetch_labelmap_mutations(server, uuid, instance, userid=None, *, action_filter=None, dag_filter='leaf-and-parents', format='pandas', session=None):
+def fetch_labelmap_mutations(server, uuid, instance, userid=None, *, action_filter=None, dag_filter='leaf-and-parents', format='pandas', chase_datarefs=False, session=None):
     """
     Fetch the log of successfully completed mutations.
     The log is returned in the same format as the kafka log.
@@ -3266,7 +3266,7 @@ def fetch_labelmap_mutations(server, uuid, instance, userid=None, *, action_filt
 
         action_filter:
             A list of actions to use as a filter for the returned messages.
-            For example, if action_filter=['split', 'split-supervoxel'],
+            For example, if action_filter=['split-complete', 'split-supervoxel-complete'],
             all messages with other actions will be filtered out.
             (This is not part of the DVID API.  It's implemented in this
             python function a post-processing step.)
@@ -3283,6 +3283,14 @@ def fetch_labelmap_mutations(server, uuid, instance, userid=None, *, action_filt
             - 'leaf-and-parents' (only messages matching the given uuid or its ancestors), or
             - None (no filtering by UUID).
 
+        chase_datarefs:
+            If a mutation log message would be very long, DVID emits an abbreviated message
+            and includes a 'DataRef' key which can be used to fetch the full message from the blobstore.
+            If chase_datarefs is True, this function will fetch the full message from the blobstore
+            in such cases.
+            For instance, if you need to make sure that every cleave/merge message will include the
+            list of supervoxels/bodies involved in the mutation, you must set chase_datarefs=True.
+
         format:
             How to return the data. Either 'pandas' or 'json'.
 
@@ -3290,7 +3298,17 @@ def fetch_labelmap_mutations(server, uuid, instance, userid=None, *, action_filt
         Either a DataFrame or list of parsed json values, depending
         on what you passed as 'format'.
     """
-    msgs = fetch_generic_mutations(server, uuid, instance, userid=userid, action_filter=action_filter, dag_filter=dag_filter, format='json', session=session)
+    msgs = fetch_generic_mutations(
+        server,
+        uuid,
+        instance,
+        userid=userid,
+        action_filter=action_filter,
+        dag_filter=dag_filter,
+        chase_datarefs=chase_datarefs,
+        format='json',
+        session=session
+    )
 
     if format == 'pandas':
         # We don't need special handling of '*-complete' messages
