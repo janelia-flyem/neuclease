@@ -2951,7 +2951,7 @@ def post_cleave(server, uuid, instance, body_id, supervoxel_ids, *, session=None
 
 
 @dvid_api_wrapper
-def post_hierarchical_cleaves(server, uuid, instance, body_id, group_mapping, leave_progress=True, *, session=None):
+def post_hierarchical_cleaves(server, uuid, instance, body_id, group_mapping, hide_progress=False, leave_progress=True, *, session=None):
     """
     When you want to perform a lot of cleaves on a single
     body (e.g. a "frankenbody") whose labelindex is really big,
@@ -2997,6 +2997,13 @@ def post_hierarchical_cleaves(server, uuid, instance, body_id, group_mapping, le
             and whose values are arbitrary component IDs indicating the final
             supervoxel grouping for the cleaves that will be performed.
             (The actual value of the group IDs are not used in the cleave operation.)
+
+        hide_progress:
+            If True, do not show a progress bar.
+
+        leave_progress:
+            If True, leave the progress bar visible after the operation is complete
+            (unless hide_progress is True).
 
     Returns:
         A DataFrame indexed by the SVs in your group_mapping (though not necessarily in the same order),
@@ -3119,7 +3126,7 @@ def post_hierarchical_cleaves(server, uuid, instance, body_id, group_mapping, le
         num_cleaves -= 1
 
     with Timer(f"Performing {num_cleaves} cleaves", logger), \
-            tqdm_proxy(total=num_cleaves, leave=leave_progress, logger=logger) as progress_bar:
+            tqdm_proxy(total=num_cleaves, disable=hide_progress, leave=leave_progress, logger=logger) as progress_bar:
         progress_bar.update(0)
 
         if need_initial_cleave:
