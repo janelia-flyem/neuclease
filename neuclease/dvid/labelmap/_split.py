@@ -344,7 +344,7 @@ def render_split_tree(tree, root=None, uuid_len=4):
     root = root or find_root(tree, next(iter(tree.nodes())))
 
     def abbreviate_uuid(n):
-        uuid = tree.node[n]['uuid']
+        uuid = tree.nodes[n]['uuid']
         if uuid != '<unknown>':
             uuid = uuid[:uuid_len]
         return f"{n} ({uuid})"
