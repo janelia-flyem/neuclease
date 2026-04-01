@@ -1281,7 +1281,7 @@ def fetch_mappings(server, uuid, instance, as_array=False, *, format=None, consi
 
 
 @dvid_api_wrapper
-def fetch_complete_mappings(server, uuid, instance, mutations=None, sort=None, *, session=None):
+def fetch_complete_mappings(server, uuid, instance, mutations=None, sort=None, *, treat_ghosts_as_retired=True, session=None):
     """
     Fetch the complete mapping from DVID for all agglomerated bodies,
     including 'identity' mappings (for agglomerated bodies only)
@@ -1315,6 +1315,18 @@ def fetch_complete_mappings(server, uuid, instance, mutations=None, sort=None, *
             Optional.
             If 'sv', sort by supervoxel column.
             If 'body', sort by body. Otherwise, don't sort.
+
+        treat_ghosts_as_retired:
+            "Ghost" supervoxels are supervoxel IDs that were created via a supervoxel split,
+            but which have no voxels (they have zero size because the "split" left all voxels
+            with the other side).
+            If True (default), treat 'ghost' supervoxels as "retired",
+            i.e. map them to body 0, regardless of what the DVID mapping returned.
+            This makes the result of this function consistent with the label index,
+            but not consistent with fetch_mapping() or fetch_mappings().
+            If False, do not give special treatment to "ghost" supervoxels,
+            which means the mapping will be consistent with fetch_mapping() or fetch_mappings(),
+            but NOT necessarily consistent with the label index.
 
     Returns:
         pd.Series(index=sv, data=body)
@@ -1353,6 +1365,21 @@ def fetch_complete_mappings(server, uuid, instance, mutations=None, sort=None, *
     # We only add 'identity' IDs in cases where the supervoxel DIDN'T exist in the mapping AND it wasn't retired.
     mapping = pd.concat((base_mapping, possible_retired, possible_identities))
     mapping = mapping.loc[~mapping.index.duplicated(keep='first')].copy()
+
+    # It turns out DVID did not always forbid supervoxel splits in which one side of the
+    # split retained ALL of the voxels and the other side got ZERO voxels (a 'ghost' supervoxel).
+    # That has strange effects.  For instance, the "ghost" supervoxel is present in the mapping,
+    # but NOT in the label index (since it has no voxels).
+    # For the purposes of this function, we usually want to produce a mapping that is consistent with the label index,
+    # so we will overwrite the mapping with 0 for all "ghost" supervoxels.
+    # Note, however, that this means we are NOT producing a mapping that is consistent
+    # with fetch_mapping() or fetch_mappings().
+    if treat_ghosts_as_retired:
+        sv_split_muts = mutations.query('action == "split-supervoxel-complete"')
+        ghost_split_svs = [m['SplitSupervoxel'] for m in sv_split_muts['msg'] if m['SplitSize'] == 0]
+        ghost_remain_svs = [m['RemainSupervoxel'] for m in sv_split_muts['msg'] if m['RemainSize'] == 0]
+        ghost_svs = [*ghost_split_svs, *ghost_remain_svs]
+        mapping.loc[ghost_svs] = 0
 
     if sort == 'sv':
         mapping.sort_index(inplace=True)
