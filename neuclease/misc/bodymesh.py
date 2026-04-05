@@ -426,6 +426,10 @@ def create_supervoxel_mesh(server, uuid, seg_instance, sv, smoothing=3, decimati
 
 @PrefixFilter.with_context("Body {body}")
 def update_body_mesh_from_supervoxels(server, uuid, seg_instance, body, body_mesh_config, resource_mgr):
+
+    # FIXME... had to hard-code this because dask workers didn't have the configured dvid timeout.
+    set_default_dvid_session_timeout(1200.0, 1200.0)
+
     seg = seg_instance
     uuid = resolve_ref(server, uuid, True)
     lastmod = fetch_lastmod(server, uuid, seg, body)['mutation id']
