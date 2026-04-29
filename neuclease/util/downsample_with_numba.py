@@ -110,13 +110,13 @@ def flat_mode_except_zero(data):
     """
     Given an array, flatten it and return the mode, without including
     zeros, if possible.
-    
+
     If (data == 0).all(), then 0 is returned.
     """
     data = data.copy().reshape(-1)
     data = data[data != 0]
     if data.size == 0:
-        return 0
+        return data.dtype.type(0)
     return _flat_mode(data)
 
 

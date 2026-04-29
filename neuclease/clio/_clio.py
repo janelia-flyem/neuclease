@@ -20,6 +20,9 @@ def default_clio_session():
     # "Authorization: Bearer $(gcloud auth print-identity-token)"
     #
 
+    # URL=https://clio-store-vwzoicitea-uk.a.run.app/v2/pull-request?user_email=tansygarvey@gmail.com
+    # curl -H "Authorization: Bearer $(gcloud auth print-identity-token)" ${URL}
+
     global DEFAULT_CLIO_SESSION
     if DEFAULT_CLIO_SESSION is None:
         p = subprocess.run("gcloud auth print-identity-token", shell=True, check=True, capture_output=True)

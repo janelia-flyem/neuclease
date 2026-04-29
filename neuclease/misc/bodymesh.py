@@ -354,7 +354,7 @@ def delete_body_mesh(server, uuid, seg_instance, body):
 
 
 @DummyResourceMgr.overwrite_none_kwarg
-def create_and_upload_missing_supervoxel_meshes(server, uuid, seg_instance, body, resource_mgr=None):
+def create_and_upload_missing_supervoxel_meshes(server, uuid, seg_instance, body, *, resource_mgr=None):
     seg = seg_instance
     with resource_mgr.access_context(server, True, 1, 0):
         try:
@@ -426,10 +426,14 @@ def create_supervoxel_mesh(server, uuid, seg_instance, sv, smoothing=3, decimati
 
 @PrefixFilter.with_context("Body {body}")
 def update_body_mesh_from_supervoxels(server, uuid, seg_instance, body, body_mesh_config, resource_mgr):
+
+    # FIXME... had to hard-code this because dask workers didn't have the configured dvid timeout.
+    set_default_dvid_session_timeout(1200.0, 1200.0)
+
     seg = seg_instance
     uuid = resolve_ref(server, uuid, True)
     lastmod = fetch_lastmod(server, uuid, seg, body)['mutation id']
-    create_and_upload_missing_supervoxel_meshes(server, uuid, seg, body, resource_mgr)
+    create_and_upload_missing_supervoxel_meshes(server, uuid, seg, body, resource_mgr=resource_mgr)
 
     with (
         Timer("Fetching supervoxel tarfile", logger),

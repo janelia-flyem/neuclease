@@ -1281,7 +1281,7 @@ def fetch_mappings(server, uuid, instance, as_array=False, *, format=None, consi
 
 
 @dvid_api_wrapper
-def fetch_complete_mappings(server, uuid, instance, mutations=None, sort=None, *, session=None):
+def fetch_complete_mappings(server, uuid, instance, mutations=None, sort=None, *, treat_ghosts_as_retired=True, session=None):
     """
     Fetch the complete mapping from DVID for all agglomerated bodies,
     including 'identity' mappings (for agglomerated bodies only)
@@ -1315,6 +1315,18 @@ def fetch_complete_mappings(server, uuid, instance, mutations=None, sort=None, *
             Optional.
             If 'sv', sort by supervoxel column.
             If 'body', sort by body. Otherwise, don't sort.
+
+        treat_ghosts_as_retired:
+            "Ghost" supervoxels are supervoxel IDs that were created via a supervoxel split,
+            but which have no voxels (they have zero size because the "split" left all voxels
+            with the other side).
+            If True (default), treat 'ghost' supervoxels as "retired",
+            i.e. map them to body 0, regardless of what the DVID mapping returned.
+            This makes the result of this function consistent with the label index,
+            but not consistent with fetch_mapping() or fetch_mappings().
+            If False, do not give special treatment to "ghost" supervoxels,
+            which means the mapping will be consistent with fetch_mapping() or fetch_mappings(),
+            but NOT necessarily consistent with the label index.
 
     Returns:
         pd.Series(index=sv, data=body)
@@ -1353,6 +1365,21 @@ def fetch_complete_mappings(server, uuid, instance, mutations=None, sort=None, *
     # We only add 'identity' IDs in cases where the supervoxel DIDN'T exist in the mapping AND it wasn't retired.
     mapping = pd.concat((base_mapping, possible_retired, possible_identities))
     mapping = mapping.loc[~mapping.index.duplicated(keep='first')].copy()
+
+    # It turns out DVID did not always forbid supervoxel splits in which one side of the
+    # split retained ALL of the voxels and the other side got ZERO voxels (a 'ghost' supervoxel).
+    # That has strange effects.  For instance, the "ghost" supervoxel is present in the mapping,
+    # but NOT in the label index (since it has no voxels).
+    # For the purposes of this function, we usually want to produce a mapping that is consistent with the label index,
+    # so we will overwrite the mapping with 0 for all "ghost" supervoxels.
+    # Note, however, that this means we are NOT producing a mapping that is consistent
+    # with fetch_mapping() or fetch_mappings().
+    if treat_ghosts_as_retired:
+        sv_split_muts = mutations.query('action == "split-supervoxel-complete"')
+        ghost_split_svs = [m['SplitSupervoxel'] for m in sv_split_muts['msg'] if m['SplitSize'] == 0]
+        ghost_remain_svs = [m['RemainSupervoxel'] for m in sv_split_muts['msg'] if m['RemainSize'] == 0]
+        ghost_svs = [*ghost_split_svs, *ghost_remain_svs]
+        mapping.loc[ghost_svs] = 0
 
     if sort == 'sv':
         mapping.sort_index(inplace=True)
@@ -2951,7 +2978,7 @@ def post_cleave(server, uuid, instance, body_id, supervoxel_ids, *, session=None
 
 
 @dvid_api_wrapper
-def post_hierarchical_cleaves(server, uuid, instance, body_id, group_mapping, leave_progress=True, *, session=None):
+def post_hierarchical_cleaves(server, uuid, instance, body_id, group_mapping, hide_progress=False, leave_progress=True, *, session=None):
     """
     When you want to perform a lot of cleaves on a single
     body (e.g. a "frankenbody") whose labelindex is really big,
@@ -2997,6 +3024,13 @@ def post_hierarchical_cleaves(server, uuid, instance, body_id, group_mapping, le
             and whose values are arbitrary component IDs indicating the final
             supervoxel grouping for the cleaves that will be performed.
             (The actual value of the group IDs are not used in the cleave operation.)
+
+        hide_progress:
+            If True, do not show a progress bar.
+
+        leave_progress:
+            If True, leave the progress bar visible after the operation is complete
+            (unless hide_progress is True).
 
     Returns:
         A DataFrame indexed by the SVs in your group_mapping (though not necessarily in the same order),
@@ -3119,7 +3153,7 @@ def post_hierarchical_cleaves(server, uuid, instance, body_id, group_mapping, le
         num_cleaves -= 1
 
     with Timer(f"Performing {num_cleaves} cleaves", logger), \
-            tqdm_proxy(total=num_cleaves, leave=leave_progress, logger=logger) as progress_bar:
+            tqdm_proxy(total=num_cleaves, disable=hide_progress, leave=leave_progress, logger=logger) as progress_bar:
         progress_bar.update(0)
 
         if need_initial_cleave:
@@ -3225,7 +3259,7 @@ def resolve_snapshot_tag(server, uuid, instance, *, session=None):
 
 
 @dvid_api_wrapper
-def fetch_labelmap_mutations(server, uuid, instance, userid=None, *, action_filter=None, dag_filter='leaf-and-parents', format='pandas', session=None):
+def fetch_labelmap_mutations(server, uuid, instance, userid=None, *, action_filter=None, dag_filter='leaf-and-parents', format='pandas', chase_datarefs=False, session=None):
     """
     Fetch the log of successfully completed mutations.
     The log is returned in the same format as the kafka log.
@@ -3266,7 +3300,7 @@ def fetch_labelmap_mutations(server, uuid, instance, userid=None, *, action_filt
 
         action_filter:
             A list of actions to use as a filter for the returned messages.
-            For example, if action_filter=['split', 'split-supervoxel'],
+            For example, if action_filter=['split-complete', 'split-supervoxel-complete'],
             all messages with other actions will be filtered out.
             (This is not part of the DVID API.  It's implemented in this
             python function a post-processing step.)
@@ -3283,6 +3317,14 @@ def fetch_labelmap_mutations(server, uuid, instance, userid=None, *, action_filt
             - 'leaf-and-parents' (only messages matching the given uuid or its ancestors), or
             - None (no filtering by UUID).
 
+        chase_datarefs:
+            If a mutation log message would be very long, DVID emits an abbreviated message
+            and includes a 'DataRef' key which can be used to fetch the full message from the blobstore.
+            If chase_datarefs is True, this function will fetch the full message from the blobstore
+            in such cases.
+            For instance, if you need to make sure that every cleave/merge message will include the
+            list of supervoxels/bodies involved in the mutation, you must set chase_datarefs=True.
+
         format:
             How to return the data. Either 'pandas' or 'json'.
 
@@ -3290,7 +3332,17 @@ def fetch_labelmap_mutations(server, uuid, instance, userid=None, *, action_filt
         Either a DataFrame or list of parsed json values, depending
         on what you passed as 'format'.
     """
-    msgs = fetch_generic_mutations(server, uuid, instance, userid=userid, action_filter=action_filter, dag_filter=dag_filter, format='json', session=session)
+    msgs = fetch_generic_mutations(
+        server,
+        uuid,
+        instance,
+        userid=userid,
+        action_filter=action_filter,
+        dag_filter=dag_filter,
+        chase_datarefs=chase_datarefs,
+        format='json',
+        session=session
+    )
 
     if format == 'pandas':
         # We don't need special handling of '*-complete' messages

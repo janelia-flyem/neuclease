@@ -43,6 +43,7 @@ requirements:
     - zarr
     - numcodecs
     - flask-cors
+    - tensorstore
 
     # Optional dependencies
     #- graph-tool  # <-- Faster connected-components for very large graphs

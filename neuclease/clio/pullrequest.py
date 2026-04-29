@@ -33,7 +33,7 @@ ASSESSMENT_CATEGORIES = [
 
 
 @clio_api_wrapper
-def fetch_pull_requests(user_email='all', *, base=None, session=None):
+def fetch_pull_requests(user_email='all', *, format='json', base=None, session=None):
     """
     Fetch the pull request data submitted by a particular user,
     with light processing to make it more convenient to work with
@@ -44,6 +44,7 @@ def fetch_pull_requests(user_email='all', *, base=None, session=None):
     Returns:
         merge_data, timestamps
     """
+    assert format in ('json', 'pandas')
     assert user_email == 'all' or '@' in user_email, \
         f"user_email does not appear to be an email address: {user_email}"
 
@@ -72,7 +73,25 @@ def fetch_pull_requests(user_email='all', *, base=None, session=None):
             for main, merged_bodies in merges.items():
                 cleaned_dataset[int(main)] = merged_bodies
 
-    return cleaned, timestamps
+    if format == 'json':
+        return cleaned, timestamps
+
+    return convert_prs_to_dataframe(cleaned, timestamps)
+
+
+def convert_prs_to_dataframe(merge_data, timestamps):
+    pr_table = []
+    for user, d in merge_data.items():
+        for dataset, merges in d.items():
+            for target_body, fragments in merges.items():
+                pr_table.append((user, dataset, target_body, fragments))
+    pr_df = pd.DataFrame(pr_table, columns=['user', 'dataset', 'target', 'fragments'])
+    pr_df['main_dataset'] = pr_df['dataset'].map(lambda s: '-'.join(s.split('-')[1:-1]))
+
+    timestamp_series = pd.DataFrame(timestamps).stack().rename('timestamp').rename_axis(['dataset', 'user'])
+    pr_df = pr_df.merge(timestamp_series, 'left', on=['user', 'dataset'])
+    pr_df['date'] = pr_df['timestamp'].dt.date
+    return pr_df
 
 
 def assess_merges(dvid_server, uuid, instance, merges, mutations=None, include_bad_merges_in_mergeset=False):

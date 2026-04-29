@@ -1,91 +1,105 @@
 #!/usr/bin/env python3
 """
-Virtual N5 Server for DVID Labelmap
+Virtual N5 Server for Neuroglancer Precomputed Volumes
 
-A Flask-based HTTP service that exposes DVID labelmap data as a virtual N5 volume
-for neuroglancer visualization. Data is fetched on-demand from DVID and served
-in N5 format without storing anything on disk.
+A Flask-based HTTP service that reads from a neuroglancer precomputed volume
+on disk and serves it as a virtual N5 volume for neuroglancer visualization.
 
 Usage:
-    dvid_virtual_n5_server emdata3:8900 abc123 segmentation --port 8000
+    precomputed_virtual_n5_server /path/to/precomputed --port 8000
 
-Then open in neuroglancer with source:
-    n5://http://localhost:8000            # body IDs (default)
-    n5://http://localhost:8000/sv         # supervoxel IDs
+Then open in neuroglancer with source: n5://http://localhost:8000
 
 With an optional mapping file (feather format):
-    dvid_virtual_n5_server emdata3:8900 abc123 segmentation --mapping mapping.feather
+    precomputed_virtual_n5_server /path/to/precomputed --mapping mapping.feather
 
 The mapping file should have a 'sv' or 'body' column as the source IDs,
 and one or more other columns as target IDs. Then use URLs like:
     n5://http://localhost:8000/<target_col>              # body -> target_col
     n5://http://localhost:8000/body/<target_col>         # body -> target_col (explicit)
-    n5://http://localhost:8000/supervoxels/<target_col>  # sv -> target_col
+    n5://http://localhost:8000/sv/<target_col>           # sv -> target_col
 """
 import argparse
+import json
 import logging
 from http import HTTPStatus
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import numcodecs
+import tensorstore as ts
 from flask import Flask, jsonify
 from flask_cors import CORS
 from zarr.n5 import N5ChunkWrapper
 
 from dvidutils import LabelMapper
 
-from neuclease.dvid.node import fetch_instance_info
-from neuclease.dvid.labelmap import fetch_labelmap_voxels
-
 logger = logging.getLogger(__name__)
 
 # Global configuration, set during startup
-DVID_CONFIG = None
+PRECOMPUTED_CONFIG = None
 CHUNK_ENCODER = None
 MAPPERS = None  # Dict of {(source_col, target_col): LabelMapper}
+STORES = None  # Dict of {scale: tensorstore}
 
-BLOCK_SIZE = 64  # Fixed to match DVID's internal block size
+BLOCK_SIZE = 64  # Fixed block size for N5 output
 
 
-def create_app(dvid_config, mappers=None):
+def create_app(precomputed_config, mappers=None):
     """
     Create and configure the Flask application.
 
     Args:
-        dvid_config: dict with keys:
-            - server: DVID server address
-            - uuid: DVID UUID
-            - instance: labelmap instance name
+        precomputed_config: dict with keys:
+            - path: path to precomputed volume
             - volume_box_xyz: np.array [[x0,y0,z0], [x1,y1,z1]]
             - voxel_size: list [x, y, z] resolution
-            - voxel_units: str, e.g. 'nanometers'
+            - voxel_units: str, e.g. 'nm'
             - max_scale: int, maximum downsampling level
+            - dtype: numpy dtype of the volume
         mappers: optional dict of {(source_col, target_col): LabelMapper}
     """
-    global DVID_CONFIG, CHUNK_ENCODER, MAPPERS
-    DVID_CONFIG = dvid_config
+    global PRECOMPUTED_CONFIG, CHUNK_ENCODER, MAPPERS, STORES
+    PRECOMPUTED_CONFIG = precomputed_config
     MAPPERS = mappers
+
+    # Open tensorstore for each scale
+    STORES = {}
+    for scale in range(precomputed_config['max_scale'] + 1):
+        STORES[scale] = ts.open({
+            "driver": "neuroglancer_precomputed",
+            "kvstore": {
+                "driver": "file",
+                "path": precomputed_config['path'],
+            },
+            "scale_index": scale
+        }).result()
+        logger.info(f"Opened tensorstore for scale {scale}: shape={STORES[scale].T[0].shape}")
 
     # Create N5 chunk encoder for uint64 labelmap data
     block_shape = np.array([BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE])
-    CHUNK_ENCODER = N5ChunkWrapper(np.uint64, block_shape, compressor=numcodecs.GZip())
+    CHUNK_ENCODER = N5ChunkWrapper(precomputed_config['dtype'], block_shape, compressor=numcodecs.GZip())
 
     app = Flask(__name__)
     CORS(app)
 
     def _get_top_level_attributes():
         """Return top-level N5 attributes describing the volume."""
-        max_scale = DVID_CONFIG['max_scale']
-        voxel_size = DVID_CONFIG['voxel_size']
+        scales_info = PRECOMPUTED_CONFIG['scales']
+        base_resolution = scales_info[0]['resolution']
+        unit = PRECOMPUTED_CONFIG['voxel_units']
 
-        # N5 uses abbreviated units
-        unit = _abbreviate_units(DVID_CONFIG['voxel_units'])
+        # Compute scale factors relative to base resolution
+        scales = []
+        for scale_info in scales_info:
+            res = scale_info['resolution']
+            scale_factor = [int(res[i] / base_resolution[i]) for i in range(3)]
+            scales.append(scale_factor)
 
-        scales = [[2**s, 2**s, 2**s] for s in range(max_scale + 1)]
         attr = {
             "pixelResolution": {
-                "dimensions": voxel_size,
+                "dimensions": base_resolution,
                 "unit": unit
             },
             "ordering": "C",
@@ -98,24 +112,36 @@ def create_app(dvid_config, mappers=None):
 
     def _get_scale_attributes(scale):
         """Return attributes for a specific scale level."""
-        if scale > DVID_CONFIG['max_scale']:
-            return jsonify({"error": f"Scale {scale} exceeds max scale {DVID_CONFIG['max_scale']}"}), HTTPStatus.NOT_FOUND
+        if scale > PRECOMPUTED_CONFIG['max_scale']:
+            return jsonify({"error": f"Scale {scale} exceeds max scale {PRECOMPUTED_CONFIG['max_scale']}"}), HTTPStatus.NOT_FOUND
 
-        voxel_size = DVID_CONFIG['voxel_size']
-        unit = _abbreviate_units(DVID_CONFIG['voxel_units'])
+        scales_info = PRECOMPUTED_CONFIG['scales']
+        scale_info = scales_info[scale]
+        base_resolution = scales_info[0]['resolution']
+        unit = PRECOMPUTED_CONFIG['voxel_units']
 
-        # Compute dimensions at this scale (in X,Y,Z order)
-        volume_box_xyz = DVID_CONFIG['volume_box_xyz']
-        volume_shape_xyz = volume_box_xyz[1] - volume_box_xyz[0]
-        scaled_shape = (volume_shape_xyz // (2 ** scale)).tolist()
+        # Get actual dimensions and resolution for this scale
+        dimensions = scale_info['size']  # [x, y, z]
+        resolution = scale_info['resolution']
+
+        # Compute scale factor relative to base resolution
+        scale_factor = [int(resolution[i] / base_resolution[i]) for i in range(3)]
+
+        # Get voxel offset if present
+        voxel_offset = scale_info.get('voxel_offset', [0, 0, 0])
+        translate = [float(voxel_offset[i] * resolution[i]) for i in range(3)]
+
+        # Determine N5 datatype string
+        dtype = PRECOMPUTED_CONFIG['dtype']
+        dtype_str = str(np.dtype(dtype))
 
         attr = {
             "transform": {
                 "ordering": "C",
                 "axes": ["x", "y", "z"],
-                "scale": [2**scale, 2**scale, 2**scale],
+                "scale": scale_factor,
                 "units": [unit, unit, unit],
-                "translate": [0.0, 0.0, 0.0]
+                "translate": translate
             },
             "compression": {
                 "type": "gzip",
@@ -123,8 +149,8 @@ def create_app(dvid_config, mappers=None):
                 "level": -1
             },
             "blockSize": [BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE],
-            "dataType": "uint64",
-            "dimensions": scaled_shape
+            "dataType": dtype_str,
+            "dimensions": dimensions
         }
         return jsonify(attr), HTTPStatus.OK
 
@@ -132,34 +158,28 @@ def create_app(dvid_config, mappers=None):
         """
         Serve a single chunk at the requested scale and location.
 
-        The chunk is fetched from DVID and encoded in N5 format.
-
         Args:
             scale: downsampling scale level
             chunk_x, chunk_y, chunk_z: chunk coordinates
-            supervoxels: if True, fetch supervoxel IDs from DVID
-            mapping_col: if provided, apply mapping from 'sv' or 'body' column
-                         to this target column
+            supervoxels: if True, use 'sv' column for mapping source; otherwise use 'body'
+            mapping_col: if provided, apply mapping to this target column
         """
-        if scale > DVID_CONFIG['max_scale']:
+        if scale > PRECOMPUTED_CONFIG['max_scale']:
             return jsonify({"error": f"Scale {scale} exceeds max scale"}), HTTPStatus.NOT_FOUND
 
         # Compute the bounding box for this chunk in X,Y,Z coordinates (at this scale)
         corner_xyz = np.array([chunk_x, chunk_y, chunk_z]) * BLOCK_SIZE
         box_xyz = np.array([corner_xyz, corner_xyz + BLOCK_SIZE])
 
-        # Convert to DVID's Z,Y,X order
-        box_zyx = box_xyz[:, ::-1]
-
-        # Clip to volume bounds (at this scale)
-        volume_box_xyz = DVID_CONFIG['volume_box_xyz']
-        scaled_volume_box_xyz = volume_box_xyz // (2 ** scale)
-        scaled_volume_box_zyx = scaled_volume_box_xyz[:, ::-1]
+        # Get volume bounds at this scale from the scale-specific metadata
+        scale_info = PRECOMPUTED_CONFIG['scales'][scale]
+        scale_size_xyz = np.array(scale_info['size'])
+        scaled_volume_box_xyz = np.array([[0, 0, 0], scale_size_xyz])
 
         # Check if chunk is completely outside volume
-        if (box_zyx[0] >= scaled_volume_box_zyx[1]).any() or (box_zyx[1] <= scaled_volume_box_zyx[0]).any():
+        if (box_xyz[0] >= scaled_volume_box_xyz[1]).any() or (box_xyz[1] <= scaled_volume_box_xyz[0]).any():
             # Return empty chunk
-            empty_block = np.zeros((BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE), dtype=np.uint64)
+            empty_block = np.zeros((BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE), dtype=PRECOMPUTED_CONFIG['dtype'])
             return (
                 CHUNK_ENCODER.encode(empty_block),
                 HTTPStatus.OK,
@@ -167,30 +187,33 @@ def create_app(dvid_config, mappers=None):
             )
 
         # Clip box to volume bounds
-        clipped_box_zyx = np.array([
-            np.maximum(box_zyx[0], scaled_volume_box_zyx[0]),
-            np.minimum(box_zyx[1], scaled_volume_box_zyx[1])
+        clipped_box_xyz = np.array([
+            np.maximum(box_xyz[0], scaled_volume_box_xyz[0]),
+            np.minimum(box_xyz[1], scaled_volume_box_xyz[1])
         ])
 
-        # Fetch data from DVID
+        # Convert to Z,Y,X for tensorstore (it uses .T which gives ZYX indexing)
+        clipped_box_zyx = clipped_box_xyz[:, ::-1]
+
+        # Fetch data from tensorstore
         try:
-            block_data_zyx = fetch_labelmap_voxels(
-                DVID_CONFIG['server'],
-                DVID_CONFIG['uuid'],
-                DVID_CONFIG['instance'],
-                clipped_box_zyx,
-                scale=scale,
-                supervoxels=supervoxels
-            )
+            store = STORES[scale]
+            block_data_zyx = store.T[0][
+                clipped_box_zyx[0, 0]:clipped_box_zyx[1, 0],
+                clipped_box_zyx[0, 1]:clipped_box_zyx[1, 1],
+                clipped_box_zyx[0, 2]:clipped_box_zyx[1, 2]
+            ].read().result()
+            block_data_zyx = np.asarray(block_data_zyx)
         except Exception as e:
             logger.error(f"Failed to fetch chunk s{scale}/{chunk_x}/{chunk_y}/{chunk_z}: {e}")
             return jsonify({"error": str(e)}), HTTPStatus.INTERNAL_SERVER_ERROR
 
         # Create full-size block and place fetched data into it
         # (handles edge chunks that are partially outside the volume)
-        block_vol_zyx = np.zeros((BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE), dtype=np.uint64)
+        block_vol_zyx = np.zeros((BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE), dtype=PRECOMPUTED_CONFIG['dtype'])
 
         # Compute where in the block to place the data
+        box_zyx = box_xyz[:, ::-1]
         rel_start = clipped_box_zyx[0] - box_zyx[0]
         rel_stop = rel_start + (clipped_box_zyx[1] - clipped_box_zyx[0])
 
@@ -205,9 +228,6 @@ def create_app(dvid_config, mappers=None):
             block_vol_zyx = _apply_mapping(block_vol_zyx, supervoxels, mapping_col)
 
         # Encode to N5 chunk format (header + compressed data)
-        # N5ChunkWrapper expects data in C-order with shape reversed from BLOCK_SHAPE.
-        # BLOCK_SHAPE is [X, Y, Z], so encoder expects shape [Z, Y, X] which is
-        # exactly what DVID gives us. No transpose needed.
         encoded = CHUNK_ENCODER.encode(block_vol_zyx)
 
         return (
@@ -216,7 +236,7 @@ def create_app(dvid_config, mappers=None):
             {'Content-Type': 'application/octet-stream'}
         )
 
-    # Routes for body IDs (default)
+    # Routes for default IDs (body)
     @app.route('/attributes.json')
     def top_level_attributes():
         return _get_top_level_attributes()
@@ -229,7 +249,7 @@ def create_app(dvid_config, mappers=None):
     def serve_chunk(scale, chunk_x, chunk_y, chunk_z):
         return _serve_chunk(scale, chunk_x, chunk_y, chunk_z, supervoxels=False)
 
-    # Routes for supervoxel IDs (via /sv prefix)
+    # Routes for supervoxel source (via /sv prefix) - no mapping, just indicates source type
     @app.route('/sv/attributes.json')
     def top_level_attributes_sv():
         return _get_top_level_attributes()
@@ -281,7 +301,7 @@ def create_app(dvid_config, mappers=None):
             return jsonify({"error": f"Unknown mapping column: {target_col}"}), HTTPStatus.NOT_FOUND
         return _serve_chunk(scale, chunk_x, chunk_y, chunk_z, supervoxels=False, mapping_col=target_col)
 
-    # /supervoxels/<target_col>/... sv -> target_col (fetches supervoxels from DVID)
+    # /supervoxels/<target_col>/... sv -> target_col
     @app.route('/supervoxels/<target_col>/attributes.json')
     def top_level_attributes_sv_mapped(target_col):
         if not _validate_mapping_col(target_col):
@@ -357,78 +377,49 @@ def _apply_mapping(data, supervoxels, target_col):
     return mapper.apply(data, allow_unmapped=True)
 
 
-def _abbreviate_units(units):
-    """Convert DVID unit names to abbreviated form for N5."""
-    unit_map = {
-        'nanometers': 'nm',
-        'nanometer': 'nm',
-        'micrometers': 'um',
-        'micrometer': 'um',
-        'microns': 'um',
-        'micron': 'um',
-        'millimeters': 'mm',
-        'millimeter': 'mm',
-    }
-    # DVID may return units as a list (one per dimension) or a string
-    if isinstance(units, list):
-        units = units[0] if units else 'nm'
-    return unit_map.get(units.lower(), units)
-
-
-def fetch_dvid_metadata(server, uuid, instance):
+def load_precomputed_metadata(path):
     """
-    Fetch instance metadata from DVID.
+    Load metadata from a neuroglancer precomputed volume.
+
+    Args:
+        path: path to the precomputed volume directory
 
     Returns:
-        dict with volume_box_xyz, voxel_size, voxel_units, max_scale
+        dict with path, scales (full info per scale), voxel_units, max_scale, dtype
     """
-    info = fetch_instance_info(server, uuid, instance)
+    info_path = Path(path) / "info"
+    with open(info_path, 'r') as f:
+        info = json.load(f)
 
-    # Volume bounds (DVID returns in X,Y,Z order)
-    min_point = info["Extended"].get("MinPoint")
-    max_point = info["Extended"].get("MaxPoint")
+    # Get scales info - store the full array for per-scale metadata
+    scales = info['scales']
+    max_scale = len(scales) - 1
 
-    if min_point is None or max_point is None:
-        raise ValueError(f"Instance {instance} has no data (MinPoint/MaxPoint is null)")
+    # Get data type
+    data_type = info.get('data_type', 'uint64')
+    dtype = np.dtype(data_type)
 
-    # MaxPoint is inclusive in DVID, so add 1 to get exclusive bounds
-    volume_box_xyz = np.array([min_point, [m + 1 for m in max_point]])
-
-    # Voxel resolution
-    voxel_size = info["Extended"].get("VoxelSize", [8.0, 8.0, 8.0])
-    if isinstance(voxel_size, (int, float)):
-        voxel_size = [voxel_size, voxel_size, voxel_size]
-
-    voxel_units = info["Extended"].get("VoxelUnits", "nanometers")
-
-    # Max scale (downsampling level)
-    max_scale = int(info["Extended"].get("MaxDownresLevel", 0))
+    # Units - precomputed typically uses nm
+    voxel_units = 'nm'
 
     return {
-        'volume_box_xyz': volume_box_xyz,
-        'voxel_size': list(voxel_size),
+        'path': str(path),
+        'scales': scales,  # Full per-scale metadata
         'voxel_units': voxel_units,
-        'max_scale': max_scale
+        'max_scale': max_scale,
+        'dtype': dtype
     }
 
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Virtual N5 server for DVID labelmap data",
+        description="Virtual N5 server for neuroglancer precomputed volumes",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__
     )
     parser.add_argument(
-        'dvid_server',
-        help="DVID server address, e.g. 'emdata3:8900'"
-    )
-    parser.add_argument(
-        'uuid',
-        help="DVID UUID"
-    )
-    parser.add_argument(
-        'instance',
-        help="Labelmap instance name, e.g. 'segmentation'"
+        'path',
+        help="Path to neuroglancer precomputed volume directory"
     )
     parser.add_argument(
         '-p', '--port', type=int, default=8000,
@@ -436,7 +427,7 @@ def parse_args():
     )
     parser.add_argument(
         '--max-scale', type=int, default=None,
-        help="Maximum scale level (default: auto-detect from DVID)"
+        help="Maximum scale level (default: auto-detect from info)"
     )
     parser.add_argument(
         '--mapping', type=str, default=None,
@@ -459,25 +450,22 @@ def main(debug_mode=False):
         format='%(asctime)s %(levelname)s %(name)s: %(message)s'
     )
 
-    # Fetch metadata from DVID
-    logger.info(f"Fetching metadata from {args.dvid_server}/{args.uuid}/{args.instance}")
-    metadata = fetch_dvid_metadata(args.dvid_server, args.uuid, args.instance)
+    # Load metadata from precomputed volume
+    logger.info(f"Loading metadata from {args.path}")
+    config = load_precomputed_metadata(args.path)
 
     # Override max_scale if specified
     if args.max_scale is not None:
-        metadata['max_scale'] = args.max_scale
+        config['max_scale'] = args.max_scale
 
-    # Build config
-    dvid_config = {
-        'server': args.dvid_server,
-        'uuid': args.uuid,
-        'instance': args.instance,
-        **metadata
-    }
-
-    logger.info(f"Volume bounds (XYZ): {dvid_config['volume_box_xyz'].tolist()}")
-    logger.info(f"Voxel size: {dvid_config['voxel_size']} {dvid_config['voxel_units']}")
-    logger.info(f"Max scale: {dvid_config['max_scale']}")
+    # Log scale info
+    base_scale = config['scales'][0]
+    logger.info(f"Base resolution: {base_scale['resolution']} {config['voxel_units']}")
+    logger.info(f"Base volume size (XYZ): {base_scale['size']}")
+    logger.info(f"Number of scales: {config['max_scale'] + 1}")
+    logger.info(f"Data type: {config['dtype']}")
+    for i, scale_info in enumerate(config['scales']):
+        logger.info(f"  Scale {i}: resolution={scale_info['resolution']}, size={scale_info['size']}")
 
     # Load mapping file if provided
     mappers = None
@@ -512,15 +500,15 @@ def main(debug_mode=False):
                 logger.info(f"Built mapper: {source_col} -> {target_col}")
 
     # Create and run app
-    app = create_app(dvid_config, mappers)
+    app = create_app(config, mappers)
 
     logger.info(f"Starting server on port {args.port}")
     logger.info(f"Open in neuroglancer with source: n5://http://localhost:{args.port}")
-    logger.info(f"  For supervoxel IDs, use: n5://http://localhost:{args.port}/sv")
-    if mapping_df is not None:
+    logger.info(f"  For supervoxel source, use: n5://http://localhost:{args.port}/sv")
+    if mappers is not None:
         logger.info(f"  For mapped IDs, use: n5://http://localhost:{args.port}/<target_col>")
         logger.info(f"  Or: n5://http://localhost:{args.port}/body/<target_col>")
-        logger.info(f"  Or: n5://http://localhost:{args.port}/supervoxels/<target_col>")
+        logger.info(f"  Or: n5://http://localhost:{args.port}/sv/<target_col>")
 
     app.run(
         host='0.0.0.0',

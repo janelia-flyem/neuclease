@@ -636,6 +636,68 @@ def contingency_table(left_vol, right_vol):
     return sizes
 
 
+@njit
+def _bincount_2d(left, right, n_right, n_bins):
+    counts = np.zeros(n_bins, dtype=np.int64)
+    for i in range(len(left)):
+        counts[left[i] * n_right + right[i]] += 1
+    return counts
+
+
+def contingency_table_small_ids(left_vol, right_vol, max_bins=int(1e9)):
+    """
+    An alternative implementation of contingency_table() that is
+    much faster, but allocates RAM in proportion to the *product*
+    of the max IDs in the two input volumes,
+    and only works for unsigned integers.
+
+    Args:
+        left_vol, right_vol:
+            np.ndarrays of equal shape
+        max_bins:
+            The maximum number of bins to allocate.
+            If the product of the max IDs in the two input volumes
+            is greater than max_bins, an error is raised.
+    """
+    assert np.issubdtype(left_vol.dtype, np.integer)
+    assert np.issubdtype(right_vol.dtype, np.integer)
+    if not np.issubdtype(left_vol.dtype, np.unsignedinteger):
+        if left_vol.min() < 0:
+            raise ValueError("left_vol contains negative values")
+    if not np.issubdtype(right_vol.dtype, np.unsignedinteger):
+        if right_vol.min() < 0:
+            raise ValueError("right_vol contains negative values")
+
+    assert left_vol.shape == right_vol.shape
+    left = left_vol.ravel()
+    right = right_vol.ravel()
+
+    n_left = int(left.max()) + 1
+    n_right = int(right.max()) + 1
+    n_bins = n_left * n_right
+
+    if n_bins > max_bins:
+        raise ValueError(
+            "The product of the max IDs in the two input volumes "
+            f"is greater than max_bins: {n_bins} > {max_bins}, which would"
+            "require a lot of RAM. Try using contingency_table() instead."
+        )
+
+    counts = _bincount_2d(left, right, n_right, n_bins)
+
+    nz = counts.nonzero()[0]
+    left_labels = (nz // n_right).astype(left_vol.dtype)
+    right_labels = (nz % n_right).astype(right_vol.dtype)
+    voxel_counts = counts[nz]
+
+    order = np.argsort(voxel_counts)[::-1]
+    idx = pd.MultiIndex.from_arrays(
+        [left_labels[order], right_labels[order]],
+        names=["left", "right"],
+    )
+    return pd.Series(voxel_counts[order], index=idx, name="voxel_count")
+
+
 def fill_holes_in_mask(mask, inplace=False):
     """
     Find the "bubbles" in the mask and fill them.
@@ -1249,31 +1311,48 @@ def thickest_point_in_mask(mask):
     return maxpoint, dt[maxpoint]
 
 
-def distance_transform_watershed(mask, smoothing=0.0, seed_mask=None, seed_labels=None, flood_from='interior', turbo_watershed=True):
+def distance_transform_watershed(dt_mask, *, smoothing=0.0, seed_labels=None, flood_from='interior', turbo_watershed=False):
     """
-    Compute a watershed over the distance transform within a mask.
-    You can either compute the watershed from inside-to-outside or outside-to-inside.
-    
-    For the former, the watershed is seeded from the most interior points,
-    and the distance transform is inverted so the watershed can proceed from low to high as usual.
-    
-    For the latter, the distance transform is seeded from the voxels immediately outside the mask,
-    using labels as found in the seed_labels volume. In this mode, the results effectively tell
-    you which exterior segment (in the seed volume) is closest to any given point within the
-    interior of the mask.
+    Compute a watershed over a distance transform within a mask.
+    The ``flood_from`` parameter controls the direction and the distance metric.
 
-    Or you can provide your own seeds if you think you know what you're doing.
+    When flooding from 'interior', the distance transform measures each voxel's
+    Euclidean distance to the nearest seed, producing a Voronoi-like partition of
+    the mask. Seeds are at distance 0 (natural minima), so the watershed floods
+    outward from seeds toward the mask boundary.  If no seed_labels are provided,
+    seeds are auto-generated at the most interior points of the mask (local minima
+    of the boundary distance transform).
+
+    When flooding from 'exterior', the distance transform measures each interior
+    voxel's distance to the mask boundary. Seeds are placed just outside the mask
+    using labels from the seed_labels volume, and the watershed floods inward.
+    The result tells you which exterior segment is closest to any given interior point.
 
     Args:
-        mask:
-            Only the masked area will be processed
+        dt_mask:
+            Boolean mask defining the region of interest.
+            When flood_from='interior', the distance transform measures distance
+            from each masked voxel to the nearest seed.
+            When flood_from='exterior', it measures distance from each masked
+            voxel to the nearest point outside the mask.
+
         smoothing:
             If non-zero, run gaussian smoothing on the distance transform with the
             given sigma before defining seed points or running the watershed.
 
-        seed_mask:
         seed_labels:
+            A label volume to seed the watershed step.
+            If using flood_from='interior', the non-zero seeds should reside within the dt_mask region.
+            If using flood_from='exterior', the non-zero seeds should reside outside the dt_mask region,
+            and only those seed voxels which are directly adjacent to the dt_mask region will be used.
+        
         flood_from:
+            Either 'interior' or 'exterior'.
+            Use 'interior' for seeds within the dt_mask that grow outward toward the
+            mask boundary. The distance transform is computed from the seeds, giving
+            each voxel its Euclidean distance to the nearest seed (a Voronoi-like partition).
+            Use 'exterior' for seeds outside the dt_mask that grow inward. The distance
+            transform is computed from the mask boundary.
 
         turbo_watershed:
             If True, convert the distance map to uint8 (after renormalizing
@@ -1281,7 +1360,20 @@ def distance_transform_watershed(mask, smoothing=0.0, seed_mask=None, seed_label
             This loses precision, but is faster.
 
     Returns:
-        dt, labeled_seeds, ws
+        dt, seed_labels, ws
+        where:
+        
+        - 'dt' is the distance transform (from seeds if flood_from='interior',
+           from the mask boundary if flood_from='exterior'),
+           possibly renormalized and quantized to uint8 if turbo_watershed=True.
+        - 'seed_labels' is the label volume used to seed the watershed step.
+           If you supplied no seed_labels, this volume is generated from the local
+           minima of the boundary distance transform.
+           Otherwise, we return a copy of your input seed_labels except that it has been
+           zeroed out to discard seeds outside the mask (when flood_from='interior')
+           or to discard seeds except those immediately adjacent to the mask
+           (when flood_from='exterior').
+        - 'ws' is the final watershed result
 
     Notes:
         This function provides a subset of the options that can be found in other
@@ -1296,82 +1388,92 @@ def distance_transform_watershed(mask, smoothing=0.0, seed_mask=None, seed_label
         https://github.com/imglib/imglib2-algorithm/tree/master/src/main/java/net/imglib2/algorithm/morphology/distance
         http://www.theoryofcomputing.org/articles/v008a019/
     """
-    mask = mask.astype(bool, copy=False)
-    mask = vigra.taggedView(mask, 'zyx').astype(np.uint32)
+    dt_mask = dt_mask.astype(bool, copy=False)
+    dt_mask = vigra.taggedView(dt_mask, 'zyx')
 
     # Widen seeds dtype if necessary
     # (The 64-bit case is handled below, with a mapping.)
     if seed_labels is not None and seed_labels.dtype in (np.uint8, np.uint16, np.int8, np.int16, np.int32):
         seed_labels = seed_labels.astype(np.uint32)
 
-    imask = np.logical_not(mask)
-    outer_edge_mask = binary_edge_mask(mask, 'outer')
-
     assert flood_from in ('interior', 'exterior')
-    if flood_from == 'interior':
-        # Negate the distance transform result,
-        # since watershed must start at minima, not maxima.
-        # Convert to uint8 to benefit from 'turbo' watershed mode
-        # (uses a bucket queue).
-        dt = distance_transform(mask, False, smoothing, negate=True)
 
-        if seed_mask is None:
-            # requires float32 input for some reason
-            if dt.ndim == 2:
-                minima = vigra.analysis.localMinima(dt, marker=np.nan, neighborhood=8, allowAtBorder=True, allowPlateaus=False)
+    dt_mask_peel = binary_edge_mask(dt_mask, 'outer')
+
+    # Our 'dummy' seeds will go beyond a two-ring buffer outside dt_mask.
+    # The buffer ensures the dummy seeds won't bleed through gaps in the outer edge
+    # (where seed_labels might be zero) into the interior mask.
+    dummy_seed_mask = ~(
+        dt_mask | dt_mask_peel | binary_edge_mask(dt_mask | dt_mask_peel, 'outer')
+    )
+
+    if flood_from == 'interior':
+        if seed_labels is not None:
+            seed_labels = seed_labels.copy()
+            seed_labels[~dt_mask] = 0
+        else:
+            # Auto-generate seeds at the most interior points of the mask,
+            # identified as local minima of the (negated) boundary distance transform.
+            boundary_dt = distance_transform(dt_mask, False, smoothing, negate=True)
+            if boundary_dt.ndim == 2:
+                minima = vigra.analysis.localMinima(
+                    boundary_dt, marker=np.nan, neighborhood=8,
+                    allowAtBorder=True, allowPlateaus=False
+                )
             else:
-                minima = vigra.analysis.localMinima3D(dt, marker=np.nan, neighborhood=26, allowAtBorder=True, allowPlateaus=False)
+                minima = vigra.analysis.localMinima3D(
+                    boundary_dt, marker=np.nan, neighborhood=26,
+                    allowAtBorder=True, allowPlateaus=False
+                )
+            del boundary_dt
             seed_mask = np.isnan(minima)
             del minima
+            seed_mask = vigra.taggedView(seed_mask, 'zyx')
+            if seed_mask.max() <= 255:
+                seed_mask = seed_mask.view('uint8')
+            seed_labels = vigra.analysis.labelMultiArrayWithBackground(seed_mask)
 
-        if turbo_watershed:
-            dt = normalize_image_range(dt, np.uint8)
+        seed_mask = (seed_labels != 0)
+
+        # Distance from each voxel to its nearest seed.
+        # Seeds are at distance 0, providing natural minima for the watershed.
+        dt = distance_transform(seed_mask, True, smoothing)
     else:
-        if seed_labels is None and seed_mask is None:
-            logger.warning("Without providing your own seed mask and/or seed labels, "
-                           "the watershed operation will simply be the same as a "
-                           "connected components operation.  Is that what you meant?")
+        if seed_labels is None:
+            raise ValueError(
+                "Without providing your own seed labels, "
+                "the flood_from='exterior' mode would simply be the same as a "
+                "connected components operation (with background).  "
+                "Is that what you meant?"
+            )
 
-        if seed_mask is None:
-            seed_mask = outer_edge_mask.copy()
+        # Distance from each interior voxel to the mask boundary.
+        dt = distance_transform(dt_mask, False, smoothing)
 
-        # Dilate the mask once more.
-        outer_edge_mask[:] |=  binary_edge_mask(outer_edge_mask | mask, 'outer')
+        seed_mask = dt_mask_peel.copy()
 
-        dt = distance_transform(mask, False, smoothing, negate=False)
-        if turbo_watershed:
-            dt = normalize_image_range(dt, np.uint8)
+        # Keep only the seeds *just* outside the mask.
+        seed_labels = seed_labels.copy()
+        seed_labels[~dt_mask_peel] = 0
 
-    if seed_labels is None:
-        seed_mask = vigra.taggedView(seed_mask, 'zyx')
-        if seed_mask.max() <= 255:
-            seed_mask = seed_mask.view('uint8')
-        labeled_seeds = vigra.analysis.labelMultiArrayWithBackground(seed_mask)
-    else:
-        labeled_seeds = np.where(seed_mask, seed_labels, 0)
+    if turbo_watershed:
+        dt = normalize_image_range(dt, np.uint8)
 
-    # Make sure seed_mask matches labeled_seeds,
-    # Even if some seed_labels were zero-valued
-    seed_mask = (labeled_seeds != 0)
-
-    # Must remap to uint32 before calling vigra's watershed.
     seed_mapper = None
     seed_values = None
-    if labeled_seeds.dtype in (np.uint64, np.int64):
-        labeled_seeds = labeled_seeds.astype(np.uint64)
-        seed_values = np.sort(pd.unique(labeled_seeds.reshape(-1)))
+    if seed_labels.dtype not in (np.uint64, np.int64):
+        ws_seeds = seed_labels
+    else:
+        # Must remap to uint32 before calling vigra's watershed.
+        seed_values = np.sort(pd.unique(seed_labels.reshape(-1))).astype(np.uint64)
         if seed_values[0] != 0:
             seed_values = np.array([0] + list(seed_values), np.uint64)
-
         assert seed_values.dtype == np.uint64
-        assert labeled_seeds.dtype == np.uint64
 
         ws_seed_values = np.arange(len(seed_values), dtype=np.uint32)
         seed_mapper = LabelMapper(seed_values, ws_seed_values)
-        ws_seeds = seed_mapper.apply(labeled_seeds)
+        ws_seeds = seed_mapper.apply(seed_labels.astype(np.uint64))
         assert ws_seeds.dtype == np.uint32
-    else:
-        ws_seeds = labeled_seeds
 
     # Fill the non-masked area with one big seed,
     # except for a thin border around the mask.
@@ -1379,11 +1481,21 @@ def distance_transform_watershed(mask, smoothing=0.0, seed_mask=None, seed_label
     # since these voxels now don't need to be
     # consumed in the watershed.
     dummy_seed = ws_seeds.max()+np.uint32(1)
-    ws_seeds[np.logical_not(mask | outer_edge_mask)] = dummy_seed
-    ws_seeds[outer_edge_mask & ~seed_mask] = 0
+    ws_seeds[dummy_seed_mask] = dummy_seed
+    if flood_from == 'interior':
+        ws_mask = dt_mask
+    else:
+        ws_mask = (dt_mask | dt_mask_peel)
 
-    dt[outer_edge_mask] = 255
-    dt[seed_mask] = 0
+    if turbo_watershed:
+        dt[~ws_mask] = 255
+    else:
+        dt[~ws_mask] = dt.max()
+
+    # Ensure that every seed always claims at least its own starting
+    # voxels in the watershed result, even if it doesn't reside on
+    # a minima in the distance transform.
+    dt[seed_mask] = dt.min()
 
     dt = vigra.taggedView(dt, 'zyx')
     ws_seeds = vigra.taggedView(ws_seeds, 'zyx')
@@ -1391,19 +1503,22 @@ def distance_transform_watershed(mask, smoothing=0.0, seed_mask=None, seed_label
         method = 'Turbo'
     else:
         method = 'RegionGrowing'
-    ws, max_id = vigra.analysis.watershedsNew(dt, seeds=ws_seeds, method='Turbo')
+
+    ws, max_id = vigra.analysis.watershedsNew(dt, seeds=ws_seeds, method=method)
 
     # Areas that were unreachable without crossing over the border
-    # could end up with the dummy seed.
+    # (due to discontiguous dt_mask) could end up with the dummy seed.
     # We treat such areas as if they are outside of the mask.
     ws[ws == dummy_seed] = 0
-    ws_seeds[imask] = 0
+
+    # Zero out all watershed results outside the user's original mask.
+    ws[~dt_mask] = 0
 
     # If we converted from uint64 to uint32 to perform the watershed,
     # convert back before returning.
     if seed_mapper is not None:
         ws = seed_values[ws]
-    return dt, labeled_seeds, ws
+    return dt, seed_labels, ws
 
 
 SEGMENTATION_FEATURE_NAMES = [
@@ -1506,6 +1621,42 @@ def region_boxes(vol):
             boxes[label, 1, axis] = max(i, boxes[label, 1, axis])
     boxes[:, 1, :] += 1
     return boxes
+
+
+def region_boxes_2(vol):
+    """
+    Similar to region_boxes(), but based on scipy.ndimage.find_objects instead of numba,
+    except it ignores label 0 and returns a different type (Series instead of ndarray).
+
+    This is mostly just for reference, to see how the scipy-based implementation
+    compares to the numba based one.
+
+    Args:
+        vol: Labeled volume array
+
+    Returns:
+        pd.Series with segment IDs as index and bounding boxes as values.
+        Each box is [(z0, y0, x0), (z1, y1, x1)].
+        Segments with no voxels (None in find_objects output) are excluded.
+    """
+    import scipy.ndimage as ndi
+    slices = ndi.find_objects(vol)
+    # Segment IDs start at 1
+    segment_ids = np.arange(1, len(slices) + 1)
+    mask = [s is not None for s in slices]
+    boxes = [
+        [
+            tuple(s.start for s in sl),
+            tuple(s.stop for s in sl)
+        ]
+        for sl in slices if sl is not None
+    ]
+    return pd.Series(
+        boxes,
+        index=segment_ids[mask],
+        dtype=object,
+        name='box'
+    )
 
 
 @njit

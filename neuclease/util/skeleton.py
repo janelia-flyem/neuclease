@@ -88,7 +88,7 @@ def skeleton_to_neuroglancer(skeleton_df, orig_resolution_nm=8, output_path=None
     """
     Convert a skeleton from DVID into the binary format that neuroglancer expects,
     as described here:
-    https://github.com/google/neuroglancer/blob/master/src/neuroglancer/datasource/precomputed/skeletons.md#encoded-skeleton-file-format
+    https://github.com/google/neuroglancer/blob/master/src/datasource/precomputed/skeletons.md
     """
     skeleton_df = skeleton_df.rename(columns={'rowId': 'node', 'link': 'parent'})
     normalize_skeleton(skeleton_df)
