@@ -270,7 +270,26 @@ def _gen_mesh(smoothing_rounds, decimation, label, fullres_box, mask):
     return label, mesh
 
 
-def upload_precomputed_ngmeshes(meshes, names, bucket_name, bucket_path, localdir=None, volume_info=None):
+def upload_precomputed_ngmeshes(meshes, names, bucket_name, bucket_path, localdir=None, volume_info=None, fix_case_insensitive_clashes=True):
+    """
+    fix_case_insensitive_clashes:
+        Although Linux and Google Cloud Storage are case-sensitive,
+        anyone downloading the mesh files onto a Mac will be bitten if
+        two file names differ only by their case.
+        It just so happens that drosophila datasets have compartments named:
+
+            - AL(L)/AL(R) (Antennal Lobe)
+            - aL(L)/aL(R) (alpha lobe)
+        
+        On a Mac, AL(L).ngmesh and aL(L).ngmesh are treated as the SAME FILE,
+        and gsutil does not warn you about this when downloading them.
+        To make matters worse, gsutil will download both files simultaneously,
+        intermingling their contents on disk, resulting in a corrupted file!
+
+        If fix_case_insensitive_clashes is True, we will fix name clashes by appending
+        one or more underscores (before the file .ngmesh file extension) to each of the
+        "duplicate" names.
+    """
     if not bucket_name.startswith('gs://'):
         bucket_name = 'gs://' + bucket_name
 
@@ -279,6 +298,16 @@ def upload_precomputed_ngmeshes(meshes, names, bucket_name, bucket_path, localdi
 
     os.makedirs(f"{localdir}/mesh", exist_ok=True)
     dump_json({"@type": "neuroglancer_legacy_mesh"}, f"{localdir}/mesh/info")
+
+    if fix_case_insensitive_clashes:
+        names = pd.Series(names).sort_values()
+        inames = names.str.lower()
+        clashes = inames.duplicated()
+        while clashes.any():
+            names[clashes] = names[clashes] + "_"
+            inames = names.str.lower()
+            clashes = inames.duplicated()
+        names = names.to_dict()
 
     logger.info("Serializing meshes")
     for label, mesh in meshes.items():
