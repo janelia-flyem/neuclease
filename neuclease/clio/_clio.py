@@ -1,3 +1,4 @@
+import os
 import copy
 import inspect
 import functools
@@ -5,14 +6,55 @@ import subprocess
 
 import requests
 
+import google.auth
+import google.auth.transport.requests
+from google.auth.exceptions import DefaultCredentialsError
+
 DEFAULT_CLIO_SESSION = None
 DEFAULT_CLIO_STORE_BASE = 'https://clio-store-vwzoicitea-uk.a.run.app'
+
+
+_ADC_HELP = (
+    "No Google credentials found. To authenticate, run this in a terminal:\n"
+    "\n"
+    "    gcloud auth application-default login\n"
+    "\n"
+    "This only needs to be done once (you can run it while Python is already running).\n"
+    "\n"
+    "Note: 'gcloud auth login' is NOT sufficient — you need the 'application-default' variant."
+)
+
+
+def _get_google_id_creds() -> str:
+    """Obtain a Google OAuth2 ID token for the default credentials.
+
+    Works with:
+    - ``gcloud auth application-default login`` (interactive / user credentials)
+    - Service account keys (via ``GOOGLE_APPLICATION_CREDENTIALS``)
+    - Workload identity on GCE/Cloud Run
+    """
+    try:
+        creds, _ = google.auth.default()
+    except DefaultCredentialsError:
+        raise RuntimeError(_ADC_HELP) from None
+
+    request = google.auth.transport.requests.Request()
+    try:
+        creds.refresh(request)
+    except google.auth.exceptions.RefreshError as e:
+        raise RuntimeError(
+            f"Google credentials found but could not be refreshed: {e}\n\n"
+            "Try re-running:  gcloud auth application-default login"
+        ) from None
+
+    return creds
 
 
 def reset_default_clio_session():
     global DEFAULT_CLIO_SESSION
     DEFAULT_CLIO_SESSION = None
     return default_clio_session()
+
 
 def default_clio_session():
     #
@@ -24,11 +66,17 @@ def default_clio_session():
     # curl -H "Authorization: Bearer $(gcloud auth print-identity-token)" ${URL}
 
     global DEFAULT_CLIO_SESSION
-    if DEFAULT_CLIO_SESSION is None:
-        p = subprocess.run("gcloud auth print-identity-token", shell=True, check=True, capture_output=True)
-        token = p.stdout.decode('utf-8').strip()
+    if DEFAULT_CLIO_SESSION is None or (DEFAULT_CLIO_SESSION.creds is not None and DEFAULT_CLIO_SESSION.creds.expired):
+        if os.environ.get('GOOGLE_IDENTITY_TOKEN'):
+            creds = None
+            token = os.environ['GOOGLE_IDENTITY_TOKEN']
+        else:
+            creds = _get_google_id_creds()
+            token = creds.id_token
+
         s = requests.Session()
         s.headers.update({"Authorization": f"Bearer {token}"})
+        s.creds = creds
         DEFAULT_CLIO_SESSION = s
 
     return DEFAULT_CLIO_SESSION
