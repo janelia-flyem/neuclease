@@ -37,15 +37,15 @@ requirements:
     - pykafka
     - networkx >=2.1
     - asciitree
-    - protobuf >=5.28.3,<5.29
+    - protobuf >=6.31.1,<7
     - confiddler
     - python-cityhash
     - zarr
     - numcodecs
     - flask-cors
-    - tensorstore
 
     # Optional dependencies
+    #- tensorstore # <-- Used for creating precomputed volumes; but conda/pixi will be finicky about the version of protobuf. You can install it from PyPI instead, which will let the install succeed, but may introduce issues with protobuf-related things.
     #- graph-tool  # <-- Faster connected-components for very large graphs
     #- nifty       # <-- Alternative cleaving algorithm "seeded-watershed"
 
