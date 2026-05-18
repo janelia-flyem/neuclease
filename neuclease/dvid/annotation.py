@@ -539,6 +539,10 @@ def load_elements_as_dataframe(elements, relationships=False):
             the given elements and return the relationships as
             a second DataFrame.
 
+            Note:
+                Elements with no relationships will be excluded from the relationships dataframe,
+                but they will still be included in the first dataframe.
+
     Returns:
         One or two pandas DataFrames, depending on whether relationships=True.
 
@@ -568,12 +572,19 @@ def load_elements_as_dataframe(elements, relationships=False):
         df['conf'] = df['conf'].astype(np.float32)
 
     rels = None
-    if relationships and 'Rels' in df.columns and df['Rels'].any():
-        rels = df.set_index([*'xyz'])['Rels'].explode()
-        rels = pd.json_normalize(rels).set_index(rels.index)
-        rels[[f'to_{k}' for k in 'xyz']] = rels['To'].tolist()
-        del rels['To']
-        rels.columns = [*map(str.lower, rels.columns)]
+    if relationships:
+        if not ('Rels' in df.columns and df['Rels'].any()):
+            rels = pd.DataFrame([], columns=[*'xyz', 'rel', 'to_x', 'to_y', 'to_z']).set_index([*'xyz'])
+        else:
+            rels = df.set_index([*'xyz'])['Rels'].explode()
+
+            # Points with no relationships are not included in the rels table.
+            rels = rels.dropna()
+
+            rels = pd.json_normalize(rels).set_index(rels.index)
+            rels[[f'to_{k}' for k in 'xyz']] = rels['To'].tolist()
+            del rels['To']
+            rels.columns = [*map(str.lower, rels.columns)]
 
     df = df.drop(columns=['Pos', 'Prop', 'Rels'], errors='ignore')
     df.columns = [*map(str.lower, df.columns)]

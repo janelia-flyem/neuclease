@@ -404,9 +404,9 @@ def update_skeletons(dvid_server, uuid, seg_instance, neutu_executable, force, s
     dvid_seg = (dvid_server, uuid, seg_instance)
     prev_update, affected, last_mutid = mutated_bodies_since_previous_update(*dvid_seg, "skeletons", ignore_before_uuid)
 
-    logger.info(f"Found {len(affected.removed_bodies)} removed bodies since last update.")
-    logger.info(f"Found {len(affected.new_bodies)} new bodies since last update.")
-    logger.info(f"Found {len(affected.changed_bodies)} changed bodies since last update.")
+    logger.info(f"Found {len(affected.removed_bodies)} removed bodies since last skeleton update.")
+    logger.info(f"Found {len(affected.new_bodies)} new bodies since last skeleton update.")
+    logger.info(f"Found {len(affected.changed_bodies)} changed bodies since last skeleton update.")
 
     keys_to_delete = {f"{body}_swc" for body in affected.removed_bodies}
     if len(keys_to_delete) >= 10_000:
