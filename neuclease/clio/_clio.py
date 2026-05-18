@@ -145,3 +145,30 @@ def clio_api_wrapper(f):
             else:
                 raise
     return wrapper
+
+
+@clio_api_wrapper
+def fetch_datasets(dataset=None, *, session=None, base=None):
+    """
+    Fetch basic information about a specific dataset, or all datasets if no dataset name is provided.
+    """
+    if dataset is None:
+        r = session.get(f"{base}/v2/datasets")
+    else:
+        r = session.get(f"{base}/v2/datasets/{dataset}")
+
+    r.raise_for_status()
+    return r.json()
+
+
+@clio_api_wrapper
+def fetch_roles(*, session=None, base=None):
+    r = session.get(f"{base}/v2/roles")
+    r.raise_for_status()
+    return r.json()
+
+@clio_api_wrapper
+def post_refresh_caches(*, session=None, base=None):
+    r = session.post(f"{base}/v2/server/refresh-caches")
+    r.raise_for_status()
+    return r.json()
