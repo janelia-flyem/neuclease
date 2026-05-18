@@ -81,7 +81,7 @@ def create_bookmark_file(df, output_path=None, default_text=None, grayscale=None
     if 'suggest_extra' in df.columns:
         df["suggest extra"] = df['suggest_extra'] & df['extra body IDs'].map(len).astype(bool)
 
-    cols = [*{'location', 'body ID', 'text', 'extra body IDs', 'suggest extras'} & {*df.columns}]
+    cols = [*{'location', 'body ID', 'text', 'extra body IDs', 'suggest extra'} & {*df.columns}]
     data = df[cols].to_dict('records')
 
     # Does any of this metadata actually matter?
