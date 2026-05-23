@@ -1,8 +1,9 @@
+import copy
 import logging
 from collections import namedtuple
 
 from ...util import Timer
-from .. import fetch_branch_nodes
+from .. import fetch_branch_nodes, resolve_ref
 from ._labelmap import (fetch_mapping, fetch_mappings, fetch_mutations,
                         fetch_labels_batched, fetch_bodies_for_many_points)
 
@@ -18,6 +19,7 @@ class PointLabeler:
     """
 
     def __init__(self, server, uuid, instance, mutations=None, mapping=None):
+        uuid = resolve_ref(server, uuid, expand=True)
         self.dvidseg = DvidSeg(server, uuid, instance)
         self._mutations = mutations
         self._mapping = mapping
@@ -64,7 +66,7 @@ class PointLabeler:
         (at least) the uuid, timestamp, and mutid.
         """
         if self._last_mutation:
-            return self._last_mutation
+            return copy.deepcopy(self._last_mutation)
 
         branch_nodes = fetch_branch_nodes(
             self.dvidseg.server,
@@ -94,4 +96,4 @@ class PointLabeler:
                 break
 
         self._last_mutation = last_mutation
-        return last_mutation
+        return copy.deepcopy(last_mutation)
