@@ -652,9 +652,11 @@ def find_branch_nodes(server, repo_uuid=None, branch=None, include_ancestors=Tru
     repo_uuid = repo_uuid or None
     assert branch is not None, "You must supply a branch or uuid"
 
-    assert branch != "master", \
-        ("Don't supply 'master' as the branch name.\n"
-         "In DVID, the 'master' branch is identified via an empty string ('').")
+    if branch.startswith(':'):
+        branch = branch[1:]
+
+    if branch == "master":
+        branch = ""
 
     repo_info = fetch_repo_info(server, repo_uuid, session=session)
     dag = fetch_repo_dag(server, repo_uuid, repo_info=repo_info, session=session)
