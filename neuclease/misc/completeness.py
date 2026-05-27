@@ -446,9 +446,14 @@ def _rank_syn_counts(point_df, conn_df, syn_counts_df=None, body_annotations_df=
         syn_counts_df = body_synapse_counts(point_df)
 
     if body_annotations_df is not None:
+        count_cols = syn_counts_df.columns
         assert body_annotations_df.index.name == 'body'
         syn_counts_df = syn_counts_df.drop(columns=body_annotations_df.columns, errors='ignore')
-        syn_counts_df = syn_counts_df.merge(body_annotations_df, 'left', on='body')
+        
+        # Use outer merge to include all bodies in the annotations table,
+        # even bodies that have no synapses.
+        syn_counts_df = syn_counts_df.merge(body_annotations_df, 'outer', on='body')
+        syn_counts_df[count_cols] = syn_counts_df[count_cols].fillna(0.0)
 
     # For categorical dtypes which include the empty string as a category,
     # we auto-convert NaN to "".
