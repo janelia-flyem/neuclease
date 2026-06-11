@@ -6,7 +6,6 @@ import pytest
 from neuclease.dvid.rle import runlength_encode_mask_to_ranges, blockwise_masks_from_ranges
 from neuclease.misc.sparsevol_multires_mesh import (
     multires_mesh_from_ranges,
-    _split_mesh_into_cells,
     _block_mask_specs,
     _inflate_block_mask,
 )
@@ -14,6 +13,8 @@ from neuclease.misc.sparsevol_multires_mesh import (
 # vol2mesh (and its DracoPy dependency) are optional for neuclease.
 pytest.importorskip("vol2mesh")
 pytest.importorskip("DracoPy")
+
+from vol2mesh.multires import split_mesh_into_cells
 
 
 @pytest.fixture
@@ -151,7 +152,7 @@ def test_split_mesh_into_cells_straddling_face():
     faces = np.array([[0, 1, 2]], dtype=np.uint32)
     mesh = Mesh(verts_zyx, faces)
 
-    cells = _split_mesh_into_cells(mesh, cell_size_zyx)
+    cells = split_mesh_into_cells(mesh, cell_size_zyx)
 
     # The triangle spans x-cells 0, 1, 2 (y=z=cell 0).
     assert set(cells.keys()) == {(0, 0, 0), (1, 0, 0), (2, 0, 0)}

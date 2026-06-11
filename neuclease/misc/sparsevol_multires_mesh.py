@@ -126,77 +126,6 @@ def _mesh_fragment_from_spec(spec, scale, method, smoothing, preserve_border,
     return (fragment_position_xyz, mesh)
 
 
-def _split_mesh_into_cells(mesh, cell_size_zyx):
-    """
-    Partition a mesh into per-grid-cell fragments.
-
-    Each face is binned to the cell(s) its bounding box overlaps, and each
-    cell's faces are then geometrically trimmed to the cell box.  A face that
-    straddles a cell boundary is therefore cut and appears (trimmed) in every
-    cell it touches, so the partition tiles space with no gaps.  The grid is
-    origin-aligned, with cells of size ``cell_size_zyx``.
-
-    Args:
-        mesh:
-            A vol2mesh ``Mesh`` (ZYX vertices).
-        cell_size_zyx:
-            (3,) cell extents in the mesh's coordinate space, ZYX order.
-
-    Returns:
-        ``{(x, y, z): Mesh}`` keyed by integer grid-cell index, XYZ order.
-    """
-    from vol2mesh import Mesh
-    from vol2mesh import multires as v2m_multires
-
-    v = np.asarray(mesh.vertices_zyx, dtype=np.float64)
-    f = np.asarray(mesh.faces)
-    if len(f) == 0:
-        return {}
-
-    cell_size_zyx = np.asarray(cell_size_zyx, dtype=np.float64)
-    fv = v[f]                                                       # (F, 3, 3) zyx
-    lo = np.floor(fv.min(axis=1) / cell_size_zyx).astype(np.int64)  # (F, 3) cell index
-    hi = np.floor(fv.max(axis=1) / cell_size_zyx).astype(np.int64)
-
-    # Build (cell_index, face_index) pairs. Single-cell faces (the common
-    # case) are assigned in bulk; the few boundary-straddling faces are
-    # enumerated over their (small) cell ranges.
-    straddles = (lo != hi).any(axis=1)
-    cell_rows = [lo[~straddles]]
-    face_rows = [np.flatnonzero(~straddles)]
-    for i in np.flatnonzero(straddles):
-        for cz in range(lo[i, 0], hi[i, 0] + 1):
-            for cy in range(lo[i, 1], hi[i, 1] + 1):
-                for cx in range(lo[i, 2], hi[i, 2] + 1):
-                    cell_rows.append(np.array([[cz, cy, cx]], dtype=np.int64))
-                    face_rows.append(np.array([i]))
-    cells = np.concatenate(cell_rows)                               # (P, 3)
-    face_ids = np.concatenate(face_rows)                            # (P,)
-
-    # Group face indices by cell.
-    order = np.lexsort(cells.T)
-    cells = cells[order]
-    face_ids = face_ids[order]
-    group_starts = np.r_[0,
-                         1 + np.flatnonzero((cells[1:] != cells[:-1]).any(axis=1)),
-                         len(cells)]
-
-    fragments = {}
-    for s, e in zip(group_starts[:-1], group_starts[1:]):
-        cz, cy, cx = (int(c) for c in cells[s])
-        sub_faces = f[face_ids[s:e]]
-        used = np.unique(sub_faces)
-        sub_v = v[used]
-        sub_f = np.searchsorted(used, sub_faces)
-        cell_lo = np.array([cz, cy, cx], dtype=np.float64) * cell_size_zyx
-        tv, tf = v2m_multires.trim_mesh_to_box(sub_v, sub_f, cell_lo, cell_lo + cell_size_zyx)
-        if len(tf) == 0:
-            continue
-        fragments[(cx, cy, cz)] = Mesh(tv, tf)
-
-    return fragments
-
-
 def multires_mesh_from_ranges(
     ranges,
     block_shape,
@@ -359,7 +288,7 @@ def multires_mesh_from_ranges(
     if final_decimation < 1.0 and fragments:
         merged = Mesh.concatenate_meshes(list(fragments.values()), keep_normals=False)
         merged.simplify(final_decimation, preserve_border=True)
-        fragments = _split_mesh_into_cells(merged, cell_size_zyx)
+        fragments = v2m_multires.split_mesh_into_cells(merged, cell_size_zyx)
 
     transform = [voxel_size_nm[0], 0, 0, 0,
                  0, voxel_size_nm[1], 0, 0,

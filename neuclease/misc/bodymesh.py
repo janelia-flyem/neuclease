@@ -103,6 +103,16 @@ BodyMeshParametersSchema = {
             "exclusiveMinimum": 0,
             "default": 200e6
         },
+        "vertex-quantization-bits": {
+            "description":
+                "Multires meshes only: the number of bits used to quantize each vertex\n"
+                "coordinate within a fragment, as required by the neuroglancer multi-resolution\n"
+                "(neuroglancer_multilod_draco) format.  Must be 10 or 16.  Ignored for\n"
+                "single-resolution (ngmesh) body meshes.\n",
+            "type": "integer",
+            "enum": [10, 16],
+            "default": 16
+        },
     }
 }
 
