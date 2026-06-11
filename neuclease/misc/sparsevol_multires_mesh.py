@@ -2,11 +2,18 @@
 Generate a neuroglancer multi-resolution (multi-LOD) Draco mesh for a single
 object directly from a DVID sparse volume.
 
-The mesh is produced one grid block at a time: ``blockwise_masks_from_ranges``
-splits the object's RLEs into block-aligned masks, each mask is meshed
-(marching cubes + optional smoothing/decimation) independently, and the
-resulting per-block meshes become the fragments of a single-LOD multires
-mesh object written via ``vol2mesh.multires``.
+The mesh is produced one grid block at a time: the object's RLEs are split
+into block-aligned per-block range descriptors, and each block is inflated
+to a mask and meshed (marching cubes + optional smoothing/decimation)
+independently, becoming a fragment of a single-LOD multires mesh object
+written via ``vol2mesh.multires``.
+
+Fragment generation can be parallelized over threads or processes via
+``compute_parallel``.  Crucially, the parallel work-items are lightweight
+per-block range descriptors (RLE-sized), not inflated 3D masks: each worker
+inflates its own block's mask and frees it after meshing, so only a
+pool-sized number of masks are ever resident at once (rather than inflating
+the entire object up front).
 
 ``vol2mesh`` is imported lazily inside the functions, since it is not a
 required dependency of neuclease.
@@ -20,9 +27,103 @@ Coordinate conventions
   voxel->nm scale.  ``voxel_size_nm`` is therefore given in XYZ order, to
   match both DVID's ``VoxelSize`` and the XYZ transform.
 """
+from functools import partial
+
 import numpy as np
 
-from neuclease.dvid.rle import blockwise_masks_from_ranges
+from neuclease.util import compute_parallel
+from neuclease.dvid.rle import split_ranges_for_grid, _write_mask_from_ranges
+
+
+def _block_mask_specs(ranges, block_shape, halo):
+    """
+    Split RLE ranges into lightweight, per-block descriptors suitable for
+    distributing to a worker pool *without* inflating any 3D masks here.
+
+    Each descriptor is ``(cell_index_zyx, box_zyx, local_ranges, full_block_shape)``:
+
+    - ``cell_index_zyx``: (3,) integer grid-cell index.
+    - ``box_zyx``: (2, 3) spatial box of the (haloed) block, in the ranges' scale.
+    - ``local_ranges``: the block's RLEs, offset to block-local coordinates and
+      converted to the EXCLUSIVE-X convention expected by
+      ``_write_mask_from_ranges`` (so a worker can inflate the mask cheaply).
+    - ``full_block_shape``: (3,) tuple, the inflated mask shape (block + 2*halo).
+
+    These descriptors are RLE-sized; the (potentially large) 3D masks are
+    inflated later, per block, by :func:`_inflate_block_mask`.
+
+    Note: this mirrors the per-block inflation performed by
+    ``neuclease.dvid.rle.blockwise_masks_from_ranges``; the
+    ``test_block_mask_specs_match_blockwise`` test guards against drift.
+    """
+    block_shape = np.asarray(block_shape)
+    if block_shape.ndim == 0:
+        block_shape = np.array(3 * [int(block_shape)])
+    BZ, BY, BX = (int(x) for x in block_shape)
+    full_block_shape = tuple(int(x) for x in (block_shape + 2 * halo))
+
+    df = split_ranges_for_grid(ranges, block_shape, halo)
+    specs = []
+    for (Bz, By, Bx), block_df in df.groupby(['Bz', 'By', 'Bx'], sort=True):
+        local_ranges = block_df[['z', 'y', 'x1', 'x2']].to_numpy(copy=True)
+        # Offset to block-local coords; the X2 column also gets (X_offset - 1)
+        # subtracted, which converts DVID's inclusive X2 to the exclusive
+        # convention _write_mask_from_ranges expects.
+        local_ranges -= (Bz * BZ - halo, By * BY - halo, Bx * BX - halo, Bx * BX - halo - 1)
+        coords = np.array([Bz, By, Bx], dtype=np.int64)
+        box = np.array([block_shape * coords - halo,
+                        block_shape * (coords + 1) + halo])
+        specs.append((coords, box, local_ranges, full_block_shape))
+    return specs
+
+
+def _inflate_block_mask(local_ranges, full_block_shape):
+    """Inflate a single block's mask from its (exclusive-X) local RLEs."""
+    mask = np.zeros(full_block_shape, dtype=bool)
+    _write_mask_from_ranges(local_ranges, mask)
+    return mask
+
+
+def _mesh_fragment_from_spec(spec, scale, method, smoothing, preserve_border,
+                             decimation, trim, cell_size_zyx):
+    """
+    Worker: inflate one block's mask and turn it into a (trimmed) fragment mesh.
+
+    Returns ``(fragment_position_xyz, Mesh)`` or ``None`` if the block yields
+    no geometry.  Defined at module scope (and importing vol2mesh internally)
+    so it is usable from a process pool.
+    """
+    from vol2mesh import Mesh
+    from vol2mesh import multires as v2m_multires
+
+    cell_index_zyx, box_zyx, local_ranges, full_block_shape = spec
+
+    mask = _inflate_block_mask(local_ranges, full_block_shape)
+    if not mask.any():
+        return None
+
+    # Mesh the block in full-resolution voxel coordinates.
+    scaled_box_zyx = box_zyx * (2 ** scale)
+    mesh = Mesh.from_binary_vol(mask, scaled_box_zyx, method=method)
+
+    if smoothing:
+        mesh.laplacian_smooth(smoothing, preserve_border=preserve_border)
+    if decimation < 1.0:
+        mesh.simplify(decimation)
+    if len(mesh.faces) == 0:
+        return None
+
+    if trim:
+        cell_size_zyx = np.asarray(cell_size_zyx)
+        cell_lo_zyx = cell_index_zyx * cell_size_zyx
+        tv, tf = v2m_multires.trim_mesh_to_box(
+            mesh.vertices_zyx, mesh.faces, cell_lo_zyx, cell_lo_zyx + cell_size_zyx)
+        if len(tf) == 0:
+            return None
+        mesh = Mesh(tv, tf)
+
+    fragment_position_xyz = tuple(int(c) for c in cell_index_zyx[::-1])
+    return (fragment_position_xyz, mesh)
 
 
 def _split_mesh_into_cells(mesh, cell_size_zyx):
@@ -112,6 +213,8 @@ def multires_mesh_from_ranges(
     method='skimage',
     vertex_quantization_bits=16,
     lod_scale_multiplier=1.0,
+    threads=0,
+    processes=0,
     write_info=True,
     progress=True,
 ):
@@ -147,8 +250,7 @@ def multires_mesh_from_ranges(
             Used to convert block coordinates to full-resolution voxels.
         halo:
             Halo (in scale-``scale`` voxels) added around each block before
-            meshing, so blocks overlap.  Passed to
-            ``blockwise_masks_from_ranges``.
+            meshing, so blocks overlap.
         smoothing:
             Number of Laplacian smoothing iterations applied to each block
             mesh (0 to disable).
@@ -187,13 +289,23 @@ def multires_mesh_from_ranges(
             Draco vertex quantization, 10 or 16 (per the neuroglancer spec).
         lod_scale_multiplier:
             ``lod_scale_multiplier`` written into the ``info`` file.
+        threads:
+            If nonzero, generate fragments in a thread pool of this size (via
+            ``compute_parallel``).  Note: per-fragment ``decimation`` is
+            serialized by pyfqmr's global lock, so use ``processes`` (not
+            ``threads``) if you want decimation to run in parallel.
+        processes:
+            If nonzero, generate fragments in a process pool of this size.
+            Best for CPU-bound meshing/decimation.  (Stage-1 work-items are
+            lightweight per-block range descriptors and each worker inflates
+            its own mask, so inter-process payloads and peak memory stay
+            bounded.)  Specify either ``threads`` or ``processes``, not both.
         write_info:
             If True, (re)write the dataset-level ``info`` file.  Set False
             when writing many objects into the same directory and the
             ``info`` file already exists.
         progress:
-            If True, show a tqdm progress bar over the blocks (if tqdm is
-            installed).
+            If True, show a progress bar over the blocks.
 
     Returns:
         The number of fragments actually written (blocks that produced no
@@ -220,53 +332,26 @@ def multires_mesh_from_ranges(
             "overlap and the merged mesh has doubled surfaces)."
         )
 
-    boxes, masks = blockwise_masks_from_ranges(ranges, block_shape, halo)
-
     # Stored-model space is full-resolution voxels; the grid is origin-aligned.
     cell_size_zyx = block_shape * (2 ** scale)
     chunk_shape_xyz = cell_size_zyx[::-1].astype(float)
     grid_origin_xyz = np.zeros(3, dtype=float)
 
-    block_iter = zip(boxes, masks)
-    if progress:
-        try:
-            from tqdm import tqdm
-            block_iter = tqdm(block_iter, total=len(boxes))
-        except ImportError:
-            pass
+    # Stage 1: generate each fragment independently (optionally in parallel),
+    # then trim it to its grid cell so the fragments tile space without overlap.
+    # The work-items are lightweight per-block range descriptors; each worker
+    # inflates its own mask, so masks aren't all materialized at once.
+    specs = _block_mask_specs(ranges, block_shape, halo)
+    mesh_fragment = partial(
+        _mesh_fragment_from_spec,
+        scale=scale, method=method, smoothing=smoothing,
+        preserve_border=preserve_border, decimation=decimation,
+        trim=trim, cell_size_zyx=cell_size_zyx)
 
-    # Stage 1: generate each fragment independently (parallelizable), then
-    # trim it to its grid cell so the fragments tile space without overlap.
-    fragments = {}
-    for box, mask in block_iter:
-        if not mask.any():
-            continue
-
-        # Mesh the block in full-resolution voxel coordinates.
-        scaled_box_zyx = box * (2 ** scale)
-        mesh = Mesh.from_binary_vol(mask, scaled_box_zyx, method=method)
-
-        if smoothing:
-            mesh.laplacian_smooth(smoothing, preserve_border=preserve_border)
-        if decimation < 1.0:
-            mesh.simplify(decimation)
-        if len(mesh.faces) == 0:
-            continue
-
-        # The block's grid-cell index. box[0] == block_shape*coords - halo,
-        # so (box[0] + halo) // block_shape recovers the (ZYX) cell index.
-        cell_index_zyx = (box[0] + halo) // block_shape
-
-        if trim:
-            cell_lo_zyx = cell_index_zyx * cell_size_zyx
-            tv, tf = v2m_multires.trim_mesh_to_box(
-                mesh.vertices_zyx, mesh.faces, cell_lo_zyx, cell_lo_zyx + cell_size_zyx)
-            if len(tf) == 0:
-                continue
-            mesh = Mesh(tv, tf)
-
-        fragment_position_xyz = tuple(int(c) for c in cell_index_zyx[::-1])
-        fragments[fragment_position_xyz] = mesh
+    results = compute_parallel(
+        mesh_fragment, specs, threads=threads, processes=processes,
+        ordered=False, show_progress=progress)
+    fragments = {pos: mesh for pos, mesh in filter(None, results)}
 
     # Stage 2: optional whole-mesh decimation. Merge the trimmed fragments,
     # decimate jointly (preserving cell boundaries so neighbors stay aligned
@@ -319,6 +404,8 @@ def multires_mesh_from_sparsevol(
     method='skimage',
     vertex_quantization_bits=16,
     lod_scale_multiplier=1.0,
+    threads=0,
+    processes=0,
     write_info=True,
     progress=True,
 ):
@@ -346,8 +433,8 @@ def multires_mesh_from_sparsevol(
         supervoxels:
             If True, treat ``body`` as a supervoxel id.
         halo, smoothing, preserve_border, decimation, final_decimation, trim,
-        method, vertex_quantization_bits, lod_scale_multiplier, write_info,
-        progress:
+        method, vertex_quantization_bits, lod_scale_multiplier, threads,
+        processes, write_info, progress:
             Forwarded to :func:`multires_mesh_from_ranges`.
 
     Returns:
@@ -380,6 +467,8 @@ def multires_mesh_from_sparsevol(
         method=method,
         vertex_quantization_bits=vertex_quantization_bits,
         lod_scale_multiplier=lod_scale_multiplier,
+        threads=threads,
+        processes=processes,
         write_info=write_info,
         progress=progress,
     )
