@@ -36,6 +36,7 @@ def multires_mesh_from_ranges(
     smoothing=0,
     preserve_border=True,
     decimation=1.0,
+    trim=True,
     method='skimage',
     vertex_quantization_bits=16,
     lod_scale_multiplier=1.0,
@@ -88,6 +89,12 @@ def multires_mesh_from_ranges(
         decimation:
             Fraction of faces to keep when simplifying each block mesh
             (1.0 to disable).
+        trim:
+            If True, geometrically trim each block mesh to its grid cell
+            (cutting the haloed overhang at the cell planes) before encoding,
+            rather than clipping overhanging vertices onto the cell face.
+            With a wide halo this lets neighboring fragments align closely at
+            their shared boundary.  Requires the ``trimesh`` package.
         method:
             Marching-cubes method passed to ``Mesh.from_binary_vol``.
         vertex_quantization_bits:
@@ -174,6 +181,7 @@ def multires_mesh_from_ranges(
         chunk_shape_xyz,
         grid_origin_xyz,
         vertex_quantization_bits=vertex_quantization_bits,
+        trim=trim,
     )
 
 
@@ -190,6 +198,7 @@ def multires_mesh_from_sparsevol(
     smoothing=0,
     preserve_border=True,
     decimation=1.0,
+    trim=True,
     method='skimage',
     vertex_quantization_bits=16,
     lod_scale_multiplier=1.0,
@@ -219,7 +228,7 @@ def multires_mesh_from_sparsevol(
             Output directory for the multires mesh.
         supervoxels:
             If True, treat ``body`` as a supervoxel id.
-        halo, smoothing, preserve_border, decimation, method,
+        halo, smoothing, preserve_border, decimation, trim, method,
         vertex_quantization_bits, lod_scale_multiplier, write_info, progress:
             Forwarded to :func:`multires_mesh_from_ranges`.
 
@@ -248,6 +257,7 @@ def multires_mesh_from_sparsevol(
         smoothing=smoothing,
         preserve_border=preserve_border,
         decimation=decimation,
+        trim=trim,
         method=method,
         vertex_quantization_bits=vertex_quantization_bits,
         lod_scale_multiplier=lod_scale_multiplier,
