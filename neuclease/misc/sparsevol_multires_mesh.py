@@ -25,6 +25,77 @@ import numpy as np
 from neuclease.dvid.rle import blockwise_masks_from_ranges
 
 
+def _split_mesh_into_cells(mesh, cell_size_zyx):
+    """
+    Partition a mesh into per-grid-cell fragments.
+
+    Each face is binned to the cell(s) its bounding box overlaps, and each
+    cell's faces are then geometrically trimmed to the cell box.  A face that
+    straddles a cell boundary is therefore cut and appears (trimmed) in every
+    cell it touches, so the partition tiles space with no gaps.  The grid is
+    origin-aligned, with cells of size ``cell_size_zyx``.
+
+    Args:
+        mesh:
+            A vol2mesh ``Mesh`` (ZYX vertices).
+        cell_size_zyx:
+            (3,) cell extents in the mesh's coordinate space, ZYX order.
+
+    Returns:
+        ``{(x, y, z): Mesh}`` keyed by integer grid-cell index, XYZ order.
+    """
+    from vol2mesh import Mesh
+    from vol2mesh import multires as v2m_multires
+
+    v = np.asarray(mesh.vertices_zyx, dtype=np.float64)
+    f = np.asarray(mesh.faces)
+    if len(f) == 0:
+        return {}
+
+    cell_size_zyx = np.asarray(cell_size_zyx, dtype=np.float64)
+    fv = v[f]                                                       # (F, 3, 3) zyx
+    lo = np.floor(fv.min(axis=1) / cell_size_zyx).astype(np.int64)  # (F, 3) cell index
+    hi = np.floor(fv.max(axis=1) / cell_size_zyx).astype(np.int64)
+
+    # Build (cell_index, face_index) pairs. Single-cell faces (the common
+    # case) are assigned in bulk; the few boundary-straddling faces are
+    # enumerated over their (small) cell ranges.
+    straddles = (lo != hi).any(axis=1)
+    cell_rows = [lo[~straddles]]
+    face_rows = [np.flatnonzero(~straddles)]
+    for i in np.flatnonzero(straddles):
+        for cz in range(lo[i, 0], hi[i, 0] + 1):
+            for cy in range(lo[i, 1], hi[i, 1] + 1):
+                for cx in range(lo[i, 2], hi[i, 2] + 1):
+                    cell_rows.append(np.array([[cz, cy, cx]], dtype=np.int64))
+                    face_rows.append(np.array([i]))
+    cells = np.concatenate(cell_rows)                               # (P, 3)
+    face_ids = np.concatenate(face_rows)                            # (P,)
+
+    # Group face indices by cell.
+    order = np.lexsort(cells.T)
+    cells = cells[order]
+    face_ids = face_ids[order]
+    group_starts = np.r_[0,
+                         1 + np.flatnonzero((cells[1:] != cells[:-1]).any(axis=1)),
+                         len(cells)]
+
+    fragments = {}
+    for s, e in zip(group_starts[:-1], group_starts[1:]):
+        cz, cy, cx = (int(c) for c in cells[s])
+        sub_faces = f[face_ids[s:e]]
+        used = np.unique(sub_faces)
+        sub_v = v[used]
+        sub_f = np.searchsorted(used, sub_faces)
+        cell_lo = np.array([cz, cy, cx], dtype=np.float64) * cell_size_zyx
+        tv, tf = v2m_multires.trim_mesh_to_box(sub_v, sub_f, cell_lo, cell_lo + cell_size_zyx)
+        if len(tf) == 0:
+            continue
+        fragments[(cx, cy, cz)] = Mesh(tv, tf)
+
+    return fragments
+
+
 def multires_mesh_from_ranges(
     ranges,
     block_shape,
@@ -36,6 +107,7 @@ def multires_mesh_from_ranges(
     smoothing=0,
     preserve_border=True,
     decimation=1.0,
+    final_decimation=1.0,
     trim=True,
     method='skimage',
     vertex_quantization_bits=16,
@@ -87,8 +159,22 @@ def multires_mesh_from_ranges(
             this prevents smoothing from pulling that cut inward and
             distorting the cell-boundary region that gets clipped/quantized.
         decimation:
-            Fraction of faces to keep when simplifying each block mesh
-            (1.0 to disable).
+            Initial, per-fragment decimation: fraction of faces to keep when
+            simplifying each block mesh individually (1.0 to disable).  This
+            is a cheap, parallelizable pre-reduction; it decimates every
+            fragment equally regardless of its complexity.
+        final_decimation:
+            Final, whole-mesh decimation: fraction of faces to keep when
+            decimating all (trimmed) fragments together as one mesh
+            (1.0 to disable).  Because the fragments are merged and decimated
+            jointly, the face budget is allocated across them by geometric
+            complexity -- complex fragments keep more detail, simple ones
+            less -- which is what you want when targeting a total mesh size
+            rather than a per-fragment size.  The decimated mesh is then split
+            back into per-cell fragments.  Requires ``trim=True`` (the merge
+            is only valid once each fragment has been trimmed to its cell).
+            The overall reduction is approximately ``decimation *
+            final_decimation`` of the original face count.
         trim:
             If True, geometrically trim each block mesh to its grid cell
             (cutting the haloed overhang at the cell planes) before encoding,
@@ -126,10 +212,19 @@ def multires_mesh_from_ranges(
         voxel_size_nm = np.array(3 * [float(voxel_size_nm)])
     assert voxel_size_nm.shape == (3,), "voxel_size_nm must be a scalar or a length-3 (XYZ) sequence"
 
+    if final_decimation < 1.0 and not trim:
+        raise ValueError(
+            "final_decimation requires trim=True: the whole-mesh decimation "
+            "pass merges all fragments, which is only valid once each fragment "
+            "has been trimmed to its cell (otherwise the haloed fragments "
+            "overlap and the merged mesh has doubled surfaces)."
+        )
+
     boxes, masks = blockwise_masks_from_ranges(ranges, block_shape, halo)
 
     # Stored-model space is full-resolution voxels; the grid is origin-aligned.
-    chunk_shape_xyz = block_shape[::-1].astype(float) * (2 ** scale)
+    cell_size_zyx = block_shape * (2 ** scale)
+    chunk_shape_xyz = cell_size_zyx[::-1].astype(float)
     grid_origin_xyz = np.zeros(3, dtype=float)
 
     block_iter = zip(boxes, masks)
@@ -140,6 +235,8 @@ def multires_mesh_from_ranges(
         except ImportError:
             pass
 
+    # Stage 1: generate each fragment independently (parallelizable), then
+    # trim it to its grid cell so the fragments tile space without overlap.
     fragments = {}
     for box, mask in block_iter:
         if not mask.any():
@@ -159,8 +256,25 @@ def multires_mesh_from_ranges(
         # The block's grid-cell index. box[0] == block_shape*coords - halo,
         # so (box[0] + halo) // block_shape recovers the (ZYX) cell index.
         cell_index_zyx = (box[0] + halo) // block_shape
+
+        if trim:
+            cell_lo_zyx = cell_index_zyx * cell_size_zyx
+            tv, tf = v2m_multires.trim_mesh_to_box(
+                mesh.vertices_zyx, mesh.faces, cell_lo_zyx, cell_lo_zyx + cell_size_zyx)
+            if len(tf) == 0:
+                continue
+            mesh = Mesh(tv, tf)
+
         fragment_position_xyz = tuple(int(c) for c in cell_index_zyx[::-1])
         fragments[fragment_position_xyz] = mesh
+
+    # Stage 2: optional whole-mesh decimation. Merge the trimmed fragments,
+    # decimate jointly (preserving cell boundaries so neighbors stay aligned
+    # and the result can be re-split), then split back into per-cell fragments.
+    if final_decimation < 1.0 and fragments:
+        merged = Mesh.concatenate_meshes(list(fragments.values()), keep_normals=False)
+        merged.simplify(final_decimation, preserve_border=True)
+        fragments = _split_mesh_into_cells(merged, cell_size_zyx)
 
     transform = [voxel_size_nm[0], 0, 0, 0,
                  0, voxel_size_nm[1], 0, 0,
@@ -174,6 +288,8 @@ def multires_mesh_from_ranges(
             lod_scale_multiplier=lod_scale_multiplier,
         )
 
+    # Fragments are already trimmed to their cells (in stage 1, and again
+    # when split after whole-mesh decimation), so no trimming is needed here.
     return v2m_multires.write_object_mesh(
         output_dir,
         segment_id,
@@ -181,7 +297,7 @@ def multires_mesh_from_ranges(
         chunk_shape_xyz,
         grid_origin_xyz,
         vertex_quantization_bits=vertex_quantization_bits,
-        trim=trim,
+        trim=False,
     )
 
 
@@ -198,6 +314,7 @@ def multires_mesh_from_sparsevol(
     smoothing=0,
     preserve_border=True,
     decimation=1.0,
+    final_decimation=1.0,
     trim=True,
     method='skimage',
     vertex_quantization_bits=16,
@@ -228,8 +345,9 @@ def multires_mesh_from_sparsevol(
             Output directory for the multires mesh.
         supervoxels:
             If True, treat ``body`` as a supervoxel id.
-        halo, smoothing, preserve_border, decimation, trim, method,
-        vertex_quantization_bits, lod_scale_multiplier, write_info, progress:
+        halo, smoothing, preserve_border, decimation, final_decimation, trim,
+        method, vertex_quantization_bits, lod_scale_multiplier, write_info,
+        progress:
             Forwarded to :func:`multires_mesh_from_ranges`.
 
     Returns:
@@ -257,6 +375,7 @@ def multires_mesh_from_sparsevol(
         smoothing=smoothing,
         preserve_border=preserve_border,
         decimation=decimation,
+        final_decimation=final_decimation,
         trim=trim,
         method=method,
         vertex_quantization_bits=vertex_quantization_bits,
