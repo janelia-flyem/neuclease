@@ -1,5 +1,7 @@
+import json
 import logging
 import datetime
+from types import SimpleNamespace
 from contextlib import contextmanager
 from string import Formatter
 from itertools import chain
@@ -14,6 +16,7 @@ from cityhash import CityHash64
 
 from confiddler import validate, flow_style
 from vol2mesh.mesh import Mesh
+from vol2mesh import multires as v2m_multires
 
 from neuclease import PrefixFilter
 from neuclease.util import Timer, compute_parallel
@@ -34,16 +37,25 @@ SV_MESH_SCALE = 2
 SV_MESH_GRID_S0 = 512
 SV_MESH_DECIMATION_S0 = 0.004
 
-# from collections import namedtuple
-# MeshInstances = namedtuple('MeshInstances', 'body_meshes sv_meshes chunk_meshes mesh_info ')
+def mesh_instance_names(seg_instance, multires=False):
+    """
+    The DVID keyvalue instance names used to store meshes for a segmentation.
 
-# def mesh_instances(seg_instance):
-#     return MeshInstances(
-#         f"{seg_instance}_meshes",
-#         f"{seg_instance}_sv_meshes",
-#         f"{seg_instance}_chunk_meshes"
-#         f"{seg_instance}_mesh_info"
-#     )
+    Single-resolution (ngmesh) meshes and multi-resolution
+    (neuroglancer_multilod_draco) meshes are kept in entirely separate
+    instances (distinguished by a '_multires' infix), so the two formats are
+    never mixed in one instance.  The supervoxel instance is single-res only
+    and is shared (no multires variant).
+
+    Returns a SimpleNamespace with attributes: body, info, chunk, sv.
+    """
+    mr = "_multires" if multires else ""
+    return SimpleNamespace(
+        body=f"{seg_instance}{mr}_meshes",
+        info=f"{seg_instance}{mr}_mesh_info",
+        chunk=f"{seg_instance}{mr}_chunk_meshes",
+        sv=f"{seg_instance}_sv_meshes",
+    )
 
 BodyMeshParametersSchema = {
     "type": "object",
@@ -224,26 +236,40 @@ MeshChunkConfigSchema = {
 }
 
 
-def init_mesh_instances(server, uuid, seg_instance, body=True, chunks=True, sv=True):
+def init_mesh_instances(server, uuid, seg_instance, body=True, chunks=True, sv=True, multires=False):
+    """
+    Create the DVID keyvalue instances used to store meshes.
+
+    If multires=True, create the multi-resolution variants (with a
+    '_multires' infix) instead of the single-resolution instances.  The
+    supervoxel instance is single-resolution only and is never created in
+    multires mode.
+
+    Note: the instances that hold mesh *files* (body meshes and chunk meshes)
+    are tagged with {'type': 'meshes'}, which tells DVID to store them in a
+    separate internal database from the main voxel data.  The mesh_info
+    instance holds JSON metadata (not mesh files) and is a plain keyvalue.
+    """
     uuid = resolve_ref(server, uuid, True)
     seg = seg_instance
+    names = mesh_instance_names(seg, multires)
     repo_instances = fetch_repo_instances(server, uuid)
 
-    if body and f"{seg}_meshes" not in repo_instances:
-        logger.info(f"Creating DVID instance: {seg}_meshes")
-        create_instance(server, uuid, f"{seg}_meshes", 'keyvalue', {'type': 'meshes'})
+    if body and names.body not in repo_instances:
+        logger.info(f"Creating DVID instance: {names.body}")
+        create_instance(server, uuid, names.body, 'keyvalue', {'type': 'meshes'})
 
-    if body and f"{seg}_mesh_info" not in repo_instances:
-        logger.info(f"Creating DVID instance: {seg}_mesh_info")
-        create_instance(server, uuid, f"{seg}_mesh_info", 'keyvalue')
+    if body and names.info not in repo_instances:
+        logger.info(f"Creating DVID instance: {names.info}")
+        create_instance(server, uuid, names.info, 'keyvalue')
 
-    if chunks and f"{seg}_chunk_meshes" not in repo_instances:
-        logger.info(f"Creating DVID instance: {seg}_chunk_meshes")
-        create_instance(server, uuid, f"{seg}_chunk_meshes", 'keyvalue', {'type': 'meshes'})
+    if chunks and names.chunk not in repo_instances:
+        logger.info(f"Creating DVID instance: {names.chunk}")
+        create_instance(server, uuid, names.chunk, 'keyvalue', {'type': 'meshes'})
 
-    if sv and f"{seg}_sv_meshes" not in repo_instances:
-        logger.info(f"Creating DVID instance: {seg}_sv_meshes")
-        create_tarsupervoxel_instance(server, uuid, f"{seg}_sv_meshes", seg, 'drc', {'type': 'meshes'})
+    if sv and not multires and names.sv not in repo_instances:
+        logger.info(f"Creating DVID instance: {names.sv}")
+        create_tarsupervoxel_instance(server, uuid, names.sv, seg, 'drc', {'type': 'meshes'})
 
 
 class DummyResourceMgr:
@@ -276,6 +302,7 @@ def update_body_mesh(
     chunk_config,
     force=False,
     processes=0,
+    multires=False,
     *,
     resource_mgr=None
 ):
@@ -288,10 +315,15 @@ def update_body_mesh(
             If a string with value 'dask-worker-client', then it is assumed that you called
             this function from within a dask worker, and chunk mesh generation will be
             submitted to the dask cluster.
+        multires:
+            If True, generate/store a multi-resolution (neuroglancer_multilod_draco)
+            body mesh from draco-encoded chunk fragments, using the '_multires' DVID
+            instances.  Only the chunk-based source-method is supported in this mode.
     """
     seg = seg_instance
     uuid = resolve_ref(server, uuid, True)
     validate(body_mesh_config, BodyMeshParametersSchema, inject_defaults=True)
+    names = mesh_instance_names(seg, multires)
 
     try:
         with resource_mgr.access_context(server, True, 1, 0):
@@ -301,13 +333,13 @@ def update_body_mesh(
         # DVID only returns 404 if we are looking at a valid keyvalue
         # instance and the key isn't present.
         if ex.response.status_code == 404:
-            delete_body_mesh(server, uuid, seg, body)
+            delete_body_mesh(server, uuid, seg, body, multires=multires)
             return
         raise
 
     requested_method = body_mesh_config['source-method']
     try:
-        mesh_info = fetch_key(server, uuid, f"{seg}_mesh_info", body, as_json=True)
+        mesh_info = fetch_key(server, uuid, names.info, body, as_json=True)
         needs_update = (lastmod > mesh_info['lastmod'] or mesh_info['method'] != requested_method)
     except HTTPError as ex:
         needs_update = True
@@ -318,6 +350,8 @@ def update_body_mesh(
         return
 
     if requested_method == 'concatenated-supervoxels':
+        if multires:
+            raise RuntimeError("Multires body meshes can only be assembled from chunks, not supervoxels.")
         update_body_mesh_from_supervoxels(server, uuid, seg, body, body_mesh_config, resource_mgr=resource_mgr)
         return
 
@@ -337,18 +371,27 @@ def update_body_mesh(
     if quality not in available_qualities:
         raise RuntimeError(f"Body mesh config requests a chunk quality which isn't listed in the chunk config: {quality}")
 
-    update_body_mesh_from_chunks(server, uuid, seg, body, body_mesh_config, chunk_config, processes=processes, resource_mgr=resource_mgr)
+    update_body_mesh_from_chunks(server, uuid, seg, body, body_mesh_config, chunk_config, processes=processes, multires=multires, resource_mgr=resource_mgr)
 
 
 @PrefixFilter.with_context("Body {body}")
-def delete_body_mesh(server, uuid, seg_instance, body):
+def delete_body_mesh(server, uuid, seg_instance, body, multires=False):
     seg = seg_instance
-    if fetch_key(server, uuid, f"{seg}_meshes", f"{body}.ngmesh", check_head=True):
-        logger.info(f"Deleting {body}.ngmesh")
-        delete_key(server, uuid, f"{seg}_meshes", f"{body}.ngmesh")
+    names = mesh_instance_names(seg, multires)
+
+    if multires:
+        # A multires body mesh is a data file ('{body}') plus its manifest ('{body}.index').
+        for key in (f"{body}", f"{body}.index"):
+            if fetch_key(server, uuid, names.body, key, check_head=True):
+                logger.info(f"Deleting {key}")
+                delete_key(server, uuid, names.body, key)
+    else:
+        if fetch_key(server, uuid, names.body, f"{body}.ngmesh", check_head=True):
+            logger.info(f"Deleting {body}.ngmesh")
+            delete_key(server, uuid, names.body, f"{body}.ngmesh")
 
     try:
-        mesh_info = fetch_key(server, uuid, f"{seg}_mesh_info", body, as_json=True)
+        mesh_info = fetch_key(server, uuid, names.info, body, as_json=True)
         if mesh_info['method'] == 'deleted':
             return
     except HTTPError:
@@ -360,7 +403,7 @@ def delete_body_mesh(server, uuid, seg_instance, body):
         "mesh-timestamp": str(datetime.datetime.now(ZoneInfo("US/Eastern"))),
         "method": "deleted",
     }
-    post_key(server, uuid, f"{seg}_mesh_info", body, json=mesh_info)
+    post_key(server, uuid, names.info, body, json=mesh_info)
 
 
 @DummyResourceMgr.overwrite_none_kwarg
@@ -499,13 +542,13 @@ def update_body_mesh_from_supervoxels(server, uuid, seg_instance, body, body_mes
     post_key(server, uuid, f"{seg}_mesh_info", body, json=mesh_info)
 
 
-def fetch_body_mesh_info(server, uuid, seg_instance, bodies, format='pandas', *, session=None):
+def fetch_body_mesh_info(server, uuid, seg_instance, bodies, format='pandas', *, multires=False, session=None):
     assert format in ('json', 'pandas')
-    seg = seg_instance
+    names = mesh_instance_names(seg_instance, multires)
     if not hasattr(bodies, '__len__'):
         bodies = [bodies]
     bodies = [str(b) for b in bodies]
-    kv = fetch_keyvalues(server, uuid, f"{seg}_mesh_info", bodies, as_json=True, session=session)
+    kv = fetch_keyvalues(server, uuid, names.info, bodies, as_json=True, session=session)
     if format == 'json':
         return kv
     return pd.DataFrame(list(filter(None, kv.values()))).set_index('body')
@@ -552,6 +595,7 @@ def update_body_mesh_from_chunks(
     body_mesh_config,
     chunk_config,
     processes=0,
+    multires=False,
     resource_mgr=None
 ):
     validate(chunk_config, MeshChunkConfigSchema, inject_defaults=True)
@@ -560,7 +604,8 @@ def update_body_mesh_from_chunks(
 
     seg = seg_instance
     uuid = resolve_ref(server, uuid, True)
-    chunk_df = _chunk_table(server, uuid, seg_instance, body, chunk_config, resource_mgr)
+    names = mesh_instance_names(seg, multires)
+    chunk_df = _chunk_table(server, uuid, seg_instance, body, chunk_config, resource_mgr, multires=multires)
     config_name = chunk_config['config-name']
 
     quality_names = {qc['name'] for qc in chunk_config['quality-configs']}
@@ -569,26 +614,44 @@ def update_body_mesh_from_chunks(
             # TODO: What, if anything, will I do with the other chunk qualities?
             continue
 
-        mesh_bytes, mesh_info = _generate_body_mesh_from_chunks(
-            server, uuid, seg_instance,
-            body,
-            chunk_df,
-            body_mesh_config,
-            chunk_config,
-            quality,
-            processes,
-            resource_mgr
-        )
+        if multires:
+            data_bytes, index_bytes, info_json, mesh_info = _generate_multires_body_mesh_from_chunks(
+                server, uuid, seg_instance,
+                body, chunk_df, body_mesh_config, chunk_config, quality,
+                processes, resource_mgr
+            )
 
-        # FIXME... had to hard-code this because dask workers didn't have the configured dvid timeout.
-        set_default_dvid_session_timeout(600.0, 600.0)
+            # FIXME... had to hard-code this because dask workers didn't have the configured dvid timeout.
+            set_default_dvid_session_timeout(600.0, 600.0)
 
-        with Timer(f"Storing body mesh: {body}.ngmesh", logger):
-            post_key(server, uuid, f"{seg}_meshes", f"{body}.ngmesh", mesh_bytes)
-            post_key(server, uuid, f"{seg}_mesh_info", body, json=mesh_info)
+            with Timer(f"Storing multires body mesh: {body}", logger):
+                # The 'info' key is dataset-wide; posting it idempotently keeps
+                # the instance self-describing for neuroglancer (no backend changes).
+                post_key(server, uuid, names.body, "info", json=info_json)
+                post_key(server, uuid, names.body, f"{body}", data_bytes)
+                post_key(server, uuid, names.body, f"{body}.index", index_bytes)
+                post_key(server, uuid, names.info, body, json=mesh_info)
+        else:
+            mesh_bytes, mesh_info = _generate_body_mesh_from_chunks(
+                server, uuid, seg_instance,
+                body,
+                chunk_df,
+                body_mesh_config,
+                chunk_config,
+                quality,
+                processes,
+                resource_mgr
+            )
+
+            # FIXME... had to hard-code this because dask workers didn't have the configured dvid timeout.
+            set_default_dvid_session_timeout(600.0, 600.0)
+
+            with Timer(f"Storing body mesh: {body}.ngmesh", logger):
+                post_key(server, uuid, names.body, f"{body}.ngmesh", mesh_bytes)
+                post_key(server, uuid, names.info, body, json=mesh_info)
 
 
-def _chunk_table(server, uuid, seg_instance, body, chunk_config, resource_mgr, enforce_block_hash_match=True):
+def _chunk_table(server, uuid, seg_instance, body, chunk_config, resource_mgr, enforce_block_hash_match=True, multires=False):
     """
     Return a table with a row for each chunk in the given body.
     For chunks with a stored mesh in DVID, their properties are included as columns.
@@ -648,7 +711,7 @@ def _chunk_table(server, uuid, seg_instance, body, chunk_config, resource_mgr, e
         chunk_df.loc[chunk_df['surface_mutid'] == 0, 'surface_mutid'] = base_mutid
 
     # Fetch all chunk mesh keys this body has
-    key_df = fetch_stored_chunk_keys(server, uuid, seg_instance, chunk_config['config-name'], body)
+    key_df = fetch_stored_chunk_keys(server, uuid, seg_instance, chunk_config['config-name'], body, multires=multires)
 
     # Drop all but the most recent key for each chunk
     key_df = key_df.sort_values('mesh_mutid').drop_duplicates([*'xyz'], keep='last')
@@ -663,7 +726,7 @@ def _chunk_table(server, uuid, seg_instance, body, chunk_config, resource_mgr, e
     return chunk_df
 
 
-def fetch_stored_chunk_keys(server, uuid, seg_instance, config_name=None, body=None):
+def fetch_stored_chunk_keys(server, uuid, seg_instance, config_name=None, body=None, multires=False):
     """
     Fetch the list of all mesh chunk keys in the database for the given segmentation,
     optionally limited to particular chunk configuration prefix, or further limited
@@ -676,8 +739,11 @@ def fetch_stored_chunk_keys(server, uuid, seg_instance, config_name=None, body=N
         DataFrame
     """
     seg = seg_instance
-    if seg.endswith('_chunk_meshes'):
-        seg = seg[:-len('_chunk_meshes')]
+    for suffix in ('_multires_chunk_meshes', '_chunk_meshes'):
+        if seg.endswith(suffix):
+            seg = seg[:-len(suffix)]
+            break
+    chunk_instance = mesh_instance_names(seg, multires).chunk
 
     assert config_name or not body, \
         "Can't fetch keys for a specific body unless you also provide the config_name."
@@ -690,7 +756,7 @@ def fetch_stored_chunk_keys(server, uuid, seg_instance, config_name=None, body=N
 
     key_cols = [x[1] for x in Formatter().parse(CHUNK_KEY_FMT)]
     assert key_cols == ['config_name', 'body', 'chunk_id', 'mesh_mutid', 'mesh_block_hash', 'quality']
-    keys = fetch_keyrange(server, uuid, f"{seg}_chunk_meshes", f"{prefix} ", f"{prefix}~")
+    keys = fetch_keyrange(server, uuid, chunk_instance, f"{prefix} ", f"{prefix}~")
     if len(keys) == 0:
         key_df = pd.DataFrame([], columns=key_cols)
     else:
@@ -795,6 +861,170 @@ def _generate_body_mesh_from_chunks(
     return mesh_bytes, mesh_info
 
 
+def _assemble_multires_object(frag_bytes_by_cell, chunk_shape_s0_xyz, voxel_size_xyz,
+                              chunk_decimation_s0, body_mesh_config):
+    """
+    Assemble a multi-resolution body mesh object from per-cell Draco fragments.
+
+    Pure function (no DVID I/O), so it can be unit-tested directly.
+
+    The fragments are already cell-quantized, cell-trimmed multires fragments
+    (as produced by mesh_for_chunk in multires mode), expressed in
+    full-resolution voxel "stored model" coordinates with a grid whose cell
+    size is ``chunk_shape_s0_xyz``.
+
+    If no body-level smoothing or decimation is needed, the cached fragment
+    bytes are reused verbatim (fast path).  Otherwise the fragments are
+    decoded, concatenated, smoothed/decimated as a single mesh (with cell
+    boundaries preserved so neighbors stay aligned and the result can be
+    re-split), re-split per cell, and re-encoded.
+
+    Args:
+        frag_bytes_by_cell:
+            ``{(x, y, z): draco_bytes}`` keyed by integer grid-cell index.
+        chunk_shape_s0_xyz:
+            (3,) cell extents in full-res voxels, XYZ order.
+        voxel_size_xyz:
+            (3,) voxel size in nm, XYZ order; written into the info transform.
+        chunk_decimation_s0:
+            The per-chunk ``decimation-s0`` that was already applied, used by
+            select_body_decimation() to decide the remaining body decimation.
+        body_mesh_config:
+            The validated body mesh config (provides smoothing,
+            small/large-body decimation thresholds, and vertex-quantization-bits).
+
+    Returns:
+        ``(data_bytes, index_bytes, info_json, stats)``.
+    """
+    bits = body_mesh_config['vertex-quantization-bits']
+    chunk_shape_s0_xyz = np.asarray(chunk_shape_s0_xyz, dtype=float)
+    grid_origin = [0, 0, 0]
+
+    # Decode every fragment (needed to count vertices and, if requested, to
+    # decimate as a single mesh).
+    decoded = {}
+    for cell, b in frag_bytes_by_cell.items():
+        if not b:
+            continue
+        v_xyz, faces = v2m_multires.decode_fragment(
+            b, cell, chunk_shape_s0_xyz, grid_origin, vertex_quantization_bits=bits)
+        decoded[cell] = (v_xyz, faces)
+
+    orig_vertices = sum(len(v) for v, _ in decoded.values())
+    target_decimation_s0, decimation = select_body_decimation(
+        chunk_decimation_s0, orig_vertices, body_mesh_config)
+    smoothing = body_mesh_config['smoothing']
+
+    if smoothing == 0 and decimation >= 1.0:
+        # Fast path: the cached fragments are already final -- reuse verbatim.
+        fragments = {cell: b for cell, b in frag_bytes_by_cell.items() if b}
+        applied_decimation = 1.0
+        final_vertices = orig_vertices
+    else:
+        meshes = [Mesh(v[:, ::-1], faces) for (v, faces) in decoded.values()]
+        body_mesh = Mesh.concatenate_meshes(meshes, keep_normals=False)
+        if smoothing:
+            body_mesh.laplacian_smooth(smoothing, preserve_border=True)
+        if decimation < 1.0:
+            body_mesh.simplify(decimation, preserve_border=True)
+        fragments = v2m_multires.split_mesh_into_cells(body_mesh, chunk_shape_s0_xyz[::-1])
+        applied_decimation = decimation
+        final_vertices = len(body_mesh.vertices_zyx)
+
+    data_bytes, index_bytes, num_fragments = v2m_multires.encode_object_mesh(
+        fragments, chunk_shape_s0_xyz, grid_origin, vertex_quantization_bits=bits)
+
+    transform = [voxel_size_xyz[0], 0, 0, 0,
+                 0, voxel_size_xyz[1], 0, 0,
+                 0, 0, voxel_size_xyz[2], 0]
+    info_json = v2m_multires.build_info(vertex_quantization_bits=bits, transform=transform)
+
+    stats = {
+        'orig_vertices': orig_vertices,
+        'target_decimation_s0': target_decimation_s0,
+        'applied_decimation': applied_decimation,
+        'final_vertices': final_vertices,
+        'num_fragments': num_fragments,
+    }
+    return data_bytes, index_bytes, info_json, stats
+
+
+def _generate_multires_body_mesh_from_chunks(
+    server, uuid, seg_instance, body, chunk_df, body_mesh_config,
+    chunk_config, quality, processes, resource_mgr
+):
+    seg = seg_instance
+    names = mesh_instance_names(seg, multires=True)
+    bits = body_mesh_config['vertex-quantization-bits']
+
+    with resource_mgr.access_context(server, True, 1, 0):
+        lastmod = fetch_lastmod(server, uuid, seg, body)['mutation id']
+
+    quality_config = {qc['name']: qc for qc in chunk_config['quality-configs']}[quality]
+
+    # Select chunks which are out-of-date or not of the desired quality.
+    missing = chunk_df.eval('mesh_mutid < surface_mutid or quality != @quality')
+    missing_chunk_df = chunk_df.loc[missing]
+    stored_chunk_df = chunk_df.loc[~missing]
+
+    new_fragment_bytes = meshes_for_chunks(
+        server, uuid, seg, body, chunk_config, quality, True,
+        missing_chunk_df[[*'zyx', 'surface_mutid', 'block_hash']],
+        processes, resource_mgr, multires=True, vertex_quantization_bits=bits)
+
+    with (
+        Timer(f"Fetching {len(stored_chunk_df)} stored chunks", logger),
+        resource_mgr.access_context(server, True, 1, 0)
+    ):
+        stored_bytes = fetch_keyvalues(server, uuid, names.chunk, stored_chunk_df['key'].values, batch_size=10)
+
+    chunk_shape_s0_xyz = np.asarray(chunk_config['chunk-shape-s0'], dtype=float)
+
+    def cell_xyz(x, y, z):
+        return (int(x // chunk_shape_s0_xyz[0]),
+                int(y // chunk_shape_s0_xyz[1]),
+                int(z // chunk_shape_s0_xyz[2]))
+
+    # Both new and stored fragments are keyed by grid-cell index. (New and
+    # stored use the same cell formula, so they remain mutually consistent.)
+    frag_bytes_by_cell = {}
+    for (z, y, x), b in zip(missing_chunk_df[[*'zyx']].values, new_fragment_bytes):
+        if b:
+            frag_bytes_by_cell[cell_xyz(x, y, z)] = b
+    for (z, y, x), key in zip(stored_chunk_df[[*'zyx']].values, stored_chunk_df['key'].values):
+        b = stored_bytes.get(key)
+        if b:
+            frag_bytes_by_cell[cell_xyz(x, y, z)] = b
+
+    # stored-model space is full-res voxels, so the transform carries voxel->nm.
+    voxel_size_xyz = np.asarray(fetch_resolution_zyx(server, uuid, seg))[::-1]
+
+    data_bytes, index_bytes, info_json, stats = _assemble_multires_object(
+        frag_bytes_by_cell, chunk_shape_s0_xyz, voxel_size_xyz,
+        quality_config['decimation-s0'], body_mesh_config)
+
+    config_name = chunk_config['config-name']
+    mesh_info = {
+        "body": int(body),
+        "uuid": uuid,
+        "lastmod": lastmod,
+        "method": f"concatenated-chunks-{config_name}-{quality}",
+        "format": "neuroglancer_multilod_draco",
+        "mesh-timestamp": str(datetime.datetime.now(ZoneInfo("US/Eastern"))),
+        "data-bytes": len(data_bytes),
+        "index-bytes": len(index_bytes),
+        "chunk-quality": quality,
+        "chunk-count": len(chunk_df),
+        "fragment-count": stats['num_fragments'],
+        "chunk-vertex-total": stats['orig_vertices'],
+        "target-body-decimation-s0": stats['target_decimation_s0'],
+        "applied-body-decimation": stats['applied_decimation'],
+        "final-body-vertex-count": stats['final_vertices'],
+        "vertex-quantization-bits": bits,
+    }
+    return data_bytes, index_bytes, info_json, mesh_info
+
+
 def meshes_for_chunks(
     server,
     uuid,
@@ -805,9 +1035,12 @@ def meshes_for_chunks(
     store,
     missing_chunk_df,
     processes,
-    resource_mgr
+    resource_mgr,
+    multires=False,
+    vertex_quantization_bits=16,
 ):
-    fn = partial(mesh_for_chunk, server, uuid, seg_instance, body, chunk_config, quality, store, resource_mgr)
+    fn = partial(mesh_for_chunk, server, uuid, seg_instance, body, chunk_config,
+                 quality, store, resource_mgr, multires, vertex_quantization_bits)
     chunk_specs = missing_chunk_df[[*'zyx', 'surface_mutid', 'block_hash']].values.tolist()
 
     if processes != 'dask-worker-client':
@@ -836,12 +1069,19 @@ def mesh_for_chunk(
     quality,
     store,
     resource_mgr,
+    multires,
+    vertex_quantization_bits,
     chunk_spec
 ):
     """
     chunk_spec is a tuple of (*chunk_zyx, surface_mutid, block_hash)
+
+    Returns the chunk mesh: a vol2mesh Mesh for single-resolution, or (for
+    multires) the cell-quantized Draco fragment bytes that are also stored
+    (an empty bytestring if the chunk produced no geometry).
     """
     seg = seg_instance
+    names = mesh_instance_names(seg, multires)
     *chunk_zyx, surface_mutid, block_hash = chunk_spec
     chunk_zyx = np.asarray(chunk_zyx)
     _cfg = [
@@ -894,6 +1134,23 @@ def mesh_for_chunk(
 
     mesh.laplacian_smooth(smoothing)
     mesh.simplify(decimation)
+
+    if multires:
+        # Encode the chunk as its final, cell-quantized multires fragment:
+        # trim to the grid cell and Draco-encode integer cell-relative
+        # positions.  The cached value IS a final body-mesh fragment, so
+        # assembly can reuse it verbatim when no further body decimation is
+        # needed.  The stored-model space is full-resolution voxels (the
+        # mesh's own coordinates here), so the cell grid is chunk-shape-s0.
+        chunk_shape_s0_xyz = np.asarray(chunk_config['chunk-shape-s0'], dtype=float)
+        fragment_position_xyz = tuple(int(c) for c in (chunk_zyx[::-1] // chunk_shape_s0_xyz))
+        draco_bytes = v2m_multires.encode_fragment(
+            mesh, fragment_position_xyz, chunk_shape_s0_xyz, [0, 0, 0],
+            vertex_quantization_bits=vertex_quantization_bits, trim=True)
+        chunk_value = draco_bytes if draco_bytes is not None else b''
+    else:
+        chunk_value = mesh.serialize(fmt='ngmesh')
+
     if store:
         key = CHUNK_KEY_FMT.format(
             config_name=chunk_config['config-name'],
@@ -904,8 +1161,9 @@ def mesh_for_chunk(
             quality=quality,
         )
         with resource_mgr.access_context(server, False, 1, 0):
-            post_key(server, uuid, f"{seg}_chunk_meshes", key, mesh.serialize(fmt='ngmesh'))
-    return mesh
+            post_key(server, uuid, names.chunk, key, chunk_value)
+
+    return chunk_value if multires else mesh
 
 
 def make_chunk_ids(df):
@@ -924,8 +1182,9 @@ def parse_chunk_ids(chunk_ids):
     return df[[*'zyx']]
 
 
-def fetch_all_body_mesh_info(server, uuid, seg_instance, *, session=None):
-    kv = fetch_keyrangevalues(server, uuid, f'{seg_instance}_mesh_info', as_json=True, session=session)
+def fetch_all_body_mesh_info(server, uuid, seg_instance, *, multires=False, session=None):
+    names = mesh_instance_names(seg_instance, multires)
+    kv = fetch_keyrangevalues(server, uuid, names.info, as_json=True, session=session)
     info_df = pd.DataFrame(kv.values())
     return info_df
 
