@@ -125,6 +125,27 @@ BodyMeshParametersSchema = {
             "enum": [10, 16],
             "default": 16
         },
+        "num-lods": {
+            "description":
+                "Multires meshes only: how many levels of detail to emit.  LOD 0 is the\n"
+                "finest (assembled from the chunk fragments); each coarser LOD is derived\n"
+                "by decimating the assembled mesh further and re-partitioning onto a grid\n"
+                "with cells twice as large per level.  1 means a single-LOD multires mesh.\n",
+            "type": "integer",
+            "minimum": 1,
+            "default": 1
+        },
+        "lod-decimation-factor": {
+            "description":
+                "Multires meshes only: the fraction of faces to keep at each successive\n"
+                "(coarser) LOD relative to the previous one.  Each coarser LOD's cells are\n"
+                "8x the volume, so ~0.25 keeps roughly constant on-screen vertex density.\n"
+                "Only used when num-lods > 1.\n",
+            "type": "number",
+            "exclusiveMinimum": 0.0,
+            "maximum": 1.0,
+            "default": 0.25
+        },
     }
 }
 
@@ -873,17 +894,18 @@ def _assemble_multires_object(frag_bytes_by_cell, chunk_shape_s0_xyz, voxel_size
     full-resolution voxel "stored model" coordinates with a grid whose cell
     size is ``chunk_shape_s0_xyz``.
 
-    If no body-level smoothing or decimation is needed, the cached fragment
-    bytes are reused verbatim (fast path).  Otherwise the fragments are
-    decoded, concatenated, smoothed/decimated as a single mesh (with cell
-    boundaries preserved so neighbors stay aligned and the result can be
-    re-split), re-split per cell, and re-encoded.
+    LOD 0 is assembled from the (chunk) fragments.  If no body-level smoothing
+    or decimation is needed, the cached LOD-0 fragment bytes are reused verbatim
+    (fast path).  Coarser LODs (num-lods > 1) are derived by decimating the
+    assembled mesh progressively and re-partitioning onto the LOD's 2x2x2 grid.
+    Decimation/smoothing preserve cell boundaries so neighbors stay aligned and
+    the mesh can be re-split.
 
     Args:
         frag_bytes_by_cell:
             ``{(x, y, z): draco_bytes}`` keyed by integer grid-cell index.
         chunk_shape_s0_xyz:
-            (3,) cell extents in full-res voxels, XYZ order.
+            (3,) LOD-0 cell extents in full-res voxels, XYZ order.
         voxel_size_xyz:
             (3,) voxel size in nm, XYZ order; written into the info transform.
         chunk_decimation_s0:
@@ -891,12 +913,15 @@ def _assemble_multires_object(frag_bytes_by_cell, chunk_shape_s0_xyz, voxel_size
             select_body_decimation() to decide the remaining body decimation.
         body_mesh_config:
             The validated body mesh config (provides smoothing,
-            small/large-body decimation thresholds, and vertex-quantization-bits).
+            small/large-body decimation thresholds, vertex-quantization-bits,
+            num-lods, lod-decimation-factor).
 
     Returns:
         ``(data_bytes, index_bytes, info_json, stats)``.
     """
     bits = body_mesh_config['vertex-quantization-bits']
+    num_lods = body_mesh_config['num-lods']
+    lod_factor = body_mesh_config['lod-decimation-factor']
     chunk_shape_s0_xyz = np.asarray(chunk_shape_s0_xyz, dtype=float)
     grid_origin = [0, 0, 0]
 
@@ -914,10 +939,12 @@ def _assemble_multires_object(frag_bytes_by_cell, chunk_shape_s0_xyz, voxel_size
     target_decimation_s0, decimation = select_body_decimation(
         chunk_decimation_s0, orig_vertices, body_mesh_config)
     smoothing = body_mesh_config['smoothing']
+    body_ops = bool(smoothing) or (decimation < 1.0)
 
-    if smoothing == 0 and decimation >= 1.0:
-        # Fast path: the cached fragments are already final -- reuse verbatim.
-        fragments = {cell: b for cell, b in frag_bytes_by_cell.items() if b}
+    fragments_by_lod = {}
+    if num_lods == 1 and not body_ops:
+        # Fast path: the cached LOD-0 fragments are already final -- reuse verbatim.
+        fragments_by_lod[0] = {cell: b for cell, b in frag_bytes_by_cell.items() if b}
         applied_decimation = 1.0
         final_vertices = orig_vertices
     else:
@@ -927,12 +954,25 @@ def _assemble_multires_object(frag_bytes_by_cell, chunk_shape_s0_xyz, voxel_size
             body_mesh.laplacian_smooth(smoothing, preserve_border=True)
         if decimation < 1.0:
             body_mesh.simplify(decimation, preserve_border=True)
-        fragments = v2m_multires.split_mesh_into_cells(body_mesh, chunk_shape_s0_xyz[::-1])
         applied_decimation = decimation
         final_vertices = len(body_mesh.vertices_zyx)
 
-    data_bytes, index_bytes, num_fragments = v2m_multires.encode_object_mesh(
-        fragments, chunk_shape_s0_xyz, grid_origin, vertex_quantization_bits=bits)
+        # LOD 0: reuse cached bytes if we didn't modify the geometry, else split
+        # the assembled mesh.
+        if not body_ops:
+            fragments_by_lod[0] = {cell: b for cell, b in frag_bytes_by_cell.items() if b}
+        else:
+            fragments_by_lod[0] = v2m_multires.split_mesh_for_lod(body_mesh, chunk_shape_s0_xyz, 0)
+
+        # Coarser LODs: progressively decimate and re-partition.
+        current = body_mesh
+        for lod in range(1, num_lods):
+            current = Mesh(current.vertices_zyx.copy(), current.faces.copy())
+            current.simplify(lod_factor, preserve_border=True)
+            fragments_by_lod[lod] = v2m_multires.split_mesh_for_lod(current, chunk_shape_s0_xyz, lod)
+
+    data_bytes, index_bytes, num_fragments_per_lod = v2m_multires.encode_multilod_object(
+        fragments_by_lod, chunk_shape_s0_xyz, grid_origin, vertex_quantization_bits=bits)
 
     transform = [voxel_size_xyz[0], 0, 0, 0,
                  0, voxel_size_xyz[1], 0, 0,
@@ -944,7 +984,9 @@ def _assemble_multires_object(frag_bytes_by_cell, chunk_shape_s0_xyz, voxel_size
         'target_decimation_s0': target_decimation_s0,
         'applied_decimation': applied_decimation,
         'final_vertices': final_vertices,
-        'num_fragments': num_fragments,
+        'num_lods': num_lods,
+        'num_fragments_per_lod': num_fragments_per_lod,
+        'num_fragments': int(sum(num_fragments_per_lod)),
     }
     return data_bytes, index_bytes, info_json, stats
 
@@ -1015,7 +1057,9 @@ def _generate_multires_body_mesh_from_chunks(
         "index-bytes": len(index_bytes),
         "chunk-quality": quality,
         "chunk-count": len(chunk_df),
+        "num-lods": stats['num_lods'],
         "fragment-count": stats['num_fragments'],
+        "fragment-count-per-lod": stats['num_fragments_per_lod'],
         "chunk-vertex-total": stats['orig_vertices'],
         "target-body-decimation-s0": stats['target_decimation_s0'],
         "applied-body-decimation": stats['applied_decimation'],

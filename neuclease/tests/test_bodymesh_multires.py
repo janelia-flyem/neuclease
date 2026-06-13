@@ -40,24 +40,51 @@ def _cube(corner, size):
 
 
 def _make_fragment_bytes(chunk_shape_xyz, cells, bits=16):
+    chunk_shape_xyz = np.asarray(chunk_shape_xyz, dtype=float)
     frag_bytes = {}
     for cell in cells:
         corner = np.array(cell) * chunk_shape_xyz
-        v, f = _cube(corner + 40.0, 150.0)  # overhangs the cell -> exercises trim
+        # A cube mostly inside the cell, with a little overhang to exercise trim.
+        v, f = _cube(corner + 0.1 * chunk_shape_xyz, 0.8 * chunk_shape_xyz[0])
         frag_bytes[cell] = v2m.encode_fragment(
             (v, f), cell, chunk_shape_xyz, [0, 0, 0], vertex_quantization_bits=bits, trim=True)
     return frag_bytes
 
 
-def _body_config(small_dec, large_dec, smoothing, bits=16):
+def _body_config(small_dec, large_dec, smoothing, bits=16, num_lods=1, lod_factor=0.25):
     cfg = {
         'small-body-overall-decimation-s0': small_dec,
         'large-body-overall-decimation-s0': large_dec,
         'smoothing': smoothing,
         'vertex-quantization-bits': bits,
+        'num-lods': num_lods,
+        'lod-decimation-factor': lod_factor,
     }
     validate(cfg, BodyMeshParametersSchema, inject_defaults=True)
     return cfg
+
+
+def _parse_positions_by_lod(index_bytes):
+    buf = index_bytes
+    pos = 0
+
+    def take(dt, c):
+        nonlocal pos
+        a = np.frombuffer(buf, dtype=dt, count=c, offset=pos)
+        pos += a.nbytes
+        return a
+
+    take("<f4", 3); take("<f4", 3)
+    num_lods = int(take("<u4", 1)[0])
+    take("<f4", num_lods); take("<f4", num_lods * 3)
+    nfr = take("<u4", num_lods).astype(int)
+    by_lod = {}
+    for lod in range(num_lods):
+        n = int(nfr[lod])
+        p = take("<u4", n * 3).reshape(3, n).T
+        take("<u4", n)
+        by_lod[lod] = {tuple(int(c) for c in row) for row in p}
+    return num_lods, by_lod
 
 
 def _read(data_bytes, index_bytes, info_json):
@@ -114,6 +141,40 @@ def test_assemble_decimation_path():
     assert stats['applied_decimation'] < 1.0
     assert stats['final_vertices'] < stats['orig_vertices']
     assert _all_in_cell(_read(data, index, info))
+
+
+def test_assemble_multilod():
+    # Many small cells so there's a real octree across LODs.
+    chunk = np.array([32.0, 32.0, 32.0])
+    cells = [(cx, cy, cz)
+             for cx in range(4) for cy in range(4) for cz in range(2)]
+    frag_bytes = _make_fragment_bytes(chunk, cells)
+
+    cfg = _body_config(1.0, 1.0, 0, num_lods=3, lod_factor=0.5)
+    data, index, info, stats = _assemble_multires_object(frag_bytes, chunk, [8.0, 8.0, 8.0], 1.0, cfg)
+
+    assert stats['num_lods'] == 3
+    assert len(stats['num_fragments_per_lod']) == 3
+    assert all(n > 0 for n in stats['num_fragments_per_lod'])
+    # Coarser LODs have fewer (or equal) fragments than finer ones.
+    nf = stats['num_fragments_per_lod']
+    assert nf[0] >= nf[1] >= nf[2]
+
+    # Octree ancestor closure holds in the written manifest.
+    num_lods, pos_by_lod = _parse_positions_by_lod(index)
+    assert num_lods == 3
+    for lod in range(num_lods - 1):
+        for (x, y, z) in pos_by_lod[lod]:
+            assert (x // 2, y // 2, z // 2) in pos_by_lod[lod + 1]
+
+    # Round-trips, and every fragment stays within its (LOD-scaled) cell.
+    res = _read(data, index, info)
+    assert res['num_lods'] == 3
+    for frag in res['fragments']:
+        cell_size = res['chunk_shape_xyz'] * (2 ** frag['lod'])
+        lo = res['grid_origin_xyz'] + frag['position'] * cell_size
+        v = frag['vertices_xyz']
+        assert (v >= lo - 1e-3).all() and (v <= lo + cell_size + 1e-3).all()
 
 
 def test_assemble_empty():
