@@ -63,6 +63,19 @@ BodyMeshParametersSchema = {
     "additionalProperties": False,
     "description": "Settings for body mesh creation.\n",
     "properties": {
+        "format": {
+            "description":
+                "Which mesh format to produce (and therefore which DVID instances to use).\n"
+                "  - 'neuroglancer-single-res': the legacy single-resolution ngmesh format.\n"
+                "  - 'neuroglancer-multi-res':  the neuroglancer multi-resolution\n"
+                "    (neuroglancer_multilod_draco) format, stored in separate '_multires'\n"
+                "    DVID instances.\n"
+                "Note: init_mesh_instances() takes a separate 'multires' argument (it has no\n"
+                "config); make sure the instances you initialize match this setting.\n",
+            "type": "string",
+            "enum": ["neuroglancer-single-res", "neuroglancer-multi-res"],
+            "default": "neuroglancer-single-res"
+        },
         "source-method": {
             "description":
                 "Body meshes can be constructed by assembling supervoxel meshes or chunk meshes.\n"
@@ -323,7 +336,6 @@ def update_body_mesh(
     chunk_config,
     force=False,
     processes=0,
-    multires=False,
     *,
     resource_mgr=None
 ):
@@ -336,14 +348,18 @@ def update_body_mesh(
             If a string with value 'dask-worker-client', then it is assumed that you called
             this function from within a dask worker, and chunk mesh generation will be
             submitted to the dask cluster.
-        multires:
-            If True, generate/store a multi-resolution (neuroglancer_multilod_draco)
-            body mesh from draco-encoded chunk fragments, using the '_multires' DVID
-            instances.  Only the chunk-based source-method is supported in this mode.
+
+    Note:
+        Whether to produce a single-resolution or multi-resolution mesh is determined
+        by ``body_mesh_config['format']`` (see BodyMeshParametersSchema).  Multi-res
+        output requires the chunk-based source-method (not supervoxels), and the
+        corresponding '_multires' DVID instances must already exist (see
+        init_mesh_instances(..., multires=True)).
     """
     seg = seg_instance
     uuid = resolve_ref(server, uuid, True)
     validate(body_mesh_config, BodyMeshParametersSchema, inject_defaults=True)
+    multires = (body_mesh_config['format'] == 'neuroglancer-multi-res')
     names = mesh_instance_names(seg, multires)
 
     try:
@@ -392,7 +408,7 @@ def update_body_mesh(
     if quality not in available_qualities:
         raise RuntimeError(f"Body mesh config requests a chunk quality which isn't listed in the chunk config: {quality}")
 
-    update_body_mesh_from_chunks(server, uuid, seg, body, body_mesh_config, chunk_config, processes=processes, multires=multires, resource_mgr=resource_mgr)
+    update_body_mesh_from_chunks(server, uuid, seg, body, body_mesh_config, chunk_config, processes=processes, resource_mgr=resource_mgr)
 
 
 @PrefixFilter.with_context("Body {body}")
@@ -616,15 +632,16 @@ def update_body_mesh_from_chunks(
     body_mesh_config,
     chunk_config,
     processes=0,
-    multires=False,
     resource_mgr=None
 ):
+    validate(body_mesh_config, BodyMeshParametersSchema, inject_defaults=True)
     validate(chunk_config, MeshChunkConfigSchema, inject_defaults=True)
     if '-' in (name := chunk_config['config-name']) or name == "":
         raise RuntimeError(f"Invalid chunk config-name name: {name}")
 
     seg = seg_instance
     uuid = resolve_ref(server, uuid, True)
+    multires = (body_mesh_config['format'] == 'neuroglancer-multi-res')
     names = mesh_instance_names(seg, multires)
     chunk_df = _chunk_table(server, uuid, seg_instance, body, chunk_config, resource_mgr, multires=multires)
     config_name = chunk_config['config-name']

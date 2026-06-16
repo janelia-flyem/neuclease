@@ -28,6 +28,20 @@ def test_mesh_instance_names():
     assert m.sv == "segmentation_sv_meshes"
 
 
+def test_format_config():
+    # Single-res is the default; multi-res is opt-in via the 'format' field.
+    cfg = {}
+    validate(cfg, BodyMeshParametersSchema, inject_defaults=True)
+    assert cfg['format'] == 'neuroglancer-single-res'
+
+    cfg2 = {'format': 'neuroglancer-multi-res'}
+    validate(cfg2, BodyMeshParametersSchema, inject_defaults=True)
+    assert cfg2['format'] == 'neuroglancer-multi-res'
+
+    with pytest.raises(Exception):
+        validate({'format': 'bogus'}, BodyMeshParametersSchema, inject_defaults=True)
+
+
 def _cube(corner, size):
     c = np.asarray(corner, dtype=float)
     off = np.array([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0],
