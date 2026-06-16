@@ -169,6 +169,10 @@ def test_assemble_multilod():
 
     assert stats['num_lods'] == 3
     assert len(stats['num_fragments_per_lod']) == 3
+    # The per-LOD counts must be native Python ints (numpy.uint32 is not
+    # JSON-serializable, which breaks posting mesh_info to DVID).
+    assert all(type(n) is int for n in stats['num_fragments_per_lod'])
+    json.dumps(stats, allow_nan=False)
     assert all(n > 0 for n in stats['num_fragments_per_lod'])
     # Coarser LODs have fewer (or equal) fragments than finer ones.
     nf = stats['num_fragments_per_lod']
