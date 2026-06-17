@@ -981,11 +981,10 @@ def _assemble_multires_object(frag_bytes_by_cell, chunk_shape_s0_xyz, voxel_size
         else:
             fragments_by_lod[0] = v2m_multires.split_mesh_for_lod(body_mesh, chunk_shape_s0_xyz, 0)
 
-        # Coarser LODs: progressively decimate and re-partition.
-        current = body_mesh
+        # Coarser LODs: decimate and re-partition.
         for lod in range(1, num_lods):
-            current = Mesh(current.vertices_zyx.copy(), current.faces.copy())
-            current.simplify(lod_factor, preserve_border=True)
+            current = Mesh(body_mesh.vertices_zyx.copy(), body_mesh.faces.copy())
+            current.simplify(lod_factor**lod, preserve_border=True)
             fragments_by_lod[lod] = v2m_multires.split_mesh_for_lod(current, chunk_shape_s0_xyz, lod)
 
     data_bytes, index_bytes, num_fragments_per_lod = v2m_multires.encode_multilod_object(
