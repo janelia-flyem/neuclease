@@ -529,6 +529,9 @@ def post_keyvalues(server, uuid, instance, keyvalues, *, batch_size=None, replac
 
     """
     assert isinstance(keyvalues, Mapping)
+    if len(keyvalues) == 0:
+        return
+    
     batch_size = batch_size or len(keyvalues)
 
     params = None
