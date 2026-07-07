@@ -78,11 +78,18 @@ BodyMeshParametersSchema = {
         },
         "source-method": {
             "description":
-                "Body meshes can be constructed by assembling supervoxel meshes or chunk meshes.\n"
+                "Body meshes can be constructed by assembling supervoxel meshes, meshing the body sparsevol RLEs, or chunk meshes.\n"
                 "This setting specifies which method to use for generating/retrieving the component meshes.\n"
-                "To generate meshes by naively assembling supervoxel meshes, use 'concatenated-supervoxels'\n",
+                "To generate meshes by naively assembling supervoxel meshes, use 'concatenated-supervoxels'\n"
+                "To generate meshes directly from the body sparsevol, use 'body-sparsevol'\n",
             "type": "string",
             "default": ""
+        },
+        "sparsevol-scale": {
+            "description": "If using the 'body-sparsevol' source-method, this specifies which scale of sparsevol to fetch.",
+            "type": "integer",
+            "minimum": 0,
+            "default": 2
         },
         "smoothing": {
             "description": "How many iterations of smoothing to apply to each mesh before decimation.",
@@ -392,6 +399,12 @@ def update_body_mesh(
         update_body_mesh_from_supervoxels(server, uuid, seg, body, body_mesh_config, resource_mgr=resource_mgr)
         return
 
+    if requested_method == 'body-sparsevol':
+        if multires:
+            raise RuntimeError("Multires body meshes can only be assembled from chunks, not sparsevol.")
+        update_body_mesh_from_body_sparsevol(server, uuid, seg, body, body_mesh_config, resource_mgr=resource_mgr)
+        return
+
     if '-' in chunk_config['config-name']:
         raise RuntimeError(f"Chunk config-name cannot contain a hyphen: {chunk_config['config-name']}")
 
@@ -571,6 +584,77 @@ def update_body_mesh_from_supervoxels(server, uuid, seg_instance, body, body_mes
         "mesh-timestamp": str(datetime.datetime.now(ZoneInfo("US/Eastern"))),
         "mesh-bytes": len(mesh_bytes),
         "supervoxel-vertex-total": orig_vertices,
+        "target-body-decimation-s0": decimation_s0,
+        "applied-body-decimation": decimation,
+        "applied-body-decimation-seconds": dec_timer.seconds,
+        "final-body-vertex-count": len(mesh.vertices_zyx)
+    }
+    post_key(server, uuid, f"{seg}_mesh_info", body, json=mesh_info)
+
+
+@PrefixFilter.with_context("Body {body}")
+def update_body_mesh_from_body_sparsevol(server, uuid, seg_instance, body, body_mesh_config, resource_mgr):
+
+    BLOCK_SHAPE = (128, 128, 128)
+    HALO = 4
+
+    # FIXME... had to hard-code this because dask workers didn't have the configured dvid timeout.
+    set_default_dvid_session_timeout(1200.0, 1200.0)
+
+    seg = seg_instance
+    uuid = resolve_ref(server, uuid, True)
+    lastmod = fetch_lastmod(server, uuid, seg, body)['mutation id']
+
+    with (
+        Timer("Fetching body sparsevol", logger),
+        resource_mgr.access_context(server, True, 1, 0)
+    ):
+        scale = body_mesh_config['sparsevol-scale']
+        ranges = fetch_sparsevol(server, uuid, seg, body, scale=body_mesh_config['sparsevol-scale'], supervoxels=False, format='ranges')
+
+    with Timer("Constructing Mesh", logger):
+        boxes, masks = blockwise_masks_from_ranges(ranges, BLOCK_SHAPE, HALO)
+        mesh = Mesh.from_binary_blocks(masks, boxes * 2**scale)
+        mesh.laplacian_smooth(body_mesh_config['smoothing'])
+
+    # neuroglancer meshes must be written in nanometer units.
+    rescale = fetch_resolution_zyx(server, uuid, seg)
+    mesh.vertices_zyx *= rescale
+
+    orig_vertices = len(mesh.vertices_zyx)
+    decimation_s0, decimation = select_body_decimation(
+        SV_MESH_DECIMATION_S0,
+        orig_vertices,
+        body_mesh_config
+    )
+
+    mesh_mb = mesh.uncompressed_size() / 1e6
+    logger.info(f"Original mesh has {orig_vertices} vertices and {len(mesh.faces)} faces ({mesh_mb:.1f} MB)")
+
+    with Timer(f"Decimating at {decimation}", logger) as dec_timer:
+        mesh.simplify(decimation)
+
+    mesh_mb = mesh.uncompressed_size() / 1e6
+    logger.info(f"Final mesh has {len(mesh.vertices_zyx)} vertices and {len(mesh.faces)} faces ({mesh_mb:.1f} MB)")
+
+    with Timer("Serializing mesh", logger):
+        mesh_bytes = mesh.serialize(fmt='ngmesh')
+
+    with (
+        Timer("Uploading mesh", logger),
+        resource_mgr.access_context(server, False, 1, len(mesh_bytes))
+    ):
+        post_key(server, uuid, f"{seg}_meshes", f"{body}.ngmesh", mesh_bytes)
+
+    mesh_info = {
+        "body": int(body),
+        "uuid": uuid,
+        "lastmod": lastmod,
+        "method": "body-sparsevol",
+        "mesh-timestamp": str(datetime.datetime.now(ZoneInfo("US/Eastern"))),
+        "mesh-bytes": len(mesh_bytes),
+        "sparsevol-vertex-total": orig_vertices,
+        "sparsevol-scale": scale,
         "target-body-decimation-s0": decimation_s0,
         "applied-body-decimation": decimation,
         "applied-body-decimation-seconds": dec_timer.seconds,
