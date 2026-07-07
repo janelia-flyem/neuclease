@@ -1,5 +1,6 @@
 import threading
 from functools import partial
+from itertools import combinations
 
 import numpy as np
 import pandas as pd
@@ -8,10 +9,105 @@ import skimage.measure
 import networkx as nx
 from scipy.spatial import KDTree
 
-from neuclease.util import compute_parallel, compute_nonzero_box, extract_subvol
+from neuclease.util import compute_parallel, compute_nonzero_box, extract_subvol, box_intersection
 from neuclease.util.segmentation import distance_transform
 from neuclease.dvid import fetch_sparsevol
 from neuclease.dvid.rle import blockwise_masks_from_ranges
+
+
+class HaloComponentTracker:
+    """
+    Resolves connected-component equivalences across the boundaries between
+    neighboring blocks during blockwise skeletonization.
+
+    Each block computes a local connected-component labeling of its (halo-padded)
+    mask.  Because neighboring blocks overlap in a halo region, the same physical
+    component may be assigned different local labels in each block.  This tracker
+    compares the labels present in the mutual overlap slab between a pair of
+    neighboring blocks and records which ``(block_id, local_label)`` pairs refer
+    to the same physical component.
+
+    A face is registered for a block only if a neighbor block actually exists on
+    that side (see ``skeleton_coords()``).  Neighbor presence is symmetric, so
+    every shared boundary is registered exactly twice: the first registration is
+    stored in ``self.pending``; the second one finds its partner, compares the two
+    label slabs, records the equivalences, and discards both slabs.  Consequently
+    ``self.pending`` is empty once all blocks have been processed.
+
+    After all blocks are processed, ``resolve()`` maps every skeleton point's
+    ``(block_id, local_label)`` to a contiguous global connected-component id.
+
+    Thread-safe: ``register()`` may be called concurrently from multiple threads.
+    """
+    def __init__(self):
+        self.uf = nx.utils.UnionFind()
+        self.pending = {}
+        self.lock = threading.Lock()
+
+    def register(self, block_id, face_entries):
+        """
+        Register the overlap-slab labels for one block's faces.
+
+        Args:
+            block_id:
+                The id of the block being registered.
+            face_entries:
+                A dict of ``{boundary_key: (slab, slab_box)}`` where ``slab`` is a
+                3D array of local component labels covering that face's mutual
+                overlap region (possibly empty if the block's content didn't reach
+                the overlap region) and ``slab_box`` is its box in global
+                coordinates.  ``boundary_key`` is block-independent, so the two
+                blocks sharing a boundary produce the same key.
+        """
+        with self.lock:
+            for key, (slab, slab_box) in face_entries.items():
+                if key not in self.pending:
+                    self.pending[key] = (block_id, slab, slab_box)
+                    continue
+
+                other_id, other_slab, other_box = self.pending.pop(key)
+                self._union_overlap(block_id, slab, slab_box, other_id, other_slab, other_box)
+
+    def _union_overlap(self, id_a, slab_a, box_a, id_b, slab_b, box_b):
+        """
+        Union the (block_id, label) pairs that co-occur on foreground voxels
+        within the physical intersection of two neighboring blocks' face slabs.
+        """
+        if slab_a.size == 0 or slab_b.size == 0:
+            return
+
+        inter = box_intersection(box_a, box_b)
+        if (inter[1] <= inter[0]).any():
+            return
+
+        sub_a = extract_subvol(slab_a, inter - box_a[0])
+        sub_b = extract_subvol(slab_b, inter - box_b[0])
+
+        both = (sub_a != 0) & (sub_b != 0)
+        if not both.any():
+            return
+
+        pairs = np.unique(np.stack([sub_a[both], sub_b[both]], axis=1), axis=0)
+        for label_a, label_b in pairs:
+            self.uf.union((id_a, int(label_a)), (id_b, int(label_b)))
+
+    def resolve(self, block_ids, local_labels):
+        """
+        Map each skeleton point's ``(block_id, local_label)`` to a contiguous
+        global connected-component id, honoring the equivalences discovered during
+        registration.  Must be called after all blocks have been registered.
+
+        Returns:
+            An int32 array of global connected-component ids, one per point.
+        """
+        global_ids = {}
+        cc = np.empty(len(block_ids), dtype=np.int32)
+        for i, key in enumerate(zip(block_ids.tolist(), local_labels.tolist())):
+            root = self.uf[key]
+            if root not in global_ids:
+                global_ids[root] = len(global_ids)
+            cc[i] = global_ids[root]
+        return cc
 
 
 def skeletonize_neuron(
@@ -24,6 +120,8 @@ def skeletonize_neuron(
     halo=128,
     closing_radius=5,
     return_radii=False,
+    heal_max_distance=None,
+    tracker=None,
     threads=12
 ):
     """
@@ -55,16 +153,27 @@ def skeletonize_neuron(
         return_radii:
             If True, also return an approximate "radius" for each skeleton point.
             This is computed via the distance transform within the neuron mask.
+        heal_max_distance:
+            Optional. If provided, the connected components of the skeleton are
+            reconnected to each other via bridging edges no longer than this
+            distance (see treeify_coords).  This can recover connections that were
+            missed across block boundaries without joining components that are
+            genuinely far apart.  If None, distinct connected components are left
+            unconnected.
+        tracker:
+            Optional. A HaloComponentTracker used to reconcile per-block
+            connected-component labels across block boundaries.  If not provided,
+            a fresh one is created.
         threads:
             Blocks are processed in parallel using a thread pool of this size.
 
     Returns:
         A pandas DataFrame with columns:
             ['node', 'x', 'y', 'z', 'parent', 'cc', 'radius']
-        
+
         (If return_radii=False, the 'radius' column is omitted.)
     """
-    all_coords, radii = skeleton_coords(
+    all_coords, radii, block_ids, point_labels, tracker = skeleton_coords(
         dvid_server,
         uuid,
         segmentation_instance,
@@ -74,9 +183,11 @@ def skeletonize_neuron(
         halo,
         closing_radius,
         return_radii=return_radii,
+        tracker=tracker,
         threads=threads
     )
-    df = treeify_coords(all_coords, radii)
+    cc_ids = tracker.resolve(block_ids, point_labels)
+    df = treeify_coords(all_coords, radii, cc_ids=cc_ids, heal_max_distance=heal_max_distance)
     return df
 
 
@@ -91,6 +202,7 @@ def skeleton_coords(
     closing_radius=5,
     trim_halo=True,
     return_radii=False,
+    tracker=None,
     threads=12
 ):
     """
@@ -125,18 +237,42 @@ def skeleton_coords(
         return_radii:
             If True, also return an approximate "radius" for each skeleton point.
             This is computed via the distance transform within the neuron mask.
+        tracker:
+            Optional. A HaloComponentTracker instance to use for reconciling the
+            per-block connected-component labels across block boundaries.
+            If not provided, a fresh one is created.  The tracker is returned so
+            the caller can use it to resolve global component ids for each point.
         threads:
             Blocks are processed in parallel using a thread pool of this size.
     Returns:
-        (coords_zyx, radii)
+        (coords_zyx, radii, block_ids, point_labels, tracker)
             coords_zyx has shape (N, 3) and contains the skeleton points. Note that the coordinates are given in Z,Y,X order.
             If return_radii is True, then radii has shape (N,) and contains the mask radius for each skeleton point.
             If return_radii is False, then radii is None.
+            block_ids has shape (N,) and gives the source block of each point.
+            point_labels has shape (N,) and gives the (block-local) connected-component
+            label of each point.  Together, (block_ids, point_labels) uniquely
+            identifies a per-block component, which tracker.resolve() maps to a
+            global connected-component id.
     """
+    if tracker is None:
+        tracker = HaloComponentTracker()
+
+    if not hasattr(block_shape, '__len__'):
+        block_shape = 3 * (block_shape,)
+    block_shape = np.asarray(block_shape)
+
     dvid_seg = (dvid_server, uuid, segmentation_instance)
     ranges = fetch_sparsevol(*dvid_seg, body, scale=scale, format='ranges')
     mask_boxes, mask_iterator = blockwise_masks_from_ranges(ranges, block_shape=block_shape, halo=halo)
-    
+    mask_boxes = np.asarray(mask_boxes)
+
+    # The set of occupied (non-empty) block grid coordinates, used to determine
+    # which faces of a block have a neighbor block (and thus a shared boundary to
+    # reconcile).  A face without a neighbor is never registered with the tracker.
+    grid_coords = (mask_boxes[:, 0] + halo) // block_shape
+    occupied = {tuple(int(c) for c in gc) for gc in grid_coords}
+
     def threadsafe_generator(g):
         lock = threading.Lock()
         with lock:
@@ -149,38 +285,58 @@ def skeleton_coords(
     # The function to process one block.
     _process_block = partial(
         _skeleton_coords_for_mask,
+        block_shape=block_shape,
+        occupied=occupied,
+        tracker=tracker,
         closing_radius=closing_radius,
         halo=halo,
         trim_halo=trim_halo,
         return_radii=return_radii
     )
 
-    # Use a thread pool.
+    # Use a thread pool.  Each item is (box, mask, block_id).
     results = compute_parallel(
         _process_block,
-        zip(mask_boxes, mask_iterator),
+        zip(mask_boxes, mask_iterator, range(len(mask_boxes))),
         starmap=True,
         total=len(mask_boxes),
         leave_progress=True,
         threads=threads,
     )
 
-    all_coords, all_radii = zip(*results)
+    all_coords, all_radii, all_block_ids, all_point_labels = zip(*results)
     all_coords = np.concatenate(all_coords)
     all_coords *= 2**scale
+    all_block_ids = np.concatenate(all_block_ids)
+    all_point_labels = np.concatenate(all_point_labels)
 
     if not return_radii:
-        return all_coords, None
+        return all_coords, None, all_block_ids, all_point_labels, tracker
 
     all_radii = np.concatenate(all_radii)
     all_radii *= 2**scale
-    return all_coords, all_radii
+    return all_coords, all_radii, all_block_ids, all_point_labels, tracker
 
 
-def _skeleton_coords_for_mask(box, mask, closing_radius, halo, trim_halo, return_radii):
+def _skeleton_coords_for_mask(box, mask, block_id, block_shape, occupied, tracker,
+                              closing_radius, halo, trim_halo, return_radii):
     """
     Helper for skeleton_coords().  Processes a single block of the sparsevol.
+
+    In addition to the skeleton coordinates, this computes the connected-component
+    labeling of the block's mask and assigns a (block-local) component label to
+    each skeleton point.  The overlap slabs shared with neighboring blocks are
+    registered with ``tracker`` so that per-block labels can be reconciled into
+    global connected components afterward (see HaloComponentTracker).
+
+    Returns:
+        (coords, radii, block_ids, point_labels)
+        where block_ids is a constant array (== block_id) and point_labels holds
+        the block-local component label for each skeleton point.
     """
+    box = np.asarray(box)
+    block_shape = np.asarray(block_shape)
+
     # We only care about the part that actually contains non-zero values.
     # (Note that the closing operation would not result in pixels outside the bounding box.)
     nz_box = compute_nonzero_box(mask)
@@ -191,24 +347,95 @@ def _skeleton_coords_for_mask(box, mask, closing_radius, halo, trim_halo, return
         mask = vigra.filters.multiBinaryClosing(mask, radius=closing_radius)
 
     mask = fill_holes(mask)
+
+    # Connected components of the (post-fill) mask, using face-connectivity, which
+    # is fast and sufficient here (we're already skeletonizing an approximation).
+    # Label 0 is background.  Skeleton points and halo overlap slabs are keyed by
+    # these labels, which are unique only within this block.
+    cc = skimage.measure.label(mask, connectivity=1)
+
     skeleton = skimage.morphology.skeletonize(mask)
     coords = np.array(skeleton.nonzero()).T
+
+    # Component label for each skeleton point, in the trimmed frame (before offset).
+    point_labels = cc[tuple(coords.T)].astype(np.int32)
 
     if return_radii:
         dt = distance_transform(mask)
         radii = np.array(dt[tuple(coords.T)])
 
+    # Register this block's halo overlap slabs so that component labels can be
+    # matched to those of neighboring blocks.
+    grid_coord = (box[0] + halo) // block_shape
+    cc_origin = box[0] + nz_box[0]
+    cc_box = np.array([cc_origin, cc_origin + cc.shape])
+    tracker.register(
+        block_id,
+        _halo_face_entries(cc, cc_box, box, grid_coord, occupied, halo)
+    )
+
     coords += box[0] + nz_box[0]
-    
+    block_ids = np.full(len(coords), block_id, dtype=np.int32)
+
     if trim_halo:
         non_halo = (coords >= box[0] + halo).all(axis=1) & (coords < box[1] - halo).all(axis=1)
         coords = coords[non_halo]
-        radii = radii[non_halo]
+        point_labels = point_labels[non_halo]
+        block_ids = block_ids[non_halo]
+        if return_radii:
+            radii = radii[non_halo]
 
     if return_radii:
-        return coords, radii
+        return coords, radii, block_ids, point_labels
     else:
-        return coords, None
+        return coords, None, block_ids, point_labels
+
+
+def _halo_face_entries(cc, cc_box, box, grid_coord, occupied, halo):
+    """
+    Build the ``{boundary_key: (slab, slab_box)}`` dict for the faces of a block
+    that have a neighbor block.
+
+    For each of the 6 faces whose neighbor exists (per ``occupied``), extract the
+    slice of the label image ``cc`` that lies within the mutual overlap region
+    shared with that neighbor.  The overlap region is ``2*halo`` wide along the
+    face axis and spans the full block on the other two axes.  The slab is clipped
+    to this block's (trimmed) content, so it may be empty if the content doesn't
+    reach the face.
+
+    ``boundary_key`` is constructed so that this block's face and the neighbor's
+    opposite face produce the SAME key: it uses the block's grid coords with the
+    face-axis component set to the higher of the two coords sharing the boundary.
+    """
+    entries = {}
+    for axis in range(3):
+        for direction in (-1, 1):
+            neighbor = list(grid_coord)
+            neighbor[axis] += direction
+            if tuple(neighbor) not in occupied:
+                continue
+
+            # Mutual overlap region shared with the neighbor, in global coords.
+            overlap = box.copy()
+            if direction < 0:
+                overlap[1, axis] = box[0, axis] + 2 * halo
+            else:
+                overlap[0, axis] = box[1, axis] - 2 * halo
+
+            slab_box = box_intersection(cc_box, overlap)
+            if (slab_box[1] <= slab_box[0]).any():
+                slab = cc[:0, :0, :0]
+                slab_box = np.array([cc_box[0], cc_box[0]])
+            else:
+                slab = extract_subvol(cc, slab_box - cc_box[0])
+
+            # Key on the boundary plane (higher of the two adjacent block coords).
+            bkey = list(grid_coord)
+            if direction > 0:
+                bkey[axis] += 1
+            key = (axis, int(bkey[0]), int(bkey[1]), int(bkey[2]))
+            entries[key] = (slab, slab_box)
+    return entries
 
 
 def fill_holes(mask):
@@ -226,7 +453,7 @@ def fill_holes(mask):
     return (cc != background_cc)
 
 
-def treeify_coords(all_coords, radii=None):
+def treeify_coords(all_coords, radii=None, cc_ids=None, heal_max_distance=None):
     """
     Given an array of coordinates, join them into a minimum spanning tree.
     We only consider possible edges between each point and its N closest neighbors,
@@ -238,39 +465,60 @@ def treeify_coords(all_coords, radii=None):
         radii:
             Optional column of radii to include in the result as column.
             The radii are not used in the computation of the MST.
-    
+        cc_ids:
+            Optional array of shape (N,) assigning each point to a connected
+            component (e.g. as produced by ``HaloComponentTracker.resolve()``).
+            If provided, nearest-neighbor edges are only considered BETWEEN points
+            that share a common cc_id, so the tree is never allowed to join points
+            from distinct components.  (Components may still be reconnected by the
+            ``heal_max_distance`` pass, below.)
+        heal_max_distance:
+            Optional. If provided, perform a final pass that reconnects the
+            resulting components to each other, but only via bridging edges whose
+            length does not exceed this distance.  This can recover connections
+            that were missed across block boundaries without joining components
+            that are genuinely far apart.
+
     Returns:
         A pandas DataFrame with columns:
             ['node', 'x', 'y', 'z', 'parent', 'cc', 'radius']
-        
+
         (If radii are not provided, the 'radius' column is omitted.)
     """
     # Select edges for every node's N closest neighbors
-    # (Ignore the first "neighbor", which is the node itself.)    
+    # (Ignore the first "neighbor", which is the node itself.)
     # TODO:
     #   Consider using a max radius instead (or in addition to)
     #   of a fixed number of neighbors.
     num_neighbors = 7
-    kdtree = KDTree(all_coords)
-    distances, neighbors = kdtree.query(all_coords, k=tuple(range(2, 2+num_neighbors)))
     nodes = np.arange(len(all_coords))
-    edges = []
-    for i in range(num_neighbors):
-        nth_edges = pd.DataFrame({
-            'u': nodes,
-            'v': neighbors[:, i],
-            'distance': distances[:, i]
-        })
-        edges.append(nth_edges)
-    edges = pd.concat(edges, ignore_index=True)
 
-    # Load into nx.Graph and compute MST
+    if cc_ids is None:
+        groups = [nodes]
+    else:
+        cc_ids = np.asarray(cc_ids)
+        # Process each connected component separately so that no edge is ever
+        # proposed between points of different components.
+        groups = [np.where(cc_ids == c)[0] for c in np.unique(cc_ids)]
+
+    edges = pd.concat(
+        [_knn_edges(all_coords, group, num_neighbors) for group in groups],
+        ignore_index=True
+    )
+
+    # Load into nx.Graph and compute MST.
+    # (Add all nodes first, so that isolated single-point components are retained.)
     g = nx.Graph()
+    g.add_nodes_from(nodes.tolist())
     for row in edges.itertuples():
         g.add_edge(row.u, row.v, weight=row.distance)
+    mst = nx.minimum_spanning_tree(g, weight='weight')
+
+    # Optionally reconnect the resulting components, subject to a max bridging distance.
+    if heal_max_distance is not None:
+        _heal_graph(mst, all_coords, heal_max_distance)
 
     dfs_edges = []
-    mst = nx.minimum_spanning_tree(g, weight='weight')
     for component in nx.connected_components(mst):
         root = min(component)
         dfs_edges.extend(nx.dfs_edges(mst, source=root))
@@ -280,17 +528,86 @@ def treeify_coords(all_coords, radii=None):
     df[[*'zyx']] = all_coords[df['node']]
 
     df = df.set_index('node').sort_index()
+
+    # Assign a component id to each node, based on the (possibly healed) tree.
     df['cc'] = np.int32(-1)
-    g = nx.Graph()
-    g.add_edges_from(dfs_edges)
-    for i, cc in enumerate(nx.connected_components(g)):
-        for node in cc:
-            if node == -1:
-                continue
-            df.loc[node, 'cc'] = i
+    for i, component in enumerate(nx.connected_components(mst)):
+        df.loc[list(component), 'cc'] = i
 
     cols = ['node', *'xyz', 'parent', 'cc']
     if radii is not None:
         df['radius'] = radii[df.index]
         cols.append('radius')
     return df.reset_index()[cols]
+
+
+def _knn_edges(all_coords, group, num_neighbors):
+    """
+    Construct candidate MST edges between each point in ``group`` and its nearest
+    neighbors WITHIN the same group.  ``group`` is an array of node ids (indices
+    into ``all_coords``).  Returns a DataFrame with columns ['u', 'v', 'distance']
+    whose 'u'/'v' values are global node ids.
+    """
+    group = np.asarray(group)
+    m = len(group)
+    if m <= 1:
+        return pd.DataFrame({
+            'u': np.array([], dtype=np.int64),
+            'v': np.array([], dtype=np.int64),
+            'distance': np.array([], dtype=np.float64),
+        })
+
+    pts = all_coords[group]
+    kdtree = KDTree(pts)
+
+    # We can't ask for more neighbors than exist in this group.
+    k = min(num_neighbors, m - 1)
+    distances, neighbors = kdtree.query(pts, k=list(range(2, 2 + k)))
+
+    # KDTree may return 1D arrays when k == 1; normalize to 2D.
+    distances = distances.reshape(m, k)
+    neighbors = neighbors.reshape(m, k)
+
+    return pd.DataFrame({
+        'u': np.repeat(group, k),
+        'v': group[neighbors.ravel()],
+        'distance': distances.ravel(),
+    })
+
+
+def _heal_graph(g, all_coords, max_distance):
+    """
+    Reconnect the connected components of graph ``g`` (in place) by adding
+    bridging edges between them, but only where the bridge length does not exceed
+    ``max_distance``.
+
+    Uses the same fragment-quotient-MST strategy as neuprint's ``heal_skeleton()``:
+    treat each component as a single node, connect components at their nearest
+    points, take the MST of that (small) quotient graph, and add the corresponding
+    fine-grained edges back to ``g`` (subject to max_distance).
+    """
+    components = [np.fromiter(c, dtype=np.int64) for c in nx.connected_components(g)]
+    if len(components) <= 1:
+        return
+
+    # Larger fragments first, so each pairwise query is run against the larger set.
+    components.sort(key=len, reverse=True)
+    kdtrees = [KDTree(all_coords[idx]) for idx in components]
+
+    frag_graph = nx.Graph()
+    frag_graph.add_nodes_from(range(len(components)))
+    for a, b in combinations(range(len(components)), 2):
+        idx_a, idx_b = components[a], components[b]
+        distances, locs_a = kdtrees[a].query(all_coords[idx_b])
+        j = np.argmin(distances)
+        i = locs_a[j]
+        frag_graph.add_edge(
+            a, b,
+            node_a=int(idx_a[i]),
+            node_b=int(idx_b[j]),
+            distance=float(distances[j]),
+        )
+
+    for _u, _v, d in nx.minimum_spanning_edges(frag_graph, weight='distance', data=True):
+        if d['distance'] <= max_distance:
+            g.add_edge(d['node_a'], d['node_b'], weight=d['distance'])
