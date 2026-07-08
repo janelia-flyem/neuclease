@@ -1376,8 +1376,8 @@ def fetch_complete_mappings(server, uuid, instance, mutations=None, sort=None, *
     # with fetch_mapping() or fetch_mappings().
     if treat_ghosts_as_retired:
         sv_split_muts = mutations.query('action == "split-supervoxel-complete"')
-        ghost_split_svs = [m['SplitSupervoxel'] for m in sv_split_muts['msg'] if m['SplitSize'] == 0]
-        ghost_remain_svs = [m['RemainSupervoxel'] for m in sv_split_muts['msg'] if m['RemainSize'] == 0]
+        ghost_split_svs = [m['SplitSupervoxel'] for m in sv_split_muts['msg'] if m.get('SplitSize') == 0]
+        ghost_remain_svs = [m['RemainSupervoxel'] for m in sv_split_muts['msg'] if m.get('RemainSize') == 0]
         ghost_svs = [*ghost_split_svs, *ghost_remain_svs]
         mapping.loc[ghost_svs] = 0
 
