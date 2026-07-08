@@ -1724,6 +1724,15 @@ def fetch_sparsevol_coarse_box(server, uuid, instance, label, supervoxels=False,
         raise
 
 
+def fetch_sparsevol_coarse_boxes(server, uuid, instance, labels, supervoxels=False, processes=4, *, missing='raise', session=None):
+    """
+    Call fetch_sparsevol_coarse_box() in parallel for a list of bodies/supervoxels.
+    """
+    _fn = partial(fetch_sparsevol_coarse_box, server, uuid, instance, supervoxels=supervoxels, missing=missing)
+    boxes = compute_parallel(_fn, labels, processes=processes)
+    return np.array(boxes)
+
+
 @dvid_api_wrapper
 def fetch_sparsevol(server, uuid, instance, label, scale=0, supervoxels=False,
                     *, format='coords', dtype=np.int32, mask_box=None, session=None):
