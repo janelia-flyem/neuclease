@@ -14,7 +14,6 @@ from neuclease.util.segmentation import distance_transform
 from neuclease.dvid import fetch_sparsevol
 from neuclease.dvid.rle import blockwise_masks_from_ranges
 
-
 class HaloComponentTracker:
     """
     Resolves connected-component equivalences across the boundaries between
@@ -117,10 +116,11 @@ def skeletonize_neuron(
     body,
     scale=2,
     block_shape=(128, 128, 128),
-    halo=128,
+    halo=4,
     closing_radius=5,
     return_radii=False,
     heal_max_distance=None,
+    first_node=1,
     tracker=None,
     threads=12
 ):
@@ -187,7 +187,7 @@ def skeletonize_neuron(
         threads=threads
     )
     cc_ids = tracker.resolve(block_ids, point_labels)
-    df = treeify_coords(all_coords, radii, cc_ids=cc_ids, heal_max_distance=heal_max_distance)
+    df = treeify_coords(all_coords, radii, cc_ids=cc_ids, heal_max_distance=heal_max_distance, first_node=first_node)
     return df
 
 
@@ -307,6 +307,13 @@ def skeleton_coords(
     all_coords, all_radii, all_block_ids, all_point_labels = zip(*results)
     all_coords = np.concatenate(all_coords)
     all_coords *= 2**scale
+
+    # Offset by half a downscaled voxel to place the points into the middle of
+    # the downscaled voxel.  (At scale 0 there's no downscaling, so no offset --
+    # and 2**(scale-1) would be a non-integer 0.5, which the integer coords can't hold.)
+    if scale > 0:
+        all_coords += 2**(scale-1)
+
     all_block_ids = np.concatenate(all_block_ids)
     all_point_labels = np.concatenate(all_point_labels)
 
@@ -453,7 +460,7 @@ def fill_holes(mask):
     return (cc != background_cc)
 
 
-def treeify_coords(all_coords, radii=None, cc_ids=None, heal_max_distance=None):
+def treeify_coords(all_coords, radii=None, cc_ids=None, heal_max_distance=None, first_node=1):
     """
     Given an array of coordinates, join them into a minimum spanning tree.
     We only consider possible edges between each point and its N closest neighbors,
@@ -478,6 +485,9 @@ def treeify_coords(all_coords, radii=None, cc_ids=None, heal_max_distance=None):
             length does not exceed this distance.  This can recover connections
             that were missed across block boundaries without joining components
             that are genuinely far apart.
+        first_node:
+            Either 0 or 1, depending on whether you desired 0-based or 1-based indexing.
+            (Either way, parentless nodes always have parent -1.)
 
     Returns:
         A pandas DataFrame with columns:
@@ -538,7 +548,13 @@ def treeify_coords(all_coords, radii=None, cc_ids=None, heal_max_distance=None):
     if radii is not None:
         df['radius'] = radii[df.index]
         cols.append('radius')
-    return df.reset_index()[cols]
+    df = df.reset_index()[cols]
+
+    if first_node != 0:
+        # Switch from 0-based to 1-based indexing
+        df.loc[df['node'] != -1, 'node'] += first_node
+        df.loc[df['parent'] != -1, 'parent'] += first_node
+    return df
 
 
 def _knn_edges(all_coords, group, num_neighbors):
