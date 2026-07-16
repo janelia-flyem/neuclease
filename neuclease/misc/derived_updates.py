@@ -22,9 +22,11 @@ from neuclease.dvid import (
     set_default_dvid_session_timeout, is_locked,
     fetch_branch_nodes, resolve_ref, fetch_repo_instances, find_repo_root,
     create_instance, fetch_key, fetch_keys, post_key, delete_key, fetch_keyrange, fetch_keyrangevalues,
-    fetch_mapping,fetch_mutations, compute_affected_bodies, fetch_skeleton, fetch_lastmod, fetch_query
+    fetch_mapping,fetch_mutations, compute_affected_bodies, fetch_skeleton, fetch_lastmod, fetch_query,
+    fetch_instance_info
 )
 from neuclease.misc.bodymesh import update_body_mesh, BodyMeshParametersSchema, MeshChunkConfigSchema, create_and_upload_missing_supervoxel_meshes
+from neuclease.misc.skeletonize import skeletonize_neuron
 
 logger = logging.getLogger(__name__)
 
@@ -72,31 +74,70 @@ SegmentationDvidInstanceSchema = {
 SkeletonConfigSchema = {
     "description": "Settings for skeleton generation.",
     "type": "object",
-    "required": ["scale"],
     "default": {},
     "additionalProperties": False,
     "properties": {
-        "neutu-executable": {
-            "description": "Full path to a neutu executable which will be used for generating skeletons from DVID bodies.\n",
-            # NO DEFAULT!
+        "method": {
+            "description":
+                "Which skeletonization method to use:\n"
+                "  'neuclease': the built-in blockwise skeletonization (recommended).\n"
+                "  'neutu':     shell out to a NeuTu executable (legacy fallback).\n"
+                "Note that several settings below apply to only one method or the other.\n",
             "type": "string",
+            "enum": ["neuclease", "neutu"],
+            "default": "neuclease"
+        },
+        "neutu-executable": {
+            "description":
+                "Full path to a neutu executable, used to generate skeletons from DVID bodies.\n"
+                "Required (and used) only when method is 'neutu'.\n",
+            "type": "string",
+            "default": ""
         },
         "scale": {
             "description":
-                "Which scale NeuTu should use when fetching the sparsevol to skeletonize.\n"
-                "Either an integer 0-5 or the special string 'coarse'.\n",
-            "default": "coarse",
+                "Which scale to use when fetching the sparsevol to skeletonize.\n"
+                "Higher scales are faster (fewer voxels) but produce coarser skeletons.\n"
+                "The special 'coarse' setting is supported only by the 'neutu' method.\n",
+            "default": 2,
             "oneOf": [
-                {
-                    "type": "string",
-                    "enum": ["coarse"]
-                },
-                {
-                    "type": "integer",
-                    "minimum": 0,
-                    "maximum": 5
-                }
+                {"type": "string", "enum": ["coarse"]},
+                {"type": "integer", "minimum": 0, "maximum": 7}
             ]
+        },
+        "block-shape": {
+            "description":
+                "(method 'neuclease' only.)\n"
+                "The sparsevol is processed in overlapping blocks of this shape (ZYX, in scale-adjusted voxels),\n"
+                "which bounds the peak RAM usage.  May be given as a single integer for a cubic block.\n",
+            "oneOf": [
+                {"type": "integer", "minimum": 1},
+                {
+                    "type": "array",
+                    "items": {"type": "integer", "minimum": 1},
+                    "minItems": 3,
+                    "maxItems": 3
+                }
+            ],
+            "default": [128, 128, 128]
+        },
+        "halo": {
+            "description":
+                "(method 'neuclease' only.)\n"
+                "The overlap (in scale-adjusted voxels) between neighboring blocks.\n"
+                "A larger halo reduces skeleton artifacts near block boundaries.\n",
+            "type": "integer",
+            "minimum": 0,
+            "default": 16
+        },
+        "closing-radius": {
+            "description":
+                "(method 'neuclease' only.)\n"
+                "Radius of the morphological closing applied to each block's mask before skeletonization.\n"
+                "Use 0 to disable closing.\n",
+            "type": "integer",
+            "minimum": 0,
+            "default": 5
         }
     }
 }
@@ -190,9 +231,8 @@ def main():
     if 'skeletons' in cfg['update-derived-types']:
         update_skeletons(
             *dvid_seg,
-            cfg['skeletons']['neutu-executable'],
+            cfg['skeletons'],
             cfg['force-update'],
-            cfg['skeletons']['scale'],
             cfg['dvid']['ignore-mutations-before-uuid']
         )
 
@@ -393,9 +433,26 @@ def update_sv_meshes(dvid_server, uuid, seg_instance, ignore_before_uuid=None):
     store_update_receipt(*dvid_seg, "sv-meshes", last_mutid)
 
 
-def update_skeletons(dvid_server, uuid, seg_instance, neutu_executable, force, scale=5, ignore_before_uuid=None):
+def update_skeletons(dvid_server, uuid, seg_instance, skeleton_config, force, ignore_before_uuid=None):
+    method = skeleton_config['method']
+
+    # Validate the config up front, before any network access, so a
+    # misconfiguration fails fast.
+    if method == 'neutu':
+        if not skeleton_config['neutu-executable']:
+            raise RuntimeError(
+                "skeletons.method is 'neutu', but no 'neutu-executable' was configured."
+            )
+    elif skeleton_config['scale'] == 'coarse':
+        raise RuntimeError(
+            "The 'coarse' scale is only supported by the 'neutu' skeletonization method. "
+            "Choose an integer scale for the 'neuclease' method."
+        )
+
     if is_locked(dvid_server, uuid) and not os.environ.get('DVID_ADMIN_TOKEN'):
-        # Without this error, NeuTu would silently just switch to the HEAD uuid without telling us!
+        # Both methods write skeletons to DVID (the 'neutu' method does so via the
+        # NeuTu executable, which would otherwise silently switch to the HEAD uuid),
+        # and DVID rejects writes to a locked node unless an admin token is provided.
         raise RuntimeError(
             "The UUID is locked, but DVID_ADMIN_TOKEN is not defined. "
             "You must define DVID_ADMIN_TOKEN to update skeletons."
@@ -419,6 +476,13 @@ def update_skeletons(dvid_server, uuid, seg_instance, neutu_executable, force, s
         # Note: DVID doesn't complain if the key doesn't exist.
         delete_key(dvid_server, uuid, f"{seg_instance}_skeletons", key)
 
+    # The physical voxel size (nm, XYZ) is constant for the instance, so fetch it
+    # once here and pass it down (rather than refetching it for every body).
+    # (Not needed for the 'neutu' method, which reads it itself.)
+    voxel_size_xyz = None
+    if method != 'neutu':
+        voxel_size_xyz = fetch_instance_info(dvid_server, uuid, seg_instance)['Extended']['VoxelSize']
+
     logger.info(f"Updating skeletons for {len(affected.changed_bodies)} changed bodies and {len(affected.new_bodies)} new bodies.")
     failed_bodies = []
     for body in tqdm_proxy([*affected.changed_bodies, *affected.new_bodies]):
@@ -429,7 +493,7 @@ def update_skeletons(dvid_server, uuid, seg_instance, neutu_executable, force, s
             logger.info(f"Failed to fetch lastmod for body {body}")
             failed_bodies.append(body)
         else:
-            update_skeleton(*dvid_seg, body, mutid, neutu_executable, force, scale)
+            update_skeleton(*dvid_seg, body, mutid, skeleton_config, voxel_size_xyz, force)
 
     if not failed_bodies:
         store_update_receipt(*dvid_seg, "skeletons", last_mutid)
@@ -437,7 +501,7 @@ def update_skeletons(dvid_server, uuid, seg_instance, neutu_executable, force, s
     logger.info("Done updating skeletons.")
 
 
-def update_skeleton(dvid_server, uuid, seg_instance, body, mutid, neutu_executable, force=False, scale=5):
+def update_skeleton(dvid_server, uuid, seg_instance, body, mutid, skeleton_config, voxel_size_xyz, force=False):
     if not dvid_server.startswith('http'):
         dvid_server = f'http://{dvid_server}'
 
@@ -452,6 +516,41 @@ def update_skeleton(dvid_server, uuid, seg_instance, body, mutid, neutu_executab
                 if swc_mutid >= mutid:
                     return
 
+    if skeleton_config['method'] == 'neutu':
+        _update_skeleton_with_neutu(
+            dvid_server, uuid, seg_instance, body,
+            skeleton_config['neutu-executable'], skeleton_config['scale']
+        )
+        return
+
+    scale = skeleton_config['scale']
+    block_shape = skeleton_config['block-shape']
+    if hasattr(block_shape, '__len__'):
+        block_shape = tuple(block_shape)
+    halo = skeleton_config['halo']
+    closing_radius = skeleton_config['closing-radius']
+
+    df = skeletonize_neuron(
+        dvid_server, uuid, seg_instance, body,
+        scale=scale,
+        block_shape=block_shape,
+        halo=halo,
+        closing_radius=closing_radius,
+        return_radii=True,
+        voxel_size_xyz=voxel_size_xyz,
+    )
+
+    swc = _skeleton_df_to_swc(
+        df, uuid, seg_instance, mutid, scale, block_shape, halo, closing_radius
+    )
+    post_key(dvid_server, uuid, f"{seg_instance}_skeletons", f"{body}_swc", data=swc.encode('utf-8'))
+
+
+def _update_skeleton_with_neutu(dvid_server, uuid, seg_instance, body, neutu_executable, scale):
+    """
+    Legacy skeletonization method: shell out to a NeuTu executable, which fetches
+    the body from DVID, skeletonizes it, and writes the SWC back to DVID itself.
+    """
     # We use --force here because we have already decided to regenerate the skeleton,
     # so we don't want NeuTu to second-guess our decision.
     target = f"{dvid_server}?uuid={uuid}&segmentation={seg_instance}&label_zoom={scale}"
@@ -461,6 +560,38 @@ def update_skeleton(dvid_server, uuid, seg_instance, body, mutid, neutu_executab
     cmd = f'{neutu_executable} --command --skeletonize --force --bodyid {body} "{target}"'
     logger.info(cmd)
     subprocess.run(cmd, shell=True, check=True)
+
+
+def _skeleton_df_to_swc(df, uuid, seg_instance, mutid, scale, block_shape, halo, closing_radius):
+    """
+    Serialize a skeleton DataFrame (as produced by skeletonize_neuron) to SWC text,
+    with a header of comment lines describing how the skeleton was generated.
+
+    The header preserves the NeuTu-style comment keys that downstream tools still
+    rely on -- 'mutation id', 'downresLevel' (the scale), 'dataName' (the
+    segmentation instance), and 'uuid' -- and adds a line recording the full set
+    of skeletonization parameters and the creation timestamp.
+    """
+    now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+    # NOTE: The 'mutation id' comment is parsed elsewhere (see update_skeleton) via
+    # a regex that expects json.dumps()'s exact spacing, so don't reformat it.
+    header_lines = [
+        "#Generated by neuclease (https://github.com/janelia-flyem/neuclease)",
+        "#$" + json.dumps({"downresLevel": scale, "uuid": uuid, "dataName": seg_instance}),
+        "#$" + json.dumps({"mutation id": mutid}),
+        "#$" + json.dumps({
+            "scale": scale,
+            "block_shape": list(block_shape) if hasattr(block_shape, '__len__') else block_shape,
+            "halo": halo,
+            "closing_radius": closing_radius,
+            "timestamp": now,
+        }),
+    ]
+
+    swc_df = df.assign(kind=0)[['node', 'kind', *'xyz', 'radius', 'parent']]
+    body_csv = swc_df.to_csv(sep=' ', header=False, index=False)
+    return '\n'.join(header_lines) + '\n' + body_csv
 
 
 def update_annotations(dvid_server, uuid, seg_instance, ignore_before_uuid=None):
