@@ -11,7 +11,7 @@ from scipy.spatial import KDTree
 
 from neuclease.util import compute_parallel, compute_nonzero_box, extract_subvol, box_intersection
 from neuclease.util.segmentation import distance_transform
-from neuclease.dvid import fetch_sparsevol
+from neuclease.dvid import fetch_sparsevol, fetch_instance_info
 from neuclease.dvid.rle import blockwise_masks_from_ranges
 
 class HaloComponentTracker:
@@ -120,6 +120,7 @@ def skeletonize_neuron(
     closing_radius=5,
     return_radii=False,
     heal_max_distance=None,
+    voxel_size_xyz=None,
     first_node=1,
     tracker=None,
     threads=12
@@ -153,6 +154,8 @@ def skeletonize_neuron(
         return_radii:
             If True, also return an approximate "radius" for each skeleton point.
             This is computed via the distance transform within the neuron mask.
+            The radii account for anisotropic voxels (see voxel_size_xyz) and are
+            returned in physical units (e.g. nanometers).
         heal_max_distance:
             Optional. If provided, the connected components of the skeleton are
             reconnected to each other via bridging edges no longer than this
@@ -160,6 +163,16 @@ def skeletonize_neuron(
             missed across block boundaries without joining components that are
             genuinely far apart.  If None, distinct connected components are left
             unconnected.
+
+            NOTE: This distance is specified in NANOMETERS (physical units), not
+            voxels, so it is independent of the scale at which the sparsevol was
+            fetched.  The neuron's physical voxel size is used to convert.
+        voxel_size_xyz:
+            Optional. The physical voxel size (nm) in XYZ order, as reported by
+            DVID (info['Extended']['VoxelSize']).  Used to make radius estimation
+            anisotropy-aware and to interpret heal_max_distance in nanometers.
+            If not provided, it is fetched from DVID automatically when needed
+            (i.e. when return_radii is True or heal_max_distance is given).
         tracker:
             Optional. A HaloComponentTracker used to reconcile per-block
             connected-component labels across block boundaries.  If not provided,
@@ -173,6 +186,18 @@ def skeletonize_neuron(
 
         (If return_radii=False, the 'radius' column is omitted.)
     """
+    # The voxel size (nm, XYZ per DVID) is needed to make radius estimation
+    # anisotropy-aware and to interpret heal_max_distance in nanometers.
+    if voxel_size_xyz is None and (return_radii or heal_max_distance is not None):
+        voxel_size_xyz = fetch_instance_info(dvid_server, uuid, segmentation_instance)['Extended']['VoxelSize']
+
+    # DVID reports VoxelSize in XYZ order; the rest of this code uses ZYX.
+    pixel_pitch_zyx = ()
+    anisotropy_zyx = None
+    if voxel_size_xyz is not None:
+        anisotropy_zyx = np.array(voxel_size_xyz, dtype=np.float64)[::-1]
+        pixel_pitch_zyx = tuple(float(v) for v in anisotropy_zyx)
+
     all_coords, radii, block_ids, point_labels, tracker = skeleton_coords(
         dvid_server,
         uuid,
@@ -184,10 +209,14 @@ def skeletonize_neuron(
         closing_radius,
         return_radii=return_radii,
         tracker=tracker,
+        pixel_pitch_zyx=pixel_pitch_zyx,
         threads=threads
     )
     cc_ids = tracker.resolve(block_ids, point_labels)
-    df = treeify_coords(all_coords, radii, cc_ids=cc_ids, heal_max_distance=heal_max_distance, first_node=first_node)
+    df = treeify_coords(
+        all_coords, radii, cc_ids=cc_ids,
+        heal_max_distance=heal_max_distance, anisotropy_zyx=anisotropy_zyx, first_node=first_node
+    )
     return df
 
 
@@ -203,6 +232,7 @@ def skeleton_coords(
     trim_halo=True,
     return_radii=False,
     tracker=None,
+    pixel_pitch_zyx=(),
     threads=12
 ):
     """
@@ -242,6 +272,12 @@ def skeleton_coords(
             per-block connected-component labels across block boundaries.
             If not provided, a fresh one is created.  The tracker is returned so
             the caller can use it to resolve global component ids for each point.
+        pixel_pitch_zyx:
+            Optional. The physical size of a voxel, in ZYX order, used when
+            computing the distance transform for radius estimation (see
+            return_radii).  Provide it in native (scale-0) units; the resulting
+            radii are scaled by 2**scale along with the coordinates.  An empty
+            tuple (the default) assumes isotropic unit voxels.
         threads:
             Blocks are processed in parallel using a thread pool of this size.
     Returns:
@@ -291,7 +327,8 @@ def skeleton_coords(
         closing_radius=closing_radius,
         halo=halo,
         trim_halo=trim_halo,
-        return_radii=return_radii
+        return_radii=return_radii,
+        pixel_pitch_zyx=pixel_pitch_zyx
     )
 
     # Use a thread pool.  Each item is (box, mask, block_id).
@@ -326,7 +363,7 @@ def skeleton_coords(
 
 
 def _skeleton_coords_for_mask(box, mask, block_id, block_shape, occupied, tracker,
-                              closing_radius, halo, trim_halo, return_radii):
+                              closing_radius, halo, trim_halo, return_radii, pixel_pitch_zyx=()):
     """
     Helper for skeleton_coords().  Processes a single block of the sparsevol.
 
@@ -368,7 +405,11 @@ def _skeleton_coords_for_mask(box, mask, block_id, block_shape, occupied, tracke
     point_labels = cc[tuple(coords.T)].astype(np.int32)
 
     if return_radii:
-        dt = distance_transform(mask)
+        # pixel_pitch_zyx accounts for anisotropic voxels so the radius estimate
+        # reflects true distance-to-boundary.  It is given here in native (scale-0)
+        # nm-per-voxel; the resulting radii are scaled by 2**scale (as are the
+        # coords) in skeleton_coords(), yielding physical nanometers.
+        dt = distance_transform(mask, pixel_pitch=pixel_pitch_zyx)
         radii = np.array(dt[tuple(coords.T)])
 
     # Register this block's halo overlap slabs so that component labels can be
@@ -460,7 +501,7 @@ def fill_holes(mask):
     return (cc != background_cc)
 
 
-def treeify_coords(all_coords, radii=None, cc_ids=None, heal_max_distance=None, first_node=1):
+def treeify_coords(all_coords, radii=None, cc_ids=None, heal_max_distance=None, anisotropy_zyx=None, first_node=1):
     """
     Given an array of coordinates, join them into a minimum spanning tree.
     We only consider possible edges between each point and its N closest neighbors,
@@ -484,7 +525,17 @@ def treeify_coords(all_coords, radii=None, cc_ids=None, heal_max_distance=None, 
             resulting components to each other, but only via bridging edges whose
             length does not exceed this distance.  This can recover connections
             that were missed across block boundaries without joining components
-            that are genuinely far apart.
+            that are genuinely far apart.  The distance is measured in the same
+            units as ``anisotropy_zyx`` (e.g. nanometers if ``anisotropy_zyx`` is
+            the physical voxel size); if ``anisotropy_zyx`` is not given, it is
+            measured in raw coordinate (voxel) units.
+        anisotropy_zyx:
+            Optional. The physical size of one coordinate unit along each axis, in
+            ZYX order (e.g. the nm-per-voxel voxel size).  When provided, all
+            distances used internally (nearest-neighbor selection and the
+            ``heal_max_distance`` threshold) are measured in these physical units,
+            which matters for anisotropic data.  The output coordinates themselves
+            are left unchanged (still in raw voxel units).
         first_node:
             Either 0 or 1, depending on whether you desired 0-based or 1-based indexing.
             (Either way, parentless nodes always have parent -1.)
@@ -503,6 +554,13 @@ def treeify_coords(all_coords, radii=None, cc_ids=None, heal_max_distance=None, 
     num_neighbors = 7
     nodes = np.arange(len(all_coords))
 
+    # For anisotropic data, measure distances in physical units by scaling the
+    # coordinates.  The output coordinates (below) still use the raw values.
+    if anisotropy_zyx is None:
+        dist_coords = all_coords
+    else:
+        dist_coords = all_coords * np.asarray(anisotropy_zyx, dtype=np.float64)
+
     if cc_ids is None:
         groups = [nodes]
     else:
@@ -512,7 +570,7 @@ def treeify_coords(all_coords, radii=None, cc_ids=None, heal_max_distance=None, 
         groups = [np.where(cc_ids == c)[0] for c in np.unique(cc_ids)]
 
     edges = pd.concat(
-        [_knn_edges(all_coords, group, num_neighbors) for group in groups],
+        [_knn_edges(dist_coords, group, num_neighbors) for group in groups],
         ignore_index=True
     )
 
@@ -526,7 +584,7 @@ def treeify_coords(all_coords, radii=None, cc_ids=None, heal_max_distance=None, 
 
     # Optionally reconnect the resulting components, subject to a max bridging distance.
     if heal_max_distance is not None:
-        _heal_graph(mst, all_coords, heal_max_distance)
+        _heal_graph(mst, dist_coords, heal_max_distance)
 
     dfs_edges = []
     for component in nx.connected_components(mst):

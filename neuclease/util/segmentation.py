@@ -1257,7 +1257,7 @@ def closest_to_point(point, mask, mask_offset=None, voxel_size=None):
     return tuple(closest_point)
 
 
-def distance_transform(mask, background=False, smoothing=0.0, negate=False, pad=True):
+def distance_transform(mask, background=False, smoothing=0.0, negate=False, pad=True, pixel_pitch=()):
     """
     Compute the distance transform of voxels inside (or outside) the given mask,
     with smoothing and negation post-processing options as a convenience.
@@ -1289,7 +1289,7 @@ def distance_transform(mask, background=False, smoothing=0.0, negate=False, pad=
         pad = False
 
     mask = vigra.taggedView(mask, 'zyx').astype(np.uint32)
-    dt = vigra.filters.distanceTransform(mask, background=background)
+    dt = vigra.filters.distanceTransform(mask, background=background, pixel_pitch=pixel_pitch)
     del mask
 
     if smoothing > 0.0:
