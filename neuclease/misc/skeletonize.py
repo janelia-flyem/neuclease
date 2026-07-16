@@ -1,6 +1,8 @@
+import json
 import threading
 from functools import partial
 from itertools import combinations
+from datetime import datetime
 
 import numpy as np
 import pandas as pd
@@ -11,7 +13,8 @@ from scipy.spatial import KDTree
 
 from neuclease.util import compute_parallel, compute_nonzero_box, extract_subvol, box_intersection
 from neuclease.util.segmentation import distance_transform
-from neuclease.dvid import fetch_sparsevol, fetch_instance_info
+from neuclease.util.skeleton import skeleton_to_neuroglancer
+from neuclease.dvid import fetch_sparsevol, fetch_instance_info, fetch_lastmod
 from neuclease.dvid.rle import blockwise_masks_from_ranges
 
 class HaloComponentTracker:
@@ -123,6 +126,8 @@ def skeletonize_neuron(
     voxel_size_xyz=None,
     first_node=1,
     tracker=None,
+    format='pandas',
+    output_path=None,
     threads=12
 ):
     """
@@ -152,10 +157,11 @@ def skeletonize_neuron(
         closing_radius:
             The radius of the morphological closing operation, applied before hole-filling and skeletonization.
         return_radii:
-            If True, also return an approximate "radius" for each skeleton point.
+            If True, also compute an approximate "radius" for each skeleton point.
             This is computed via the distance transform within the neuron mask.
             The radii account for anisotropic voxels (see voxel_size_xyz) and are
-            returned in physical units (e.g. nanometers).
+            in physical units (e.g. nanometers).  (Radii are always computed for
+            format='swc', regardless of this setting.)
         heal_max_distance:
             Optional. If provided, the connected components of the skeleton are
             reconnected to each other via bridging edges no longer than this
@@ -177,18 +183,41 @@ def skeletonize_neuron(
             Optional. A HaloComponentTracker used to reconcile per-block
             connected-component labels across block boundaries.  If not provided,
             a fresh one is created.
+        format:
+            The format of the returned skeleton:
+              'pandas':       A DataFrame (see below).  This is the default.
+              'swc':          SWC-formatted text (str), with a comment header
+                              recording the segmentation uuid, instance, mutation
+                              id, generation parameters, and creation timestamp.
+              'neuroglancer': The binary "precomputed" skeleton format (bytes),
+                              with vertex positions in physical nanometers.
+        output_path:
+            Optional. If given (only valid for the 'swc' and 'neuroglancer'
+            formats), also write the result to this file path.
         threads:
             Blocks are processed in parallel using a thread pool of this size.
 
     Returns:
-        A pandas DataFrame with columns:
-            ['node', 'x', 'y', 'z', 'parent', 'cc', 'radius']
-
-        (If return_radii=False, the 'radius' column is omitted.)
+        Depends on 'format':
+          'pandas':       A DataFrame with columns
+                          ['node', 'x', 'y', 'z', 'parent', 'cc', 'radius']
+                          (the 'radius' column is omitted if return_radii=False).
+          'swc':          SWC text (str).
+          'neuroglancer': The precomputed skeleton (bytes).
     """
+    assert format in ('pandas', 'swc', 'neuroglancer'), \
+        f"Unknown format: {format}"
+    assert output_path is None or format in ('swc', 'neuroglancer'), \
+        "output_path is only supported for the 'swc' and 'neuroglancer' formats"
+
+    # SWC requires radii; neuroglancer needs the voxel size to scale to nm.
+    need_radii = return_radii or (format == 'swc')
+    need_voxel_size = need_radii or (heal_max_distance is not None) or (format == 'neuroglancer')
+
     # The voxel size (nm, XYZ per DVID) is needed to make radius estimation
-    # anisotropy-aware and to interpret heal_max_distance in nanometers.
-    if voxel_size_xyz is None and (return_radii or heal_max_distance is not None):
+    # anisotropy-aware, to interpret heal_max_distance in nanometers, and to
+    # scale neuroglancer vertex positions to physical units.
+    if voxel_size_xyz is None and need_voxel_size:
         voxel_size_xyz = fetch_instance_info(dvid_server, uuid, segmentation_instance)['Extended']['VoxelSize']
 
     # DVID reports VoxelSize in XYZ order; the rest of this code uses ZYX.
@@ -207,7 +236,7 @@ def skeletonize_neuron(
         block_shape,
         halo,
         closing_radius,
-        return_radii=return_radii,
+        return_radii=need_radii,
         tracker=tracker,
         pixel_pitch_zyx=pixel_pitch_zyx,
         threads=threads
@@ -217,7 +246,54 @@ def skeletonize_neuron(
         all_coords, radii, cc_ids=cc_ids,
         heal_max_distance=heal_max_distance, anisotropy_zyx=anisotropy_zyx, first_node=first_node
     )
-    return df
+
+    if format == 'pandas':
+        return df
+
+    if format == 'swc':
+        mutid = fetch_lastmod(dvid_server, uuid, segmentation_instance, body)["mutation id"]
+        swc = _skeleton_df_to_swc(df, uuid, segmentation_instance, mutid, scale, block_shape, halo, closing_radius)
+        if output_path:
+            with open(output_path, 'w') as f:
+                f.write(swc)
+        return swc
+
+    # format == 'neuroglancer'
+    orig_resolution_nm = voxel_size_xyz if voxel_size_xyz is not None else 8
+    return skeleton_to_neuroglancer(df, orig_resolution_nm=orig_resolution_nm, output_path=output_path)
+
+
+def _skeleton_df_to_swc(df, uuid, seg_instance, mutid, scale, block_shape, halo, closing_radius):
+    """
+    Serialize a skeleton DataFrame (as produced by skeletonize_neuron) to SWC text,
+    with a header of comment lines describing how the skeleton was generated.
+
+    The header preserves the NeuTu-style comment keys that downstream tools still
+    rely on -- 'mutation id', 'downresLevel' (the scale), 'dataName' (the
+    segmentation instance), and 'uuid' -- and adds a line recording the full set
+    of skeletonization parameters and the creation timestamp.
+    """
+    now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+    # NOTE: The 'mutation id' comment is parsed elsewhere (e.g. the derived-data
+    # update script) via a regex that expects json.dumps()'s exact spacing, so
+    # don't reformat it.
+    header_lines = [
+        "#Generated by neuclease (https://github.com/janelia-flyem/neuclease)",
+        "#$" + json.dumps({"downresLevel": scale, "uuid": uuid, "dataName": seg_instance}),
+        "#$" + json.dumps({"mutation id": mutid}),
+        "#$" + json.dumps({
+            "scale": scale,
+            "block_shape": list(block_shape) if hasattr(block_shape, '__len__') else block_shape,
+            "halo": halo,
+            "closing_radius": closing_radius,
+            "timestamp": now,
+        }),
+    ]
+
+    swc_df = df.assign(kind=0)[['node', 'kind', *'xyz', 'radius', 'parent']]
+    body_csv = swc_df.to_csv(sep=' ', header=False, index=False)
+    return '\n'.join(header_lines) + '\n' + body_csv
 
 
 def skeleton_coords(
