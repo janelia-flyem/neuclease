@@ -9,6 +9,7 @@ import neuclease.misc.skeletonize as skel_module
 from neuclease.misc.skeletonize import (
     treeify_coords,
     skeletonize_neuron,
+    skeletonize_neuron_from_ranges,
     HaloComponentTracker,
 )
 
@@ -240,6 +241,48 @@ def test_skeletonize_neuroglancer_format(monkeypatch):
     ng_coords = np.sort(ng_df[[*'xyz']].values / 8.0, axis=0)
     df_coords = np.sort(df[[*'xyz']].values.astype(float), axis=0)
     assert np.allclose(ng_coords, df_coords)
+
+
+def test_skeletonize_from_ranges_no_dvid(monkeypatch):
+    # skeletonize_neuron_from_ranges must not touch DVID at all: sabotage the
+    # fetch functions so any DVID access would raise.
+    def _boom(*a, **k):
+        raise AssertionError("skeletonize_neuron_from_ranges should not access DVID")
+    monkeypatch.setattr(skel_module, 'fetch_sparsevol', _boom)
+    monkeypatch.setattr(skel_module, 'fetch_instance_info', _boom)
+    monkeypatch.setattr(skel_module, 'fetch_lastmod', _boom)
+
+    mask = np.zeros((30, 30, 80), dtype=bool)
+    mask[13:18, 13:18, 4:76] = True
+    ranges = runlength_encode_mask_to_ranges(mask)
+
+    common = dict(scale=0, block_shape=(20, 20, 20), halo=6, closing_radius=0,
+                  voxel_size_xyz=(8, 8, 8), threads=1)
+
+    # pandas
+    df = skeletonize_neuron_from_ranges(ranges, format='pandas', **common)
+    assert len(df) > 0
+    assert df['cc'].nunique() == 1
+
+    # swc (caller must supply the header metadata)
+    swc = skeletonize_neuron_from_ranges(
+        ranges, format='swc', uuid='u', segmentation_instance='seg', mutid=999, **common
+    )
+    assert re.search(r'{"mutation id": (\d+)}', swc).group(1) == '999'
+    assert '"dataName": "seg"' in swc
+
+    # neuroglancer
+    buf = skeletonize_neuron_from_ranges(ranges, format='neuroglancer', **common)
+    assert isinstance(buf, (bytes, bytearray)) and len(buf) > 0
+
+
+def test_skeletonize_from_ranges_swc_requires_metadata():
+    mask = np.zeros((10, 10, 10), dtype=bool)
+    mask[2:8, 2:8, 2:8] = True
+    ranges = runlength_encode_mask_to_ranges(mask)
+    # Missing uuid/segmentation_instance/mutid for swc -> AssertionError.
+    with pytest.raises(AssertionError):
+        skeletonize_neuron_from_ranges(ranges, format='swc', scale=0, threads=1)
 
 
 def test_skeletonize_output_path_rejected_for_pandas(monkeypatch):

@@ -207,18 +207,93 @@ def skeletonize_neuron(
     """
     assert format in ('pandas', 'swc', 'neuroglancer'), \
         f"Unknown format: {format}"
-    assert output_path is None or format in ('swc', 'neuroglancer'), \
-        "output_path is only supported for the 'swc' and 'neuroglancer' formats"
 
     # SWC requires radii; neuroglancer needs the voxel size to scale to nm.
     need_radii = return_radii or (format == 'swc')
     need_voxel_size = need_radii or (heal_max_distance is not None) or (format == 'neuroglancer')
 
-    # The voxel size (nm, XYZ per DVID) is needed to make radius estimation
-    # anisotropy-aware, to interpret heal_max_distance in nanometers, and to
-    # scale neuroglancer vertex positions to physical units.
+    dvid_seg = (dvid_server, uuid, segmentation_instance)
+
+    # Perform the DVID fetches here (sparsevol, and, if needed, voxel size and
+    # mutation id), then hand off to skeletonize_neuron_from_ranges() for the
+    # (fetch-free) skeletonization.  Callers who want to manage the fetch
+    # themselves (e.g. within a resource-manager context) can call that function
+    # directly instead.
     if voxel_size_xyz is None and need_voxel_size:
-        voxel_size_xyz = fetch_instance_info(dvid_server, uuid, segmentation_instance)['Extended']['VoxelSize']
+        voxel_size_xyz = fetch_instance_info(*dvid_seg)['Extended']['VoxelSize']
+
+    ranges = fetch_sparsevol(*dvid_seg, body, scale=scale, format='ranges')
+
+    mutid = None
+    if format == 'swc':
+        mutid = fetch_lastmod(*dvid_seg, body)["mutation id"]
+
+    return skeletonize_neuron_from_ranges(
+        ranges,
+        scale=scale,
+        block_shape=block_shape,
+        halo=halo,
+        closing_radius=closing_radius,
+        return_radii=return_radii,
+        heal_max_distance=heal_max_distance,
+        voxel_size_xyz=voxel_size_xyz,
+        first_node=first_node,
+        tracker=tracker,
+        format=format,
+        output_path=output_path,
+        threads=threads,
+        uuid=uuid,
+        segmentation_instance=segmentation_instance,
+        mutid=mutid,
+    )
+
+
+def skeletonize_neuron_from_ranges(
+    ranges,
+    scale=2,
+    block_shape=(128, 128, 128),
+    halo=16,
+    closing_radius=5,
+    return_radii=False,
+    heal_max_distance=None,
+    voxel_size_xyz=None,
+    first_node=1,
+    tracker=None,
+    format='pandas',
+    output_path=None,
+    threads=12,
+    *,
+    uuid=None,
+    segmentation_instance=None,
+    mutid=None,
+):
+    """
+    Like skeletonize_neuron(), but operates on a pre-fetched sparsevol (in DVID
+    'ranges' format) and performs no DVID access of its own.  This lets the caller
+    fetch the sparsevol separately -- e.g. within a resource-manager context --
+    without holding that resource for the (CPU-bound) duration of skeletonization.
+
+    Any metadata that skeletonize_neuron() would normally fetch from DVID must be
+    supplied by the caller when the corresponding output is requested:
+
+        - voxel_size_xyz: needed for anisotropy-aware radii, nm-based
+          heal_max_distance, and neuroglancer output.  If omitted, isotropic unit
+          voxels are assumed.
+        - uuid, segmentation_instance, mutid: required for format='swc'
+          (they populate the SWC comment header).
+
+    See skeletonize_neuron() for a description of the remaining arguments and the
+    return value.
+    """
+    assert format in ('pandas', 'swc', 'neuroglancer'), \
+        f"Unknown format: {format}"
+    assert output_path is None or format in ('swc', 'neuroglancer'), \
+        "output_path is only supported for the 'swc' and 'neuroglancer' formats"
+    if format == 'swc':
+        assert None not in (uuid, segmentation_instance, mutid), \
+            "For format='swc', you must provide uuid, segmentation_instance, and mutid."
+
+    need_radii = return_radii or (format == 'swc')
 
     # DVID reports VoxelSize in XYZ order; the rest of this code uses ZYX.
     pixel_pitch_zyx = ()
@@ -227,19 +302,16 @@ def skeletonize_neuron(
         anisotropy_zyx = np.array(voxel_size_xyz, dtype=np.float64)[::-1]
         pixel_pitch_zyx = tuple(float(v) for v in anisotropy_zyx)
 
-    all_coords, radii, block_ids, point_labels, tracker = skeleton_coords(
-        dvid_server,
-        uuid,
-        segmentation_instance,
-        body,
-        scale,
-        block_shape,
-        halo,
-        closing_radius,
+    all_coords, radii, block_ids, point_labels, tracker = skeleton_coords_from_ranges(
+        ranges,
+        scale=scale,
+        block_shape=block_shape,
+        halo=halo,
+        closing_radius=closing_radius,
         return_radii=need_radii,
         tracker=tracker,
         pixel_pitch_zyx=pixel_pitch_zyx,
-        threads=threads
+        threads=threads,
     )
     cc_ids = tracker.resolve(block_ids, point_labels)
     df = treeify_coords(
@@ -251,7 +323,6 @@ def skeletonize_neuron(
         return df
 
     if format == 'swc':
-        mutid = fetch_lastmod(dvid_server, uuid, segmentation_instance, body)["mutation id"]
         swc = _skeleton_df_to_swc(df, uuid, segmentation_instance, mutid, scale, block_shape, halo, closing_radius)
         if output_path:
             with open(output_path, 'w') as f:
@@ -367,6 +438,42 @@ def skeleton_coords(
             identifies a per-block component, which tracker.resolve() maps to a
             global connected-component id.
     """
+    dvid_seg = (dvid_server, uuid, segmentation_instance)
+    ranges = fetch_sparsevol(*dvid_seg, body, scale=scale, format='ranges')
+    return skeleton_coords_from_ranges(
+        ranges,
+        scale=scale,
+        block_shape=block_shape,
+        halo=halo,
+        closing_radius=closing_radius,
+        trim_halo=trim_halo,
+        return_radii=return_radii,
+        tracker=tracker,
+        pixel_pitch_zyx=pixel_pitch_zyx,
+        threads=threads,
+    )
+
+
+def skeleton_coords_from_ranges(
+    ranges,
+    scale=2,
+    block_shape=(128, 128, 128),
+    halo=16,
+    closing_radius=5,
+    trim_halo=True,
+    return_radii=False,
+    tracker=None,
+    pixel_pitch_zyx=(),
+    threads=12
+):
+    """
+    Like skeleton_coords(), but operates on a pre-fetched sparsevol (in DVID
+    'ranges' format) instead of fetching it from DVID.  This lets the caller
+    perform the (DVID) fetch separately -- for example, within a resource-manager
+    context -- without holding that resource for the duration of skeletonization.
+
+    See skeleton_coords() for a description of the arguments and return value.
+    """
     if tracker is None:
         tracker = HaloComponentTracker()
 
@@ -374,8 +481,6 @@ def skeleton_coords(
         block_shape = 3 * (block_shape,)
     block_shape = np.asarray(block_shape)
 
-    dvid_seg = (dvid_server, uuid, segmentation_instance)
-    ranges = fetch_sparsevol(*dvid_seg, body, scale=scale, format='ranges')
     mask_boxes, mask_iterator = blockwise_masks_from_ranges(ranges, block_shape=block_shape, halo=halo)
     mask_boxes = np.asarray(mask_boxes)
 
