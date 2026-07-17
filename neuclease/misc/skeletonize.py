@@ -2,6 +2,7 @@ import json
 import threading
 from functools import partial
 from itertools import combinations
+from collections import defaultdict
 from datetime import datetime
 
 import numpy as np
@@ -771,7 +772,18 @@ def treeify_coords(all_coords, radii=None, cc_ids=None, heal_max_distance=None, 
         g.add_edge(row.u, row.v, weight=row.distance)
     mst = nx.minimum_spanning_tree(g, weight='weight')
 
-    # Optionally reconnect the resulting components, subject to a max bridging distance.
+    # The kNN graph only connects each point to its N nearest neighbors, so a
+    # single physical component (cc_id) can end up split into multiple sub-trees
+    # wherever the medial-axis points have a gap wider than that local reach (e.g.
+    # at a block boundary after halo-trimming).  Since the points of a cc_id are
+    # known to belong to the same physical component, rejoin any such sub-trees at
+    # their nearest cross-chunk points, unconditionally -- guaranteeing exactly one
+    # tree (one root) per cc_id.
+    if cc_ids is not None:
+        _connect_within_cc(mst, dist_coords, cc_ids)
+
+    # Optionally reconnect distinct components to each other, subject to a max
+    # bridging distance.
     if heal_max_distance is not None:
         _heal_graph(mst, dist_coords, heal_max_distance)
 
@@ -838,18 +850,54 @@ def _knn_edges(all_coords, group, num_neighbors):
     })
 
 
+def _connect_within_cc(g, all_coords, cc_ids):
+    """
+    Ensure each physical component (cc_id) forms a single connected tree in ``g``.
+
+    Points that share a cc_id are known to belong to the same physical component
+    (that's what the halo-tracker reconciles), but the kNN graph may still leave
+    them split across multiple connected sub-components.  For each cc_id whose
+    points span more than one sub-component, join those sub-components at their
+    nearest cross-component points -- with NO distance limit, since they are known
+    to be the same component.
+
+    Works in place.
+    """
+    # Edges are only ever built within a single cc_id, so every connected
+    # component of g is homogeneous in cc_id; group them by that shared cc_id.
+    comps_by_cc = defaultdict(list)
+    for comp in nx.connected_components(g):
+        rep = next(iter(comp))
+        comps_by_cc[cc_ids[rep]].append(np.fromiter(comp, dtype=np.int64))
+
+    for components in comps_by_cc.values():
+        if len(components) > 1:
+            _bridge_components(g, all_coords, components, np.inf)
+
+
 def _heal_graph(g, all_coords, max_distance):
     """
-    Reconnect the connected components of graph ``g`` (in place) by adding
-    bridging edges between them, but only where the bridge length does not exceed
+    Reconnect the connected components of graph ``g`` (in place) by adding bridging
+    edges between them, but only where the bridge length does not exceed
     ``max_distance``.
+    """
+    components = [np.fromiter(c, dtype=np.int64) for c in nx.connected_components(g)]
+    _bridge_components(g, all_coords, components, max_distance)
+
+
+def _bridge_components(g, all_coords, components, max_distance):
+    """
+    Join the given ``components`` (a list of arrays of node ids, each forming a
+    connected subgraph of ``g``) by adding bridging edges (in place) at their
+    nearest cross-component points.  Only bridges whose length does not exceed
+    ``max_distance`` are added.
 
     Uses the same fragment-quotient-MST strategy as neuprint's ``heal_skeleton()``:
     treat each component as a single node, connect components at their nearest
     points, take the MST of that (small) quotient graph, and add the corresponding
     fine-grained edges back to ``g`` (subject to max_distance).
     """
-    components = [np.fromiter(c, dtype=np.int64) for c in nx.connected_components(g)]
+    components = [np.asarray(c, dtype=np.int64) for c in components]
     if len(components) <= 1:
         return
 

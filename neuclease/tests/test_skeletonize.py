@@ -74,6 +74,27 @@ def test_treeify_heal_respects_max_distance():
     assert treeify_coords(coords, cc_ids=cc_ids, heal_max_distance=100)['cc'].nunique() == 1
 
 
+def test_treeify_one_tree_per_cc():
+    # Two dense clusters far apart (>> the kNN reach).  Each point's nearest
+    # neighbors lie entirely within its own cluster, so the kNN MST leaves them as
+    # two separate sub-trees.
+    a = np.array([[0, 0, i] for i in range(10)])
+    b = np.array([[50, 0, i] for i in range(10)])
+    coords = np.concatenate([a, b])
+
+    # Same cc_id => same physical component => the sub-trees must be rejoined into
+    # a single tree (exactly one root), regardless of the gap.
+    df = treeify_coords(coords, cc_ids=np.zeros(20, dtype=int))
+    assert (df['parent'] == -1).sum() == 1
+    assert df['cc'].nunique() == 1
+    assert len(df) == len(coords)
+
+    # Distinct cc_ids => distinct physical components => stays two trees.
+    df2 = treeify_coords(coords, cc_ids=np.array([0] * 10 + [1] * 10))
+    assert (df2['parent'] == -1).sum() == 2
+    assert df2['cc'].nunique() == 2
+
+
 def test_treeify_anisotropy_scales_heal_distance():
     # Two clusters separated by 4 voxels along Z.
     cluster_a = np.array([[0, 0, i] for i in range(5)])
