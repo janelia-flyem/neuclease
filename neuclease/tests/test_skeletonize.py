@@ -50,7 +50,8 @@ def test_treeify_isolated_points_are_retained():
     # A single-point component must not be dropped from the output.
     coords = np.array([[0, 0, 0], [0, 0, 1], [0, 0, 2], [50, 50, 50]])
     cc_ids = np.array([0, 0, 0, 1])
-    df = treeify_coords(coords, cc_ids=cc_ids, first_node=0)
+    # min_component_size=1 to exercise retention (the default of 2 would drop the lone point).
+    df = treeify_coords(coords, cc_ids=cc_ids, min_component_size=1, first_node=0)
     assert len(df) == len(coords)
     assert set(df['node']) == {0, 1, 2, 3}
     # The lone point is its own root.
@@ -93,6 +94,31 @@ def test_treeify_one_tree_per_cc():
     df2 = treeify_coords(coords, cc_ids=np.array([0] * 10 + [1] * 10))
     assert (df2['parent'] == -1).sum() == 2
     assert df2['cc'].nunique() == 2
+
+
+def test_treeify_min_component_size_drops_orphans():
+    # A 5-node line plus two isolated single points (each its own component).
+    line = np.array([[0, 0, i] for i in range(5)])
+    orphans = np.array([[100, 0, 0], [0, 100, 0]])
+    coords = np.concatenate([line, orphans])
+    cc_ids = np.array([0, 0, 0, 0, 0, 1, 2])
+
+    # min_component_size=1 keeps everything: 3 components (1 line + 2 orphans).
+    df = treeify_coords(coords, cc_ids=cc_ids, min_component_size=1)
+    assert df['cc'].nunique() == 3
+    assert len(df) == 7
+
+    # The default (2) drops the two single-node orphans.
+    df2 = treeify_coords(coords, cc_ids=cc_ids)
+    assert df2['cc'].nunique() == 1
+    assert len(df2) == 5
+    assert (df2['parent'] == -1).sum() == 1
+
+    # If everything is single-node, dropping yields an empty (well-formed) result.
+    singletons = np.array([[0, 0, 0], [50, 0, 0]])
+    df3 = treeify_coords(singletons, cc_ids=np.array([0, 1]))
+    assert len(df3) == 0
+    assert list(df3.columns) == ['node', *'xyz', 'parent', 'cc']
 
 
 def test_treeify_anisotropy_scales_heal_distance():

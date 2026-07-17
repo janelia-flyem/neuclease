@@ -125,6 +125,7 @@ def skeletonize_neuron(
     return_radii=False,
     heal_max_distance=None,
     voxel_size_xyz=None,
+    min_component_size=2,
     first_node=1,
     tracker=None,
     format='pandas',
@@ -180,6 +181,10 @@ def skeletonize_neuron(
             anisotropy-aware and to interpret heal_max_distance in nanometers.
             If not provided, it is fetched from DVID automatically when needed
             (i.e. when return_radii is True or heal_max_distance is given).
+        min_component_size:
+            Discard skeleton connected components with fewer than this many nodes.
+            The default (2) drops isolated single-node components (tiny segments
+            that skeletonized to a single point); use 1 to keep everything.
         tracker:
             Optional. A HaloComponentTracker used to reconcile per-block
             connected-component labels across block boundaries.  If not provided,
@@ -238,6 +243,7 @@ def skeletonize_neuron(
         return_radii=return_radii,
         heal_max_distance=heal_max_distance,
         voxel_size_xyz=voxel_size_xyz,
+        min_component_size=min_component_size,
         first_node=first_node,
         tracker=tracker,
         format=format,
@@ -258,6 +264,7 @@ def skeletonize_neuron_from_ranges(
     return_radii=False,
     heal_max_distance=None,
     voxel_size_xyz=None,
+    min_component_size=2,
     first_node=1,
     tracker=None,
     format='pandas',
@@ -317,7 +324,8 @@ def skeletonize_neuron_from_ranges(
     cc_ids = tracker.resolve(block_ids, point_labels)
     df = treeify_coords(
         all_coords, radii, cc_ids=cc_ids,
-        heal_max_distance=heal_max_distance, anisotropy_zyx=anisotropy_zyx, first_node=first_node
+        heal_max_distance=heal_max_distance, anisotropy_zyx=anisotropy_zyx,
+        min_component_size=min_component_size, first_node=first_node
     )
 
     if format == 'pandas':
@@ -683,7 +691,7 @@ def fill_holes(mask):
     return (cc != background_cc)
 
 
-def treeify_coords(all_coords, radii=None, cc_ids=None, heal_max_distance=None, anisotropy_zyx=None, first_node=1):
+def treeify_coords(all_coords, radii=None, cc_ids=None, heal_max_distance=None, anisotropy_zyx=None, min_component_size=2, first_node=1):
     """
     Given an array of coordinates, join them into a minimum spanning tree.
     We only consider possible edges between each point and its N closest neighbors,
@@ -718,6 +726,10 @@ def treeify_coords(all_coords, radii=None, cc_ids=None, heal_max_distance=None, 
             ``heal_max_distance`` threshold) are measured in these physical units,
             which matters for anisotropic data.  The output coordinates themselves
             are left unchanged (still in raw voxel units).
+        min_component_size:
+            Discard connected components (tree fragments) with fewer than this many
+            nodes.  The default (2) drops isolated single-node components (e.g. tiny
+            segments that skeletonized to a single point); use 1 to keep everything.
         first_node:
             Either 0 or 1, depending on whether you desired 0-based or 1-based indexing.
             (Either way, parentless nodes always have parent -1.)
@@ -787,8 +799,20 @@ def treeify_coords(all_coords, radii=None, cc_ids=None, heal_max_distance=None, 
     if heal_max_distance is not None:
         _heal_graph(mst, dist_coords, heal_max_distance)
 
+    components = list(nx.connected_components(mst))
+    if min_component_size > 1:
+        components = [c for c in components if len(c) >= min_component_size]
+
+    cols = ['node', *'xyz', 'parent', 'cc']
+    if radii is not None:
+        cols.append('radius')
+
+    if not components:
+        # Everything was dropped (or there was nothing to begin with).
+        return pd.DataFrame(columns=cols)
+
     dfs_edges = []
-    for component in nx.connected_components(mst):
+    for component in components:
         root = min(component)
         dfs_edges.extend(nx.dfs_edges(mst, source=root))
         dfs_edges.append((-1, root))
@@ -800,13 +824,11 @@ def treeify_coords(all_coords, radii=None, cc_ids=None, heal_max_distance=None, 
 
     # Assign a component id to each node, based on the (possibly healed) tree.
     df['cc'] = np.int32(-1)
-    for i, component in enumerate(nx.connected_components(mst)):
+    for i, component in enumerate(components):
         df.loc[list(component), 'cc'] = i
 
-    cols = ['node', *'xyz', 'parent', 'cc']
     if radii is not None:
         df['radius'] = radii[df.index]
-        cols.append('radius')
     df = df.reset_index()[cols]
 
     if first_node != 0:
