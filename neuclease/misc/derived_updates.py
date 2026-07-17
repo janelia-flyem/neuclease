@@ -548,6 +548,14 @@ def update_skeleton(dvid_server, uuid, seg_instance, body, mutid, skeleton_confi
         threads=skeleton_config['threads'],
         format='swc',
     )
+
+    # Some bodies (e.g. very small ones at the chosen scale) skeletonize to
+    # nothing, yielding an SWC with only a comment header and no nodes.  Don't
+    # store an empty skeleton.
+    if not any(line and not line.startswith('#') for line in swc.splitlines()):
+        logger.warning(f"Body {body} skeletonized to an empty skeleton; not storing an SWC file.")
+        return
+
     post_key(dvid_server, uuid, f"{seg_instance}_skeletons", f"{body}_swc", data=swc.encode('utf-8'))
 
 

@@ -276,6 +276,44 @@ def test_skeletonize_from_ranges_no_dvid(monkeypatch):
     assert isinstance(buf, (bytes, bytearray)) and len(buf) > 0
 
 
+def test_treeify_empty_input():
+    # A body that skeletonizes to zero points must not crash treeify_coords.
+    empty = np.zeros((0, 3), dtype=int)
+
+    df = treeify_coords(empty, cc_ids=np.array([], dtype=int))
+    assert len(df) == 0
+    assert list(df.columns) == ['node', *'xyz', 'parent', 'cc']
+
+    df_r = treeify_coords(empty, radii=np.array([]), cc_ids=np.array([], dtype=int))
+    assert len(df_r) == 0
+    assert 'radius' in df_r.columns
+
+
+def test_skeletonize_empty_skeleton_all_formats():
+    # An even-width symmetric bar skeletonizes to zero points (skimage quirk),
+    # which previously crashed treeify_coords with "No objects to concatenate".
+    mask = np.zeros((10, 10, 40), dtype=bool)
+    mask[3:7, 3:7, 4:36] = True
+    ranges = runlength_encode_mask_to_ranges(mask)
+
+    common = dict(scale=0, block_shape=(20, 20, 20), halo=4, closing_radius=0,
+                  voxel_size_xyz=(8, 8, 8), threads=1)
+
+    df = skeletonize_neuron_from_ranges(ranges, format='pandas', **common)
+    assert len(df) == 0
+
+    swc = skeletonize_neuron_from_ranges(
+        ranges, format='swc', uuid='u', segmentation_instance='seg', mutid=1, **common
+    )
+    # Header present, but no body (node) rows.
+    assert '"mutation id": 1' in swc
+    assert not [ln for ln in swc.splitlines() if ln and not ln.startswith('#')]
+
+    buf = skeletonize_neuron_from_ranges(ranges, format='neuroglancer', **common)
+    # 8-byte header: num_vertices=0, num_edges=0.
+    assert np.frombuffer(buf, np.uint32).tolist() == [0, 0]
+
+
 def test_skeletonize_from_ranges_swc_requires_metadata():
     mask = np.zeros((10, 10, 10), dtype=bool)
     mask[2:8, 2:8, 2:8] = True

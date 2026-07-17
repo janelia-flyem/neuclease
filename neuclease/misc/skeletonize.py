@@ -735,6 +735,14 @@ def treeify_coords(all_coords, radii=None, cc_ids=None, heal_max_distance=None, 
     num_neighbors = 7
     nodes = np.arange(len(all_coords))
 
+    if len(all_coords) == 0:
+        # No skeleton points at all (e.g. a tiny body that skeletonized to nothing).
+        # Return a well-formed but empty result rather than choking downstream.
+        cols = ['node', *'xyz', 'parent', 'cc']
+        if radii is not None:
+            cols.append('radius')
+        return pd.DataFrame(columns=cols)
+
     # For anisotropic data, measure distances in physical units by scaling the
     # coordinates.  The output coordinates (below) still use the raw values.
     if anisotropy_zyx is None:
