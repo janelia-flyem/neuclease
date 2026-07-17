@@ -138,6 +138,15 @@ SkeletonConfigSchema = {
             "type": "integer",
             "minimum": 0,
             "default": 5
+        },
+        "threads": {
+            "description":
+                "(method 'neuclease' only.)\n"
+                "Number of threads to use when skeletonizing a single body (its blocks\n"
+                "are processed in parallel via a thread pool of this size).\n",
+            "type": "integer",
+            "minimum": 1,
+            "default": 12
         }
     }
 }
@@ -536,6 +545,7 @@ def update_skeleton(dvid_server, uuid, seg_instance, body, mutid, skeleton_confi
         halo=skeleton_config['halo'],
         closing_radius=skeleton_config['closing-radius'],
         voxel_size_xyz=voxel_size_xyz,
+        threads=skeleton_config['threads'],
         format='swc',
     )
     post_key(dvid_server, uuid, f"{seg_instance}_skeletons", f"{body}_swc", data=swc.encode('utf-8'))
