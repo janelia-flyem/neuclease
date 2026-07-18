@@ -799,43 +799,141 @@ def treeify_coords(all_coords, radii=None, cc_ids=None, heal_max_distance=None, 
     if heal_max_distance is not None:
         _heal_graph(mst, dist_coords, heal_max_distance)
 
-    components = list(nx.connected_components(mst))
-    if min_component_size > 1:
-        components = [c for c in components if len(c) >= min_component_size]
+    # Root each component (via DFS) and orient parent pointers away from the root.
+    parents, cc = _reoriented_parents(mst, len(all_coords), min_component_size)
 
     cols = ['node', *'xyz', 'parent', 'cc']
     if radii is not None:
         cols.append('radius')
 
-    if not components:
+    kept = np.nonzero(cc != -1)[0]
+    if len(kept) == 0:
         # Everything was dropped (or there was nothing to begin with).
         return pd.DataFrame(columns=cols)
 
-    dfs_edges = []
-    for component in components:
-        root = min(component)
-        dfs_edges.extend(nx.dfs_edges(mst, source=root))
-        dfs_edges.append((-1, root))
-
-    df = pd.DataFrame(dfs_edges, columns=['parent', 'node'])
-    df[[*'zyx']] = all_coords[df['node']]
-
-    df = df.set_index('node').sort_index()
-
-    # Assign a component id to each node, based on the (possibly healed) tree.
-    df['cc'] = np.int32(-1)
-    for i, component in enumerate(components):
-        df.loc[list(component), 'cc'] = i
-
+    df = pd.DataFrame({'node': kept})
+    df[[*'zyx']] = all_coords[kept]
+    df['parent'] = parents[kept]
+    df['cc'] = cc[kept]
     if radii is not None:
-        df['radius'] = radii[df.index]
-    df = df.reset_index()[cols]
+        df['radius'] = radii[kept]
+    df = df[cols]
 
     if first_node != 0:
-        # Switch from 0-based to 1-based indexing
+        # Switch from 0-based to 1-based indexing.
         df.loc[df['node'] != -1, 'node'] += first_node
         df.loc[df['parent'] != -1, 'parent'] += first_node
     return df
+
+
+def heal_skeleton(skeleton_df, max_distance=np.inf, anisotropy_xyz=None, min_component_size=1):
+    """
+    Repair a fragmented skeleton by stitching its connected components together and
+    re-orienting the result into a valid tree.
+
+    A skeleton DataFrame (as produced by :py:func:`skeletonize_neuron` /
+    :py:func:`treeify_coords`) may consist of several disconnected fragments, i.e.
+    multiple trees, each with its own root (a row whose ``parent`` is -1).  This
+    function joins those fragments at their nearest cross-fragment points (using the
+    same fragment-quotient-MST strategy as the blockwise stitching), then re-roots
+    each resulting component so that its ``parent`` pointers again form a proper tree
+    -- even where the joined fragments were originally oriented in opposition to each
+    other.
+
+    The input node ids, coordinates, radii, and any extra columns are preserved; only
+    the ``parent`` and ``cc`` columns are recomputed.
+
+    Args:
+        skeleton_df:
+            A skeleton DataFrame with (at least) columns ``['node', 'x', 'y', 'z', 'parent']``.
+        max_distance:
+            Fragments are only joined where the bridging edge does not exceed this
+            length.  Fragments that remain too far apart stay disconnected (multiple
+            trees).  Measured in the same units as ``anisotropy_xyz`` (or raw voxel
+            units if that isn't given).  The default (inf) joins everything into a
+            single tree.
+        anisotropy_xyz:
+            Optional physical size of one coordinate unit along each axis, in XYZ
+            order (e.g. the nm-per-voxel voxel size, as reported by DVID).  When
+            given, bridge distances (and hence ``max_distance``) are measured in
+            these physical units.
+        min_component_size:
+            Discard components with fewer than this many nodes from the result.
+            The default (1) keeps everything.
+
+    Returns:
+        A copy of ``skeleton_df`` with updated ``parent`` and ``cc`` columns
+        (and any sub-threshold components removed).
+    """
+    df = skeleton_df.reset_index(drop=True)
+    n = len(df)
+    if n == 0:
+        return df.copy()
+
+    node_ids = df['node'].to_numpy()
+    coords_zyx = df[['z', 'y', 'x']].to_numpy()
+    id_to_pos = pd.Series(np.arange(n), index=node_ids)
+
+    # Build an undirected graph over positional indices [0, n) from the existing edges.
+    g = nx.Graph()
+    g.add_nodes_from(range(n))
+    child_parent = df.loc[df['parent'] != -1, ['node', 'parent']]
+    for child, parent in child_parent.itertuples(index=False):
+        g.add_edge(int(id_to_pos[child]), int(id_to_pos[parent]))
+
+    # Stitch the fragments (in physical units if anisotropy is given).
+    # coords_zyx is in ZYX order, so reverse the XYZ anisotropy to match.
+    if anisotropy_xyz is None:
+        dist_coords = coords_zyx
+    else:
+        dist_coords = coords_zyx * np.asarray(anisotropy_xyz, dtype=np.float64)[::-1]
+    components = [np.fromiter(c, dtype=np.int64) for c in nx.connected_components(g)]
+    _bridge_components(g, dist_coords, components, max_distance)
+
+    # Re-root each (possibly newly joined) component into a valid tree.
+    parents, cc = _reoriented_parents(g, n, min_component_size)
+
+    out = df.copy()
+    out['parent'] = np.where(parents == -1, -1, node_ids[parents])
+    out['cc'] = cc
+    return out[cc != -1].reset_index(drop=True)
+
+
+def _reoriented_parents(g, num_nodes, min_component_size=1):
+    """
+    Root each connected component of ``g`` (whose nodes are integers in
+    ``[0, num_nodes)``) via a depth-first traversal, orienting parent pointers away
+    from the root.  A spanning tree is taken per component, so any cycles in ``g``
+    are broken.
+
+    Args:
+        g:
+            An undirected ``nx.Graph`` over node ids in ``[0, num_nodes)``.
+        num_nodes:
+            The total number of nodes (positions) represented.
+        min_component_size:
+            Components with fewer than this many nodes are dropped (their nodes get
+            ``cc = -1``).
+
+    Returns:
+        (parents, cc), each a length-``num_nodes`` array:
+          - ``parents[i]`` is the positional parent of node ``i`` (or -1 for a root
+            or a dropped/absent node).
+          - ``cc[i]`` is the component id of node ``i`` (or -1 if dropped/absent).
+    """
+    parents = np.full(num_nodes, -1, dtype=np.int64)
+    cc = np.full(num_nodes, -1, dtype=np.int32)
+    comp_id = 0
+    for component in nx.connected_components(g):
+        if len(component) < min_component_size:
+            continue
+        root = min(component)
+        for parent, child in nx.dfs_edges(g, source=root):
+            parents[child] = parent
+        for node in component:
+            cc[node] = comp_id
+        comp_id += 1
+    return parents, cc
 
 
 def _knn_edges(all_coords, group, num_neighbors):

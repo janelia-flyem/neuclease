@@ -1,6 +1,7 @@
 import re
 
 import numpy as np
+import pandas as pd
 import pytest
 
 from neuclease.dvid.rle import runlength_encode_mask_to_ranges
@@ -10,8 +11,24 @@ from neuclease.misc.skeletonize import (
     treeify_coords,
     skeletonize_neuron,
     skeletonize_neuron_from_ranges,
+    heal_skeleton,
     HaloComponentTracker,
 )
+
+
+def _assert_valid_forest(df):
+    """Every connected component (by node/parent edges) is a tree with exactly one root."""
+    import networkx as nx
+    g = nx.Graph()
+    g.add_nodes_from(df['node'])
+    edges = df.loc[df['parent'] != -1, ['node', 'parent']]
+    for node, parent in edges.itertuples(index=False):
+        g.add_edge(node, parent)
+    roots = set(df.loc[df['parent'] == -1, 'node'])
+    for comp in nx.connected_components(g):
+        assert len(comp & roots) == 1, "component must have exactly one root"
+    # A forest has (#nodes - #components) edges (no cycles).
+    assert g.number_of_edges() == g.number_of_nodes() - nx.number_connected_components(g)
 
 
 def _edges(df):
@@ -374,6 +391,59 @@ def test_skeletonize_output_path_rejected_for_pandas(monkeypatch):
     monkeypatch.setattr(skel_module, 'fetch_sparsevol', _FakeSparsevol(np.ones((4, 4, 4), bool)))
     with pytest.raises(AssertionError):
         skeletonize_neuron('s', 'u', 'seg', body=1, format='pandas', output_path='/tmp/x.swc')
+
+
+def _make_skeleton_df(rows):
+    # rows: list of (node, x, y, z, parent, radius)
+    return pd.DataFrame(rows, columns=['node', 'x', 'y', 'z', 'parent', 'radius'])
+
+
+def test_heal_skeleton_reorients_opposed_fragments():
+    # Fragment A: 1->2->3 rooted at node 1, running along x = 0,1,2.
+    # Fragment B: 6->5->4 rooted at node 6 (the FAR end), running along x = 3,4,5.
+    # The nearest cross-fragment points are node 3 (x=2) and node 4 (x=3).
+    rows = [
+        (1, 0.0, 0.0, 0.0, -1, 1.0),
+        (2, 1.0, 0.0, 0.0,  1, 1.0),
+        (3, 2.0, 0.0, 0.0,  2, 1.0),
+        (4, 3.0, 0.0, 0.0,  5, 1.0),
+        (5, 4.0, 0.0, 0.0,  6, 1.0),
+        (6, 5.0, 0.0, 0.0, -1, 1.0),
+    ]
+    df = _make_skeleton_df(rows)
+    assert (df['parent'] == -1).sum() == 2  # two roots to begin with
+
+    healed = heal_skeleton(df)
+    # One connected tree now, exactly one root, valid (acyclic) structure.
+    assert (healed['parent'] == -1).sum() == 1
+    assert healed['cc'].nunique() == 1
+    _assert_valid_forest(healed)
+
+    # Node ids, coordinates, and radius are preserved.
+    assert set(healed['node']) == {1, 2, 3, 4, 5, 6}
+    assert 'radius' in healed.columns
+    # Fragment B was re-oriented: node 6 is no longer a root.
+    assert healed.set_index('node').loc[6, 'parent'] != -1
+
+
+def test_heal_skeleton_respects_max_distance():
+    rows = [
+        (1, 0.0, 0.0, 0.0, -1, 1.0),
+        (2, 1.0, 0.0, 0.0,  1, 1.0),
+        (3, 20.0, 0.0, 0.0, -1, 1.0),
+        (4, 21.0, 0.0, 0.0,  3, 1.0),
+    ]
+    df = _make_skeleton_df(rows)
+
+    # Gap between the two fragments is ~19 (node 2 -> node 3).
+    assert heal_skeleton(df, max_distance=5)['parent'].eq(-1).sum() == 2    # too far, stays split
+    assert heal_skeleton(df, max_distance=100)['parent'].eq(-1).sum() == 1  # joined
+    assert heal_skeleton(df)['parent'].eq(-1).sum() == 1                    # default inf -> joined
+
+    # Anisotropy (XYZ) scales the gap: with 10x on x, the ~19-voxel gap becomes ~190 > 100.
+    healed = heal_skeleton(df, max_distance=100, anisotropy_xyz=(10, 1, 1))
+    assert (healed['parent'] == -1).sum() == 2
+    _assert_valid_forest(healed)
 
 
 if __name__ == "__main__":
