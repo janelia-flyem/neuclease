@@ -11,11 +11,12 @@ import numpy as np
 import pandas as pd
 import requests
 
-from ...util import tqdm_proxy, compute_parallel, swc_to_dataframe
+from ...util import tqdm_proxy, compute_parallel, swc_to_dataframe, fix_df_names
 from .. import dvid_api_wrapper, fetch_generic_json
 from ..common import post_tags
 from ..node import fetch_instance_info
-from ..repo import create_instance
+from ..repo import create_instance, find_branch_nodes
+from ..mutations import fetch_generic_mutations
 
 # $ protoc --python_out=. neuclease/dvid/keyvalue/ingest.proto
 from .ingest_pb2 import Keys, KeyValue, KeyValues
@@ -49,6 +50,42 @@ def fetch_keys(server, uuid, instance, *, session=None):
         list of strings
     """
     return fetch_generic_json(f'{server}/api/node/{uuid}/{instance}/keys', session=session)
+
+
+@dvid_api_wrapper
+def fetch_keys_via_mutation_log(server, uuid, instance, *, session=None):
+    """
+    Similar to fetch_keys(), but infers the set of stored keys in the keyvalue
+    instance by parsing the instance mutation log, rather than asking for the
+    list of keys directly.
+
+    For instances with many keys, this is much faster.
+    Additionally, this returns a Series indexed by (uuid, timestamp)
+    indicating when the key was last posted.
+
+    Args:
+        server:
+            dvid server, e.g. 'emdata3:8900'
+
+        uuid:
+            dvid uuid, e.g. 'abc9'
+
+        instance:
+            keyvalue instance name, e.g. 'segmentation_meshes'
+
+    Returns:
+        Series of key names indexed by (uuid, timestamp)
+    """
+    muts = fetch_generic_mutations(server, uuid, instance, format='json', session=session)
+    muts_df = pd.DataFrame(muts)
+    muts_df = fix_df_names(muts_df)
+
+    branch_nodes = find_branch_nodes(server, uuid, uuid, session=session)
+    muts_df['uuid'] = muts_df['uuid'].astype(branch_nodes.dtype)
+    last_muts = muts_df.drop_duplicates('key', keep='last')
+    present_keys = last_muts.query('action == "postkv"')
+    present_keys = present_keys.set_index(['uuid', 'timestamp'])['key']
+    return present_keys
 
 
 @dvid_api_wrapper
