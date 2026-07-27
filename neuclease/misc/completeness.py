@@ -13,7 +13,8 @@ logger = logging.getLogger(__name__)
 
 def completeness_forecast(labeled_point_df, partner_df, syn_counts_df=None, body_annotations_df=None, *,
                           min_tbar_conf=0.0, min_psd_conf=0.0, roi=None,
-                          sort_by='SynWeight', stop_at_rank=None, _syn_counts_only=False):
+                          sort_by='SynWeight', stop_at_rank=None, plateau_rows=True,
+                          _syn_counts_only=False):
     """
     Produces a DataFrame listing all pairwise synapse connections,
     ordered according to the size of the smaller body in the pair.
@@ -81,6 +82,19 @@ def completeness_forecast(labeled_point_df, partner_df, syn_counts_df=None, body
             use this parameter to limit the size of the results,
             and also speed up the computation.
 
+        plateau_rows:
+            If body_annotations_df contains bodies which have no synapses at all,
+            those bodies still consume a rank, but they can never appear in the
+            connection table on their own merits.  By default, we insert one
+            "plateau" row per such body so that its rank is still represented in
+            the results (with the cumulative statistics carried over from the
+            preceding row).  Otherwise, the completeness curves would contain a
+            gap wherever such bodies occupy a run of consecutive ranks.
+
+            Set this to False if you intend to do row-wise arithmetic on
+            sorted_connection_df and would rather it contain nothing but
+            genuine connections.
+
         _syn_counts_only:
             Internal use.
 
@@ -94,8 +108,16 @@ def completeness_forecast(labeled_point_df, partner_df, syn_counts_df=None, body
             'minimally_connected_tbar_frac': 'traced tbars with a traced output',
             'traced_psd_frac': 'psds on traced bodies',
             'traced_conn_frac': 'fully traced connections'
+            'conn_count': 1 for a genuine connection, 0 for a plateau row
 
         sorted_bodies_df is indexed by body ID, sorted by the body 'SynWeight'
+        (or whatever sort_by specifies), with a 'rank' column.
+
+        Note:
+            Unless plateau_rows=False, not every row of sorted_connection_df is a
+            connection: rows with conn_count == 0 are placeholders which merely
+            reserve an X-axis position for a ranked body that has no synapses.
+            Use ``query('conn_count == 1')`` to see only genuine connections.
     """
     # Validate and standardize arguments
     args = _sanitize_args(
@@ -111,7 +133,7 @@ def completeness_forecast(labeled_point_df, partner_df, syn_counts_df=None, body
     if _syn_counts_only:
         return syn_counts_df
 
-    conn_df = _completeness_forecast(conn_df, syn_counts_df, stop_at_rank)
+    conn_df = _completeness_forecast(conn_df, syn_counts_df, stop_at_rank, plateau_rows=plateau_rows)
     return conn_df, syn_counts_df
 
 
@@ -210,7 +232,7 @@ def _sanitize_args(labeled_point_df, partner_df, syn_counts_df, body_annotations
             sort_by, stop_at_rank)
 
 
-def _completeness_forecast(conn_df, syn_counts_df, stop_at_rank, _debug_cols=False):
+def _completeness_forecast(conn_df, syn_counts_df, stop_at_rank, _debug_cols=False, plateau_rows=True):
     """
     Main implementation of completeness_forecast()
 
@@ -222,6 +244,8 @@ def _completeness_forecast(conn_df, syn_counts_df, stop_at_rank, _debug_cols=Fal
             Sorted synapse counts.
             Indexed by body, with at least columns ['PreSyn', 'PostSyn', 'rank']
         stop_at_rank:
+            See description in completeness_forecast()
+        plateau_rows:
             See description in completeness_forecast()
 
     Returns:
@@ -247,6 +271,14 @@ def _completeness_forecast(conn_df, syn_counts_df, stop_at_rank, _debug_cols=Fal
     conn_df['min_rank'] = prepost_ranks[:, 0]  # min rank -> larger body
     conn_df['max_rank'] = prepost_ranks[:, 1]  # max rank -> smaller body
 
+    # Every row so far represents exactly one connection.  The placeholder rows we're
+    # about to insert represent none, so from here on we count connections with this
+    # column rather than by counting rows.
+    conn_df['conn_count'] = np.int32(1)
+
+    if plateau_rows:
+        conn_df = _append_plateau_rows(conn_df, syn_counts_df, stop_at_rank)
+
     # Now order the connection pairs according to the SMALLER of the two bodies in the pair,
     # i.e. sort according to the body with greater rank (i.e. worse rank).
     # The idea is that if we were to trace all bodies in rank-order, the connection pairs
@@ -267,7 +299,8 @@ def _completeness_forecast(conn_df, syn_counts_df, stop_at_rank, _debug_cols=Fal
     if _debug_cols:
         # Moving down the list of connection pairs,
         # calculate the number of unique tbars we've seen so far.
-        nondupes = ~(conn_df['pre_id'].duplicated())
+        # (Plateau rows have no tbar at all, so they must not be counted here.)
+        nondupes = ~(conn_df['pre_id'].duplicated()) & (conn_df['conn_count'] == 1)
         conn_df['num_tbars'] = nondupes.cumsum()
 
         # This indicates the number of unique tbars involved in connections thus far,
@@ -301,11 +334,14 @@ def _completeness_forecast(conn_df, syn_counts_df, stop_at_rank, _debug_cols=Fal
     for c in syncols:
         conn_df[f'traced_{c}_frac'] = conn_df[f'cumulative_traced_{c}'] / syn_counts_df[c].sum()
 
-    # The cumulatively fully-traced connection count (i.e. connections for which both input
-    # and output are in traced bodies) is simply the row number, due to the careful sorting
-    # of the connection table as explained above.
+    # Due to the careful sorting of the connection table as explained above,
+    # the cumulatively fully-traced connection count (i.e. connections for which both input
+    # and output are in traced bodies) is just a running total of the conn_count rows
+    # (i.e. the running count of all rows except for the non-synaptic "plateau" rows).
+    # We can't use the row number for this, since plateau rows aren't connections;
+    # that's what the 'conn_count' column is for.
     # Note: When visualizing, we'll usually want to put this in the Y-axis, not the X-axis.
-    conn_df['cumulative_traced_conn'] = 1 + conn_df.index
+    conn_df['cumulative_traced_conn'] = conn_df['conn_count'].cumsum()
     conn_df['traced_conn_frac'] = conn_df['cumulative_traced_conn'] / full_conn_count
 
     # It's useful to provide the max body rank
@@ -323,6 +359,83 @@ def _completeness_forecast(conn_df, syn_counts_df, stop_at_rank, _debug_cols=Fal
     conn_df = conn_df.merge(body_max_syn_counts, 'left', left_on='body_max_rank', right_index=True)
 
     return conn_df
+
+
+def _append_plateau_rows(conn_df, syn_counts_df, stop_at_rank):
+    """
+    Append one "plateau" row to conn_df for each ranked body which has no synapses at all.
+
+    Such bodies can only arise from the caller's body_annotations_df, and they can never
+    appear in the connection table on their own merits (no synapses means no connections).
+    But they DO consume a rank, so without these rows the plotted completeness curves
+    would contain a gap wherever such bodies occupy a run of consecutive ranks -- which is
+    exactly what happens when sort_by begins with a category such as 'status', since then
+    all of a category's synapse-less bodies land together at the tail of that category.
+
+    A plateau row is not a connection.  It exists so that the body's rank is represented
+    on the X-axis of the completeness plots, with the cumulative capture statistics simply
+    carried over from the preceding row -- hence "plateau".  We arrange for that to happen
+    with no special-casing anywhere else:
+
+        - 'conn_count' is 0, so the row doesn't advance cumulative_traced_conn.
+
+        - 'body_pre' and 'body_post' both name the body itself.  The cumulative synapse
+          columns are computed by flattening those two columns and cumsum-ing the per-body
+          counts, so listing the body twice costs nothing (its counts are zero, and the
+          second occurrence is dropped as a duplicate anyway), while leaving them NaN
+          would poison that cumsum.
+
+        - min_rank == max_rank == the body's rank, so the row sorts into its correct
+          position, and downstream code assigns body_max_rank to the body itself.
+
+    Note:
+        Only bodies with NO synapses get a plateau row.  A body which HAS synapses always
+        appears in the connection table somewhere, though not necessarily as the max_rank
+        body.
+
+    Returns:
+        conn_df, with the extra rows appended (unsorted).
+    """
+    ranked_bodies = syn_counts_df.query('rank <= @stop_at_rank')
+    synapseless = ranked_bodies.loc[
+        (ranked_bodies[['PreSyn', 'PostSyn']] == 0).all(axis=1)
+    ]
+    if len(synapseless) == 0:
+        return conn_df
+
+    logger.info(f"Appending {len(synapseless)} plateau rows for bodies with no synapses")
+
+    bodies = synapseless.index.values
+    ranks = synapseless['rank'].values
+    plateau = pd.DataFrame({
+        'pre_id': 0,
+        'post_id': 0,
+        'body_pre': bodies,
+        'body_post': bodies,
+        'body_pre_rank': ranks,
+        'body_post_rank': ranks,
+        'min_rank': ranks,
+        'max_rank': ranks,
+        'conn_count': np.int32(0),
+    })
+
+    # Match conn_df's dtypes so the concatenation doesn't upcast anything,
+    # and supply null values for any columns we didn't set (e.g. 'roi').
+    for col, dtype in conn_df.dtypes.items():
+        if col in plateau.columns:
+            if plateau[col].dtype != dtype:
+                plateau[col] = plateau[col].astype(dtype)
+            continue
+        nulls = pd.Series([pd.NA] * len(plateau))
+        try:
+            nulls = nulls.astype(dtype)
+        except (TypeError, ValueError):
+            # Not all dtypes can hold a null value (e.g. int64).
+            # Leave the column as-is and let pd.concat() widen it.
+            logger.warning(f"Can't store a null value in plateau rows for column '{col}' ({dtype})")
+        plateau[col] = nulls
+
+    return pd.concat((conn_df, plateau[conn_df.columns]), ignore_index=True)
 
 
 def _filter_synapses(point_df, partner_df, min_tbar_conf=0.0, min_psd_conf=0.0, roi=None):
