@@ -319,7 +319,7 @@ def _completeness_forecast(conn_df, syn_counts_df, stop_at_rank, _debug_cols=Fal
     # since the 'max rank' body is the body that's conceptually being "appended"
     # to the traced set.
     body_max_syn_counts = syn_counts_df.rename(
-        columns={c: f'{c}_max_rank' for k in syncols})
+        columns={c: f'{c}_max_rank' for c in syncols})
     conn_df = conn_df.merge(body_max_syn_counts, 'left', left_on='body_max_rank', right_index=True)
 
     return conn_df
