@@ -531,6 +531,17 @@ def skeleton_coords_from_ranges(
         threads=threads,
     )
 
+    if not results:
+        # The sparsevol had no blocks at all (e.g. a tiny body whose voxels all
+        # vanished at this downsampled scale).  Return a well-formed but empty
+        # result instead of crashing on zip(*[]) below; treeify_coords() already
+        # knows how to turn this into an empty (but valid) skeleton.
+        empty_coords = np.zeros((0, 3), dtype=np.int64)
+        empty_radii = np.zeros((0,), dtype=np.float64) if return_radii else None
+        empty_block_ids = np.zeros((0,), dtype=np.int32)
+        empty_point_labels = np.zeros((0,), dtype=np.int32)
+        return empty_coords, empty_radii, empty_block_ids, empty_point_labels, tracker
+
     all_coords, all_radii, all_block_ids, all_point_labels = zip(*results)
     all_coords = np.concatenate(all_coords)
     all_coords *= 2**scale
