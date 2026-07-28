@@ -761,7 +761,7 @@ def _plot_categorized_connectivity_forecast(
         conn_df, category_col, max_rank=None, plotted_points=20_000, hover_cols=[],
         title='connectivity after prioritized merging', export_path=None, selection_link=None,
         secondary_line='synweight', secondary_categories=['Anchor', '0.5assign', ''],
-        secondary_range=[0, 400]):
+        secondary_range=[0, 400], uncategorized_pad=100_000):
     """
     Plot the curves of captured tbars, captured PSDs and captured dual-sided
     connections as bodies are traced/merged from large to small.
@@ -797,6 +797,13 @@ def _plot_categorized_connectivity_forecast(
             Columns to display in the hover text.
             Any '*_max_rank' columns should be referred to by their prefix only.
             For example, use ``hover_cols=['SynWeight']``, not ``hover_cols=['SynWeight_max_rank']``.
+        uncategorized_pad:
+            The plot always contains ALL of the data it was given, but by default
+            it isn't zoomed all the way out, since the tail of the ranking (tiny
+            bodies with no status) usually isn't the interesting part.
+            The initial view spans from rank 0 to this many ranks beyond the first
+            body in the uncategorized (empty-string) category.
+            Use None to zoom all the way out, as before.
     """
     from bokeh.plotting import figure, output_file, save as bokeh_save
     from bokeh.models import HoverTool, Range1d, LinearAxis
@@ -816,6 +823,10 @@ def _plot_categorized_connectivity_forecast(
 
     _df = _df.drop_duplicates('max_rank', keep='last')
 
+    # Note: We compute the initial X range BEFORE decimating, so that the
+    # category boundary it's based on is exact.
+    x_range = _initial_xlim(_df, category_col, uncategorized_pad)
+
     # Avoid plotting too many points
     step = max(1, len(_df) // plotted_points)
     _df = _df.iloc[::step]
@@ -824,7 +835,12 @@ def _plot_categorized_connectivity_forecast(
     # (bigger than 2**53), and we don't need these columns anyway.
     _df = _df.drop(columns=['pre_id', 'post_id'])
 
-    p = figure(align='center', height=500, width=800, title=title, y_range=(0, 1.0))
+    # Note: bokeh doesn't accept an explicit x_range=None (its default is a
+    # sentinel, not None), so we omit the argument entirely if we aren't setting it.
+    x_range_arg = {} if x_range is None else {'x_range': x_range}
+
+    p = figure(align='center', height=500, width=800, title=title,
+               y_range=(0, 1.0), **x_range_arg)
     p.title.text_font_size = '14pt'
     p.xaxis.axis_label = 'body rank'
     p.yaxis.axis_label = 'fraction of captured presyn, synweight, postsyn, and connectivity'
@@ -886,6 +902,39 @@ def _plot_categorized_connectivity_forecast(
         bokeh_save(p)
 
     return p
+
+
+def _initial_xlim(df, category_col, uncategorized_pad):
+    """
+    Choose the X range (body rank) that a categorized forecast plot should be
+    zoomed to when it first opens.
+
+    All of the data is present in the plot regardless; this merely sets the
+    initial view, and the user can zoom/pan out to see the rest.
+
+    We start at rank 0 and stop shortly after the first body in the
+    'uncategorized' category (the empty string), which for body statuses marks
+    the beginning of the long tail of unannotated bodies.  Everything past that
+    point tends to compress the interesting left-hand region into a sliver.
+
+    Returns:
+        (start, end) tuple, or None to let bokeh fit the whole dataset.
+    """
+    if uncategorized_pad is None:
+        return None
+
+    uncategorized = df.loc[df[category_col] == '', 'max_rank']
+    if len(uncategorized) == 0:
+        logger.info(
+            f"No rows have an empty '{category_col}', so the initial plot view "
+            "will span the full range of body ranks."
+        )
+        return None
+
+    # Don't bother extending the view past the data we actually have.
+    # (Cast to int; numpy ints serialize awkwardly into the exported html.)
+    end = min(uncategorized.min() + uncategorized_pad, df['max_rank'].max())
+    return (0, int(end))
 
 
 def _add_link_taptool(bokeh_plot, template_link, dots):
