@@ -8,7 +8,8 @@ from libdvid import DVIDNodeService
 
 from neuclease.dvid import ( DvidInstanceInfo, post_key, post_branch, create_instance,
                              fetch_mutation_id, post_cleave, post_split_supervoxel, post_merge )
-from neuclease.cleave.merge_graph import LabelmapMergeGraph
+# note: I think these tests were written when the "local table" implementation was the only one...
+from neuclease.cleave.merge_graph import LabelmapMergeGraphLocalTable as LabelmapMergeGraph
 from neuclease.cleave.merge_table import load_merge_table, MAPPED_MERGE_TABLE_DTYPE
 
 ##
