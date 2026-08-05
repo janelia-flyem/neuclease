@@ -48,6 +48,14 @@ def standardize_servername(server):
     protocol = m.group('protocol') or ''
     domain = m.group('domain') or ''
     port = m.group('port') or ''
+
+    if domain in ('localhost', '127.0.0.1', '::1'):
+        # getfqdn() performs a reverse DNS lookup, which for loopback addresses
+        # can return a bogus, non-resolvable name (e.g. '1.0.0.127.in-addr.arpa')
+        # depending on the local resolver configuration. Loopback addresses
+        # don't need canonicalization anyway, so just leave them as-is.
+        return f"{protocol}{domain}{port}"
+
     fqdn = getfqdn(domain)
     return f"{protocol}{fqdn}{port}"
 
