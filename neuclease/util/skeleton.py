@@ -56,12 +56,12 @@ def normalize_skeleton(skeleton_df):
     """
     Ensure that a skeleton's nodes have contiguous IDs from 1..N,
     and that they are listed in sorted order.
-
-    Works IN-PLACE.
     """
     # Remap vertices to range 1..N
     if (skeleton_df['node'] == np.arange(1, 1+len(skeleton_df))).all():
         return skeleton_df
+
+    skeleton_df = skeleton_df.copy()
 
     # Use 0 for virtual root instead of -1
     assert skeleton_df['node'].min() >= 1
@@ -83,6 +83,8 @@ def normalize_skeleton(skeleton_df):
     assert skeleton_df['parent'].min() == -1
     assert not (skeleton_df['parent'] == 0).any()
 
+    return skeleton_df
+
 
 def skeleton_to_neuroglancer(skeleton_df, orig_resolution_nm=8, output_path=None):
     """
@@ -91,7 +93,7 @@ def skeleton_to_neuroglancer(skeleton_df, orig_resolution_nm=8, output_path=None
     https://github.com/google/neuroglancer/blob/master/src/datasource/precomputed/skeletons.md
     """
     skeleton_df = skeleton_df.rename(columns={'rowId': 'node', 'link': 'parent'})
-    normalize_skeleton(skeleton_df)
+    skeleton_df = normalize_skeleton(skeleton_df)
     num_vertices = len(skeleton_df)
     num_edges = skeleton_df.eval('parent != -1').sum()
     vertex_positions = skeleton_df[[*'xyz']].values.astype(np.float32, 'C')
