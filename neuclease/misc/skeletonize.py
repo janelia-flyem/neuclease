@@ -125,6 +125,8 @@ def skeletonize_neuron(
     return_radii=False,
     heal_max_distance=None,
     voxel_size_xyz=None,
+    coordinate_units='voxels',
+    radius_units='voxels',
     min_component_size=2,
     first_node=1,
     tracker=None,
@@ -181,6 +183,17 @@ def skeletonize_neuron(
             anisotropy-aware and to interpret heal_max_distance in nanometers.
             If not provided, it is fetched from DVID automatically when needed
             (i.e. when return_radii is True or heal_max_distance is given).
+        coordinate_units:
+            The units for the returned coordinates: 'voxels' (scale-0 voxels, the
+            default) or 'nanometers'.  'nanometers' requires a voxel_size_xyz.
+            (Coordinates are always at scale-0 resolution, regardless of 'scale'.)
+        radius_units:
+            The units for the returned radii: 'voxels' (the default) or 'nanometers'.
+            'nanometers' requires a voxel_size_xyz; 'voxels' is only valid for
+            ISOTROPIC datasets (it raises on anisotropic voxels, where a single
+            voxel radius is ill-defined).
+            Note: for format='neuroglancer', vertex positions are always physical
+            nanometers (these unit options are ignored for that format).
         min_component_size:
             Discard skeleton connected components with fewer than this many nodes.
             The default (2) drops isolated single-node components (tiny segments
@@ -214,9 +227,15 @@ def skeletonize_neuron(
     assert format in ('pandas', 'swc', 'neuroglancer'), \
         f"Unknown format: {format}"
 
-    # SWC requires radii; neuroglancer needs the voxel size to scale to nm.
+    # SWC requires radii; neuroglancer needs the voxel size to scale to nm;
+    # nanometer coordinates also require the voxel size.
     need_radii = return_radii or (format == 'swc')
-    need_voxel_size = need_radii or (heal_max_distance is not None) or (format == 'neuroglancer')
+    need_voxel_size = (
+        need_radii
+        or (heal_max_distance is not None)
+        or (format == 'neuroglancer')
+        or (coordinate_units == 'nanometers')
+    )
 
     dvid_seg = (dvid_server, uuid, segmentation_instance)
 
@@ -227,6 +246,10 @@ def skeletonize_neuron(
     # directly instead.
     if voxel_size_xyz is None and need_voxel_size:
         voxel_size_xyz = fetch_instance_info(*dvid_seg)['Extended']['VoxelSize']
+
+    # Validate the units request up front (before fetching the sparsevol), so an
+    # impossible request (e.g. voxel radii on an anisotropic dataset) fails fast.
+    _check_units(coordinate_units, radius_units, voxel_size_xyz, need_radii)
 
     ranges = fetch_sparsevol(*dvid_seg, body, scale=scale, format='ranges')
 
@@ -243,6 +266,8 @@ def skeletonize_neuron(
         return_radii=return_radii,
         heal_max_distance=heal_max_distance,
         voxel_size_xyz=voxel_size_xyz,
+        coordinate_units=coordinate_units,
+        radius_units=radius_units,
         min_component_size=min_component_size,
         first_node=first_node,
         tracker=tracker,
@@ -264,6 +289,8 @@ def skeletonize_neuron_from_ranges(
     return_radii=False,
     heal_max_distance=None,
     voxel_size_xyz=None,
+    coordinate_units='voxels',
+    radius_units='voxels',
     min_component_size=2,
     first_node=1,
     tracker=None,
@@ -285,10 +312,15 @@ def skeletonize_neuron_from_ranges(
     supplied by the caller when the corresponding output is requested:
 
         - voxel_size_xyz: needed for anisotropy-aware radii, nm-based
-          heal_max_distance, and neuroglancer output.  If omitted, isotropic unit
-          voxels are assumed.
+          heal_max_distance, neuroglancer output, and any 'units' selection that
+          involves nanometers.  If omitted, isotropic unit voxels are assumed and
+          radii come out in voxels.
         - uuid, segmentation_instance, mutid: required for format='swc'
           (they populate the SWC comment header).
+
+    The 'coordinate_units' / 'radius_units' options (see skeletonize_neuron) select
+    the units of the returned pandas/swc skeleton; they require voxel_size_xyz
+    whenever they ask for nanometers.
 
     See skeletonize_neuron() for a description of the remaining arguments and the
     return value.
@@ -302,6 +334,10 @@ def skeletonize_neuron_from_ranges(
             "For format='swc', you must provide uuid, segmentation_instance, and mutid."
 
     need_radii = return_radii or (format == 'swc')
+
+    # Validate the units request (and its voxel-size / isotropy prerequisites) up
+    # front, before the expensive skeletonization.
+    _check_units(coordinate_units, radius_units, voxel_size_xyz, need_radii)
 
     # DVID reports VoxelSize in XYZ order; the rest of this code uses ZYX.
     pixel_pitch_zyx = ()
@@ -328,22 +364,30 @@ def skeletonize_neuron_from_ranges(
         min_component_size=min_component_size, first_node=first_node
     )
 
+    # Neuroglancer positions are always physical nanometers (per the format spec),
+    # so it operates on the internal (voxel-coordinate) df and scales to nm itself,
+    # regardless of the coordinate_units / radius_units options.
+    if format == 'neuroglancer':
+        orig_resolution_nm = voxel_size_xyz if voxel_size_xyz is not None else 8
+        return skeleton_to_neuroglancer(df, orig_resolution_nm=orig_resolution_nm, output_path=output_path)
+
+    # Convert to the requested output units for the pandas / swc representations.
+    df = _apply_output_units(df, coordinate_units, radius_units, voxel_size_xyz)
+
     if format == 'pandas':
         return df
 
-    if format == 'swc':
-        swc = _skeleton_df_to_swc(df, uuid, segmentation_instance, mutid, scale, block_shape, halo, closing_radius)
-        if output_path:
-            with open(output_path, 'w') as f:
-                f.write(swc)
-        return swc
-
-    # format == 'neuroglancer'
-    orig_resolution_nm = voxel_size_xyz if voxel_size_xyz is not None else 8
-    return skeleton_to_neuroglancer(df, orig_resolution_nm=orig_resolution_nm, output_path=output_path)
+    # format == 'swc'
+    swc = _skeleton_df_to_swc(df, uuid, segmentation_instance, mutid, scale, block_shape, halo, closing_radius,
+                              coordinate_units, radius_units)
+    if output_path:
+        with open(output_path, 'w') as f:
+            f.write(swc)
+    return swc
 
 
-def _skeleton_df_to_swc(df, uuid, seg_instance, mutid, scale, block_shape, halo, closing_radius):
+def _skeleton_df_to_swc(df, uuid, seg_instance, mutid, scale, block_shape, halo, closing_radius,
+                        coordinate_units='voxels', radius_units='voxels'):
     """
     Serialize a skeleton DataFrame (as produced by skeletonize_neuron) to SWC text,
     with a header of comment lines describing how the skeleton was generated.
@@ -367,6 +411,8 @@ def _skeleton_df_to_swc(df, uuid, seg_instance, mutid, scale, block_shape, halo,
             "block_shape": list(block_shape) if hasattr(block_shape, '__len__') else block_shape,
             "halo": halo,
             "closing_radius": closing_radius,
+            "coordinate_units": coordinate_units,
+            "radius_units": radius_units,
             "timestamp": now,
         }),
     ]
@@ -374,6 +420,71 @@ def _skeleton_df_to_swc(df, uuid, seg_instance, mutid, scale, block_shape, halo,
     swc_df = df.assign(kind=0)[['node', 'kind', *'xyz', 'radius', 'parent']]
     body_csv = swc_df.to_csv(sep=' ', header=False, index=False)
     return '\n'.join(header_lines) + '\n' + body_csv
+
+
+# The valid values accepted by the coordinate_units / radius_units options.
+VALID_SKELETON_UNITS = ('voxels', 'nanometers')
+
+
+def _check_units(coordinate_units, radius_units, voxel_size_xyz, need_radii):
+    """
+    Validate a coordinate_units / radius_units request against the available
+    voxel-size metadata, raising a ValueError if the request can't be honored.
+
+    The two axes are validated independently:
+      - 'nanometers' (for either coordinates or radii) requires voxel_size_xyz.
+      - radius_units='voxels' is only well-defined for ISOTROPIC voxels
+        (a single voxel radius is ambiguous otherwise).
+    """
+    for name, val in [('coordinate_units', coordinate_units), ('radius_units', radius_units)]:
+        if val not in VALID_SKELETON_UNITS:
+            raise ValueError(f"Invalid {name} {val!r}; choose one of {VALID_SKELETON_UNITS}")
+
+    if coordinate_units == 'nanometers' and voxel_size_xyz is None:
+        raise ValueError("coordinate_units='nanometers' requires a voxel_size_xyz.")
+
+    if need_radii:
+        if radius_units == 'nanometers' and voxel_size_xyz is None:
+            raise ValueError("radius_units='nanometers' requires a voxel_size_xyz.")
+        if radius_units == 'voxels' and voxel_size_xyz is not None:
+            vs = np.asarray(voxel_size_xyz, dtype=np.float64)
+            if not (vs == vs[0]).all():
+                raise ValueError(
+                    "radius_units='voxels' is only supported for isotropic datasets, "
+                    f"but voxel_size_xyz={list(voxel_size_xyz)} is anisotropic."
+                )
+
+
+def _apply_output_units(df, coordinate_units, radius_units, voxel_size_xyz):
+    """
+    Convert a skeleton DataFrame from the internal representation (coordinates in
+    scale-0 voxels; radii in nanometers if voxel_size_xyz was used to compute them,
+    else in scale-0 voxels) into the requested output units.
+
+    Returns a converted copy (or the original df if no conversion is needed).
+    Assumes the request has already been validated via _check_units().
+    """
+    vs = None if voxel_size_xyz is None else np.asarray(voxel_size_xyz, dtype=np.float64)  # xyz
+
+    convert_coords = (coordinate_units == 'nanometers')
+    internal_radius_units = 'nanometers' if vs is not None else 'voxels'
+    convert_radii = ('radius' in df.columns) and (radius_units != internal_radius_units)
+
+    if not convert_coords and not convert_radii:
+        return df
+
+    df = df.copy()
+    if convert_coords:
+        # coords are XYZ; voxel_size_xyz is XYZ -> per-axis multiply.
+        df[[*'xyz']] = df[[*'xyz']].to_numpy(dtype=np.float64) * vs
+    if convert_radii:
+        # Radii are a single scalar per node; a voxel<->nm conversion is only
+        # well-defined for isotropic voxels (validated in _check_units).
+        if radius_units == 'voxels':
+            df['radius'] = df['radius'].to_numpy(dtype=np.float64) / vs[0]
+        else:
+            df['radius'] = df['radius'].to_numpy(dtype=np.float64) * vs[0]
+    return df
 
 
 def skeleton_coords(

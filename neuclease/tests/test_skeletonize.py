@@ -245,8 +245,8 @@ def test_radii_reported_in_physical_units(monkeypatch):
     mask = np.zeros((30, 30, 80), dtype=bool)
     mask[13:18, 13:18, 4:76] = True
 
-    df1, _ = _skeletonize_mask(monkeypatch, mask, return_radii=True, voxel_size_xyz=(1, 1, 1))
-    df2, _ = _skeletonize_mask(monkeypatch, mask, return_radii=True, voxel_size_xyz=(2, 2, 2))
+    df1, _ = _skeletonize_mask(monkeypatch, mask, return_radii=True, radius_units='nanometers', voxel_size_xyz=(1, 1, 1))
+    df2, _ = _skeletonize_mask(monkeypatch, mask, return_radii=True, radius_units='nanometers', voxel_size_xyz=(2, 2, 2))
 
     assert 'radius' in df1.columns
     assert df1['radius'].max() > 0
@@ -376,6 +376,69 @@ def test_skeletonize_empty_skeleton_all_formats():
     buf = skeletonize_neuron_from_ranges(ranges, format='neuroglancer', **common)
     # 8-byte header: num_vertices=0, num_edges=0.
     assert np.frombuffer(buf, np.uint32).tolist() == [0, 0]
+
+
+def test_skeletonize_units_options():
+    mask = np.zeros((30, 30, 80), dtype=bool)
+    mask[13:18, 13:18, 4:76] = True
+    ranges = runlength_encode_mask_to_ranges(mask)
+
+    vs = (8, 8, 8)  # isotropic
+    common = dict(scale=0, block_shape=(20, 20, 20), halo=6, closing_radius=0,
+                  voxel_size_xyz=vs, return_radii=True, threads=1)
+
+    # voxels / nanometers: coords in scale-0 voxels, radii in nm.
+    ref = skeletonize_neuron_from_ranges(
+        ranges, format='pandas', coordinate_units='voxels', radius_units='nanometers', **common)
+    assert len(ref) > 0
+
+    # nanometer coordinates: scaled by voxel size (radii still nm here).
+    nm = skeletonize_neuron_from_ranges(
+        ranges, format='pandas', coordinate_units='nanometers', radius_units='nanometers', **common)
+    assert np.allclose(nm[[*'xyz']].to_numpy(), ref[[*'xyz']].to_numpy() * 8)
+    assert np.allclose(np.sort(nm['radius']), np.sort(ref['radius']))
+
+    # voxel radii: divided by the isotropic voxel size (coords unchanged voxels).
+    vv = skeletonize_neuron_from_ranges(
+        ranges, format='pandas', coordinate_units='voxels', radius_units='voxels', **common)
+    assert np.allclose(vv[[*'xyz']].to_numpy(), ref[[*'xyz']].to_numpy())
+    assert np.allclose(np.sort(vv['radius']), np.sort(ref['radius']) / 8)
+
+    # The two axes are independent: nm coordinates with voxel radii is allowed.
+    mixed = skeletonize_neuron_from_ranges(
+        ranges, format='pandas', coordinate_units='nanometers', radius_units='voxels', **common)
+    assert np.allclose(mixed[[*'xyz']].to_numpy(), ref[[*'xyz']].to_numpy() * 8)
+    assert np.allclose(np.sort(mixed['radius']), np.sort(ref['radius']) / 8)
+
+
+def test_skeletonize_voxel_radii_requires_isotropy():
+    mask = np.zeros((30, 30, 80), dtype=bool)
+    mask[13:18, 13:18, 4:76] = True
+    ranges = runlength_encode_mask_to_ranges(mask)
+
+    common = dict(scale=0, block_shape=(20, 20, 20), halo=6, closing_radius=0,
+                  return_radii=True, threads=1)
+
+    # Anisotropic voxels + voxel radii -> ValueError.
+    with pytest.raises(ValueError):
+        skeletonize_neuron_from_ranges(ranges, format='pandas', radius_units='voxels',
+                                       voxel_size_xyz=(16, 16, 15), **common)
+
+    # But nanometer radii are fine on anisotropic data.
+    df = skeletonize_neuron_from_ranges(ranges, format='pandas', radius_units='nanometers',
+                                        voxel_size_xyz=(16, 16, 15), **common)
+    assert len(df) > 0
+
+
+def test_skeletonize_nanometer_units_require_voxel_size():
+    mask = np.zeros((10, 10, 10), dtype=bool)
+    mask[2:8, 2:8, 2:8] = True
+    ranges = runlength_encode_mask_to_ranges(mask)
+
+    # nanometer coordinates but no voxel size -> ValueError.
+    with pytest.raises(ValueError):
+        skeletonize_neuron_from_ranges(ranges, format='pandas', coordinate_units='nanometers',
+                                       scale=0, threads=1)
 
 
 def test_skeletonize_from_ranges_swc_requires_metadata():
