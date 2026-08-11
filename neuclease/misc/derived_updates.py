@@ -26,7 +26,7 @@ from neuclease.dvid import (
     fetch_instance_info
 )
 from neuclease.misc.bodymesh import update_body_mesh, BodyMeshParametersSchema, MeshChunkConfigSchema, create_and_upload_missing_supervoxel_meshes
-from neuclease.misc.skeletonize import skeletonize_neuron
+from neuclease.misc.skeletonize import skeletonize_neuron, _check_units
 
 logger = logging.getLogger(__name__)
 
@@ -147,6 +147,24 @@ SkeletonConfigSchema = {
             "type": "integer",
             "minimum": 1,
             "default": 12
+        },
+        "coordinate-units": {
+            "description":
+                "(method 'neuclease' only.)\n"
+                "Units for the skeleton coordinates stored in the SWC file.\n"
+                "'nanometers' requires the segmentation's voxel size (fetched from DVID).\n",
+            "type": "string",
+            "enum": ["voxels", "nanometers"],
+            "default": "voxels"
+        },
+        "radius-units": {
+            "description":
+                "(method 'neuclease' only.)\n"
+                "Units for the skeleton radii stored in the SWC file.\n"
+                "'voxels' is only valid for isotropic datasets (it raises otherwise).\n",
+            "type": "string",
+            "enum": ["voxels", "nanometers"],
+            "default": "voxels"
         }
     }
 }
@@ -491,6 +509,15 @@ def update_skeletons(dvid_server, uuid, seg_instance, skeleton_config, force, ig
     voxel_size_xyz = None
     if method != 'neutu':
         voxel_size_xyz = fetch_instance_info(dvid_server, uuid, seg_instance)['Extended']['VoxelSize']
+        # Validate the requested skeleton units up front (before processing any
+        # bodies), so a misconfiguration (e.g. voxel radii on anisotropic data)
+        # fails fast rather than once per body.
+        _check_units(
+            skeleton_config['coordinate-units'],
+            skeleton_config['radius-units'],
+            voxel_size_xyz,
+            need_radii=True,
+        )
 
     logger.info(f"Updating skeletons for {len(affected.changed_bodies)} changed bodies and {len(affected.new_bodies)} new bodies.")
     failed_bodies = []
@@ -545,6 +572,8 @@ def update_skeleton(dvid_server, uuid, seg_instance, body, mutid, skeleton_confi
         halo=skeleton_config['halo'],
         closing_radius=skeleton_config['closing-radius'],
         voxel_size_xyz=voxel_size_xyz,
+        coordinate_units=skeleton_config['coordinate-units'],
+        radius_units=skeleton_config['radius-units'],
         threads=skeleton_config['threads'],
         format='swc',
     )
