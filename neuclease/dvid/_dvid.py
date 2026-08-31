@@ -76,7 +76,12 @@ def _default_dvid_session_template():
     """
     # If the connection fails, retry a couple times.
     retries = Retry(connect=2, backoff_factor=0.1)
-    adapter = DefaultTimeoutHTTPAdapter(max_retries=retries, timeout=DEFAULT_DVID_TIMEOUT)
+    adapter = DefaultTimeoutHTTPAdapter(
+        max_retries=retries,
+        timeout=DEFAULT_DVID_TIMEOUT,
+        pool_connections=30,   # More pools per host for high-performance DVID
+        pool_maxsize=50        # Higher connection limit per pool for 256-core server
+    )
 
     s = requests.Session()
     s.mount('http://', adapter)
