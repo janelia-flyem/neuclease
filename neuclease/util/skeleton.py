@@ -52,6 +52,26 @@ def swc_to_dataframe(swc_text, neuprint_colnames=True):
     return df
 
 
+def dataframe_to_swc(df, comment_header=None, output_path=None):
+    swc_df = df.rename(columns={'rowId': 'node', 'link': 'parent'})
+    if 'kind' not in df.columns:
+        swc_df['kind'] = 0
+
+    cols = ['node', 'kind', 'x', 'y', 'z', 'radius', 'parent']
+    swc_text = swc_df[cols].to_csv(header=False, index=False, sep=' ')
+
+    if comment_header:
+        if comment_header.endswith('\n'):
+            comment_header = comment_header[:-1]
+        swc_text = comment_header + '\n' + swc_text
+
+    if output_path:
+        with open(output_path, 'w') as f:
+            f.write(swc_text)
+
+    return swc_text
+
+
 def normalize_skeleton(skeleton_df):
     """
     Ensure that a skeleton's nodes have contiguous IDs from 1..N,
