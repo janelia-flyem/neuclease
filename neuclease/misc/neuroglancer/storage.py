@@ -3,9 +3,9 @@ Utility functions related to storing neuroglancer states in cloud storage.
 """
 import json
 import argparse
-import tempfile
-import subprocess
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+
+from neuclease.util import gcs
 
 
 def upload_ngstates(bucket_dir, states, threads=0, processes=0, disable_cache=False, return_prefix='https://neuroglancer-demo.appspot.com'):
@@ -135,16 +135,7 @@ def upload_to_bucket(bucket, blob_name, blob_contents, content_type='application
         blob_contents: str
             The data to upload.
     """
-    if isinstance(bucket, str):
-        from google.cloud import storage
-        storage_client = storage.Client()
-        bucket = storage_client.get_bucket(bucket)
-
-    blob = bucket.blob(blob_name)
-    if disable_cache:
-        blob.cache_control = 'public, no-store'
-    blob.upload_from_string(blob_contents, content_type)
-    return blob.public_url
+    return gcs.upload_string(bucket, blob_name, blob_contents, content_type, disable_cache)
 
 
 def make_bucket_public(bucket=None):
@@ -172,17 +163,14 @@ def make_bucket_public(bucket=None):
     if bucket.startswith('gs://'):
         bucket = bucket[len('gs://'):]
 
-    subprocess.run(f'gsutil iam ch allUsers:objectViewer gs://{bucket}', shell=True, check=True)
+    gcs.set_bucket_public(bucket)
 
-    with tempfile.NamedTemporaryFile('w') as f:
-        cors_settings = [{
-            "maxAgeSeconds": 3600,
-            "method": ["GET"],
-            "origin": ["*"],
-            "responseHeader": ["Content-Type", "Range"]
-        }]
-        json.dump(cors_settings, f)
-        f.flush()
-        subprocess.run(f'gsutil cors set {f.name} gs://{bucket}', shell=True, check=True)
+    cors_settings = [{
+        "maxAgeSeconds": 3600,
+        "method": ["GET"],
+        "origin": ["*"],
+        "responseHeader": ["Content-Type", "Range"]
+    }]
+    gcs.set_bucket_cors(bucket, cors_settings)
 
     print(f"Configured bucket for public neuroglancer access: gs://{bucket}")

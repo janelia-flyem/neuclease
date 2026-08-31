@@ -2,14 +2,13 @@ import os
 import json
 import logging
 import getpass
-import platform
 import datetime
-import subprocess
 
 import numpy as np
 import pandas as pd
 
 from neuclease.util import dump_json, iter_batches
+from neuclease.util import gcs
 
 logger = logging.getLogger(__name__)
 
@@ -227,15 +226,7 @@ def prepare_bookmark_assignment_setup(df, output_dir, bucket_path, csv_path, pre
     bucket_path = bucket_path[len('gs://'):]
 
     # First, verify that we have permission to edit the bucket.
-    with open("/tmp/test-file.txt", 'w') as f:
-        f.write("Just testing my bucket access...\n")
-    try:
-        p = subprocess.run(f"gsutil cp /tmp/test-file.txt gs://{bucket_path}/test-file.txt", shell=True, check=True, capture_output=True)
-        p = subprocess.run(f"gsutil rm gs://{bucket_path}/test-file.txt", shell=True, check=True, capture_output=True)
-    except subprocess.SubprocessError as ex:
-        print(p.stdout)
-        print(p.stderr)
-        raise RuntimeError(f"Can't access gs://{bucket_path}") from ex
+    gcs.check_bucket_access(bucket_path)
 
     if not isinstance(df, pd.DataFrame):
         raise NotImplementedError
@@ -353,15 +344,7 @@ def prepare_cleaving_assignment_setup(bodies, output_dir, bucket_path, csv_path,
     bucket_path = bucket_path[len('gs://'):]
 
     # First, verify that we have permission to edit the bucket.
-    with open("/tmp/test-file.txt", 'w') as f:
-        f.write("Just testing my bucket access...\n")
-    try:
-        p = subprocess.run(f"gsutil cp /tmp/test-file.txt gs://{bucket_path}/test-file.txt", shell=True, check=True, capture_output=True)
-        p = subprocess.run(f"gsutil rm gs://{bucket_path}/test-file.txt", shell=True, check=True, capture_output=True)
-    except subprocess.SubprocessError as ex:
-        print(p.stdout)
-        print(p.stderr)
-        raise RuntimeError(f"Can't access gs://{bucket_path}") from ex
+    gcs.check_bucket_access(bucket_path)
 
     if isinstance(bodies, pd.DataFrame):
         assert bodies.index.name == 'body'
@@ -441,21 +424,8 @@ def create_connection_validation_assignments(df, output_dir, prefix='connection-
 def upload_assignment_files(local_dir, bucket_path):
     # Explicitly *unset* content type, to trigger browsers to download the file, not display it as JSON.
     # Also, forbid caching.
-    opts = [
-        "-h 'Cache-Control:public, no-store'",
-        "-h 'Content-Type'",
-    ]
-    if platform.system() == 'Darwin':
-        # gsutil gives the following warning:
-        #
-        #   If you experience problems with multiprocessing on MacOS,
-        #   they might be related to https://bugs.python.org/issue33725.
-        #   You can disable multiprocessing by editing your .boto config or
-        #   by adding the following flag to your command: `-o "GSUtil:parallel_process_count=1"`.
-        #   Note that multithreading is still available even if you disable multiprocessing.
-        opts += [
-            "-o GSUtil:parallel_process_count=1",
-            "-o GSUtil:parallel_thread_count=8",
-        ]
-    cmd = f"gsutil -m {' '.join(opts)} cp -r {local_dir} gs://{bucket_path}/"
-    _ = subprocess.run(cmd, shell=True, check=True, capture_output=True)
+    # Note: gsutil's `cp -r <dir> <dest>` nests the source dir (by basename) under <dest>,
+    # so we replicate that here rather than uploading directly into bucket_path.
+    bucket_name, bucket_subpath = gcs.split_gs_path(bucket_path)
+    dest_prefix = '/'.join(filter(None, [bucket_subpath, os.path.basename(local_dir.rstrip('/'))]))
+    gcs.upload_directory(bucket_name, dest_prefix, local_dir, disable_cache=True, unset_content_type=True)
