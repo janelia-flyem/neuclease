@@ -759,12 +759,31 @@ def fetch_body_annotations(server, uuid, instance='segmentation_annotations', bo
         # Due to https://github.com/janelia-flyem/dvid/issues/356,
         # we can't use serialization='json' yet.
         kvs = fetch_keyvalues(server, uuid, instance, keys, as_json=True, batch_size=batch_size, serialization='protobuf', session=session)
-    elif batch_size is None:
-        # This gets everything from '0' to 'zzzzz...'
-        kvs = fetch_keyrangevalues(server, uuid, instance, '0', chr(ord('z')+1), as_json=True, session=session)
-    else:
+    elif batch_size:
         keys = fetch_keys(server, uuid, instance, session=session)
         kvs = fetch_keyvalues(server, uuid, instance, keys, as_json=True, batch_size=batch_size, session=session)
+    else:
+        # This gets everything from '0' to 'zzzzz...'
+        try:
+            kvs = fetch_keyrangevalues(server, uuid, instance, '0', chr(ord('z')+1), as_json=True, session=session)
+        except requests.HTTPError as ex:
+            # On some old DVID servers (e.g. the flatiron wasp server),
+            # relatively small keyvalue sets can time out.
+            # As a workaround, we'll try batching the request.
+            logger.warning("Encountered timeout error when fetching keyrangevalues.  Attempting to fetch in 90 batches by prefix 10..99")
+            content = (ex.response and ex.response.content) or b''
+            if not ('timeout' or 'time-out' in content.decode('utf-8').lower()):
+                raise
+
+            # Start with special cases not covered by the loop below: 0-99
+            kvs = fetch_keyvalues(server, uuid, instance, [str(i) for i in range(0, 100)], as_json=True, session=session)
+            kvs = {k: v for k, v in kvs.items() if v is not None}
+
+            # Fetch in 100 batches.
+            # (This will not work well for segmentations which all
+            # start with the same prefix, but it's better than nothing.)
+            for i in tqdm_proxy(range(100, 1000, 10)):
+                kvs |= fetch_keyrangevalues(server, uuid, instance, str(i), str(i + 9) + '999999999999', as_json=True, session=session)
 
     values = []
     for k,v in kvs.items():
