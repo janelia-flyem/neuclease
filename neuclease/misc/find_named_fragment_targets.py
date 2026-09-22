@@ -1,6 +1,6 @@
 import numpy as np
 import pandas as pd
-from skimage.morphology import binary_dilation
+import skimage.morphology
 
 from neuclease.util import compute_parallel
 from neuclease.dvid import fetch_body_annotations, fetch_sparsevol_coarse
@@ -35,7 +35,7 @@ def _fetch_svc(body, dilate=0):
         box += [[-dilate, -dilate, -dilate],
                 [ dilate,  dilate,  dilate]]
         assert (box[1] - box[0] == mask.shape).all()
-        mask = binary_dilation(mask, np.ones(3 * [1 + 2 * dilate], bool))
+        mask = skimage.morphology.dilation(mask, np.ones(3 * [1 + 2 * dilate], bool))
         svc = box[0] + np.array(mask.nonzero()).transpose()
 
     df = pd.DataFrame(svc, columns=[*'zyx'])

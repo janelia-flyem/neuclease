@@ -83,7 +83,7 @@ def test_rle_box_dilation(sparse_object):
     decoded_dilated_coords = runlength_decode_from_lengths( dilated_start_coords.copy(),
                                                             dilated_lengths.copy() )
     
-    dilated_vol = scipy.ndimage.morphology.binary_dilation(a, np.ones((5, 5, 5), bool))
+    dilated_vol = scipy.ndimage.morphology.dilation(a, np.ones((5, 5, 5), bool))
     dilated_coords = np.transpose(dilated_vol.nonzero())
     
 #     redilated_table = runlength_encode_to_lengths(dilated_coords.astype(np.int32)) - (3,3,3,0)

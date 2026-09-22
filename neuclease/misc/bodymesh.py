@@ -1258,9 +1258,9 @@ def mesh_for_chunk(
     closing_radius //= 2**scale
     if closing_radius:
         # Note that it's okay to use out=mask since the implementation
-        # of binary_closing() operates on a temporary array.
+        # of closing() operates on a temporary array.
         footprints = skimage.morphology.ball(closing_radius, decomposition='sequence')
-        skimage.morphology.binary_closing(mask, footprints, out=mask)
+        skimage.morphology.closing(mask, footprints, out=mask)
 
     fill_holes = quality_config['fill-holes']
     if fill_holes:
