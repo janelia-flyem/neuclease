@@ -3341,7 +3341,7 @@ def fetch_labelmap_mutations(server, uuid, instance, userid=None, *, action_filt
         Either a DataFrame or list of parsed json values, depending
         on what you passed as 'format'.
     """
-    msgs = fetch_generic_mutations(
+    msgs, uuids = fetch_generic_mutations(
         server,
         uuid,
         instance,
@@ -3350,6 +3350,7 @@ def fetch_labelmap_mutations(server, uuid, instance, userid=None, *, action_filt
         dag_filter=dag_filter,
         chase_datarefs=chase_datarefs,
         format='json',
+        return_uuids=True,
         session=session
     )
 
@@ -3367,6 +3368,8 @@ def fetch_labelmap_mutations(server, uuid, instance, userid=None, *, action_filt
 
         for msg in msg_df['msg']:
             msg['Action'] = replace[msg['Action']]
+        
+        msg_df['uuid'] = msg_df['uuid'].astype(pd.CategoricalDtype(uuids, ordered=True))
         return msg_df
     else:
         return msgs

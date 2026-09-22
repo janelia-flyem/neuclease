@@ -332,7 +332,7 @@ def kafka_msgs_to_df(msgs, drop_duplicates=False, default_timestamp=DEFAULT_TIME
         DataFrame
     """
     if len(msgs) == 0:
-        return pd.DataFrame([], columns=['timestamp', 'uuid', 'mutid', 'msg'])
+        return pd.DataFrame([], columns=['timestamp', 'uuid', 'mutid', 'action', 'key', 'msg'])
 
     if drop_duplicates:
         if isinstance(msgs[0], str):
@@ -367,29 +367,21 @@ def kafka_msgs_to_df(msgs, drop_duplicates=False, default_timestamp=DEFAULT_TIME
     if strip_tz:
         timestamps = timestamps.dt.tz_localize(None)
 
-    msgs_df = pd.DataFrame({'msg': msgs})
+    msgs_df = pd.DataFrame(msgs).replace([np.nan], [None])
+    msgs_df.columns = msgs_df.columns.str.lower()
     msgs_df['timestamp'] = timestamps
-    msgs_df['uuid'] = [msg['UUID'] for msg in msgs_df['msg']]
     msgs_df['uuid'] = pd.Categorical(msgs_df['uuid'], msgs_df['uuid'].unique(), ordered=True)
 
     if convert_tz:
         msgs_df['timestamp'] = msgs_df['timestamp'].dt.tz_convert(convert_tz)
 
-    if any('MutationID' in m for m in msgs):
-        msgs_df['mutid'] = [msg.get('MutationID', None) for msg in msgs_df['msg']]
+    msgs_df = msgs_df.rename(columns={'mutationid': 'mutid'})
 
-    if any('Key' in m for m in msgs):
-        msgs_df['key'] = [msg.get('Key', None) for msg in msgs_df['msg']]
-
-    columns = ['timestamp', 'uuid', 'mutid', 'key', 'msg']
-
-    if 'mutid' not in msgs_df.columns:
-        columns.remove('mutid')
-
-    if 'key' not in msgs_df.columns:
-        columns.remove('key')
-
-    return msgs_df[columns]
+    cols = [c for c in ['timestamp', 'uuid', 'mutid', 'action', 'key'] if c in msgs_df.columns]
+    cols += [*[c for c in msgs_df.columns if c not in cols]]
+    msgs_df = msgs_df[cols]
+    msgs_df['msg'] = msgs
+    return msgs_df
 
 
 def filter_kafka_msgs_by_timerange(kafka_msgs, min_timestamp=None, max_timestamp=None, min_mutid=None, max_mutid=None):

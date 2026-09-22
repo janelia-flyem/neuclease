@@ -1,4 +1,5 @@
 import logging
+import pandas as pd
 import networkx as nx
 
 from ._dvid import dvid_api_wrapper
@@ -10,7 +11,19 @@ logger = logging.getLogger(__name__)
 
 
 @dvid_api_wrapper
-def fetch_generic_mutations(server, uuid, instance, userid=None, *, action_filter=None, dag_filter='leaf-and-parents', format='pandas', chase_datarefs=False, session=None):
+def fetch_generic_mutations(
+    server,
+    uuid,
+    instance,
+    userid=None,
+    *,
+    action_filter=None,
+    dag_filter='leaf-and-parents',
+    format='pandas',
+    chase_datarefs=False,
+    return_uuids=False,
+    session=None
+):
     """
     Fetch the log of successfully completed mutations.
     The log is returned in the same format as the kafka log.
@@ -76,12 +89,19 @@ def fetch_generic_mutations(server, uuid, instance, userid=None, *, action_filte
 
         format:
             How to return the data. Either 'pandas' or 'json'.
+        
+        return_uuids:
+            If True, also return the list of UUIDs that correspond to your DAG filter.
+            The list may differ from the set of unique UUIDs in the messages if some UUIDs had no mutations.
+            Only allowed if format is 'json'; if format is 'pandas', the 'uuid' column is a categorical
+            dtype that includes all UUIDs as categories.
 
     Returns:
         Either a DataFrame or list of parsed json values, depending
         on what you passed as 'format'.
     """
     assert dag_filter in ('leaf-only', 'leaf-and-parents', None)
+    assert return_uuids is False or format == 'json'
 
     # json-values is a synonym, for compatibility with read_kafka_messages
     assert format in ('pandas', 'json', 'json-values')
@@ -124,5 +144,12 @@ def fetch_generic_mutations(server, uuid, instance, userid=None, *, action_filte
                     raise RuntimeError(f"Error fetching blob for mutation {msg['Action']}: {e}") from e
 
     if format == 'pandas':
-        return kafka_msgs_to_df(msgs)
-    return msgs
+        df = kafka_msgs_to_df(msgs)
+        if 'uuid' in df.columns:
+            df['uuid'] = df['uuid'].astype(pd.CategoricalDtype(uuids, ordered=True))
+        return df
+
+    if return_uuids:
+        return msgs, uuids
+    else:
+        return msgs
