@@ -1,6 +1,7 @@
 import os
 import sys
 import copy
+import atexit
 import signal
 import logging
 import argparse
@@ -18,7 +19,7 @@ from flask import Flask, request, abort, redirect, url_for, jsonify, Response, m
 from .logging_setup import init_logging
 from .merge_graph import LabelmapMergeGraphLocalTable, LabelmapMergeGraphBigQuery
 from .cleave import cleave, InvalidCleaveMethodError
-from ..dvid import DvidInstanceInfo, default_dvid_session
+from ..dvid import DvidInstanceInfo, default_dvid_session, clear_default_dvid_sessions
 from ..util import Timer, PrefixedLogger, log_exceptions
 
 
@@ -97,6 +98,9 @@ def main(debug_mode=False, stdout_logging=False):
 
     # Terminate results in normal shutdown
     signal.signal(signal.SIGTERM, lambda signum, stack_frame: exit(1))
+
+    # Register cleanup for DVID sessions to prevent file descriptor leaks
+    atexit.register(clear_default_dvid_sessions)
 
     args = parse_args()
 
