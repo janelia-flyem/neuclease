@@ -5,7 +5,6 @@ import json
 import copy
 import logging
 import tempfile
-import subprocess
 from functools import partial
 from collections.abc import Mapping, Collection
 
@@ -14,6 +13,7 @@ import pandas as pd
 
 from vol2mesh import Mesh
 from neuclease.util import tqdm_proxy as tqdm, dump_json, compute_parallel, region_boxes, box_to_slicing, compute_nonzero_box
+from neuclease.util import gcs
 from neuclease.dvid import fetch_combined_roi_volume
 
 logger = logging.getLogger()
@@ -63,10 +63,7 @@ def construct_ng_precomputed_layer_from_rois(server, uuid, rois, bucket_name, bu
     os.makedirs(localdir, exist_ok=True)
 
     # First, verify that we have permission to edit the bucket.
-    with open(f"{localdir}/test-file.txt", 'w') as f:
-        f.write("Just testing my bucket access...\n")
-    subprocess.run(f"gsutil cp '{localdir}/test-file.txt' '{bucket_name}/{bucket_path}/test-file.txt'", shell=True, check=True)
-    subprocess.run(f"gsutil rm '{bucket_name}/{bucket_path}/test-file.txt'", shell=True, check=True)
+    gcs.check_bucket_access(f"{bucket_name}/{bucket_path}")
 
     if isinstance(rois, pd.Series):
         roi_names = dict(rois.items())
@@ -144,10 +141,7 @@ def construct_ng_precomputed_layer_from_roi_seg(roi_vol, roi_names, bucket_name,
     scale_0_res = np.asarray(scale_0_res)
 
     # First, verify that we have permission to edit the bucket.
-    with open(f"{localdir}/test-file.txt", 'w') as f:
-        f.write("Just testing my bucket access...\n")
-    subprocess.run(f"gsutil cp '{localdir}/test-file.txt' '{bucket_name}/{bucket_path}/test-file.txt'", shell=True, check=True)
-    subprocess.run(f"gsutil rm '{bucket_name}/{bucket_path}/test-file.txt'", shell=True, check=True)
+    gcs.check_bucket_access(f"{bucket_name}/{bucket_path}")
 
     if 'voxels' in steps:
         logger.info("Uploading segmentation volume")
@@ -318,7 +312,8 @@ def upload_precomputed_ngmeshes(meshes, names, bucket_name, bucket_path, localdi
     if volume_info:
         volume_info = copy.deepcopy(volume_info)
     else:
-        subprocess.run(f"gsutil cp '{bucket_name}/{bucket_path}/info' '{localdir}/info'", shell=True)
+        if not gcs.download_to_file(bucket_name, f"{bucket_path}/info", f"{localdir}/info"):
+            raise FileNotFoundError(f"No existing 'info' file found at {bucket_name}/{bucket_path}/info")
         with open(f"{localdir}/info", 'r') as f:
             volume_info = json.load(f)
 
@@ -326,8 +321,8 @@ def upload_precomputed_ngmeshes(meshes, names, bucket_name, bucket_path, localdi
     dump_json(volume_info, f"{localdir}/info", unsplit_int_lists=True)
 
     logger.info("Uploading")
-    subprocess.run(f"gsutil -h 'Cache-Control:public, no-store' cp '{localdir}/info' '{bucket_name}/{bucket_path}/info'", shell=True)
-    subprocess.run(f"gsutil -m cp -R '{localdir}/mesh' '{bucket_name}/{bucket_path}/mesh'", shell=True)
+    gcs.upload_file(bucket_name, f"{bucket_path}/info", f"{localdir}/info", disable_cache=True)
+    gcs.upload_directory(bucket_name, f"{bucket_path}/mesh", f"{localdir}/mesh", disable_cache=True)
 
 
 def upload_precomputed_ngmesh_files(mesh_dir, names, bucket_name, bucket_path):
@@ -352,7 +347,10 @@ def upload_precomputed_ngmesh_files(mesh_dir, names, bucket_name, bucket_path):
         dump_json({"fragments": [f"{name}.ngmesh"]}, f"{mesh_dir}/{label}:0")
 
     logger.info("Uploading")
-    subprocess.run(f"gsutil -m cp -R {mesh_dir} '{bucket_name}/{bucket_path}'", shell=True, check=True)
+    # Note: gsutil's `cp -R <dir> <dest>` nests the source dir (by basename) under <dest>,
+    # so we replicate that here rather than uploading directly into bucket_path.
+    dest_prefix = f"{bucket_path}/{os.path.basename(mesh_dir.rstrip('/'))}"
+    gcs.upload_directory(bucket_name, dest_prefix, mesh_dir)
 
 
 def create_precomputed_segment_properties(names, bucket_name, bucket_path, localdir=None, volume_info=None):
@@ -404,15 +402,16 @@ def create_precomputed_segment_properties(names, bucket_name, bucket_path, local
     if volume_info is not None:
         volume_info = copy.deepcopy(volume_info)
     else:
-        subprocess.run(f"gsutil cp '{bucket_name}/{bucket_path}/info' '{localdir}/info'", shell=True)
+        if not gcs.download_to_file(bucket_name, f"{bucket_path}/info", f"{localdir}/info"):
+            raise FileNotFoundError(f"No existing 'info' file found at {bucket_name}/{bucket_path}/info")
         with open(f"{localdir}/info", 'r') as f:
             volume_info = json.load(f)
 
     volume_info["segment_properties"] = "segment_properties"
     dump_json(volume_info, f"{localdir}/info", unsplit_int_lists=True)
 
-    subprocess.run(f"gsutil -h 'Cache-Control:public, no-store' cp '{localdir}/info' '{bucket_name}/{bucket_path}/info'", shell=True)
-    subprocess.run(f"gsutil -h 'Cache-Control:public, no-store' cp -R '{localdir}/segment_properties' '{bucket_name}/{bucket_path}/segment_properties'", shell=True)
+    gcs.upload_file(bucket_name, f"{bucket_path}/info", f"{localdir}/info", disable_cache=True)
+    gcs.upload_directory(bucket_name, f"{bucket_path}/segment_properties", f"{localdir}/segment_properties", disable_cache=True)
 
 
 def create_legacy_mesh_info(mesh_dir, names=None):
