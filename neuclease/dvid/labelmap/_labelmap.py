@@ -454,7 +454,7 @@ def fetch_sizes(server, uuid, instance, label_ids, supervoxels=False, *, session
     batches = iter_batches(label_ids, batch_size)
 
     if len(label_ids) == 0:
-        unordered_sizes = pd.Series([], name='size')
+        unordered_sizes = pd.Series([], name='size', dtype=np.int64)
     elif (threads == 0 and processes == 0):
         unordered_sizes = []
         for batch in tqdm_proxy(batches, disable=(len(batches) == 1)):
@@ -478,7 +478,7 @@ def fetch_sizes(server, uuid, instance, label_ids, supervoxels=False, *, session
 
 def _fetch_sizes(server, uuid, instance, label_ids, supervoxels, session=None):
     if len(label_ids) == 0:
-        sizes = pd.Series([], name='size')
+        sizes = pd.Series([], name='size', dtype=np.int64)
     else:
         sv_param = str(bool(supervoxels)).lower()
         url = f'{server}/api/node/{uuid}/{instance}/sizes?supervoxels={sv_param}'
