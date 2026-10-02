@@ -771,7 +771,7 @@ def fetch_body_annotations(server, uuid, instance='segmentation_annotations', bo
             # relatively small keyvalue sets can time out.
             # As a workaround, we'll try batching the request.
             logger.warning("Encountered timeout error when fetching keyrangevalues.  Attempting to fetch in 90 batches by prefix 10..99")
-            content = (ex.response and ex.response.content) or b''
+            content = b'' if ex.response is None else ex.response.content
             content = content.decode('utf-8').lower()
             if not ('timeout' in content or 'time-out' in content):
                 raise
