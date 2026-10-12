@@ -2,7 +2,6 @@ import os
 import sys
 import glob
 import logging
-import subprocess
 from math import ceil, log10
 
 import ujson
@@ -10,6 +9,7 @@ import numpy as np
 import pandas as pd
 
 from ..util import tqdm_proxy, swap_df_cols, iter_batches
+from ..util import gcs
 
 logger = logging.getLogger(__name__)
 
@@ -202,8 +202,11 @@ def upload_batched_assignments(tasks, bucket_path, campaign='focused'):
     # Explicitly *unset* content type, to trigger browsers to download the file, not display it as JSON.
     # Also, forbid caching.
     logging.info(f"Uploading {len(files)} files to gs://{bucket_path}/{output_dir}")
-    cmd = f"gsutil -m -h 'Cache-Control:public, no-store' -h 'Content-Type' cp -r {output_dir} gs://{bucket_path}/"
-    _ = subprocess.run(cmd, shell=True, check=True, capture_output=True)
+    # Note: gsutil's `cp -r <dir> <dest>` nests the source dir (by basename) under <dest>,
+    # so we replicate that here rather than uploading directly into bucket_path.
+    bucket_name, bucket_subpath = gcs.split_gs_path(bucket_path)
+    dest_prefix = '/'.join(filter(None, [bucket_subpath, output_dir]))
+    gcs.upload_directory(bucket_name, dest_prefix, output_dir, disable_cache=True, unset_content_type=True)
 
     tracking_df = pd.DataFrame(files, columns=['batch', 'assignment', 'file'])
     tracking_df['file'] = f'https://storage.googleapis.com/{bucket_path}/' + tracking_df['file']

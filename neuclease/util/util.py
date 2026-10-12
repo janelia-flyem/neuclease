@@ -31,6 +31,7 @@ import numpy as np
 import pandas as pd
 from numba import jit
 
+from . import gcs
 from .downsample_with_numba import downsample_binary_3d_suppress_zero
 from .box import box_to_slicing, box_union, extract_subvol, box_intersection
 from .view_as_blocks import view_as_blocks
@@ -2259,16 +2260,7 @@ def upload_to_bucket(bucket, blob_name, blob_contents, content_type='application
     """
     Upload a blob of data to the specified google storage bucket.
     """
-    if isinstance(bucket, str):
-        from google.cloud import storage
-        storage_client = storage.Client()
-        bucket = storage_client.get_bucket(bucket)
-
-    blob = bucket.blob(blob_name)
-    if disable_cache:
-        blob.cache_control = 'public, no-store'
-    blob.upload_from_string(blob_contents, content_type)
-    return blob.public_url
+    return gcs.upload_string(bucket, blob_name, blob_contents, content_type, disable_cache)
 
 
 def perform_bigquery(q, client=None, project='janelia-flyem', downgrade_nullables_via='skip'):
@@ -2359,9 +2351,9 @@ def upload_chunked_table(df, full_table_name, gbucket_dir, gbucket_subdir, local
     This is useful for tables which are too large to upload in one chunk
     via the Python API.
     """
+    import subprocess
     import pyarrow
     import pyarrow.parquet
-    import subprocess
 
     assert gbucket_dir.startswith('gs://')
     project, dataset, table = full_table_name.split('.')
@@ -2377,13 +2369,14 @@ def upload_chunked_table(df, full_table_name, gbucket_dir, gbucket_subdir, local
         t = pyarrow.Table.from_pandas(chunk_df)
         pyarrow.parquet.write_table(t, name)
 
-    cp_cmd = f"gsutil -q cp -r {local_dir}/{table} {gbucket_dir}/{gbucket_subdir}/"
-    logger.info(cp_cmd)
-    subprocess.run(cp_cmd, shell=True, check=True)
+    bucket_name, base_prefix = gcs.split_gs_path(gbucket_dir)
+    blob_prefix = '/'.join(filter(None, [base_prefix, gbucket_subdir, table]))
+    logger.info(f"Uploading {local_dir}/{table} to gs://{bucket_name}/{blob_prefix}")
+    gcs.upload_directory(bucket_name, blob_prefix, f"{local_dir}/{table}")
 
-    ls_cmd = f"gsutil ls -d {gbucket_dir}/{gbucket_subdir}/{table}"
-    logger.info(ls_cmd)
-    subprocess.run(ls_cmd, shell=True, check=True)
+    uploaded = gcs.list_blobs(bucket_name, prefix=blob_prefix, max_results=1)
+    if not uploaded:
+        raise RuntimeError(f"Upload appears to have failed: no blobs found at gs://{bucket_name}/{blob_prefix}")
 
     bq_cmd = f"bq load --source_format=PARQUET --project_id={project}"
 
