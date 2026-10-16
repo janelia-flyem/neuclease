@@ -344,6 +344,7 @@ def update_body_mesh(
     force=False,
     processes=0,
     *,
+    expect_concurrent_updates=False,
     resource_mgr=None
 ):
     """
@@ -355,6 +356,13 @@ def update_body_mesh(
             If a string with value 'dask-worker-client', then it is assumed that you called
             this function from within a dask worker, and chunk mesh generation will be
             submitted to the dask cluster.
+        expect_concurrent_updates:
+            Set this if other processes (e.g. other instances of a mesh service) may be
+            updating the same body at the same time.  For chunk-based meshes, the missing
+            chunks are then generated in random order, and each chunk is skipped if another
+            process has stored it in the meantime.  Likewise, the body mesh isn't assembled
+            (or stored) if another process has already stored an up-to-date one.
+            (This costs one small extra DVID request per generated chunk.)
 
     Note:
         Whether to produce a single-resolution or multi-resolution mesh is determined
@@ -406,7 +414,8 @@ def update_body_mesh(
         return
 
     quality_from_source_method(body_mesh_config, chunk_config)  # validates the source-method
-    update_body_mesh_from_chunks(server, uuid, seg, body, body_mesh_config, chunk_config, processes=processes, resource_mgr=resource_mgr)
+    update_body_mesh_from_chunks(server, uuid, seg, body, body_mesh_config, chunk_config, processes=processes,
+                                 expect_concurrent_updates=expect_concurrent_updates, resource_mgr=resource_mgr)
 
 
 def quality_from_source_method(body_mesh_config, chunk_config):
@@ -728,8 +737,12 @@ def update_body_mesh_from_chunks(
     body_mesh_config,
     chunk_config,
     processes=0,
-    resource_mgr=None
+    resource_mgr=None,
+    expect_concurrent_updates=False,
 ):
+    """
+    See update_body_mesh() for an explanation of expect_concurrent_updates.
+    """
     validate(body_mesh_config, BodyMeshParametersSchema, inject_defaults=True)
     validate(chunk_config, MeshChunkConfigSchema, inject_defaults=True)
     if '-' in (name := chunk_config['config-name']) or name == "":
@@ -749,11 +762,15 @@ def update_body_mesh_from_chunks(
             continue
 
         if multires:
-            data_bytes, index_bytes, info_json, mesh_info = _generate_multires_body_mesh_from_chunks(
+            result = _generate_multires_body_mesh_from_chunks(
                 server, uuid, seg_instance,
                 body, chunk_df, body_mesh_config, chunk_config, quality,
-                processes, resource_mgr
+                processes, resource_mgr, expect_concurrent_updates
             )
+            if result is None:
+                # Another process already stored an up-to-date body mesh.
+                continue
+            data_bytes, index_bytes, info_json, mesh_info = result
 
             # FIXME... had to hard-code this because dask workers didn't have the configured dvid timeout.
             set_default_dvid_session_timeout(600.0, 600.0)
@@ -766,7 +783,7 @@ def update_body_mesh_from_chunks(
                 post_key(server, uuid, names.body, f"{body}.index", index_bytes)
                 post_key(server, uuid, names.info, body, json=mesh_info)
         else:
-            mesh_bytes, mesh_info = _generate_body_mesh_from_chunks(
+            result = _generate_body_mesh_from_chunks(
                 server, uuid, seg_instance,
                 body,
                 chunk_df,
@@ -774,8 +791,13 @@ def update_body_mesh_from_chunks(
                 chunk_config,
                 quality,
                 processes,
-                resource_mgr
+                resource_mgr,
+                expect_concurrent_updates
             )
+            if result is None:
+                # Another process already stored an up-to-date body mesh.
+                continue
+            mesh_bytes, mesh_info = result
 
             # FIXME... had to hard-code this because dask workers didn't have the configured dvid timeout.
             set_default_dvid_session_timeout(600.0, 600.0)
@@ -919,8 +941,13 @@ def _generate_body_mesh_from_chunks(
     chunk_config,
     quality,
     processes,
-    resource_mgr
+    resource_mgr,
+    expect_concurrent_updates=False,
 ):
+    """
+    Returns (mesh_bytes, mesh_info), or None if expect_concurrent_updates
+    is True and another process has already stored an up-to-date body mesh.
+    """
     seg = seg_instance
     with resource_mgr.access_context(server, True, 1, 0):
         lastmod = fetch_lastmod(server, uuid, seg, body)['mutation id']
@@ -938,8 +965,15 @@ def _generate_body_mesh_from_chunks(
         body,
         chunk_config, quality, True,
         missing_chunk_df[[*'zyx', 'surface_mutid', 'block_hash']],
-        processes, resource_mgr
+        processes, resource_mgr,
+        check_stored=expect_concurrent_updates,
     )
+
+    names = mesh_instance_names(seg, multires=False)
+    if expect_concurrent_updates and _body_mesh_is_current(
+            server, uuid, names.info, body, lastmod, body_mesh_config['source-method'], resource_mgr):
+        logger.info("Another process already stored an up-to-date body mesh")
+        return None
 
     with (
         Timer(f"Fetching {len(stored_chunk_df)} stored chunks", logger),
@@ -1111,8 +1145,13 @@ def _assemble_multires_object(frag_bytes_by_cell, chunk_shape_s0_xyz, voxel_size
 
 def _generate_multires_body_mesh_from_chunks(
     server, uuid, seg_instance, body, chunk_df, body_mesh_config,
-    chunk_config, quality, processes, resource_mgr
+    chunk_config, quality, processes, resource_mgr, expect_concurrent_updates=False
 ):
+    """
+    Returns (data_bytes, index_bytes, info_json, mesh_info), or None if
+    expect_concurrent_updates is True and another process has already
+    stored an up-to-date body mesh.
+    """
     seg = seg_instance
     names = mesh_instance_names(seg, multires=True)
     bits = body_mesh_config['vertex-quantization-bits']
@@ -1130,7 +1169,13 @@ def _generate_multires_body_mesh_from_chunks(
     new_fragment_bytes = meshes_for_chunks(
         server, uuid, seg, body, chunk_config, quality, True,
         missing_chunk_df[[*'zyx', 'surface_mutid', 'block_hash']],
-        processes, resource_mgr, multires=True, vertex_quantization_bits=bits)
+        processes, resource_mgr, multires=True, vertex_quantization_bits=bits,
+        check_stored=expect_concurrent_updates)
+
+    if expect_concurrent_updates and _body_mesh_is_current(
+            server, uuid, names.info, body, lastmod, body_mesh_config['source-method'], resource_mgr):
+        logger.info("Another process already stored an up-to-date body mesh")
+        return None
 
     with (
         Timer(f"Fetching {len(stored_chunk_df)} stored chunks", logger),
@@ -1202,26 +1247,47 @@ def meshes_for_chunks(
     resource_mgr,
     multires=False,
     vertex_quantization_bits=16,
+    check_stored=False,
 ):
+    """
+    Generate the meshes for the given chunks (see mesh_for_chunk()).
+    Returns a list of results, in the same order as the rows of missing_chunk_df.
+
+    If check_stored is True, the chunks are processed in random order, and any chunk
+    which another process has stored by the time we get to it is fetched rather than
+    generated.  (Random order makes it unlikely that concurrent processes updating the
+    same body will be working on the same chunk at the same time.)
+    """
     fn = partial(mesh_for_chunk, server, uuid, seg_instance, body, chunk_config,
-                 quality, store, resource_mgr, multires, vertex_quantization_bits)
+                 quality, store, resource_mgr, multires, vertex_quantization_bits, check_stored)
     chunk_specs = missing_chunk_df[[*'zyx', 'surface_mutid', 'block_hash']].values.tolist()
+
+    order = np.arange(len(chunk_specs))
+    if check_stored:
+        np.random.default_rng().shuffle(order)
+    chunk_specs = [chunk_specs[i] for i in order]
 
     if processes != 'dask-worker-client':
         with Timer(f"Generating {len(chunk_specs)} missing chunks using {processes} processes", logger):
-            return compute_parallel(fn, chunk_specs, processes=processes)
+            results = compute_parallel(fn, chunk_specs, processes=processes)
+    else:
+        from dask.distributed import worker_client
+        with (
+            Timer(f"Generating {len(chunk_specs)} missing chunks using the dask cluster", logger),
+            worker_client() as client
+        ):
+            task_names = [
+                f'mesh_for_chunk-body-{body}-chunk-{x},{y},{z}'
+                for z, y, x, *_ in chunk_specs
+            ]
+            futures = client.map(fn, chunk_specs, key=task_names, priority=10)
+            results = client.gather(futures)
 
-    from dask.distributed import worker_client
-    with (
-        Timer(f"Generating {len(missing_chunk_df)} missing chunks using the dask cluster", logger),
-        worker_client() as client
-    ):
-        task_names = [
-            f'mesh_for_chunk-body-{body}-chunk-{x},{y},{z}'
-            for z,y,x in missing_chunk_df[[*'zyx']].values
-        ]
-        futures = client.map(fn, chunk_specs, key=task_names, priority=10)
-        return client.gather(futures)
+    # Restore the original order.
+    ordered_results = [None] * len(results)
+    for i, result in zip(order, results):
+        ordered_results[i] = result
+    return ordered_results
 
 
 def mesh_for_chunk(
@@ -1235,6 +1301,7 @@ def mesh_for_chunk(
     resource_mgr,
     multires,
     vertex_quantization_bits,
+    check_stored,
     chunk_spec
 ):
     """
@@ -1243,11 +1310,38 @@ def mesh_for_chunk(
     Returns the chunk mesh: a vol2mesh Mesh for single-resolution, or (for
     multires) the cell-quantized Draco fragment bytes that are also stored
     (an empty bytestring if the chunk produced no geometry).
+
+    If store and check_stored are both True, then first check whether this chunk
+    has been stored already (e.g. by another process), and if so, return it as-is.
     """
     seg = seg_instance
     names = mesh_instance_names(seg, multires)
     *chunk_zyx, surface_mutid, block_hash = chunk_spec
     chunk_zyx = np.asarray(chunk_zyx)
+
+    # The key identifies the chunk's voxel content (via surface_mutid and
+    # block_hash), so a stored value under this exact key is up-to-date.
+    key = CHUNK_KEY_FMT.format(
+        config_name=chunk_config['config-name'],
+        body=body,
+        chunk_id=make_chunk_id(chunk_zyx),
+        mesh_mutid=surface_mutid,
+        mesh_block_hash=block_hash,
+        quality=quality,
+    )
+    if store and check_stored:
+        try:
+            with resource_mgr.access_context(server, True, 1, 0):
+                stored_value = fetch_key(server, uuid, names.chunk, key)
+        except HTTPError as ex:
+            if ex.response is None or ex.response.status_code != 404:
+                raise
+        else:
+            if multires:
+                return stored_value
+            if not stored_value:
+                return Mesh(np.zeros((0, 3), np.float32), np.zeros((0, 3), np.uint32))
+            return Mesh.from_buffer(stored_value, 'ngmesh')
     _cfg = [
         cfg for cfg in chunk_config['quality-configs']
         if cfg['name'] == quality
@@ -1327,18 +1421,25 @@ def mesh_for_chunk(
         chunk_value = mesh.serialize(fmt='ngmesh')
 
     if store:
-        key = CHUNK_KEY_FMT.format(
-            config_name=chunk_config['config-name'],
-            body=body,
-            chunk_id=make_chunk_id(chunk_zyx),
-            mesh_mutid=surface_mutid,
-            mesh_block_hash=block_hash,
-            quality=quality,
-        )
         with resource_mgr.access_context(server, False, 1, 0):
             post_key(server, uuid, names.chunk, key, chunk_value)
 
     return chunk_value if multires else mesh
+
+
+def _body_mesh_is_current(server, uuid, info_instance, body, lastmod, method, resource_mgr):
+    """
+    Return True if the stored body mesh (according to its mesh_info)
+    was generated with the given method from the body's lastmod (or later).
+    """
+    try:
+        with resource_mgr.access_context(server, True, 1, 0):
+            mesh_info = fetch_key(server, uuid, info_instance, body, as_json=True)
+    except HTTPError as ex:
+        if ex.response is not None and ex.response.status_code == 404:
+            return False
+        raise
+    return mesh_info.get('method') == method and mesh_info.get('lastmod', -1) >= lastmod
 
 
 def make_chunk_ids(df):

@@ -246,5 +246,98 @@ def test_chunk_table_anisotropic_chunk_shape(monkeypatch):
     assert (corners == [[0, 0, 0], [64, 128, 0], [192, 0, 256], [320, 256, 0]]).all()
 
 
+@pytest.mark.parametrize("check_stored", [True, False])
+def test_meshes_for_chunks_check_stored(monkeypatch, check_stored):
+    """
+    With check_stored=True, chunks that another process has already stored are fetched
+    rather than generated, and the results are still returned in the caller's order.
+    """
+    import pandas as pd
+    import requests
+    from requests import HTTPError
+    from neuclease.misc import bodymesh
+
+    zz, yy, xx = np.ogrid[:192, :192, :192]
+    vol_s0 = ((zz - 96)**2 + (yy - 96)**2 + (xx - 96)**2) <= 70**2
+    vol_s1 = vol_s0[::2, ::2, ::2]
+
+    def not_found():
+        r = requests.Response()
+        r.status_code = 404
+        return HTTPError("404", response=r)
+
+    kv = {}
+    sparsevol_requests = []
+
+    def fake_fetch_sparsevol(server, uuid, instance, label, scale=0, supervoxels=False, *, mask_box=None, **kwargs):
+        sparsevol_requests.append(mask_box)
+        box = np.asarray(mask_box)
+        mask = np.zeros(box[1] - box[0], bool)
+        lo, hi = np.maximum(box[0], 0), np.minimum(box[1], vol_s1.shape)
+        mask[tuple(slice(a - b, c - b) for a, c, b in zip(lo, hi, box[0]))] = \
+            vol_s1[tuple(slice(a, c) for a, c in zip(lo, hi))]
+        if not mask.any():
+            raise not_found()
+        return mask, box
+
+    def fake_fetch_key(server, uuid, instance, key, **kwargs):
+        if (instance, key) not in kv:
+            raise not_found()
+        return kv[(instance, key)]
+
+    def fake_post_key(server, uuid, instance, key, data=None, **kwargs):
+        kv[(instance, key)] = data
+
+    monkeypatch.setattr(bodymesh, 'fetch_sparsevol', fake_fetch_sparsevol)
+    monkeypatch.setattr(bodymesh, 'fetch_key', fake_fetch_key)
+    monkeypatch.setattr(bodymesh, 'post_key', fake_post_key)
+
+    chunk_cfg = {
+        'config-name': 'test',
+        'chunk-shape-s0': [64, 64, 64],
+        'chunk-halo': 2,
+        'quality-configs': [{'name': 'q', 'source-scale': 1, 'morphological-closing-s0': 0,
+                             'fill-holes': False, 'smoothing': 1, 'decimation-s0': 1.0}],
+    }
+    validate(chunk_cfg, bodymesh.MeshChunkConfigSchema, inject_defaults=True)
+
+    corners = [(z, y, x) for z in (0, 64, 128) for y in (0, 64, 128) for x in (0, 64, 128)]
+    chunk_df = pd.DataFrame(corners, columns=[*'zyx'])
+    chunk_df['surface_mutid'] = 10
+    chunk_df['block_hash'] = '0xabc'
+    chunk_instance = 'segmentation_multires_chunk_meshes'
+
+    def key(i):
+        z, y, x = corners[i]
+        return bodymesh.CHUNK_KEY_FMT.format(
+            config_name='test', body=1, chunk_id=f'{x},{y},{z}',
+            mesh_mutid=10, mesh_block_hash='0xabc', quality='q')
+
+    # Pretend that another process has already stored every other chunk.
+    prestored = range(0, len(corners), 2)
+    for i in prestored:
+        kv[(chunk_instance, key(i))] = f'stored-{i}'.encode()
+
+    results = bodymesh.meshes_for_chunks(
+        'http://fake-dvid', 'abc123', 'segmentation', 1, chunk_cfg, 'q', True, chunk_df,
+        0, bodymesh.DummyResourceMgr(), multires=True, vertex_quantization_bits=16,
+        check_stored=check_stored)
+
+    assert len(results) == len(corners)
+    if check_stored:
+        # Pre-stored chunks were used as-is (in the right positions); only the others were generated.
+        assert len(sparsevol_requests) == len(corners) - len(prestored)
+        for i in prestored:
+            assert results[i] == f'stored-{i}'.encode()
+    else:
+        assert len(sparsevol_requests) == len(corners)
+
+    # Generated chunks were stored, and returned in the right positions.
+    generated = range(1, len(corners), 2) if check_stored else range(len(corners))
+    for i in generated:
+        assert results[i] == kv[(chunk_instance, key(i))]
+        assert not results[i].startswith(b'stored')
+
+
 if __name__ == "__main__":
     pytest.main(['-s', '--tb=native', '--pyargs', 'neuclease.tests.test_bodymesh_multires'])
