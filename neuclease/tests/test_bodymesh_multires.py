@@ -341,3 +341,49 @@ def test_meshes_for_chunks_check_stored(monkeypatch, check_stored):
 
 if __name__ == "__main__":
     pytest.main(['-s', '--tb=native', '--pyargs', 'neuclease.tests.test_bodymesh_multires'])
+
+
+def test_chunk_table_body_not_in_base_uuid(monkeypatch):
+    """
+    If some blocks lack a surface_mutid but the body didn't exist in the base uuid,
+    _chunk_table() still works: chunks without a stored mesh count as missing,
+    and stored chunk meshes with a matching block hash count as up-to-date.
+    """
+    import pandas as pd
+    import requests
+    from requests import HTTPError
+    from neuclease.misc import bodymesh
+    from neuclease.dvid.labelmap import PandasLabelIndex
+
+    block_zyx = np.array([[0, 0, 0], [0, 0, 64], [0, 0, 128]])
+    blocks_df = pd.DataFrame(block_zyx, columns=[*'zyx'])
+    blocks_df['sv'] = np.uint64(1)
+    blocks_df['count'] = 1
+    surface_mutids = pd.DataFrame(block_zyx, columns=[*'zyx'])
+    surface_mutids['surface_mutid'] = [0, 0, 20]
+    pli = PandasLabelIndex(blocks_df, 1, 20, '', '', surface_mutids)
+
+    def fetch_lastmod(*args, **kwargs):
+        response = requests.Response()
+        response.status_code = 404
+        raise HTTPError("404 Client Error: Not Found", response=response)
+
+    # Chunk (0,0,0) has a stored mesh; the others don't.
+    block_hash_0 = hex(bodymesh.CityHash64(np.array([[0, 0, 0]]).copy('C')))
+    stored_keys = pd.DataFrame({
+        'config_name': ['test'], 'body': [1], 'chunk_id': ['0,0,0'], 'mesh_mutid': [1],
+        'mesh_block_hash': [block_hash_0], 'quality': ['q'], 'key': ['test-1-0,0,0-1-hash-q'],
+        'z': [0], 'y': [0], 'x': [0],
+    })
+
+    monkeypatch.setattr(bodymesh, 'resolve_ref', lambda *args, **kwargs: 'abc123')
+    monkeypatch.setattr(bodymesh, 'fetch_labelindex', lambda *args, **kwargs: pli)
+    monkeypatch.setattr(bodymesh, 'fetch_lastmod', fetch_lastmod)
+    monkeypatch.setattr(bodymesh, 'fetch_stored_chunk_keys', lambda *args, **kwargs: stored_keys)
+
+    chunk_cfg = {'config-name': 'test', 'chunk-shape-s0': [64, 64, 64], 'base-uuid': 'abc123'}
+    chunk_df = bodymesh._chunk_table('http://fake-dvid', 'abc123', 'segmentation', 1, chunk_cfg, None)
+    chunk_df = chunk_df.sort_values('x', ignore_index=True)
+
+    missing = chunk_df.eval('mesh_mutid < surface_mutid or quality != "q"')
+    assert missing.tolist() == [False, True, True]

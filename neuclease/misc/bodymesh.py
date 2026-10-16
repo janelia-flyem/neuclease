@@ -880,8 +880,20 @@ def _chunk_table(server, uuid, seg_instance, body, chunk_config, resource_mgr, e
         # And although we did not enable the surface_mutid feature until recently,
         # it was turned on immediately after locking the base_uuid, so all mutations
         # since then are captured by surface_mutid.
-        with resource_mgr.access_context(server, False, True, 0):
-            base_mutid = fetch_lastmod(server, base_uuid, seg_instance, body)['mutation id']
+        try:
+            with resource_mgr.access_context(server, False, True, 0):
+                base_mutid = fetch_lastmod(server, base_uuid, seg_instance, body)['mutation id']
+        except HTTPError as ex:
+            if ex.response is None or ex.response.status_code != 404:
+                raise
+            # The body didn't exist in the base uuid.  (Its unchanged blocks were
+            # inherited from other bodies, e.g. via merges.)  Every stored chunk mesh
+            # for this body was generated after the body came into existence, so any
+            # stored chunk is at least up-to-date with the base uuid.  Any positive
+            # mutid expresses that (and a chunk with no stored mesh still counts as missing).
+            logger.info(f"Body didn't exist in the base uuid ({base_uuid}); "
+                        "its blocks without a surface_mutid will be treated as unchanged since then.")
+            base_mutid = 1
         chunk_df.loc[chunk_df['surface_mutid'] == 0, 'surface_mutid'] = base_mutid
 
     # Fetch all chunk mesh keys this body has
