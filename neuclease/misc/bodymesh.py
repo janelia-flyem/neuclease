@@ -1,4 +1,5 @@
 import json
+import time
 import logging
 import datetime
 from types import SimpleNamespace
@@ -384,7 +385,8 @@ def update_body_mesh(
         # Note: If the instance name can't be found, DVID returns 400.
         # DVID only returns 404 if we are looking at a valid keyvalue
         # instance and the key isn't present.
-        if ex.response.status_code == 404:
+        if ex.response is not None and ex.response.status_code == 404:
+            logger.info(f"Body {body} doesn't exist in {uuid}; deleting its stored mesh (if any)")
             delete_body_mesh(server, uuid, seg, body, multires=multires)
             return
         raise
@@ -395,11 +397,21 @@ def update_body_mesh(
         needs_update = (lastmod > mesh_info['lastmod'] or mesh_info['method'] != requested_method)
     except HTTPError as ex:
         needs_update = True
-        if ex.response.status_code != 404:
+        if ex.response is None or ex.response.status_code != 404:
             raise
+        mesh_info = None
 
     if not (needs_update or force):
+        logger.info(f"Body {body}: stored mesh is up-to-date (lastmod {lastmod})")
         return
+
+    if mesh_info is None:
+        logger.info(f"Body {body}: no stored mesh yet; generating it (lastmod {lastmod}, method {requested_method})")
+    elif needs_update:
+        logger.info(f"Body {body}: stored mesh is stale (stored lastmod {mesh_info['lastmod']}, "
+                    f"method {mesh_info['method']}; current lastmod {lastmod}, method {requested_method}); updating it")
+    else:
+        logger.info(f"Body {body}: regenerating mesh (forced)")
 
     if requested_method == 'concatenated-supervoxels':
         if multires:
@@ -775,7 +787,8 @@ def update_body_mesh_from_chunks(
             # FIXME... had to hard-code this because dask workers didn't have the configured dvid timeout.
             set_default_dvid_session_timeout(600.0, 600.0)
 
-            with Timer(f"Storing multires body mesh: {body}", logger):
+            with Timer(f"Storing multires body mesh "
+                       f"({len(data_bytes) / 1e6:.1f} MB data, {len(index_bytes) / 1e3:.1f} kB index)", logger):
                 # The 'info' key is dataset-wide; posting it idempotently keeps
                 # the instance self-describing for neuroglancer (no backend changes).
                 post_key(server, uuid, names.body, "info", json=info_json)
@@ -802,7 +815,7 @@ def update_body_mesh_from_chunks(
             # FIXME... had to hard-code this because dask workers didn't have the configured dvid timeout.
             set_default_dvid_session_timeout(600.0, 600.0)
 
-            with Timer(f"Storing body mesh: {body}.ngmesh", logger):
+            with Timer(f"Storing body mesh {body}.ngmesh ({len(mesh_bytes) / 1e6:.1f} MB)", logger):
                 post_key(server, uuid, names.body, f"{body}.ngmesh", mesh_bytes)
                 post_key(server, uuid, names.info, body, json=mesh_info)
 
@@ -831,8 +844,12 @@ def _chunk_table(server, uuid, seg_instance, body, chunk_config, resource_mgr, e
     chunk_shape_s0_zyx = np.array(chunk_config['chunk-shape-s0'])[::-1]
     assert not (chunk_shape_s0_zyx % 64).any(), "Chunk shape must be a multiple of 64"
 
-    with resource_mgr.access_context(server, False, True, 0):
+    with (
+        Timer(f"Fetching label index", logger),
+        resource_mgr.access_context(server, False, True, 0)
+    ):
         pli = fetch_labelindex(server, uuid, seg_instance, body, format='pandas')
+    logger.info(f"Label index lists {len(pli.surface_mutids)} blocks")
 
     # DVID blocks (64x64x64)
     block_df = pli.surface_mutids
@@ -868,7 +885,9 @@ def _chunk_table(server, uuid, seg_instance, body, chunk_config, resource_mgr, e
         chunk_df.loc[chunk_df['surface_mutid'] == 0, 'surface_mutid'] = base_mutid
 
     # Fetch all chunk mesh keys this body has
-    key_df = fetch_stored_chunk_keys(server, uuid, seg_instance, chunk_config['config-name'], body, multires=multires)
+    with Timer(f"Listing stored chunk mesh keys", logger):
+        key_df = fetch_stored_chunk_keys(server, uuid, seg_instance, chunk_config['config-name'], body, multires=multires)
+    logger.info(f"Found {len(key_df)} stored chunk mesh keys (including outdated ones)")
 
     # Drop all but the most recent key for each chunk
     key_df = key_df.sort_values('mesh_mutid').drop_duplicates([*'xyz'], keep='last')
@@ -959,6 +978,8 @@ def _generate_body_mesh_from_chunks(
     missing = chunk_df.eval('mesh_mutid < surface_mutid or quality != @quality')
     missing_chunk_df = chunk_df.loc[missing]
     stored_chunk_df = chunk_df.loc[~missing]
+    logger.info(f"{len(chunk_df)} chunks: {len(missing_chunk_df)} must be generated, "
+                f"{len(stored_chunk_df)} are already stored and up-to-date")
 
     new_chunk_meshes = meshes_for_chunks(
         server, uuid, seg,
@@ -972,7 +993,7 @@ def _generate_body_mesh_from_chunks(
     names = mesh_instance_names(seg, multires=False)
     if expect_concurrent_updates and _body_mesh_is_current(
             server, uuid, names.info, body, lastmod, body_mesh_config['source-method'], resource_mgr):
-        logger.info("Another process already stored an up-to-date body mesh")
+        logger.info(f"Another process already stored an up-to-date body mesh")
         return None
 
     with (
@@ -981,7 +1002,7 @@ def _generate_body_mesh_from_chunks(
     ):
         stored_chunk_mesh_bytes = fetch_keyvalues(server, uuid, f"{seg}_chunk_meshes", stored_chunk_df['key'].values, batch_size=10)
 
-    with Timer("Combining chunks...", logger):
+    with Timer(f"Combining chunks", logger):
         stored_chunk_meshes = (Mesh.from_buffer(b, 'ngmesh') for b in stored_chunk_mesh_bytes.values())
         body_mesh = Mesh.concatenate_meshes(chain(new_chunk_meshes, stored_chunk_meshes), keep_normals=False)
 
@@ -1076,18 +1097,22 @@ def _assemble_multires_object(frag_bytes_by_cell, chunk_shape_s0_xyz, voxel_size
     # Decode every fragment (needed to count vertices and, if requested, to
     # decimate as a single mesh).
     decoded = {}
-    for cell, b in frag_bytes_by_cell.items():
-        if not b:
-            continue
-        v_xyz, faces = v2m_multires.decode_fragment(
-            b, cell, chunk_shape_s0_xyz, grid_origin, vertex_quantization_bits=bits)
-        decoded[cell] = (v_xyz, faces)
+    with Timer(f"Decoding {len(frag_bytes_by_cell)} chunk fragments", logger):
+        for cell, b in frag_bytes_by_cell.items():
+            if not b:
+                continue
+            v_xyz, faces = v2m_multires.decode_fragment(
+                b, cell, chunk_shape_s0_xyz, grid_origin, vertex_quantization_bits=bits)
+            decoded[cell] = (v_xyz, faces)
 
     orig_vertices = sum(len(v) for v, _ in decoded.values())
+    orig_faces = sum(len(f) for _, f in decoded.values())
     target_decimation_s0, decimation = select_body_decimation(
         chunk_decimation_s0, orig_vertices, body_mesh_config)
     smoothing = body_mesh_config['smoothing']
     body_ops = bool(smoothing) or (decimation < 1.0)
+    logger.info(f"Chunk fragments have {orig_vertices} vertices and {orig_faces} faces in total; "
+                f"body smoothing: {smoothing}, body decimation: {decimation:.4g}, LODs: {num_lods}")
 
     fragments_by_lod = {}
     if not decoded:
@@ -1101,12 +1126,16 @@ def _assemble_multires_object(frag_bytes_by_cell, chunk_shape_s0_xyz, voxel_size
         applied_decimation = 1.0
         final_vertices = orig_vertices
     else:
-        meshes = [Mesh(v[:, ::-1], faces) for (v, faces) in decoded.values()]
-        body_mesh = Mesh.concatenate_meshes(meshes, keep_normals=False)
+        with Timer(f"Concatenating {len(decoded)} chunk fragments", logger):
+            meshes = [Mesh(v[:, ::-1], faces) for (v, faces) in decoded.values()]
+            body_mesh = Mesh.concatenate_meshes(meshes, keep_normals=False)
         if smoothing:
-            body_mesh.laplacian_smooth(smoothing, preserve_border=True)
+            with Timer(f"Smoothing body mesh with {smoothing} iterations", logger):
+                body_mesh.laplacian_smooth(smoothing, preserve_border=True)
         if decimation < 1.0:
-            body_mesh.simplify(decimation, preserve_border=True)
+            with Timer(f"Decimating body mesh with {decimation:.4g}", logger):
+                body_mesh.simplify(decimation, preserve_border=True)
+            logger.info(f"Decimated body mesh from {orig_vertices} to {len(body_mesh.vertices_zyx)} vertices")
         applied_decimation = decimation
         final_vertices = len(body_mesh.vertices_zyx)
 
@@ -1115,16 +1144,23 @@ def _assemble_multires_object(frag_bytes_by_cell, chunk_shape_s0_xyz, voxel_size
         if not body_ops:
             fragments_by_lod[0] = {cell: b for cell, b in frag_bytes_by_cell.items() if b}
         else:
-            fragments_by_lod[0] = v2m_multires.split_mesh_for_lod(body_mesh, chunk_shape_s0_xyz, 0)
+            with Timer(f"Splitting LOD 0 into fragments", logger):
+                fragments_by_lod[0] = v2m_multires.split_mesh_for_lod(body_mesh, chunk_shape_s0_xyz, 0)
 
         # Coarser LODs: decimate and re-partition.
         for lod in range(1, num_lods):
-            current = Mesh(body_mesh.vertices_zyx.copy(), body_mesh.faces.copy())
-            current.simplify(lod_factor**lod, preserve_border=True)
-            fragments_by_lod[lod] = v2m_multires.split_mesh_for_lod(current, chunk_shape_s0_xyz, lod)
+            with Timer(f"Generating LOD {lod} (decimation {lod_factor**lod:.4g})", logger):
+                current = Mesh(body_mesh.vertices_zyx.copy(), body_mesh.faces.copy())
+                current.simplify(lod_factor**lod, preserve_border=True)
+                fragments_by_lod[lod] = v2m_multires.split_mesh_for_lod(current, chunk_shape_s0_xyz, lod)
+            logger.info(f"LOD {lod} has {len(current.vertices_zyx)} vertices "
+                        f"in {len(fragments_by_lod[lod])} fragments")
 
-    data_bytes, index_bytes, num_fragments_per_lod = v2m_multires.encode_multilod_object(
-        fragments_by_lod, chunk_shape_s0_xyz, grid_origin, vertex_quantization_bits=bits)
+    with Timer(f"Encoding {num_lods} LOD(s)", logger):
+        data_bytes, index_bytes, num_fragments_per_lod = v2m_multires.encode_multilod_object(
+            fragments_by_lod, chunk_shape_s0_xyz, grid_origin, vertex_quantization_bits=bits)
+    logger.info(f"Encoded {int(sum(num_fragments_per_lod))} fragments "
+                f"({len(data_bytes) / 1e6:.1f} MB data, {len(index_bytes) / 1e3:.1f} kB index)")
 
     transform = [voxel_size_xyz[0], 0, 0, 0,
                  0, voxel_size_xyz[1], 0, 0,
@@ -1165,6 +1201,8 @@ def _generate_multires_body_mesh_from_chunks(
     missing = chunk_df.eval('mesh_mutid < surface_mutid or quality != @quality')
     missing_chunk_df = chunk_df.loc[missing]
     stored_chunk_df = chunk_df.loc[~missing]
+    logger.info(f"{len(chunk_df)} chunks: {len(missing_chunk_df)} must be generated, "
+                f"{len(stored_chunk_df)} are already stored and up-to-date")
 
     new_fragment_bytes = meshes_for_chunks(
         server, uuid, seg, body, chunk_config, quality, True,
@@ -1174,7 +1212,7 @@ def _generate_multires_body_mesh_from_chunks(
 
     if expect_concurrent_updates and _body_mesh_is_current(
             server, uuid, names.info, body, lastmod, body_mesh_config['source-method'], resource_mgr):
-        logger.info("Another process already stored an up-to-date body mesh")
+        logger.info(f"Another process already stored an up-to-date body mesh")
         return None
 
     with (
@@ -1199,9 +1237,10 @@ def _generate_multires_body_mesh_from_chunks(
     # stored-model space is full-res voxels, so the transform carries voxel->nm.
     voxel_size_xyz = np.asarray(fetch_resolution_zyx(server, uuid, seg))[::-1]
 
-    data_bytes, index_bytes, info_json, stats = _assemble_multires_object(
-        frag_bytes_by_cell, chunk_shape_s0_xyz, voxel_size_xyz,
-        quality_config['decimation-s0'], body_mesh_config)
+    with Timer(f"Assembling multires mesh from {len(frag_bytes_by_cell)} non-empty chunks", logger):
+        data_bytes, index_bytes, info_json, stats = _assemble_multires_object(
+            frag_bytes_by_cell, chunk_shape_s0_xyz, voxel_size_xyz,
+            quality_config['decimation-s0'], body_mesh_config)
 
     config_name = chunk_config['config-name']
     mesh_info = {
@@ -1329,6 +1368,7 @@ def mesh_for_chunk(
         mesh_block_hash=block_hash,
         quality=quality,
     )
+    chunk_id = make_chunk_id(chunk_zyx)
     if store and check_stored:
         try:
             with resource_mgr.access_context(server, True, 1, 0):
@@ -1337,6 +1377,7 @@ def mesh_for_chunk(
             if ex.response is None or ex.response.status_code != 404:
                 raise
         else:
+            logger.debug(f"Chunk {chunk_id} was already stored (by another process)")
             if multires:
                 return stored_value
             if not stored_value:
@@ -1365,6 +1406,7 @@ def mesh_for_chunk(
     # FIXME... had to hard-code this because dask workers didn't have the configured dvid timeout.
     set_default_dvid_session_timeout(600.0, 600.0)
 
+    start = time.perf_counter()
     try:
         with resource_mgr.access_context(server, True, 1, 0):
             mask, mask_box = fetch_sparsevol(server, uuid, seg, body, scale, mask_box=chunk_box, format='mask')
@@ -1374,10 +1416,13 @@ def mesh_for_chunk(
         # returns 404 for this box.  Treat that as an empty chunk (not stored).
         if ex.response is None or ex.response.status_code != 404:
             raise
-        logger.info(f"Body {body}: no voxels at scale {scale} in chunk {make_chunk_id(chunk_zyx)}")
+        logger.info(f"Body {body}: no voxels at scale {scale} in chunk {chunk_id}")
         if multires:
             return b''
         return Mesh(np.zeros((0, 3), np.float32), np.zeros((0, 3), np.uint32))
+
+    fetch_seconds = time.perf_counter() - start
+    start = time.perf_counter()
 
     closing_radius = quality_config['morphological-closing-s0']
     closing_radius //= 2**scale
@@ -1420,10 +1465,14 @@ def mesh_for_chunk(
     else:
         chunk_value = mesh.serialize(fmt='ngmesh')
 
+    mesh_seconds = time.perf_counter() - start
+
     if store:
         with resource_mgr.access_context(server, False, 1, 0):
             post_key(server, uuid, names.chunk, key, chunk_value)
 
+    logger.debug(f"Chunk {chunk_id}: fetched mask {mask.shape[::-1]} in {fetch_seconds:.1f}s, "
+                 f"meshed in {mesh_seconds:.1f}s ({len(chunk_value)} bytes)")
     return chunk_value if multires else mesh
 
 
