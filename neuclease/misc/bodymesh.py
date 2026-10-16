@@ -805,15 +805,16 @@ def _chunk_table(server, uuid, seg_instance, body, chunk_config, resource_mgr, e
     """
     resource_mgr = resource_mgr or DummyResourceMgr()
     base_uuid = resolve_ref(server, chunk_config['base-uuid'], True)
-    chunk_shape_s0 = np.array(chunk_config['chunk-shape-s0'])
-    assert not (chunk_shape_s0 % 64).any(), "Chunk shape must be a multiple of 64"
+    # Note: chunk-shape-s0 is given in XYZ order.
+    chunk_shape_s0_zyx = np.array(chunk_config['chunk-shape-s0'])[::-1]
+    assert not (chunk_shape_s0_zyx % 64).any(), "Chunk shape must be a multiple of 64"
 
     with resource_mgr.access_context(server, False, True, 0):
         pli = fetch_labelindex(server, uuid, seg_instance, body, format='pandas')
 
     # DVID blocks (64x64x64)
     block_df = pli.surface_mutids
-    block_df[['cz', 'cy', 'cx']] = (block_df[[*'zyx']] // chunk_shape_s0) * chunk_shape_s0
+    block_df[['cz', 'cy', 'cx']] = (block_df[[*'zyx']] // chunk_shape_s0_zyx) * chunk_shape_s0_zyx
     block_df = block_df.sort_values(['cz', 'cy', 'cx', *'zyx'], ignore_index=True)
 
     def compute_block_hash(df):

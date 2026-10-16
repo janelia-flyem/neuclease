@@ -211,5 +211,40 @@ def test_assemble_all_fragments_empty_with_body_decimation():
     assert data == b'' and index == b'' and stats['num_fragments'] == 0
 
 
+def test_chunk_table_anisotropic_chunk_shape(monkeypatch):
+    """
+    _chunk_table() must assign blocks to the right chunks, even for a non-cubic
+    chunk shape (chunk-shape-s0 is in XYZ order, but block coordinates are ZYX).
+    """
+    import pandas as pd
+    from neuclease.misc import bodymesh
+    from neuclease.dvid.labelmap import PandasLabelIndex
+
+    block_zyx = np.array([[0, 0, 0], [64, 128, 192], [192, 64, 320], [320, 320, 64]])
+    blocks_df = pd.DataFrame(block_zyx, columns=[*'zyx'])
+    blocks_df['sv'] = np.uint64(1)
+    blocks_df['count'] = 1
+    surface_mutids = pd.DataFrame(block_zyx, columns=[*'zyx'])
+    surface_mutids['surface_mutid'] = 10
+    pli = PandasLabelIndex(blocks_df, 1, 10, '', '', surface_mutids)
+
+    key_cols = ['config_name', 'body', 'chunk_id', 'mesh_mutid', 'mesh_block_hash', 'quality', 'key']
+    no_keys = pd.DataFrame({c: pd.Series(dtype=object) for c in key_cols})
+    no_keys = no_keys.astype({'mesh_mutid': int}).assign(
+        z=pd.Series(dtype=int), y=pd.Series(dtype=int), x=pd.Series(dtype=int))
+
+    monkeypatch.setattr(bodymesh, 'resolve_ref', lambda *args, **kwargs: 'abc123')
+    monkeypatch.setattr(bodymesh, 'fetch_labelindex', lambda *args, **kwargs: pli)
+    monkeypatch.setattr(bodymesh, 'fetch_stored_chunk_keys', lambda *args, **kwargs: no_keys)
+
+    # x, y, z
+    chunk_cfg = {'config-name': 'test', 'chunk-shape-s0': [256, 128, 64], 'base-uuid': 'abc123'}
+    chunk_df = bodymesh._chunk_table('http://fake-dvid', 'abc123', 'segmentation', 1, chunk_cfg, None)
+
+    # z is chunked by 64, y by 128, x by 256
+    corners = chunk_df[[*'zyx']].sort_values([*'zyx']).values
+    assert (corners == [[0, 0, 0], [64, 128, 0], [192, 0, 256], [320, 256, 0]]).all()
+
+
 if __name__ == "__main__":
     pytest.main(['-s', '--tb=native', '--pyargs', 'neuclease.tests.test_bodymesh_multires'])
