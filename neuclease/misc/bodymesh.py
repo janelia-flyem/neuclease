@@ -405,6 +405,19 @@ def update_body_mesh(
         update_body_mesh_from_body_sparsevol(server, uuid, seg, body, body_mesh_config, resource_mgr=resource_mgr)
         return
 
+    quality_from_source_method(body_mesh_config, chunk_config)  # validates the source-method
+    update_body_mesh_from_chunks(server, uuid, seg, body, body_mesh_config, chunk_config, processes=processes, resource_mgr=resource_mgr)
+
+
+def quality_from_source_method(body_mesh_config, chunk_config):
+    """
+    Parse a chunk-based ``source-method`` ('concatenated-chunks-{config-name}-{quality}')
+    and verify that it matches the given chunk config.
+
+    Returns:
+        The name of the requested chunk quality config.
+    """
+    requested_method = body_mesh_config['source-method']
     if '-' in chunk_config['config-name']:
         raise RuntimeError(f"Chunk config-name cannot contain a hyphen: {chunk_config['config-name']}")
 
@@ -420,8 +433,7 @@ def update_body_mesh(
     available_qualities = {q['name'] for q in chunk_config['quality-configs']}
     if quality not in available_qualities:
         raise RuntimeError(f"Body mesh config requests a chunk quality which isn't listed in the chunk config: {quality}")
-
-    update_body_mesh_from_chunks(server, uuid, seg, body, body_mesh_config, chunk_config, processes=processes, resource_mgr=resource_mgr)
+    return quality
 
 
 @PrefixFilter.with_context("Body {body}")
@@ -1043,7 +1055,12 @@ def _assemble_multires_object(frag_bytes_by_cell, chunk_shape_s0_xyz, voxel_size
     body_ops = bool(smoothing) or (decimation < 1.0)
 
     fragments_by_lod = {}
-    if num_lods == 1 and not body_ops:
+    if not decoded:
+        # No geometry at all (every chunk was empty).  There's nothing to
+        # smooth or decimate (and concatenating zero meshes would fail).
+        applied_decimation = 1.0
+        final_vertices = 0
+    elif num_lods == 1 and not body_ops:
         # Fast path: the cached LOD-0 fragments are already final -- reuse verbatim.
         fragments_by_lod[0] = {cell: b for cell, b in frag_bytes_by_cell.items() if b}
         applied_decimation = 1.0
@@ -1122,21 +1139,16 @@ def _generate_multires_body_mesh_from_chunks(
 
     chunk_shape_s0_xyz = np.asarray(chunk_config['chunk-shape-s0'], dtype=float)
 
-    def cell_xyz(x, y, z):
-        return (int(x // chunk_shape_s0_xyz[0]),
-                int(y // chunk_shape_s0_xyz[1]),
-                int(z // chunk_shape_s0_xyz[2]))
-
     # Both new and stored fragments are keyed by grid-cell index. (New and
     # stored use the same cell formula, so they remain mutually consistent.)
     frag_bytes_by_cell = {}
     for (z, y, x), b in zip(missing_chunk_df[[*'zyx']].values, new_fragment_bytes):
         if b:
-            frag_bytes_by_cell[cell_xyz(x, y, z)] = b
+            frag_bytes_by_cell[_chunk_cell_xyz(x, y, z, chunk_shape_s0_xyz)] = b
     for (z, y, x), key in zip(stored_chunk_df[[*'zyx']].values, stored_chunk_df['key'].values):
         b = stored_bytes.get(key)
         if b:
-            frag_bytes_by_cell[cell_xyz(x, y, z)] = b
+            frag_bytes_by_cell[_chunk_cell_xyz(x, y, z, chunk_shape_s0_xyz)] = b
 
     # stored-model space is full-res voxels, so the transform carries voxel->nm.
     voxel_size_xyz = np.asarray(fetch_resolution_zyx(server, uuid, seg))[::-1]
@@ -1167,6 +1179,13 @@ def _generate_multires_body_mesh_from_chunks(
         "vertex-quantization-bits": bits,
     }
     return data_bytes, index_bytes, info_json, mesh_info
+
+
+def _chunk_cell_xyz(x, y, z, chunk_shape_s0_xyz):
+    """Grid-cell index (XYZ) of the chunk whose full-resolution corner is (x, y, z)."""
+    return (int(x // chunk_shape_s0_xyz[0]),
+            int(y // chunk_shape_s0_xyz[1]),
+            int(z // chunk_shape_s0_xyz[2]))
 
 
 def meshes_for_chunks(
@@ -1251,8 +1270,19 @@ def mesh_for_chunk(
     # FIXME... had to hard-code this because dask workers didn't have the configured dvid timeout.
     set_default_dvid_session_timeout(600.0, 600.0)
 
-    with resource_mgr.access_context(server, True, 1, 0):
-        mask, mask_box = fetch_sparsevol(server, uuid, seg, body, scale, mask_box=chunk_box, format='mask')
+    try:
+        with resource_mgr.access_context(server, True, 1, 0):
+            mask, mask_box = fetch_sparsevol(server, uuid, seg, body, scale, mask_box=chunk_box, format='mask')
+    except HTTPError as ex:
+        # The chunk list comes from the body's scale-0 blocks, but a tiny piece of
+        # the body may vanish at the (coarser) source scale, in which case DVID
+        # returns 404 for this box.  Treat that as an empty chunk (not stored).
+        if ex.response is None or ex.response.status_code != 404:
+            raise
+        logger.info(f"Body {body}: no voxels at scale {scale} in chunk {make_chunk_id(chunk_zyx)}")
+        if multires:
+            return b''
+        return Mesh(np.zeros((0, 3), np.float32), np.zeros((0, 3), np.uint32))
 
     closing_radius = quality_config['morphological-closing-s0']
     closing_radius //= 2**scale

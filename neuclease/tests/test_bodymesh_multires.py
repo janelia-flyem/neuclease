@@ -202,5 +202,14 @@ def test_assemble_empty():
     assert data == b'' and index == b'' and stats['num_fragments'] == 0
 
 
+def test_assemble_all_fragments_empty_with_body_decimation():
+    # Every chunk is empty, but the body config requests decimation.
+    # (Previously this tried to concatenate zero meshes and crashed.)
+    chunk = np.array([256.0, 256.0, 256.0])
+    cfg = _body_config(0.001, 0.001, 0)
+    data, index, info, stats = _assemble_multires_object({(0, 0, 0): b''}, chunk, [8.0, 8.0, 8.0], 0.005, cfg)
+    assert data == b'' and index == b'' and stats['num_fragments'] == 0
+
+
 if __name__ == "__main__":
     pytest.main(['-s', '--tb=native', '--pyargs', 'neuclease.tests.test_bodymesh_multires'])
