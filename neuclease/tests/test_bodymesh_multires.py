@@ -339,9 +339,6 @@ def test_meshes_for_chunks_check_stored(monkeypatch, check_stored):
         assert not results[i].startswith(b'stored')
 
 
-if __name__ == "__main__":
-    pytest.main(['-s', '--tb=native', '--pyargs', 'neuclease.tests.test_bodymesh_multires'])
-
 
 def test_chunk_table_body_not_in_base_uuid(monkeypatch):
     """
@@ -387,3 +384,40 @@ def test_chunk_table_body_not_in_base_uuid(monkeypatch):
 
     missing = chunk_df.eval('mesh_mutid < surface_mutid or quality != "q"')
     assert missing.tolist() == [False, True, True]
+
+
+def test_meshes_for_chunks_with_chunk_fn():
+    """
+    If a chunk_fn is given, it's called (from multiple threads) instead of mesh_for_chunk(),
+    with plain-python chunk specs, and the results are returned in the caller's order.
+    """
+    import threading
+    import pandas as pd
+    from neuclease.misc import bodymesh
+
+    corners = [(z, y, x) for z in (0, 64) for y in (0, 64) for x in (0, 64)]
+    chunk_df = pd.DataFrame(corners, columns=[*'zyx'])
+    chunk_df['surface_mutid'] = np.int64(10)
+    chunk_df['block_hash'] = [f'0x{i}' for i in range(len(corners))]
+
+    calls = []
+    lock = threading.Lock()
+
+    def chunk_fn(chunk_spec):
+        with lock:
+            calls.append(chunk_spec)
+        z, y, x, mutid, block_hash = chunk_spec
+        return f'{z},{y},{x}-{mutid}-{block_hash}'.encode()
+
+    results = bodymesh.meshes_for_chunks(
+        'http://fake-dvid', 'abc123', 'segmentation', 1, {'config-name': 'test'}, 'q', True, chunk_df,
+        0, bodymesh.DummyResourceMgr(), multires=True, check_stored=True,
+        chunk_fn=chunk_fn, chunk_fn_threads=4)
+
+    assert len(calls) == len(corners)
+    assert all(type(v) in (int, str) for spec in calls for v in spec)
+    assert results == [f'{z},{y},{x}-10-0x{i}'.encode() for i, (z, y, x) in enumerate(corners)]
+
+
+if __name__ == "__main__":
+    pytest.main(['-s', '--tb=native', '--pyargs', 'neuclease.tests.test_bodymesh_multires'])

@@ -346,7 +346,9 @@ def update_body_mesh(
     processes=0,
     *,
     expect_concurrent_updates=False,
-    resource_mgr=None
+    resource_mgr=None,
+    chunk_fn=None,
+    chunk_fn_threads=8,
 ):
     """
     FIXME: Too many parameters -- server, uuid, seg_instance, and resource_mgr should be rolled into one.
@@ -364,6 +366,17 @@ def update_body_mesh(
             process has stored it in the meantime.  Likewise, the body mesh isn't assembled
             (or stored) if another process has already stored an up-to-date one.
             (This costs one small extra DVID request per generated chunk.)
+        chunk_fn:
+            Optional.  A function to call (instead of mesh_for_chunk()) to generate each
+            missing chunk mesh, e.g. by sending the work to a remote service.
+            It is called as ``chunk_fn(chunk_spec)``, where chunk_spec is
+            ``(z, y, x, surface_mutid, block_hash)`` (the chunk's full-resolution corner, etc.),
+            and it must behave like mesh_for_chunk(..., store=True, check_stored=expect_concurrent_updates):
+            it must store the chunk mesh in DVID and return it (as returned by mesh_for_chunk()).
+            If chunk_fn is given, then 'processes' is ignored, and chunk_fn is called from
+            chunk_fn_threads threads.
+        chunk_fn_threads:
+            How many chunk_fn calls to make concurrently (if chunk_fn is given).
 
     Note:
         Whether to produce a single-resolution or multi-resolution mesh is determined
@@ -427,7 +440,8 @@ def update_body_mesh(
 
     quality_from_source_method(body_mesh_config, chunk_config)  # validates the source-method
     update_body_mesh_from_chunks(server, uuid, seg, body, body_mesh_config, chunk_config, processes=processes,
-                                 expect_concurrent_updates=expect_concurrent_updates, resource_mgr=resource_mgr)
+                                 expect_concurrent_updates=expect_concurrent_updates, resource_mgr=resource_mgr,
+                                 chunk_fn=chunk_fn, chunk_fn_threads=chunk_fn_threads)
 
 
 def quality_from_source_method(body_mesh_config, chunk_config):
@@ -751,9 +765,11 @@ def update_body_mesh_from_chunks(
     processes=0,
     resource_mgr=None,
     expect_concurrent_updates=False,
+    chunk_fn=None,
+    chunk_fn_threads=8,
 ):
     """
-    See update_body_mesh() for an explanation of expect_concurrent_updates.
+    See update_body_mesh() for an explanation of expect_concurrent_updates, chunk_fn, and chunk_fn_threads.
     """
     validate(body_mesh_config, BodyMeshParametersSchema, inject_defaults=True)
     validate(chunk_config, MeshChunkConfigSchema, inject_defaults=True)
@@ -777,7 +793,8 @@ def update_body_mesh_from_chunks(
             result = _generate_multires_body_mesh_from_chunks(
                 server, uuid, seg_instance,
                 body, chunk_df, body_mesh_config, chunk_config, quality,
-                processes, resource_mgr, expect_concurrent_updates
+                processes, resource_mgr, expect_concurrent_updates,
+                chunk_fn, chunk_fn_threads
             )
             if result is None:
                 # Another process already stored an up-to-date body mesh.
@@ -805,7 +822,9 @@ def update_body_mesh_from_chunks(
                 quality,
                 processes,
                 resource_mgr,
-                expect_concurrent_updates
+                expect_concurrent_updates,
+                chunk_fn,
+                chunk_fn_threads
             )
             if result is None:
                 # Another process already stored an up-to-date body mesh.
@@ -974,6 +993,8 @@ def _generate_body_mesh_from_chunks(
     processes,
     resource_mgr,
     expect_concurrent_updates=False,
+    chunk_fn=None,
+    chunk_fn_threads=8,
 ):
     """
     Returns (mesh_bytes, mesh_info), or None if expect_concurrent_updates
@@ -1000,6 +1021,8 @@ def _generate_body_mesh_from_chunks(
         missing_chunk_df[[*'zyx', 'surface_mutid', 'block_hash']],
         processes, resource_mgr,
         check_stored=expect_concurrent_updates,
+        chunk_fn=chunk_fn,
+        chunk_fn_threads=chunk_fn_threads,
     )
 
     names = mesh_instance_names(seg, multires=False)
@@ -1193,7 +1216,8 @@ def _assemble_multires_object(frag_bytes_by_cell, chunk_shape_s0_xyz, voxel_size
 
 def _generate_multires_body_mesh_from_chunks(
     server, uuid, seg_instance, body, chunk_df, body_mesh_config,
-    chunk_config, quality, processes, resource_mgr, expect_concurrent_updates=False
+    chunk_config, quality, processes, resource_mgr, expect_concurrent_updates=False,
+    chunk_fn=None, chunk_fn_threads=8
 ):
     """
     Returns (data_bytes, index_bytes, info_json, mesh_info), or None if
@@ -1220,7 +1244,7 @@ def _generate_multires_body_mesh_from_chunks(
         server, uuid, seg, body, chunk_config, quality, True,
         missing_chunk_df[[*'zyx', 'surface_mutid', 'block_hash']],
         processes, resource_mgr, multires=True, vertex_quantization_bits=bits,
-        check_stored=expect_concurrent_updates)
+        check_stored=expect_concurrent_updates, chunk_fn=chunk_fn, chunk_fn_threads=chunk_fn_threads)
 
     if expect_concurrent_updates and _body_mesh_is_current(
             server, uuid, names.info, body, lastmod, body_mesh_config['source-method'], resource_mgr):
@@ -1299,6 +1323,8 @@ def meshes_for_chunks(
     multires=False,
     vertex_quantization_bits=16,
     check_stored=False,
+    chunk_fn=None,
+    chunk_fn_threads=8,
 ):
     """
     Generate the meshes for the given chunks (see mesh_for_chunk()).
@@ -1308,6 +1334,8 @@ def meshes_for_chunks(
     which another process has stored by the time we get to it is fetched rather than
     generated.  (Random order makes it unlikely that concurrent processes updating the
     same body will be working on the same chunk at the same time.)
+
+    If chunk_fn is given, it is used instead of mesh_for_chunk() (see update_body_mesh()).
     """
     fn = partial(mesh_for_chunk, server, uuid, seg_instance, body, chunk_config,
                  quality, store, resource_mgr, multires, vertex_quantization_bits, check_stored)
@@ -1318,7 +1346,13 @@ def meshes_for_chunks(
         np.random.default_rng().shuffle(order)
     chunk_specs = [chunk_specs[i] for i in order]
 
-    if processes != 'dask-worker-client':
+    if chunk_fn is not None:
+        # Plain python types (e.g. JSON-serializable)
+        chunk_specs = [(int(z), int(y), int(x), int(mutid), str(block_hash))
+                       for (z, y, x, mutid, block_hash) in chunk_specs]
+        with Timer(f"Generating {len(chunk_specs)} missing chunks via {chunk_fn_threads} threads", logger):
+            results = compute_parallel(chunk_fn, chunk_specs, threads=chunk_fn_threads)
+    elif processes != 'dask-worker-client':
         with Timer(f"Generating {len(chunk_specs)} missing chunks using {processes} processes", logger):
             results = compute_parallel(fn, chunk_specs, processes=processes)
     else:
