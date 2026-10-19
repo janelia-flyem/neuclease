@@ -33,7 +33,7 @@ from flask import Flask, jsonify
 from flask_cors import CORS
 from zarr.n5 import N5ChunkWrapper
 
-from dvidutils import LabelMapper
+from neuclease.util import LabelMapper
 
 from neuclease.dvid.node import fetch_instance_info
 from neuclease.dvid.labelmap import fetch_labelmap_voxels

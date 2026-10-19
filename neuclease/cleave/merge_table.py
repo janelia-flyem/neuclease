@@ -8,7 +8,7 @@ import h5py
 import numpy as np
 import pandas as pd
 
-from dvidutils import LabelMapper
+from ..util import LabelMapper
 
 from ..util import Timer, read_csv_header, tqdm_proxy
 from ..dvid import (fetch_complete_mappings, fetch_split_supervoxel_sizes, read_kafka_messages,

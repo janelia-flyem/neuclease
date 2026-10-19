@@ -15,7 +15,7 @@ import pandas as pd
 import networkx as nx
 from scipy.spatial import KDTree
 
-from dvidutils import LabelMapper
+from .labelmapper import LabelMapper
 
 
 def find_root(g, start=None):

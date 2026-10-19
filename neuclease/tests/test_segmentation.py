@@ -4,7 +4,7 @@ import pytest
 import numpy as np
 import pandas as pd
 
-from dvidutils import LabelMapper
+from neuclease.util import LabelMapper
 from neuclease.util import mask_for_labels, apply_mask_for_labels, contingency_table, split_disconnected_bodies, fill_holes_in_mask
 
 def test_mask_for_labels():

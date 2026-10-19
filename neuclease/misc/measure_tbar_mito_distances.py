@@ -10,7 +10,7 @@ from skimage.graph import MCP_Geometric
 import vigra
 from vigra.analysis import labelMultiArrayWithBackground
 
-from dvidutils import LabelMapper
+from neuclease.util import LabelMapper
 from neuprint import SynapseCriteria as SC, fetch_synapses
 from neuclease.util import (tqdm_proxy, Timer, box_to_slicing, round_box, apply_mask_for_labels, downsample_mask,
                             compute_nonzero_box, mask_for_labels, box_intersection, PrefixedLogger)

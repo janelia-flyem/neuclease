@@ -9,7 +9,7 @@ import pandas as pd
 from numba import njit
 from skimage.util import view_as_blocks
 
-from dvidutils import LabelMapper
+from .labelmapper import LabelMapper
 
 from .util import Timer, tqdm_proxy, downsample_mask, upsample
 from .grid import Grid, boxes_from_grid, box_intersection

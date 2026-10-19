@@ -16,7 +16,7 @@ import networkx as nx
 from requests import HTTPError
 
 from libdvid import DVIDNodeService, encode_label_block
-from dvidutils import LabelMapper
+from ...util import LabelMapper
 from vigra.filters import multiBinaryErosion, distanceTransform
 from vigra.analysis import labelMultiArrayWithBackground
 
