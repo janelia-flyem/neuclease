@@ -31,6 +31,7 @@ from neuclease.dvid.tarsupervoxels import create_tarsupervoxel_instance
 from neuclease.dvid.labelmap import fetch_lastmod, fetch_sparsevol, fetch_labelindex
 from neuclease.dvid.tarsupervoxels import fetch_tarfile, fetch_missing, post_supervoxel
 from neuclease.dvid.rle import blockwise_masks_from_ranges
+from neuclease.misc.meshstore import open_store, PreconditionFailed
 
 logger = logging.getLogger(__name__)
 
@@ -167,6 +168,33 @@ BodyMeshParametersSchema = {
             "maximum": 1.0,
             "default": 0.25
         },
+        "storage": {
+            "description":
+                "Multires meshes only: where to store the body meshes.  Either 'dvid'\n"
+                "(the '<segmentation>_multires_meshes' keyvalue instance), or an object store\n"
+                "URL such as 'gs://my-bucket/some/prefix'.\n"
+                "In an object store, the mesh for the newest state of each body (on the\n"
+                "'live-ref' branch) is stored as '<body>' and '<body>.index' (along with an\n"
+                "'info' file), i.e. a standard neuroglancer precomputed mesh source which\n"
+                "can be read directly from the bucket.  Meshes for other UUIDs are stored as\n"
+                "'<body>-<uuid>' and '<body>-<uuid>.index'.  When the newest mesh for a body\n"
+                "is replaced by one for a newer UUID, the old one is renamed (copied) to\n"
+                "'<body>-<old-uuid>' first, so each UUID's mesh remains available.\n"
+                "Either way, the mesh_info is stored in DVID.  (See locate_multires_body_mesh().)\n"
+                "Note: The objects' names don't include the segmentation instance name,\n"
+                "so use a separate prefix for each segmentation.\n",
+            "type": "string",
+            "default": "dvid"
+        },
+        "live-ref": {
+            "description":
+                "Multires meshes in an object store only: the DVID branch whose newest\n"
+                "body meshes are stored under the standard names ('<body>' and '<body>.index').\n"
+                "Body meshes for any UUID other than the head of this branch are stored as\n"
+                "'<body>-<uuid>' (see 'storage').\n",
+            "type": "string",
+            "default": "master"
+        },
     }
 }
 
@@ -273,6 +301,17 @@ MeshChunkConfigSchema = {
             "type": "array",
             "items": ChunkMeshParametersSchema,
             "default": [{}]
+        },
+        "storage": {
+            "description":
+                "Where to store the chunk meshes.  Either 'dvid' (the '<segmentation>_chunk_meshes'\n"
+                "or '<segmentation>_multires_chunk_meshes' keyvalue instance), or an object\n"
+                "store URL such as 'gs://my-bucket/some/prefix'.  Each chunk mesh is stored under\n"
+                "its key (which includes the config-name), just as it would be in DVID.\n"
+                "Note: The keys don't include the segmentation instance name,\n"
+                "so use a separate prefix (or config-name) for each segmentation.\n",
+            "type": "string",
+            "default": "dvid"
         }
     }
 }
@@ -407,7 +446,7 @@ def update_body_mesh(
     requested_method = body_mesh_config['source-method']
     try:
         mesh_info = fetch_key(server, uuid, names.info, body, as_json=True)
-        needs_update = (lastmod > mesh_info['lastmod'] or mesh_info['method'] != requested_method)
+        needs_update = not _mesh_info_is_current(mesh_info, lastmod, body_mesh_config)
     except HTTPError as ex:
         needs_update = True
         if ex.response is None or ex.response.status_code != 404:
@@ -421,8 +460,9 @@ def update_body_mesh(
     if mesh_info is None:
         logger.info(f"Body {body}: no stored mesh yet; generating it (lastmod {lastmod}, method {requested_method})")
     elif needs_update:
-        logger.info(f"Body {body}: stored mesh is stale (stored lastmod {mesh_info['lastmod']}, "
-                    f"method {mesh_info['method']}; current lastmod {lastmod}, method {requested_method}); updating it")
+        logger.info(f"Body {body}: stored mesh is stale (stored lastmod {mesh_info.get('lastmod')}, "
+                    f"method {mesh_info.get('method')}; current lastmod {lastmod}, method {requested_method}, "
+                    "or the body mesh settings have changed); updating it")
     else:
         logger.info(f"Body {body}: regenerating mesh (forced)")
 
@@ -779,6 +819,8 @@ def update_body_mesh_from_chunks(
     seg = seg_instance
     uuid = resolve_ref(server, uuid, True)
     multires = (body_mesh_config['format'] == 'neuroglancer-multi-res')
+    if body_mesh_config['storage'] != 'dvid' and not multires:
+        raise RuntimeError("Only multires body meshes can be stored outside of DVID.")
     names = mesh_instance_names(seg, multires)
     chunk_df = _chunk_table(server, uuid, seg_instance, body, chunk_config, resource_mgr, multires=multires)
     config_name = chunk_config['config-name']
@@ -804,13 +846,22 @@ def update_body_mesh_from_chunks(
             # FIXME... had to hard-code this because dask workers didn't have the configured dvid timeout.
             set_default_dvid_session_timeout(600.0, 600.0)
 
-            with Timer(f"Storing multires body mesh "
+            storage = body_mesh_config['storage']
+            with Timer(f"Storing multires body mesh in {storage} "
                        f"({len(data_bytes) / 1e6:.1f} MB data, {len(index_bytes) / 1e3:.1f} kB index)", logger):
                 # The 'info' key is dataset-wide; posting it idempotently keeps
                 # the instance self-describing for neuroglancer (no backend changes).
+                # (We store it in DVID even if the meshes themselves are stored elsewhere.)
                 post_key(server, uuid, names.body, "info", json=info_json)
-                post_key(server, uuid, names.body, f"{body}", data_bytes)
-                post_key(server, uuid, names.body, f"{body}.index", index_bytes)
+                if storage == 'dvid':
+                    post_key(server, uuid, names.body, f"{body}", data_bytes)
+                    post_key(server, uuid, names.body, f"{body}.index", index_bytes)
+                elif not _store_multires_body_mesh_in_object_store(
+                        server, uuid, seg, body, open_store(storage), body_mesh_config['live-ref'],
+                        data_bytes, index_bytes, info_json, mesh_info['lastmod']):
+                    continue
+
+                # The mesh_info is posted last, since readers rely on it to find the mesh.
                 post_key(server, uuid, names.info, body, json=mesh_info)
         else:
             result = _generate_body_mesh_from_chunks(
@@ -837,6 +888,152 @@ def update_body_mesh_from_chunks(
             with Timer(f"Storing body mesh {body}.ngmesh ({len(mesh_bytes) / 1e6:.1f} MB)", logger):
                 post_key(server, uuid, names.body, f"{body}.ngmesh", mesh_bytes)
                 post_key(server, uuid, names.info, body, json=mesh_info)
+
+
+# The version of the mesh_info format for multires body meshes.
+# The fields which clients (e.g. neuroglancer) may rely on are:
+#
+#   mesh-info-version:          This version number.
+#   format:                     "neuroglancer_multilod_draco"
+#   lastmod:                    The body's mutation id when the mesh was generated.
+#   written-uuid:               The UUID in which the mesh was generated (and stored).
+#   storage:                    "dvid", or the URL of the object store containing the mesh.
+#   vertex-quantization-bits:   As in the neuroglancer 'info' file.
+#
+# All other fields are informational.  See locate_multires_body_mesh() for how to find
+# the mesh files.  (The mesh_info is inherited by descendant UUIDs, like any DVID data.)
+MULTIRES_MESH_INFO_VERSION = 1
+
+# Body meshes in an object store may be overwritten, so browsers must not cache them.
+BODY_MESH_CACHE_CONTROL = 'no-cache'
+
+
+def locate_multires_body_mesh(server, uuid, seg_instance, body, mesh_info=None):
+    """
+    Find the stored multires mesh for the given body, as seen from the given UUID.
+
+    Args:
+        mesh_info:
+            The body's mesh_info in the given UUID, if you've already fetched it.
+
+    Returns:
+        None if there's no stored mesh, or a SimpleNamespace with attributes:
+
+        - store: None if the mesh is stored in DVID, otherwise the object store (see meshstore.py)
+        - index_name, data_name: The names of the mesh manifest and data files,
+          either DVID keys (in the '<segmentation>_multires_meshes' instance, in the given UUID)
+          or object names (in the object store).
+        - mesh_info: The body's mesh_info
+
+    The rule for finding a body mesh in an object store is as follows:
+    Let W be the mesh_info's 'written-uuid'.  If the object '<body>' was written in W
+    (according to its custom metadata) from the same lastmod as the mesh_info indicates,
+    then the mesh files are '<body>' and '<body>.index'.  Otherwise, they are
+    '<body>-<W>' and '<body>-<W>.index'.
+    """
+    if mesh_info is None:
+        names = mesh_instance_names(seg_instance, multires=True)
+        try:
+            mesh_info = fetch_key(server, uuid, names.info, body, as_json=True)
+        except HTTPError as ex:
+            if ex.response is not None and ex.response.status_code == 404:
+                return None
+            raise
+
+    if mesh_info.get('method') == 'deleted' or 'lastmod' not in mesh_info:
+        return None
+
+    storage = mesh_info.get('storage', 'dvid')
+    if storage == 'dvid':
+        return SimpleNamespace(store=None, index_name=f'{body}.index', data_name=f'{body}', mesh_info=mesh_info)
+
+    store = open_store(storage)
+    written_uuid = mesh_info['written-uuid']
+    live = store.stat(f'{body}')
+    if live and live.metadata.get('uuid') == written_uuid and live.metadata.get('lastmod') == str(mesh_info['lastmod']):
+        name = f'{body}'
+    else:
+        name = f'{body}-{written_uuid}'
+    return SimpleNamespace(store=store, index_name=f'{name}.index', data_name=name, mesh_info=mesh_info)
+
+
+def _store_multires_body_mesh_in_object_store(server, uuid, seg_instance, body, store, live_ref,
+                                              data_bytes, index_bytes, info_json, lastmod):
+    """
+    Store a multires body mesh (generated in the given UUID) in an object store.
+    (See BodyMeshParametersSchema['properties']['storage'] for the naming scheme.)
+
+    If the UUID is the head of the live_ref branch, the mesh is stored as '<body>'
+    (and '<body>.index'), after preserving the existing mesh (if it was generated
+    in a different UUID) as '<body>-<old-uuid>'.  Otherwise, it is stored as '<body>-<uuid>'.
+
+    Returns True if the mesh was stored, or False if it wasn't, because another
+    process has already stored a mesh for a newer state of the body in this UUID.
+    """
+    store.put('info', json.dumps(info_json).encode(), cache_control=BODY_MESH_CACHE_CONTROL,
+              content_type='application/json')
+
+    if not _is_branch_head(server, uuid, live_ref):
+        name = f'{body}-{uuid}'
+        store.put(name, data_bytes, cache_control=BODY_MESH_CACHE_CONTROL)
+        store.put(f'{name}.index', index_bytes, cache_control=BODY_MESH_CACHE_CONTROL)
+        return True
+
+    # The live mesh might be modified by other processes at the same time,
+    # so we only overwrite it if it hasn't changed since we inspected it.
+    metadata = {'uuid': uuid, 'lastmod': str(lastmod)}
+    for _ in range(5):
+        data_stat = store.stat(f'{body}')
+        index_stat = store.stat(f'{body}.index')
+        if data_stat and data_stat.metadata.get('uuid') == uuid and int(data_stat.metadata.get('lastmod', -1)) > lastmod:
+            logger.info("A mesh for a newer state of this body has already been stored.")
+            return False
+        if data_stat and data_stat.metadata.get('uuid') != uuid:
+            _preserve_superseded_body_mesh(server, seg_instance, body, store, data_stat, index_stat)
+        try:
+            store.put(f'{body}', data_bytes, metadata=metadata, cache_control=BODY_MESH_CACHE_CONTROL,
+                      if_generation_match=data_stat.generation if data_stat else 0)
+            store.put(f'{body}.index', index_bytes, metadata=metadata, cache_control=BODY_MESH_CACHE_CONTROL,
+                      if_generation_match=index_stat.generation if index_stat else 0)
+            return True
+        except PreconditionFailed:
+            logger.info("Another process modified the stored body mesh at the same time; trying again.")
+    raise RuntimeError(f"Body {body}: Could not store the body mesh in {store.url}, "
+                       "due to repeated concurrent modifications by other processes.")
+
+
+def _preserve_superseded_body_mesh(server, seg_instance, body, store, data_stat, index_stat):
+    """
+    The live body mesh ('<body>') is about to be replaced with a mesh from a different UUID.
+    Copy it to '<body>-<old-uuid>', so that its UUID (and that UUID's descendants)
+    can still find it.  But only do so if the old UUID's mesh_info refers to it.
+    (Otherwise, nothing refers to it anymore.)
+    """
+    old_uuid = data_stat.metadata.get('uuid')
+    old_lastmod = data_stat.metadata.get('lastmod')
+    if not old_uuid or index_stat is None or index_stat.metadata != data_stat.metadata:
+        logger.warning(f"The stored mesh files for body {body} are inconsistent; not preserving them.")
+        return
+
+    names = mesh_instance_names(seg_instance, multires=True)
+    try:
+        old_mesh_info = fetch_key(server, old_uuid, names.info, body, as_json=True)
+    except HTTPError as ex:
+        if ex.response is not None and ex.response.status_code == 404:
+            return
+        raise
+    if old_mesh_info.get('written-uuid') != old_uuid or str(old_mesh_info.get('lastmod')) != old_lastmod:
+        return
+
+    with Timer(f"Preserving the mesh from {old_uuid[:6]} as {body}-{old_uuid}", logger):
+        store.copy(f'{body}', f'{body}-{old_uuid}', source_generation=data_stat.generation)
+        store.copy(f'{body}.index', f'{body}-{old_uuid}.index', source_generation=index_stat.generation)
+
+
+def _is_branch_head(server, uuid, branch):
+    """Return True if the given (full) UUID is the head of the given branch (in the same repo)."""
+    head = resolve_ref(server, f'{uuid}:{branch}', expand=True)
+    return uuid.startswith(head) or head.startswith(uuid)
 
 
 def _chunk_table(server, uuid, seg_instance, body, chunk_config, resource_mgr, enforce_block_hash_match=True, multires=False):
@@ -917,7 +1114,8 @@ def _chunk_table(server, uuid, seg_instance, body, chunk_config, resource_mgr, e
 
     # Fetch all chunk mesh keys this body has
     with Timer(f"Listing stored chunk mesh keys", logger):
-        key_df = fetch_stored_chunk_keys(server, uuid, seg_instance, chunk_config['config-name'], body, multires=multires)
+        key_df = fetch_stored_chunk_keys(server, uuid, seg_instance, chunk_config['config-name'], body,
+                                         multires=multires, storage=chunk_config.get('storage', 'dvid'))
     logger.info(f"Found {len(key_df)} stored chunk mesh keys (including outdated ones)")
 
     # Drop all but the most recent key for each chunk
@@ -933,11 +1131,14 @@ def _chunk_table(server, uuid, seg_instance, body, chunk_config, resource_mgr, e
     return chunk_df
 
 
-def fetch_stored_chunk_keys(server, uuid, seg_instance, config_name=None, body=None, multires=False):
+def fetch_stored_chunk_keys(server, uuid, seg_instance, config_name=None, body=None, multires=False, storage='dvid'):
     """
     Fetch the list of all mesh chunk keys in the database for the given segmentation,
     optionally limited to particular chunk configuration prefix, or further limited
     to a specific body under that prefix.
+
+    If storage is an object store URL (see MeshChunkConfigSchema), the keys are listed
+    from the object store instead of DVID.
 
     The keys are parsed into their components (config_name, body, chunk_id, mesh_mutid, quality),
     and the chunk_id is parsed into x,y,z columns.
@@ -963,7 +1164,10 @@ def fetch_stored_chunk_keys(server, uuid, seg_instance, config_name=None, body=N
 
     key_cols = [x[1] for x in Formatter().parse(CHUNK_KEY_FMT)]
     assert key_cols == ['config_name', 'body', 'chunk_id', 'mesh_mutid', 'mesh_block_hash', 'quality']
-    keys = fetch_keyrange(server, uuid, chunk_instance, f"{prefix} ", f"{prefix}~")
+    if storage == 'dvid':
+        keys = fetch_keyrange(server, uuid, chunk_instance, f"{prefix} ", f"{prefix}~")
+    else:
+        keys = open_store(storage).list(prefix)
     if len(keys) == 0:
         key_df = pd.DataFrame([], columns=key_cols)
     else:
@@ -1027,7 +1231,7 @@ def _generate_body_mesh_from_chunks(
 
     names = mesh_instance_names(seg, multires=False)
     if expect_concurrent_updates and _body_mesh_is_current(
-            server, uuid, names.info, body, lastmod, body_mesh_config['source-method'], resource_mgr):
+            server, uuid, names.info, body, lastmod, body_mesh_config, resource_mgr):
         logger.info(f"Another process already stored an up-to-date body mesh")
         return None
 
@@ -1035,7 +1239,7 @@ def _generate_body_mesh_from_chunks(
         Timer(f"Fetching {len(stored_chunk_df)} stored chunks", logger),
         resource_mgr.access_context(server, True, 1, 0)
     ):
-        stored_chunk_mesh_bytes = fetch_keyvalues(server, uuid, f"{seg}_chunk_meshes", stored_chunk_df['key'].values, batch_size=10)
+        stored_chunk_mesh_bytes = _fetch_chunks(server, uuid, f"{seg}_chunk_meshes", chunk_config, stored_chunk_df['key'].values)
 
     with Timer(f"Combining chunks", logger):
         stored_chunk_meshes = (Mesh.from_buffer(b, 'ngmesh') for b in stored_chunk_mesh_bytes.values())
@@ -1247,7 +1451,7 @@ def _generate_multires_body_mesh_from_chunks(
         check_stored=expect_concurrent_updates, chunk_fn=chunk_fn, chunk_fn_threads=chunk_fn_threads)
 
     if expect_concurrent_updates and _body_mesh_is_current(
-            server, uuid, names.info, body, lastmod, body_mesh_config['source-method'], resource_mgr):
+            server, uuid, names.info, body, lastmod, body_mesh_config, resource_mgr):
         logger.info(f"Another process already stored an up-to-date body mesh")
         return None
 
@@ -1255,7 +1459,7 @@ def _generate_multires_body_mesh_from_chunks(
         Timer(f"Fetching {len(stored_chunk_df)} stored chunks", logger),
         resource_mgr.access_context(server, True, 1, 0)
     ):
-        stored_bytes = fetch_keyvalues(server, uuid, names.chunk, stored_chunk_df['key'].values, batch_size=10)
+        stored_bytes = _fetch_chunks(server, uuid, names.chunk, chunk_config, stored_chunk_df['key'].values)
 
     chunk_shape_s0_xyz = np.asarray(chunk_config['chunk-shape-s0'], dtype=float)
 
@@ -1280,11 +1484,15 @@ def _generate_multires_body_mesh_from_chunks(
 
     config_name = chunk_config['config-name']
     mesh_info = {
+        "mesh-info-version": MULTIRES_MESH_INFO_VERSION,
         "body": int(body),
         "uuid": uuid,
+        "written-uuid": uuid,
         "lastmod": lastmod,
         "method": f"concatenated-chunks-{config_name}-{quality}",
         "format": "neuroglancer_multilod_draco",
+        "storage": body_mesh_config['storage'],
+        "assembly-settings": _assembly_settings(body_mesh_config),
         "mesh-timestamp": str(datetime.datetime.now(ZoneInfo("US/Eastern"))),
         "data-bytes": len(data_bytes),
         "index-bytes": len(index_bytes),
@@ -1416,13 +1624,9 @@ def mesh_for_chunk(
     )
     chunk_id = make_chunk_id(chunk_zyx)
     if store and check_stored:
-        try:
-            with resource_mgr.access_context(server, True, 1, 0):
-                stored_value = fetch_key(server, uuid, names.chunk, key)
-        except HTTPError as ex:
-            if ex.response is None or ex.response.status_code != 404:
-                raise
-        else:
+        with resource_mgr.access_context(server, True, 1, 0):
+            stored_value = _fetch_chunk(server, uuid, names.chunk, chunk_config, key)
+        if stored_value is not None:
             logger.debug(f"Chunk {chunk_id} was already stored (by another process)")
             if multires:
                 return stored_value
@@ -1515,17 +1719,44 @@ def mesh_for_chunk(
 
     if store:
         with resource_mgr.access_context(server, False, 1, 0):
-            post_key(server, uuid, names.chunk, key, chunk_value)
+            _store_chunk(server, uuid, names.chunk, chunk_config, key, chunk_value)
 
     logger.debug(f"Chunk {chunk_id}: fetched mask {mask.shape[::-1]} in {fetch_seconds:.1f}s, "
                  f"meshed in {mesh_seconds:.1f}s ({len(chunk_value)} bytes)")
     return chunk_value if multires else mesh
 
 
-def _body_mesh_is_current(server, uuid, info_instance, body, lastmod, method, resource_mgr):
+def _fetch_chunk(server, uuid, chunk_instance, chunk_config, key):
+    """Fetch a stored chunk mesh from DVID or the configured object store, or return None if it isn't stored."""
+    if chunk_config['storage'] != 'dvid':
+        return open_store(chunk_config['storage']).get(key)
+    try:
+        return fetch_key(server, uuid, chunk_instance, key)
+    except HTTPError as ex:
+        if ex.response is None or ex.response.status_code != 404:
+            raise
+        return None
+
+
+def _fetch_chunks(server, uuid, chunk_instance, chunk_config, keys):
+    """Fetch several stored chunk meshes.  Returns {key: value}, omitting chunks which aren't stored."""
+    if chunk_config['storage'] != 'dvid':
+        return open_store(chunk_config['storage']).get_many(keys)
+    return fetch_keyvalues(server, uuid, chunk_instance, keys, batch_size=10)
+
+
+def _store_chunk(server, uuid, chunk_instance, chunk_config, key, value):
+    """Store a chunk mesh in DVID or the configured object store."""
+    if chunk_config['storage'] != 'dvid':
+        open_store(chunk_config['storage']).put(key, value)
+    else:
+        post_key(server, uuid, chunk_instance, key, value)
+
+
+def _body_mesh_is_current(server, uuid, info_instance, body, lastmod, body_mesh_config, resource_mgr):
     """
     Return True if the stored body mesh (according to its mesh_info)
-    was generated with the given method from the body's lastmod (or later).
+    is up-to-date (see _mesh_info_is_current()).
     """
     try:
         with resource_mgr.access_context(server, True, 1, 0):
@@ -1534,7 +1765,42 @@ def _body_mesh_is_current(server, uuid, info_instance, body, lastmod, method, re
         if ex.response is not None and ex.response.status_code == 404:
             return False
         raise
-    return mesh_info.get('method') == method and mesh_info.get('lastmod', -1) >= lastmod
+    return _mesh_info_is_current(mesh_info, lastmod, body_mesh_config)
+
+
+def _mesh_info_is_current(mesh_info, lastmod, body_mesh_config):
+    """
+    Return True if a stored body mesh (according to its mesh_info) was generated
+    with the configured source-method from the body's lastmod (or later).
+    For multires meshes, the mesh must also have been generated with the current
+    body mesh settings (e.g. num-lods), and stored in the configured storage.
+    """
+    if mesh_info.get('method') != body_mesh_config['source-method']:
+        return False
+    if mesh_info.get('lastmod', -1) < lastmod:
+        return False
+    if body_mesh_config['format'] != 'neuroglancer-multi-res':
+        return True
+    return (mesh_info.get('storage', 'dvid') == body_mesh_config['storage']
+            and mesh_info.get('assembly-settings') == _assembly_settings(body_mesh_config))
+
+
+# The body mesh settings which affect the (multires) body mesh assembled from the chunks.
+ASSEMBLY_SETTINGS = [
+    'smoothing',
+    'small-body-overall-decimation-s0',
+    'small-body-cutoff-vertices-s0',
+    'large-body-overall-decimation-s0',
+    'large-body-cutoff-vertices-s0',
+    'vertex-quantization-bits',
+    'num-lods',
+    'lod-decimation-factor',
+]
+
+
+def _assembly_settings(body_mesh_config):
+    # (Round-tripped through JSON, to match the mesh_info.)
+    return json.loads(json.dumps({k: body_mesh_config[k] for k in ASSEMBLY_SETTINGS}))
 
 
 def make_chunk_ids(df):
