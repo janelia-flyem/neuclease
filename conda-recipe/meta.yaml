@@ -35,7 +35,7 @@ requirements:
     - pykafka
     - networkx >=2.1
     - asciitree
-    - protobuf >=6.31.1,<7
+    - protobuf >=6.31.1,<8
     - confiddler
     - python-cityhash
     - zarr

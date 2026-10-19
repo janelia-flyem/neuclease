@@ -7,6 +7,7 @@ try:
 except Exception:
     print("Failed to enable faulthandlder module", file=sys.stderr)
 
+import re
 import inspect
 import logging
 import warnings
@@ -22,13 +23,33 @@ logging.getLogger('pykafka').setLevel(logging.WARNING)
 warnings.filterwarnings("ignore", module=r"pandas\..*", category=FutureWarning)
 
 
+_ADMINTOKEN_PATTERN = re.compile(r'(admintoken=)[^&\s\'"]+')
+
+
+def redact_admintoken(text):
+    """
+    Replace any 'admintoken=...' query parameter value in the given text
+    (e.g. a URL or an error message containing a URL) with '<redacted>'.
+    """
+    return _ADMINTOKEN_PATTERN.sub(r'\1<redacted>', str(text))
+
+
+class _RedactingFormatter(logging.Formatter):
+    """
+    Formatter which redacts DVID admin tokens from the final log line,
+    including any formatted exception traceback.
+    """
+    def format(self, record):
+        return redact_admintoken(super().format(record))
+
+
 def configure_default_logging():
     """
     Simple logging configuration.
     Useful for interactive terminal sessions.
     """
     logging.captureWarnings(True)
-    formatter = logging.Formatter('[%(asctime)s] %(levelname)s %(message)s')
+    formatter = _RedactingFormatter('[%(asctime)s] %(levelname)s %(message)s')
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(formatter)
     handler.addFilter(PrefixFilter())

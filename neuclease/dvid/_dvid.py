@@ -13,6 +13,8 @@ from urllib3.util import Timeout
 from urllib3.util.retry import Retry
 
 
+from .. import redact_admintoken
+
 # On Mac, requests uses a system library which is not fork-safe,
 # resulting in segfaults such as the following:
 #
@@ -226,9 +228,13 @@ def dvid_api_wrapper(f):
                     err = ex.response.content[:unicode_err.start].decode('utf-8')
 
                 msg += str(ex.args[0]) + "\n" + err + "\n"
+            elif ex.args:
+                # No response content (e.g. a timeout or connection error).
+                # Keep the original message, since it explains the failure.
+                msg += str(ex.args[0]) + "\n"
 
             new_ex = copy.copy(ex)
-            new_ex.args = (msg, *ex.args[1:])
+            new_ex.args = (redact_admintoken(msg), *ex.args[1:])
             new_ex.response_content_appended = True
             raise new_ex from ex
 
