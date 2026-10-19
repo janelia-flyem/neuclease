@@ -11,7 +11,7 @@ import pytest
 import numpy as np
 import pandas as pd
 
-from libdvid import DVIDNodeService
+from neuclease.dvid.labelmap.blockcodec import inflate_labelarray_blocks
 
 from neuclease.dvid import (dvid_api_wrapper, DvidInstanceInfo, fetch_supervoxels, fetch_supervoxel_sizes_for_body,
                             fetch_label, fetch_labels, fetch_labels_batched, fetch_mappings, fetch_complete_mappings, post_mappings,
@@ -244,10 +244,10 @@ def test_encode_labelarray_volume():
     encoded2 = encode_labelarray_volume((512,1024,2048), vol, gzip_level=9)
     assert len(encoded) > len(encoded2)
 
-    inflated = DVIDNodeService.inflate_labelarray_blocks3D_from_raw(encoded, (128,128,128), (512,1024,2048))
+    inflated = inflate_labelarray_blocks(encoded, (128,128,128), (512,1024,2048))
     assert (inflated == vol).all()
 
-    inflated = DVIDNodeService.inflate_labelarray_blocks3D_from_raw(encoded2, (128,128,128), (512,1024,2048))
+    inflated = inflate_labelarray_blocks(encoded2, (128,128,128), (512,1024,2048))
     assert (inflated == vol).all()
 
 
@@ -261,7 +261,7 @@ def test_encode_nonaligned_labelarray_volume():
     aligned_vol[box_to_slicing(*(nonaligned_box - aligned_box[0]))] = nonaligned_vol
 
     encoded_box, encoded_vol = encode_nonaligned_labelarray_volume(nonaligned_box[0], nonaligned_vol)
-    inflated = DVIDNodeService.inflate_labelarray_blocks3D_from_raw(encoded_vol, (128,128,128), aligned_start)
+    inflated = inflate_labelarray_blocks(encoded_vol, (128,128,128), aligned_start)
 
     assert (encoded_box == aligned_box).all()
     assert (inflated == aligned_vol).all()

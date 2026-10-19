@@ -94,9 +94,9 @@ def find_best_plane(segchunk, label1, label2):
 if __name__ == "__main__":
     #####################################
     ### Simple test
-    from libdvid import DVIDNodeService
-    ns = DVIDNodeService("emdata3:8900", "a776")
+    from neuclease.dvid import fetch_labelmap_voxels
     # find edge by label1=330009078 and label2=330345807
-    labels = ns.get_labels3D("segmentation", (256,256,256), (4600, 25400, 22250))
+    offset = numpy.array((4600, 25400, 22250))
+    labels = fetch_labelmap_voxels("emdata3:8900", "a776", "segmentation", [offset, offset + 256])
     pt1, pt2 = findBestPlane(labels, 330009078, 330345807)
     print((pt1[0]+4600,pt1[1]+25400,pt1[2]+22250),(pt2[0]+4600,pt2[1]+25400,pt2[2]+22250))

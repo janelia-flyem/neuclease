@@ -4,10 +4,9 @@ from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 
-from libdvid import DVIDNodeService
-
 from neuclease.dvid import ( DvidInstanceInfo, post_key, post_branch, create_instance,
-                             fetch_mutation_id, post_cleave, post_split_supervoxel, post_merge )
+                             fetch_mutation_id, post_cleave, post_split_supervoxel, post_merge,
+                             post_labelmap_voxels )
 # note: I think these tests were written when the "local table" implementation was the only one...
 from neuclease.cleave.merge_graph import LabelmapMergeGraphLocalTable as LabelmapMergeGraph
 from neuclease.cleave.merge_table import load_merge_table, MAPPED_MERGE_TABLE_DTYPE
@@ -105,7 +104,7 @@ def test_extract_edges_with_large_gap(labelmap_setup):
     # Add a new supervoxel to the body, far away from the others.
     # (No edge will be added for that supervoxel.)
     block_99 = 99*np.ones((64,64,64), np.uint64)
-    DVIDNodeService(dvid_server, uuid).put_labels3D('segmentation', block_99, (128,0,0))
+    post_labelmap_voxels(dvid_server, uuid, 'segmentation', (128,0,0), block_99)
     post_merge(dvid_server, uuid, 'segmentation', 1, [99])
 
     root_logger = logging.getLogger()

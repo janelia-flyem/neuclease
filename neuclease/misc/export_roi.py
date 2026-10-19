@@ -10,7 +10,7 @@ from tqdm import tqdm
 
 import neuprint
 from neuclease.util import Timer, tqdm_proxy, round_box, boxes_from_grid, extract_subvol
-from neuclease.dvid import ( fetch_repo_instances, fetch_roi, fetch_volume_box,
+from neuclease.dvid import ( fetch_repo_instances, fetch_roi, fetch_volume_box, fetch_raw,
                              fetch_combined_roi_volume, create_labelmap_instance, post_labelmap_voxels )
 
 logger = logging.getLogger(__name__)
@@ -201,13 +201,12 @@ def export_downsampled_grayscale(instance_info, scale, parent_output_dir):
 
     scaled_shape_zyx = fetch_volume_box(*instance_info)[1]
 
-    ns = DVIDNodeService(*instance_info[:2])
     z_slab_bounds = list(range(0, scaled_shape_zyx[0] // 64 * 64 + 1, 64))
 
     y_stop, x_stop = scaled_shape_zyx[1:3]
     for z_start, z_stop in tqdm(list(zip(z_slab_bounds[:-1], z_slab_bounds[1:]))):
-        slab_shape = (z_stop - z_start, y_stop, x_stop)
-        slab_vol = ns.get_gray3D(instance_name, slab_shape, (z_start, 0, 0), False, False)
+        slab_box = [(z_start, 0, 0), (z_stop, y_stop, x_stop)]
+        slab_vol = fetch_raw(*instance_info, slab_box)
         slab_vol = vigra.taggedView(slab_vol, 'zyx')
         for z, z_slice in enumerate(tqdm(slab_vol, leave=False), start=z_start):
             vigra.impex.writeImage(z_slice, f'{output_dir}/{z:05d}.tiff', 'UINT8')

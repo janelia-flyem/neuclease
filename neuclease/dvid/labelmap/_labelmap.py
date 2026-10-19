@@ -15,7 +15,7 @@ import pandas as pd
 import networkx as nx
 from requests import HTTPError
 
-from libdvid import DVIDNodeService, encode_label_block
+from .blockcodec import encode_label_block, inflate_labelarray_blocks as _inflate_labelarray_blocks
 from ...util import LabelMapper
 from vigra.filters import multiBinaryErosion, distanceTransform
 from vigra.analysis import labelMultiArrayWithBackground
@@ -2102,7 +2102,7 @@ def fetch_labelmap_voxels(server, uuid, instance, box_zyx, scale=0, throttle=Fal
     r.raise_for_status()
 
     def inflate_labelarray_blocks():
-        aligned_volume = DVIDNodeService.inflate_labelarray_blocks3D_from_raw(r.content, aligned_shape, aligned_box[0])
+        aligned_volume = _inflate_labelarray_blocks(r.content, aligned_shape, aligned_box[0])
         requested_box_within_aligned = box_zyx - aligned_box[0]
         return extract_subvol(aligned_volume, requested_box_within_aligned )
 
@@ -2171,7 +2171,7 @@ def fetch_labelmap_specificblocks(server, uuid, instance, corners_zyx, scale=0, 
             and that will inflate the data into a blocks dict when called.
             If 'raw-blocks', return a dict {corner: compressed_block}, in which each compressed
             block has not been inflated. Each block can be inflated with
-            ``libdvid.DVIDNodeService.inflate_labelarray_blocks3D_from_raw(buf, (64,64,64), corner)``
+            ``neuclease.dvid.labelmap.blockcodec.inflate_labelarray_blocks(buf, (64,64,64), corner)``
             If 'callable-blocks`, return a dict {corner: callable}, where the callable returns the
             inflated block when called.  (This is the same as 'raw-blocks', but spares you some typing
             when you want to inflate the block.)
@@ -2296,7 +2296,7 @@ def fetch_labelmap_specificblocks(server, uuid, instance, corners_zyx, scale=0, 
     elif format == 'callable-blocks':
         # Wrap each buffer in a callable that will inflate it
         for coord, buf in [*blocks.items()]:
-            f = DVIDNodeService.inflate_labelarray_blocks3D_from_raw
+            f = _inflate_labelarray_blocks
             blocks[coord] = partial(f, buf, (64,64,64), coord)
         return blocks
 
@@ -2304,7 +2304,7 @@ def fetch_labelmap_specificblocks(server, uuid, instance, corners_zyx, scale=0, 
 def _inflate_block(corner, buf):
     if not buf:
         return corner, np.zeros((64,64,64), np.uint64)
-    block = DVIDNodeService.inflate_labelarray_blocks3D_from_raw(buf, (64,64,64), corner)
+    block = _inflate_labelarray_blocks(buf, (64,64,64), corner)
     return (corner, block)
 
 
@@ -2342,7 +2342,7 @@ def fetch_labelmap_specificblocks_batched(server, uuid, instance, corners_zyx, s
     elif format == 'callable-blocks':
         # Wrap each buffer in a callable that will inflate it
         for coord, buf in [*blocks.items()]:
-            f = DVIDNodeService.inflate_labelarray_blocks3D_from_raw
+            f = _inflate_labelarray_blocks
             blocks[coord] = partial(f, buf, (64,64,64), coord)
         return blocks
 
@@ -2751,16 +2751,11 @@ def encode_labelarray_blocks(corners_zyx, blocks, gzip_level=6, progress=False):
     # dvid wants block coordinates, not voxel coordinates
     encoded_corners = map(bytes, corners_xyz // 64)
 
-    def _encode_label_block(block):
-        # We wrap the C++ call in this little pure-python function
-        # solely for the sake of nice profiler output.
-        return encode_label_block(block)
-
     encoded_blocks = []
     for block in tqdm_proxy(blocks, disable=not progress):
         assert block.shape == (64,64,64)
         block = np.asarray(block, np.uint64, 'C')
-        encoded_blocks.append( gzip.compress(_encode_label_block(block), gzip_level) )
+        encoded_blocks.append( gzip.compress(encode_label_block(block), gzip_level) )
         del block
     assert len(encoded_blocks) == len(corners_xyz)
 
@@ -2877,7 +2872,7 @@ def decode_labelarray_volume(box_zyx, encoded_data):
     """
     box_zyx = np.asarray(box_zyx)
     shape = box_zyx[1] - box_zyx[0]
-    return DVIDNodeService.inflate_labelarray_blocks3D_from_raw(encoded_data, shape, box_zyx[0])
+    return _inflate_labelarray_blocks(encoded_data, shape, box_zyx[0])
 
 
 def parse_labelarray_data(encoded_data, extract_labels=True):
