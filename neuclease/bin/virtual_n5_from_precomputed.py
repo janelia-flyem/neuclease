@@ -33,7 +33,7 @@ from flask import Flask, jsonify
 from flask_cors import CORS
 from zarr.n5 import N5ChunkWrapper
 
-from dvidutils import LabelMapper
+from neuclease.util import LabelMapper
 
 logger = logging.getLogger(__name__)
 

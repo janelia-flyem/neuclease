@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import vigra
 
-from dvidutils import LabelMapper
+from ..util import LabelMapper
 
 from .favorites import compute_favorites, mark_favorites, extract_favorites
 from ..util import Timer, tqdm_proxy, Grid, compute_parallel

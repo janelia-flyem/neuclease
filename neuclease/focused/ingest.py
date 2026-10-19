@@ -9,7 +9,7 @@ import h5py
 import numpy as np
 import pandas as pd
 
-from dvidutils import LabelMapper
+from ..util import LabelMapper
 
 from ..util import read_csv_header, Timer, swap_df_cols, compute_parallel, dump_json, tqdm_proxy
 from ..util.csv import read_csv_col

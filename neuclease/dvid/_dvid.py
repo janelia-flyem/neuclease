@@ -12,7 +12,6 @@ import requests.adapters
 from urllib3.util import Timeout
 from urllib3.util.retry import Retry
 
-from libdvid import DVIDNodeService
 
 # On Mac, requests uses a system library which is not fork-safe,
 # resulting in segfaults such as the following:
@@ -34,7 +33,6 @@ if platform.system() == "Darwin" and 'no_proxy' not in os.environ:
     os.environ["no_proxy"] = "*"
 
 DEFAULT_DVID_SESSIONS = {}
-DEFAULT_DVID_NODE_SERVICES = {}
 DEFAULT_APPNAME = "neuclease"
 
 # Medium timeout for connections, long timeout for data
@@ -96,10 +94,8 @@ DEFAULT_DVID_SESSION_TEMPLATE = _default_dvid_session_template()
 
 def clear_default_dvid_sessions():
     global DEFAULT_DVID_SESSIONS
-    global DEFAULT_DVID_NODE_SERVICES
     global DEFAULT_DVID_SESSION_TEMPLATE
     DEFAULT_DVID_SESSIONS.clear()
-    DEFAULT_DVID_NODE_SERVICES.clear()
     DEFAULT_DVID_SESSION_TEMPLATE = _default_dvid_session_template()
 
 
@@ -166,27 +162,6 @@ def default_dvid_session(appname=None, user=None, admintoken=None, timeout=None)
         DEFAULT_DVID_SESSIONS[(appname, user, admintoken, thread_id, pid)] = s
 
     return s
-
-
-def default_node_service(server, uuid, appname=DEFAULT_APPNAME, user=getpass.getuser()):
-    """
-    Return a DVIDNodeService for the given server and uuid.
-    The object is cached, so this function will return the same service
-    object if called again from the same thread with the same arguments.
-    """
-    global DEFAULT_DVID_NODE_SERVICES
-
-    # One per thread/process
-    thread_id = threading.current_thread().ident
-    pid = os.getpid()
-
-    try:
-        ns = DEFAULT_DVID_NODE_SERVICES[(appname, user, thread_id, pid, server, uuid)]
-    except KeyError:
-        ns = DVIDNodeService(server, str(uuid), user, appname)
-        DEFAULT_DVID_NODE_SERVICES[(appname, user, thread_id, pid, server, uuid)] = ns
-
-    return ns
 
 
 def dvid_api_wrapper(f):

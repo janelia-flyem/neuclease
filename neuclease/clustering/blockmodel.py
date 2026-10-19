@@ -29,7 +29,7 @@ def construct_graph(weights, multigraph=True):
     Returns:
         g, sorted_nodes
     """
-    from dvidutils import LabelMapper
+    from neuclease.util import LabelMapper
     assert weights.index.nlevels == 2, \
         "Please pass a series, indexed by e.g. [body_pre, body_post]"
     weights = weights.astype(np.int32)

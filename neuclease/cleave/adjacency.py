@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 from scipy.ndimage import grey_dilation
 
-from dvidutils import LabelMapper
+from ..util import LabelMapper
 
 from ..dvid.labelmap import fetch_labelindex, fetch_labelarray_voxels, decode_labelindex_blocks
 from ..util.graph import graph_tool_available, connected_components, connected_components_nonconsecutive

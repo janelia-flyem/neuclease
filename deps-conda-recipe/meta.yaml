@@ -26,7 +26,6 @@ requirements:
     - pytz
     - vigra
     - pillow
-    - libdvid-cpp >=0.5
     - dvidutils >=0.0.post114
     - tqdm
     - ujson

@@ -38,7 +38,7 @@ import requests
 import numpy as np
 import pandas as pd
 
-from dvidutils import LabelMapper
+from neuclease.util import LabelMapper
 
 from neuclease import configure_default_logging
 from neuclease.util import read_csv_header, read_csv_col, tqdm_proxy, parse_timestamp

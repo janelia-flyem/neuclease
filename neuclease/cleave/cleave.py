@@ -5,7 +5,7 @@ import pandas as pd
 import vigra.graphs as vg
 import networkx as nx
 
-from dvidutils import LabelMapper
+from ..util import LabelMapper
 
 from ..util import Timer, connected_components, graph_tool_available
 

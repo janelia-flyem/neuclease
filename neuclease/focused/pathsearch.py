@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 
 # flyem
-from dvidutils import LabelMapper
+from ..util import LabelMapper
 
 # local
 from ..util import Timer, read_csv_col, NumpyConvertingEncoder

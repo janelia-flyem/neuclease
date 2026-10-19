@@ -30,8 +30,6 @@ requirements:
     - pytz
     - vigra
     - pillow
-    - libdvid-cpp >=0.5
-    - dvidutils >=0.0.post114
     - tqdm
     - ujson
     - pykafka
@@ -53,7 +51,6 @@ test:
   requires:
     - pytest
     - dvid >=dvid-0.9.17
-    - libdvid-cpp >=0.5
 
   imports:
     - neuclease

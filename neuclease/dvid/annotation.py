@@ -11,7 +11,7 @@ import ujson
 import numpy as np
 import pandas as pd
 
-from dvidutils import LabelMapper
+from ..util import LabelMapper
 
 from neuclease.dvid.repo import find_repo_root
 
