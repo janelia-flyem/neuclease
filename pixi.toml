@@ -1,0 +1,74 @@
+# Generated from conda-recipe/meta.yaml.
+# Allows neuclease to be used as a pixi source dependency, e.g.
+#
+#   [dependencies]
+#   neuclease = { git = "https://github.com/janelia-flyem/neuclease" }
+#
+# Keep the dependency lists below in sync with conda-recipe/meta.yaml.
+
+[workspace]
+name = "neuclease"
+channels = ["conda-forge", "flyem-forge"]
+platforms = ["linux-64", "osx-64", "osx-arm64"]
+preview = ["pixi-build"]
+
+[package]
+name = "neuclease"
+version = "0.100"
+
+[package.build]
+backend = { name = "pixi-build-python", version = "*" }
+
+[package.build.config]
+noarch = true
+# The default installer (uv) crashes on rattler-build's placeholder prefix; pip works.
+installer = "pip"
+
+[package.host-dependencies]
+python = ">=3.10"
+setuptools = "*"
+pip = "*"
+
+[package.run-dependencies]
+python = ">=3.10"
+requests = "*"
+flask = ">=1.0"
+numpy = ">=1.17"
+scipy = "*"
+scikit-image = ">=0.25"
+h5py = "*"
+pandas = "*"
+numba = ">=0.45"
+pytz = "*"
+vigra = "*"
+pillow = "*"
+tqdm = "*"
+ujson = "*"
+pykafka = "*"
+networkx = ">=2.1"
+asciitree = "*"
+protobuf = ">=6.31.1,<8"
+confiddler = "*"
+python-cityhash = "*"
+zarr = "*"
+numcodecs = "*"
+flask-cors = "*"
+
+# Optional dependencies (see conda-recipe/meta.yaml for notes)
+# tensorstore = "*"
+# graph-tool = "*"
+# nifty = "*"
+
+# Development environment for working on neuclease itself.
+[dependencies]
+neuclease = { path = "." }
+
+[feature.test.dependencies]
+pytest = "*"
+dvid = ">=dvid-0.9.17"
+
+[feature.test.tasks]
+test = "pytest -s --tb=native --pyargs neuclease.tests"
+
+[environments]
+test = ["test"]
