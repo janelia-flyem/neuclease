@@ -55,7 +55,7 @@ def _encode_related_ids(related_ids):
         A numpy array with N entries, where each entry is a buffer as shown above.
     """
     # Special case if the relationship contains only a single ID for each annotation.
-    if np.issubdtype(related_ids.dtype, np.integer):
+    if pd.api.types.is_integer_dtype(related_ids.dtype):
         buf = (
             pd.DataFrame({'count': np.uint32(1), 'id': related_ids})
             .astype({'count': np.uint32, 'id': np.uint64}, copy=False)

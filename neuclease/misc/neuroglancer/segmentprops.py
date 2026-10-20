@@ -326,7 +326,7 @@ def _scalar_property_types(df, label_col, description_col, string_cols, number_c
     if (
         len(df.columns) == 1
         and not prop_types
-        and not np.issubdtype(df.dtypes.iloc[0], np.number)
+        and not _is_number_dtype(df.dtypes.iloc[0])
     ):
         prop_types = {df.columns[0]: 'label'}
 
@@ -334,7 +334,7 @@ def _scalar_property_types(df, label_col, description_col, string_cols, number_c
     for name, dtype in df.dtypes.items():
         if dtype == bool and prop_types.get(name) != 'tags':  # noqa: E721
             raise RuntimeError(f"Column '{name}': Boolean columns are only valid as tag_cols")
-        elif prop_types.get(name) == 'number' and not np.issubdtype(dtype, np.number):
+        elif prop_types.get(name) == 'number' and not _is_number_dtype(dtype):
             raise RuntimeError(f"Column '{name}': Not valid as number_cols (dtype: {dtype})")
         elif name in prop_types:
             continue
@@ -342,7 +342,7 @@ def _scalar_property_types(df, label_col, description_col, string_cols, number_c
             prop_types['label'] = 'label'
         elif name == 'description':
             prop_types['description'] = 'description'
-        elif np.issubdtype(dtype, np.number):
+        elif _is_number_dtype(dtype):
             prop_types[name] = 'number'
         else:
             prop_types[name] = 'string'
@@ -355,6 +355,15 @@ def _scalar_property_types(df, label_col, description_col, string_cols, number_c
     # Return scalar properties only
     prop_types = {k:v for k,v in prop_types.items() if v != 'tags'}
     return prop_types
+
+
+def _is_number_dtype(dtype):
+    """
+    True for numeric (but not bool) dtypes.
+    (We use pandas, not numpy, to inspect dtypes, since they may be
+    pandas extension dtypes, e.g. the default string dtype in pandas 3.)
+    """
+    return pd.api.types.is_numeric_dtype(dtype) and not pd.api.types.is_bool_dtype(dtype)
 
 
 def _scalar_property_json(s, prop_type, description):
@@ -386,7 +395,7 @@ def _scalar_number_property_json(s, description):
     if s.dtype in (np.int64, np.uint64):
         dtype_name = _select_int64_downcast(s)
 
-    if np.issubdtype(s.dtype, np.floating):
+    if pd.api.types.is_float_dtype(s.dtype):
         dtype_name = 'float32'
         if s.isnull().any():
             raise RuntimeError(f"Numeric column '{s.name}' contains NaN.")
@@ -564,7 +573,7 @@ def _disambiguate_tags(df):
 
     # Prefix must not contain spaces (forbidden by neuroglancer)
     # or colons (because we use ':' as the separator).
-    prefixes = col_tags['col'].str.replace(r'[: ]', '_')
+    prefixes = col_tags['col'].str.replace(r'[: ]', '_', regex=True)
     col_tags['new_tag'] = prefixes + ':' + col_tags['tag']
 
     for col, old_new_df in col_tags.groupby('col')[['tag', 'new_tag']]:
