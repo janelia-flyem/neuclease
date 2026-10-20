@@ -2,6 +2,7 @@ import re
 from collections.abc import Mapping, Collection
 
 import numpy as np
+import pandas as pd
 
 
 # Copied from neuroglancer/write_annotations.py
@@ -149,7 +150,8 @@ def _proptype(s):
         # Pandas already stores categorical codes with a minimal-width dtype
         return str(np.dtype(s.cat.codes.dtype))
 
-    if s.dtype != object:
+    # (In pandas 3, string columns have a dedicated string dtype, not object.)
+    if s.dtype != object and not pd.api.types.is_string_dtype(s.dtype):
         raise RuntimeError(f"Unsupported property dtype: {s.dtype} for column {s.name}")
 
     is_str = s.map(lambda x: isinstance(x, str)).all()
