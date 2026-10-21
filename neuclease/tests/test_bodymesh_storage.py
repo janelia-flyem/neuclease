@@ -70,6 +70,7 @@ class FakeRepo:
 @pytest.fixture
 def store():
     MemoryStore.clear_all()
+    bodymesh._verified_store_infos.clear()
     return open_store('mem://test-bucket/meshes')
 
 
@@ -154,6 +155,53 @@ def test_concurrent_modification_is_retried(monkeypatch, store):
     assert repo.update(store, UUID_B, 1, 20)
     assert interfered
     assert repo.read(store, UUID_B, 1) == (b'data-b-20', b'index-b-20')
+
+
+def test_info_written_only_when_necessary(monkeypatch, store):
+    """
+    The dataset-wide 'info' file is only written if it's missing or different,
+    since Cloud Storage permits only ~1 write per second to a single object.
+    """
+    repo = FakeRepo(monkeypatch)
+    info_writes = []
+    real_put = type(store).put
+
+    def put(self, name, data, **kwargs):
+        if name == 'info':
+            info_writes.append(data)
+        return real_put(self, name, data, **kwargs)
+
+    monkeypatch.setattr(type(store), 'put', put)
+    for body in range(1, 6):
+        assert repo.update(store, UUID_A, body, 10)
+    assert len(info_writes) == 1
+    assert json.loads(store.get('info')) == INFO_JSON
+
+    # Another process (with no memory of having verified it) doesn't rewrite it either.
+    bodymesh._verified_store_infos.clear()
+    assert repo.update(store, UUID_A, 6, 10)
+    assert len(info_writes) == 1
+
+    # But an out-of-date info is replaced.
+    real_put(store, 'info', b'{"old": "info"}')
+    bodymesh._verified_store_infos.clear()
+    assert repo.update(store, UUID_A, 7, 10)
+    assert len(info_writes) == 2
+    assert json.loads(store.get('info')) == INFO_JSON
+
+
+def test_info_conflict_is_reported(monkeypatch, store):
+    """If another process concurrently writes a *different* info, we complain."""
+    real_put = type(store).put
+
+    def put(self, name, data, **kwargs):
+        if name == 'info':
+            real_put(self, 'info', b'{"from": "another config"}')
+        return real_put(self, name, data, **kwargs)
+
+    monkeypatch.setattr(type(store), 'put', put)
+    with pytest.raises(RuntimeError, match="doesn't match the current config"):
+        bodymesh._ensure_store_info(store, INFO_JSON)
 
 
 def test_memory_store_preconditions(store):

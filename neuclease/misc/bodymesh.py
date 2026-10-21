@@ -980,8 +980,7 @@ def _store_multires_body_mesh_in_object_store(server, uuid, seg_instance, body, 
     Returns True if the mesh was stored, or False if it wasn't, because another
     process has already stored a mesh for a newer state of the body in this UUID.
     """
-    store.put('info', json.dumps(info_json).encode(), cache_control=BODY_MESH_CACHE_CONTROL,
-              content_type='application/json')
+    _ensure_store_info(store, info_json)
 
     if not _is_branch_head(server, uuid, live_ref):
         name = f'{body}-{uuid}'
@@ -1010,6 +1009,40 @@ def _store_multires_body_mesh_in_object_store(server, uuid, seg_instance, body, 
             logger.info("Another process modified the stored body mesh at the same time; trying again.")
     raise RuntimeError(f"Body {body}: Could not store the body mesh in {store.url}, "
                        "due to repeated concurrent modifications by other processes.")
+
+
+# The (store URL, info) combinations which this process has already written or verified.
+_verified_store_infos = set()
+
+
+def _ensure_store_info(store, info_json):
+    """
+    Ensure that the object store's (dataset-wide) 'info' file matches the given info.
+
+    We avoid writing it unless necessary: Cloud Storage permits only about one write
+    per second to any single object, and many processes (e.g. cluster workers) may be
+    storing body meshes at the same time.  So we only write it if it's missing or
+    different, and each process checks it only once.
+    """
+    info_bytes = json.dumps(info_json).encode()
+    if (store.url, info_bytes) in _verified_store_infos:
+        return
+
+    if store.get('info') != info_bytes:
+        stat = store.stat('info')
+        try:
+            # Only one of the processes that try to create (or replace) it at the same time will succeed.
+            store.put('info', info_bytes, cache_control=BODY_MESH_CACHE_CONTROL,
+                      content_type='application/json',
+                      if_generation_match=stat.generation if stat else 0)
+        except PreconditionFailed:
+            # Another process wrote it in the meantime.
+            if store.get('info') != info_bytes:
+                raise RuntimeError(f"The 'info' file in {store.url} doesn't match the current config, "
+                                   "and another process is writing it concurrently.  "
+                                   "Are processes with different configs using the same storage?")
+
+    _verified_store_infos.add((store.url, info_bytes))
 
 
 def _preserve_superseded_body_mesh(server, seg_instance, body, store, data_stat, index_stat):
