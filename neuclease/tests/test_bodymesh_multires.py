@@ -195,6 +195,30 @@ def test_assemble_multilod():
         assert (v >= lo - 1e-3).all() and (v <= lo + cell_size + 1e-3).all()
 
 
+def test_assemble_in_subprocess_matches_in_process():
+    """Assembling in a subprocess produces exactly the same result as assembling in-process."""
+    from neuclease.misc.bodymesh import _assemble_multires_object_in_subprocess
+
+    chunk = np.array([32.0, 32.0, 32.0])
+    cells = [(cx, cy, cz) for cx in range(4) for cy in range(4) for cz in range(2)]
+    frag_bytes = _make_fragment_bytes(chunk, cells)
+
+    # Body decimation and multiple LODs, to exercise the full assembly path.
+    cfg = _body_config(0.5, 0.5, 0, num_lods=3, lod_factor=0.5)
+    expected = _assemble_multires_object(frag_bytes, chunk, [8.0, 8.0, 8.0], 1.0, cfg)
+    actual = _assemble_multires_object_in_subprocess(frag_bytes, chunk, [8.0, 8.0, 8.0], 1.0, cfg)
+    assert expected[3]['applied_decimation'] < 1.0
+    assert actual == expected
+
+
+def test_assemble_in_subprocess_propagates_errors():
+    from neuclease.misc.bodymesh import _assemble_multires_object_in_subprocess
+    chunk = np.array([32.0, 32.0, 32.0])
+    frag_bytes = _make_fragment_bytes(chunk, [(0, 0, 0)])
+    with pytest.raises(KeyError):
+        _assemble_multires_object_in_subprocess(frag_bytes, chunk, [8.0, 8.0, 8.0], 1.0, {})
+
+
 def test_assemble_empty():
     chunk = np.array([256.0, 256.0, 256.0])
     cfg = _body_config(1.0, 1.0, 0)

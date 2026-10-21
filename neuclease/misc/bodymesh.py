@@ -388,6 +388,7 @@ def update_body_mesh(
     resource_mgr=None,
     chunk_fn=None,
     chunk_fn_threads=8,
+    assemble_in_subprocess=False,
 ):
     """
     FIXME: Too many parameters -- server, uuid, seg_instance, and resource_mgr should be rolled into one.
@@ -416,6 +417,12 @@ def update_body_mesh(
             chunk_fn_threads threads.
         chunk_fn_threads:
             How many chunk_fn calls to make concurrently (if chunk_fn is given).
+        assemble_in_subprocess:
+            Multires meshes only.  If True, assemble the body mesh from its chunks
+            (decimation, LOD generation, encoding) in a separate, short-lived process.
+            Decimating a large mesh requires a lot of memory, and the decimation library
+            doesn't release all of it afterwards, so this is advisable for long-running
+            processes such as a mesh service.  (Note that the peak memory usage is the same.)
 
     Note:
         Whether to produce a single-resolution or multi-resolution mesh is determined
@@ -481,7 +488,8 @@ def update_body_mesh(
     quality_from_source_method(body_mesh_config, chunk_config)  # validates the source-method
     update_body_mesh_from_chunks(server, uuid, seg, body, body_mesh_config, chunk_config, processes=processes,
                                  expect_concurrent_updates=expect_concurrent_updates, resource_mgr=resource_mgr,
-                                 chunk_fn=chunk_fn, chunk_fn_threads=chunk_fn_threads)
+                                 chunk_fn=chunk_fn, chunk_fn_threads=chunk_fn_threads,
+                                 assemble_in_subprocess=assemble_in_subprocess)
 
 
 def quality_from_source_method(body_mesh_config, chunk_config):
@@ -807,9 +815,11 @@ def update_body_mesh_from_chunks(
     expect_concurrent_updates=False,
     chunk_fn=None,
     chunk_fn_threads=8,
+    assemble_in_subprocess=False,
 ):
     """
-    See update_body_mesh() for an explanation of expect_concurrent_updates, chunk_fn, and chunk_fn_threads.
+    See update_body_mesh() for an explanation of expect_concurrent_updates,
+    chunk_fn, chunk_fn_threads, and assemble_in_subprocess.
     """
     validate(body_mesh_config, BodyMeshParametersSchema, inject_defaults=True)
     validate(chunk_config, MeshChunkConfigSchema, inject_defaults=True)
@@ -836,7 +846,7 @@ def update_body_mesh_from_chunks(
                 server, uuid, seg_instance,
                 body, chunk_df, body_mesh_config, chunk_config, quality,
                 processes, resource_mgr, expect_concurrent_updates,
-                chunk_fn, chunk_fn_threads
+                chunk_fn, chunk_fn_threads, assemble_in_subprocess
             )
             if result is None:
                 # Another process already stored an up-to-date body mesh.
@@ -1333,8 +1343,11 @@ def _assemble_multires_object(frag_bytes_by_cell, chunk_shape_s0_xyz, voxel_size
     chunk_shape_s0_xyz = np.asarray(chunk_shape_s0_xyz, dtype=float)
     grid_origin = [0, 0, 0]
 
+    # Note: For large bodies, memory usage is a concern, so below we take care to
+    # avoid keeping multiple copies of the body's geometry in memory at once.
+
     # Decode every fragment (needed to count vertices and, if requested, to
-    # decimate as a single mesh).
+    # decimate as a single mesh).  We store the vertices as float32 ZYX (as Mesh does).
     decoded = {}
     with Timer(f"Decoding {len(frag_bytes_by_cell)} chunk fragments", logger):
         for cell, b in frag_bytes_by_cell.items():
@@ -1342,7 +1355,19 @@ def _assemble_multires_object(frag_bytes_by_cell, chunk_shape_s0_xyz, voxel_size
                 continue
             v_xyz, faces = v2m_multires.decode_fragment(
                 b, cell, chunk_shape_s0_xyz, grid_origin, vertex_quantization_bits=bits)
-            decoded[cell] = (v_xyz, faces)
+            decoded[cell] = (v_xyz[:, ::-1].astype(np.float32), faces)
+            del v_xyz
+
+    def encode_lod(fragments, lod):
+        """Encode a LOD's fragment meshes right away, so the meshes can be discarded."""
+        encoded = {}
+        for position, fragment_mesh in fragments.items():
+            b = v2m_multires.encode_fragment(
+                fragment_mesh, position, chunk_shape_s0_xyz, grid_origin,
+                lod=lod, vertex_quantization_bits=bits, trim=False)
+            if b is not None:
+                encoded[position] = b
+        return encoded
 
     orig_vertices = sum(len(v) for v, _ in decoded.values())
     orig_faces = sum(len(f) for _, f in decoded.values())
@@ -1366,8 +1391,10 @@ def _assemble_multires_object(frag_bytes_by_cell, chunk_shape_s0_xyz, voxel_size
         final_vertices = orig_vertices
     else:
         with Timer(f"Concatenating {len(decoded)} chunk fragments", logger):
-            meshes = [Mesh(v[:, ::-1], faces) for (v, faces) in decoded.values()]
+            meshes = [Mesh(v_zyx, faces) for (v_zyx, faces) in decoded.values()]
             body_mesh = Mesh.concatenate_meshes(meshes, keep_normals=False)
+            del meshes
+            decoded.clear()
         if smoothing:
             with Timer(f"Smoothing body mesh with {smoothing} iterations", logger):
                 body_mesh.laplacian_smooth(smoothing, preserve_border=True)
@@ -1383,19 +1410,25 @@ def _assemble_multires_object(frag_bytes_by_cell, chunk_shape_s0_xyz, voxel_size
         if not body_ops:
             fragments_by_lod[0] = {cell: b for cell, b in frag_bytes_by_cell.items() if b}
         else:
-            with Timer(f"Splitting LOD 0 into fragments", logger):
-                fragments_by_lod[0] = v2m_multires.split_mesh_for_lod(body_mesh, chunk_shape_s0_xyz, 0)
+            with Timer("Splitting LOD 0 into fragments and encoding them", logger):
+                fragments = v2m_multires.split_mesh_for_lod(body_mesh, chunk_shape_s0_xyz, 0)
+                fragments_by_lod[0] = encode_lod(fragments, 0)
+                del fragments
 
-        # Coarser LODs: decimate and re-partition.
+        # Coarser LODs: decimate further and re-partition.
+        # Each LOD is decimated from the previous one (in-place), rather than from LOD 0,
+        # so we don't need to keep a separate copy of the LOD 0 mesh.
         for lod in range(1, num_lods):
-            with Timer(f"Generating LOD {lod} (decimation {lod_factor**lod:.4g})", logger):
-                current = Mesh(body_mesh.vertices_zyx.copy(), body_mesh.faces.copy())
-                current.simplify(lod_factor**lod, preserve_border=True)
-                fragments_by_lod[lod] = v2m_multires.split_mesh_for_lod(current, chunk_shape_s0_xyz, lod)
-            logger.info(f"LOD {lod} has {len(current.vertices_zyx)} vertices "
+            with Timer(f"Generating LOD {lod} (decimation {lod_factor**lod:.4g} relative to LOD 0)", logger):
+                body_mesh.simplify(lod_factor, preserve_border=True)
+                fragments = v2m_multires.split_mesh_for_lod(body_mesh, chunk_shape_s0_xyz, lod)
+                fragments_by_lod[lod] = encode_lod(fragments, lod)
+                del fragments
+            logger.info(f"LOD {lod} has {len(body_mesh.vertices_zyx)} vertices "
                         f"in {len(fragments_by_lod[lod])} fragments")
+        del body_mesh
 
-    with Timer(f"Encoding {num_lods} LOD(s)", logger):
+    with Timer(f"Writing {num_lods} LOD(s)", logger):
         data_bytes, index_bytes, num_fragments_per_lod = v2m_multires.encode_multilod_object(
             fragments_by_lod, chunk_shape_s0_xyz, grid_origin, vertex_quantization_bits=bits)
     logger.info(f"Encoded {int(sum(num_fragments_per_lod))} fragments "
@@ -1418,10 +1451,63 @@ def _assemble_multires_object(frag_bytes_by_cell, chunk_shape_s0_xyz, voxel_size
     return data_bytes, index_bytes, info_json, stats
 
 
+def _assemble_multires_object_in_subprocess(*args):
+    """
+    Call _assemble_multires_object(*args) in a separate, short-lived process.
+
+    Decimating a large mesh (via pyfqmr) requires a lot of memory, and pyfqmr doesn't
+    release all of it afterwards.  In a long-running process (e.g. a mesh service),
+    that memory would be held indefinitely.  Running the assembly in its own process
+    guarantees that it's all released when the process exits.
+
+    The arguments (compressed chunk fragments) and results (the encoded mesh) are
+    relatively small, so passing them between processes is cheap.
+
+    The subprocess is started via the 'forkserver' method (where available),
+    rather than 'fork', since forking a multithreaded process (e.g. a web server)
+    can deadlock.  The forkserver preloads this module, so each subprocess starts quickly.
+    """
+    from concurrent.futures import ProcessPoolExecutor
+    from neuclease import _logging_prefix
+
+    ctx = _assembly_mp_context()
+    prefixes = list(_logging_prefix.get([]))
+    with ProcessPoolExecutor(1, mp_context=ctx) as executor:
+        future = executor.submit(_assemble_multires_object_with_logging, prefixes, logger.getEffectiveLevel(), *args)
+        return future.result()
+
+
+@cache
+def _assembly_mp_context():
+    import multiprocessing
+    if 'forkserver' not in multiprocessing.get_all_start_methods():
+        return multiprocessing.get_context('spawn')
+    ctx = multiprocessing.get_context('forkserver')
+    ctx.set_forkserver_preload(['neuclease.misc.bodymesh'])
+    return ctx
+
+
+def _assemble_multires_object_with_logging(prefixes, log_level, *args):
+    """
+    Runs in the subprocess: configure logging (to match the parent's
+    log prefix and level), and call _assemble_multires_object().
+    """
+    from contextlib import ExitStack
+    from neuclease import configure_default_logging
+
+    if not logging.getLogger().handlers:
+        configure_default_logging()
+    logger.setLevel(log_level)
+    with ExitStack() as stack:
+        for prefix in prefixes:
+            stack.enter_context(PrefixFilter.context(prefix))
+        return _assemble_multires_object(*args)
+
+
 def _generate_multires_body_mesh_from_chunks(
     server, uuid, seg_instance, body, chunk_df, body_mesh_config,
     chunk_config, quality, processes, resource_mgr, expect_concurrent_updates=False,
-    chunk_fn=None, chunk_fn_threads=8
+    chunk_fn=None, chunk_fn_threads=8, assemble_in_subprocess=False
 ):
     """
     Returns (data_bytes, index_bytes, info_json, mesh_info), or None if
@@ -1477,8 +1563,10 @@ def _generate_multires_body_mesh_from_chunks(
     # stored-model space is full-res voxels, so the transform carries voxel->nm.
     voxel_size_xyz = np.asarray(fetch_resolution_zyx(server, uuid, seg))[::-1]
 
-    with Timer(f"Assembling multires mesh from {len(frag_bytes_by_cell)} non-empty chunks", logger):
-        data_bytes, index_bytes, info_json, stats = _assemble_multires_object(
+    assemble = _assemble_multires_object_in_subprocess if assemble_in_subprocess else _assemble_multires_object
+    where = " (in a subprocess)" if assemble_in_subprocess else ""
+    with Timer(f"Assembling multires mesh from {len(frag_bytes_by_cell)} non-empty chunks{where}", logger):
+        data_bytes, index_bytes, info_json, stats = assemble(
             frag_bytes_by_cell, chunk_shape_s0_xyz, voxel_size_xyz,
             quality_config['decimation-s0'], body_mesh_config)
 
