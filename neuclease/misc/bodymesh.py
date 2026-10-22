@@ -1,4 +1,3 @@
-import json
 import time
 import logging
 import datetime
@@ -17,7 +16,6 @@ from cityhash import CityHash64
 
 from confiddler import validate, flow_style
 from vol2mesh.mesh import Mesh
-from vol2mesh import multires as v2m_multires
 
 from neuclease import PrefixFilter
 from neuclease.util import Timer, compute_parallel
@@ -31,7 +29,7 @@ from neuclease.dvid.tarsupervoxels import create_tarsupervoxel_instance
 from neuclease.dvid.labelmap import fetch_lastmod, fetch_sparsevol, fetch_labelindex
 from neuclease.dvid.tarsupervoxels import fetch_tarfile, fetch_missing, post_supervoxel
 from neuclease.dvid.rle import blockwise_masks_from_ranges
-from neuclease.misc.meshstore import open_store, PreconditionFailed
+from neuclease.misc.meshstore import open_store
 
 logger = logging.getLogger(__name__)
 
@@ -43,11 +41,11 @@ def mesh_instance_names(seg_instance, multires=False):
     """
     The DVID keyvalue instance names used to store meshes for a segmentation.
 
-    Single-resolution (ngmesh) meshes and multi-resolution
-    (neuroglancer_multilod_draco) meshes are kept in entirely separate
-    instances (distinguished by a '_multires' infix), so the two formats are
-    never mixed in one instance.  The supervoxel instance is single-res only
-    and is shared (no multires variant).
+    Single-resolution (ngmesh) meshes (from this module) and multi-resolution
+    (neuroglancer_multilod_draco) meshes (from neuclease.misc.multiresmesh) are kept
+    in entirely separate instances (distinguished by a '_multires' infix), so the two
+    formats are never mixed in one instance.  The supervoxel instance is single-res only
+    and is shared (no multires variant).  (Multires meshes have no chunk instance.)
 
     Returns a SimpleNamespace with attributes: body, info, chunk, sv.
     """
@@ -65,19 +63,6 @@ BodyMeshParametersSchema = {
     "additionalProperties": False,
     "description": "Settings for body mesh creation.\n",
     "properties": {
-        "format": {
-            "description":
-                "Which mesh format to produce (and therefore which DVID instances to use).\n"
-                "  - 'neuroglancer-single-res': the legacy single-resolution ngmesh format.\n"
-                "  - 'neuroglancer-multi-res':  the neuroglancer multi-resolution\n"
-                "    (neuroglancer_multilod_draco) format, stored in separate '_multires'\n"
-                "    DVID instances.\n"
-                "Note: init_mesh_instances() takes a separate 'multires' argument (it has no\n"
-                "config); make sure the instances you initialize match this setting.\n",
-            "type": "string",
-            "enum": ["neuroglancer-single-res", "neuroglancer-multi-res"],
-            "default": "neuroglancer-single-res"
-        },
         "source-method": {
             "description":
                 "Body meshes can be constructed by assembling supervoxel meshes, meshing the body sparsevol RLEs, or chunk meshes.\n"
@@ -136,64 +121,6 @@ BodyMeshParametersSchema = {
             "type": "number",
             "exclusiveMinimum": 0,
             "default": 200e6
-        },
-        "vertex-quantization-bits": {
-            "description":
-                "Multires meshes only: the number of bits used to quantize each vertex\n"
-                "coordinate within a fragment, as required by the neuroglancer multi-resolution\n"
-                "(neuroglancer_multilod_draco) format.  Must be 10 or 16.  Ignored for\n"
-                "single-resolution (ngmesh) body meshes.\n",
-            "type": "integer",
-            "enum": [10, 16],
-            "default": 16
-        },
-        "num-lods": {
-            "description":
-                "Multires meshes only: how many levels of detail to emit.  LOD 0 is the\n"
-                "finest (assembled from the chunk fragments); each coarser LOD is derived\n"
-                "by decimating the assembled mesh further and re-partitioning onto a grid\n"
-                "with cells twice as large per level.  1 means a single-LOD multires mesh.\n",
-            "type": "integer",
-            "minimum": 1,
-            "default": 1
-        },
-        "lod-decimation-factor": {
-            "description":
-                "Multires meshes only: the fraction of faces to keep at each successive\n"
-                "(coarser) LOD relative to the previous one.  Each coarser LOD's cells are\n"
-                "8x the volume, so ~0.25 keeps roughly constant on-screen vertex density.\n"
-                "Only used when num-lods > 1.\n",
-            "type": "number",
-            "exclusiveMinimum": 0.0,
-            "maximum": 1.0,
-            "default": 0.25
-        },
-        "storage": {
-            "description":
-                "Multires meshes only: where to store the body meshes.  Either 'dvid'\n"
-                "(the '<segmentation>_multires_meshes' keyvalue instance), or an object store\n"
-                "URL such as 'gs://my-bucket/some/prefix'.\n"
-                "In an object store, the mesh for the newest state of each body (on the\n"
-                "'live-ref' branch) is stored as '<body>' and '<body>.index' (along with an\n"
-                "'info' file), i.e. a standard neuroglancer precomputed mesh source which\n"
-                "can be read directly from the bucket.  Meshes for other UUIDs are stored as\n"
-                "'<body>-<uuid>' and '<body>-<uuid>.index'.  When the newest mesh for a body\n"
-                "is replaced by one for a newer UUID, the old one is renamed (copied) to\n"
-                "'<body>-<old-uuid>' first, so each UUID's mesh remains available.\n"
-                "Either way, the mesh_info is stored in DVID.  (See locate_multires_body_mesh().)\n"
-                "Note: The objects' names don't include the segmentation instance name,\n"
-                "so use a separate prefix for each segmentation.\n",
-            "type": "string",
-            "default": "dvid"
-        },
-        "live-ref": {
-            "description":
-                "Multires meshes in an object store only: the DVID branch whose newest\n"
-                "body meshes are stored under the standard names ('<body>' and '<body>.index').\n"
-                "Body meshes for any UUID other than the head of this branch are stored as\n"
-                "'<body>-<uuid>' (see 'storage').\n",
-            "type": "string",
-            "default": "master"
         },
     }
 }
@@ -305,8 +232,8 @@ MeshChunkConfigSchema = {
         "storage": {
             "description":
                 "Where to store the chunk meshes.  Either 'dvid' (the '<segmentation>_chunk_meshes'\n"
-                "or '<segmentation>_multires_chunk_meshes' keyvalue instance), or an object\n"
-                "store URL such as 'gs://my-bucket/some/prefix'.  Each chunk mesh is stored under\n"
+                "keyvalue instance), or an object store URL such as 'gs://my-bucket/some/prefix'.\n"
+                "Each chunk mesh is stored under\n"
                 "its key (which includes the config-name), just as it would be in DVID.\n"
                 "Note: The keys don't include the segmentation instance name,\n"
                 "so use a separate prefix (or config-name) for each segmentation.\n",
@@ -322,8 +249,9 @@ def init_mesh_instances(server, uuid, seg_instance, body=True, chunks=True, sv=T
     Create the DVID keyvalue instances used to store meshes.
 
     If multires=True, create the multi-resolution variants (with a
-    '_multires' infix) instead of the single-resolution instances.  The
-    supervoxel instance is single-resolution only and is never created in
+    '_multires' infix) instead of the single-resolution instances, for the
+    meshes of neuclease.misc.multiresmesh.  (See init_multires_mesh_instances().)
+    The supervoxel instance is single-resolution only and is never created in
     multires mode.
 
     Note: the instances that hold mesh *files* (body meshes and chunk meshes)
@@ -388,9 +316,11 @@ def update_body_mesh(
     resource_mgr=None,
     chunk_fn=None,
     chunk_fn_threads=8,
-    assemble_in_subprocess=False,
 ):
     """
+    Bring a body's stored (single-resolution) mesh up-to-date.
+    (For multi-resolution meshes, see neuclease.misc.multiresmesh.)
+
     FIXME: Too many parameters -- server, uuid, seg_instance, and resource_mgr should be rolled into one.
 
     Args:
@@ -417,25 +347,11 @@ def update_body_mesh(
             chunk_fn_threads threads.
         chunk_fn_threads:
             How many chunk_fn calls to make concurrently (if chunk_fn is given).
-        assemble_in_subprocess:
-            Multires meshes only.  If True, assemble the body mesh from its chunks
-            (decimation, LOD generation, encoding) in a separate, short-lived process.
-            Decimating a large mesh requires a lot of memory, and the decimation library
-            doesn't release all of it afterwards, so this is advisable for long-running
-            processes such as a mesh service.  (Note that the peak memory usage is the same.)
-
-    Note:
-        Whether to produce a single-resolution or multi-resolution mesh is determined
-        by ``body_mesh_config['format']`` (see BodyMeshParametersSchema).  Multi-res
-        output requires the chunk-based source-method (not supervoxels), and the
-        corresponding '_multires' DVID instances must already exist (see
-        init_mesh_instances(..., multires=True)).
     """
     seg = seg_instance
     uuid = resolve_ref(server, uuid, True)
     validate(body_mesh_config, BodyMeshParametersSchema, inject_defaults=True)
-    multires = (body_mesh_config['format'] == 'neuroglancer-multi-res')
-    names = mesh_instance_names(seg, multires)
+    names = mesh_instance_names(seg)
 
     try:
         with resource_mgr.access_context(server, True, 1, 0):
@@ -446,7 +362,7 @@ def update_body_mesh(
         # instance and the key isn't present.
         if ex.response is not None and ex.response.status_code == 404:
             logger.info(f"Body {body} doesn't exist in {uuid}; deleting its stored mesh (if any)")
-            delete_body_mesh(server, uuid, seg, body, multires=multires)
+            delete_body_mesh(server, uuid, seg, body)
             return
         raise
 
@@ -474,22 +390,17 @@ def update_body_mesh(
         logger.info(f"Body {body}: regenerating mesh (forced)")
 
     if requested_method == 'concatenated-supervoxels':
-        if multires:
-            raise RuntimeError("Multires body meshes can only be assembled from chunks, not supervoxels.")
         update_body_mesh_from_supervoxels(server, uuid, seg, body, body_mesh_config, resource_mgr=resource_mgr)
         return
 
     if requested_method == 'body-sparsevol':
-        if multires:
-            raise RuntimeError("Multires body meshes can only be assembled from chunks, not sparsevol.")
         update_body_mesh_from_body_sparsevol(server, uuid, seg, body, body_mesh_config, resource_mgr=resource_mgr)
         return
 
     quality_from_source_method(body_mesh_config, chunk_config)  # validates the source-method
     update_body_mesh_from_chunks(server, uuid, seg, body, body_mesh_config, chunk_config, processes=processes,
                                  expect_concurrent_updates=expect_concurrent_updates, resource_mgr=resource_mgr,
-                                 chunk_fn=chunk_fn, chunk_fn_threads=chunk_fn_threads,
-                                 assemble_in_subprocess=assemble_in_subprocess)
+                                 chunk_fn=chunk_fn, chunk_fn_threads=chunk_fn_threads)
 
 
 def quality_from_source_method(body_mesh_config, chunk_config):
@@ -520,20 +431,13 @@ def quality_from_source_method(body_mesh_config, chunk_config):
 
 
 @PrefixFilter.with_context("Body {body}")
-def delete_body_mesh(server, uuid, seg_instance, body, multires=False):
+def delete_body_mesh(server, uuid, seg_instance, body):
     seg = seg_instance
-    names = mesh_instance_names(seg, multires)
+    names = mesh_instance_names(seg)
 
-    if multires:
-        # A multires body mesh is a data file ('{body}') plus its manifest ('{body}.index').
-        for key in (f"{body}", f"{body}.index"):
-            if fetch_key(server, uuid, names.body, key, check_head=True):
-                logger.info(f"Deleting {key}")
-                delete_key(server, uuid, names.body, key)
-    else:
-        if fetch_key(server, uuid, names.body, f"{body}.ngmesh", check_head=True):
-            logger.info(f"Deleting {body}.ngmesh")
-            delete_key(server, uuid, names.body, f"{body}.ngmesh")
+    if fetch_key(server, uuid, names.body, f"{body}.ngmesh", check_head=True):
+        logger.info(f"Deleting {body}.ngmesh")
+        delete_key(server, uuid, names.body, f"{body}.ngmesh")
 
     try:
         mesh_info = fetch_key(server, uuid, names.info, body, as_json=True)
@@ -815,11 +719,10 @@ def update_body_mesh_from_chunks(
     expect_concurrent_updates=False,
     chunk_fn=None,
     chunk_fn_threads=8,
-    assemble_in_subprocess=False,
 ):
     """
     See update_body_mesh() for an explanation of expect_concurrent_updates,
-    chunk_fn, chunk_fn_threads, and assemble_in_subprocess.
+    chunk_fn, and chunk_fn_threads.
     """
     validate(body_mesh_config, BodyMeshParametersSchema, inject_defaults=True)
     validate(chunk_config, MeshChunkConfigSchema, inject_defaults=True)
@@ -828,11 +731,8 @@ def update_body_mesh_from_chunks(
 
     seg = seg_instance
     uuid = resolve_ref(server, uuid, True)
-    multires = (body_mesh_config['format'] == 'neuroglancer-multi-res')
-    if body_mesh_config['storage'] != 'dvid' and not multires:
-        raise RuntimeError("Only multires body meshes can be stored outside of DVID.")
-    names = mesh_instance_names(seg, multires)
-    chunk_df = _chunk_table(server, uuid, seg_instance, body, chunk_config, resource_mgr, multires=multires)
+    names = mesh_instance_names(seg)
+    chunk_df = _chunk_table(server, uuid, seg_instance, body, chunk_config, resource_mgr)
     config_name = chunk_config['config-name']
 
     quality_names = {qc['name'] for qc in chunk_config['quality-configs']}
@@ -841,245 +741,33 @@ def update_body_mesh_from_chunks(
             # TODO: What, if anything, will I do with the other chunk qualities?
             continue
 
-        if multires:
-            result = _generate_multires_body_mesh_from_chunks(
-                server, uuid, seg_instance,
-                body, chunk_df, body_mesh_config, chunk_config, quality,
-                processes, resource_mgr, expect_concurrent_updates,
-                chunk_fn, chunk_fn_threads, assemble_in_subprocess
-            )
-            if result is None:
-                # Another process already stored an up-to-date body mesh.
-                continue
-            data_bytes, index_bytes, info_json, mesh_info = result
+        result = _generate_body_mesh_from_chunks(
+            server, uuid, seg_instance,
+            body,
+            chunk_df,
+            body_mesh_config,
+            chunk_config,
+            quality,
+            processes,
+            resource_mgr,
+            expect_concurrent_updates,
+            chunk_fn,
+            chunk_fn_threads
+        )
+        if result is None:
+            # Another process already stored an up-to-date body mesh.
+            continue
+        mesh_bytes, mesh_info = result
 
-            # FIXME... had to hard-code this because dask workers didn't have the configured dvid timeout.
-            set_default_dvid_session_timeout(600.0, 600.0)
+        # FIXME... had to hard-code this because dask workers didn't have the configured dvid timeout.
+        set_default_dvid_session_timeout(600.0, 600.0)
 
-            storage = body_mesh_config['storage']
-            with Timer(f"Storing multires body mesh in {storage} "
-                       f"({len(data_bytes) / 1e6:.1f} MB data, {len(index_bytes) / 1e3:.1f} kB index)", logger):
-                # The 'info' key is dataset-wide; posting it idempotently keeps
-                # the instance self-describing for neuroglancer (no backend changes).
-                # (We store it in DVID even if the meshes themselves are stored elsewhere.)
-                post_key(server, uuid, names.body, "info", json=info_json)
-                if storage == 'dvid':
-                    post_key(server, uuid, names.body, f"{body}", data_bytes)
-                    post_key(server, uuid, names.body, f"{body}.index", index_bytes)
-                elif not _store_multires_body_mesh_in_object_store(
-                        server, uuid, seg, body, open_store(storage), body_mesh_config['live-ref'],
-                        data_bytes, index_bytes, info_json, mesh_info['lastmod']):
-                    continue
-
-                # The mesh_info is posted last, since readers rely on it to find the mesh.
-                post_key(server, uuid, names.info, body, json=mesh_info)
-        else:
-            result = _generate_body_mesh_from_chunks(
-                server, uuid, seg_instance,
-                body,
-                chunk_df,
-                body_mesh_config,
-                chunk_config,
-                quality,
-                processes,
-                resource_mgr,
-                expect_concurrent_updates,
-                chunk_fn,
-                chunk_fn_threads
-            )
-            if result is None:
-                # Another process already stored an up-to-date body mesh.
-                continue
-            mesh_bytes, mesh_info = result
-
-            # FIXME... had to hard-code this because dask workers didn't have the configured dvid timeout.
-            set_default_dvid_session_timeout(600.0, 600.0)
-
-            with Timer(f"Storing body mesh {body}.ngmesh ({len(mesh_bytes) / 1e6:.1f} MB)", logger):
-                post_key(server, uuid, names.body, f"{body}.ngmesh", mesh_bytes)
-                post_key(server, uuid, names.info, body, json=mesh_info)
+        with Timer(f"Storing body mesh {body}.ngmesh ({len(mesh_bytes) / 1e6:.1f} MB)", logger):
+            post_key(server, uuid, names.body, f"{body}.ngmesh", mesh_bytes)
+            post_key(server, uuid, names.info, body, json=mesh_info)
 
 
-# The version of the mesh_info format for multires body meshes.
-# The fields which clients (e.g. neuroglancer) may rely on are:
-#
-#   mesh-info-version:          This version number.
-#   format:                     "neuroglancer_multilod_draco"
-#   lastmod:                    The body's mutation id when the mesh was generated.
-#   written-uuid:               The UUID in which the mesh was generated (and stored).
-#   storage:                    "dvid", or the URL of the object store containing the mesh.
-#   vertex-quantization-bits:   As in the neuroglancer 'info' file.
-#
-# All other fields are informational.  See locate_multires_body_mesh() for how to find
-# the mesh files.  (The mesh_info is inherited by descendant UUIDs, like any DVID data.)
-MULTIRES_MESH_INFO_VERSION = 1
-
-# Body meshes in an object store may be overwritten, so browsers must not cache them.
-BODY_MESH_CACHE_CONTROL = 'no-cache'
-
-
-def locate_multires_body_mesh(server, uuid, seg_instance, body, mesh_info=None):
-    """
-    Find the stored multires mesh for the given body, as seen from the given UUID.
-
-    Args:
-        mesh_info:
-            The body's mesh_info in the given UUID, if you've already fetched it.
-
-    Returns:
-        None if there's no stored mesh, or a SimpleNamespace with attributes:
-
-        - store: None if the mesh is stored in DVID, otherwise the object store (see meshstore.py)
-        - index_name, data_name: The names of the mesh manifest and data files,
-          either DVID keys (in the '<segmentation>_multires_meshes' instance, in the given UUID)
-          or object names (in the object store).
-        - mesh_info: The body's mesh_info
-
-    The rule for finding a body mesh in an object store is as follows:
-    Let W be the mesh_info's 'written-uuid'.  If the object '<body>' was written in W
-    (according to its custom metadata) from the same lastmod as the mesh_info indicates,
-    then the mesh files are '<body>' and '<body>.index'.  Otherwise, they are
-    '<body>-<W>' and '<body>-<W>.index'.
-    """
-    if mesh_info is None:
-        names = mesh_instance_names(seg_instance, multires=True)
-        try:
-            mesh_info = fetch_key(server, uuid, names.info, body, as_json=True)
-        except HTTPError as ex:
-            if ex.response is not None and ex.response.status_code == 404:
-                return None
-            raise
-
-    if mesh_info.get('method') == 'deleted' or 'lastmod' not in mesh_info:
-        return None
-
-    storage = mesh_info.get('storage', 'dvid')
-    if storage == 'dvid':
-        return SimpleNamespace(store=None, index_name=f'{body}.index', data_name=f'{body}', mesh_info=mesh_info)
-
-    store = open_store(storage)
-    written_uuid = mesh_info['written-uuid']
-    live = store.stat(f'{body}')
-    if live and live.metadata.get('uuid') == written_uuid and live.metadata.get('lastmod') == str(mesh_info['lastmod']):
-        name = f'{body}'
-    else:
-        name = f'{body}-{written_uuid}'
-    return SimpleNamespace(store=store, index_name=f'{name}.index', data_name=name, mesh_info=mesh_info)
-
-
-def _store_multires_body_mesh_in_object_store(server, uuid, seg_instance, body, store, live_ref,
-                                              data_bytes, index_bytes, info_json, lastmod):
-    """
-    Store a multires body mesh (generated in the given UUID) in an object store.
-    (See BodyMeshParametersSchema['properties']['storage'] for the naming scheme.)
-
-    If the UUID is the head of the live_ref branch, the mesh is stored as '<body>'
-    (and '<body>.index'), after preserving the existing mesh (if it was generated
-    in a different UUID) as '<body>-<old-uuid>'.  Otherwise, it is stored as '<body>-<uuid>'.
-
-    Returns True if the mesh was stored, or False if it wasn't, because another
-    process has already stored a mesh for a newer state of the body in this UUID.
-    """
-    _ensure_store_info(store, info_json)
-
-    if not _is_branch_head(server, uuid, live_ref):
-        name = f'{body}-{uuid}'
-        store.put(name, data_bytes, cache_control=BODY_MESH_CACHE_CONTROL)
-        store.put(f'{name}.index', index_bytes, cache_control=BODY_MESH_CACHE_CONTROL)
-        return True
-
-    # The live mesh might be modified by other processes at the same time,
-    # so we only overwrite it if it hasn't changed since we inspected it.
-    metadata = {'uuid': uuid, 'lastmod': str(lastmod)}
-    for _ in range(5):
-        data_stat = store.stat(f'{body}')
-        index_stat = store.stat(f'{body}.index')
-        if data_stat and data_stat.metadata.get('uuid') == uuid and int(data_stat.metadata.get('lastmod', -1)) > lastmod:
-            logger.info("A mesh for a newer state of this body has already been stored.")
-            return False
-        if data_stat and data_stat.metadata.get('uuid') != uuid:
-            _preserve_superseded_body_mesh(server, seg_instance, body, store, data_stat, index_stat)
-        try:
-            store.put(f'{body}', data_bytes, metadata=metadata, cache_control=BODY_MESH_CACHE_CONTROL,
-                      if_generation_match=data_stat.generation if data_stat else 0)
-            store.put(f'{body}.index', index_bytes, metadata=metadata, cache_control=BODY_MESH_CACHE_CONTROL,
-                      if_generation_match=index_stat.generation if index_stat else 0)
-            return True
-        except PreconditionFailed:
-            logger.info("Another process modified the stored body mesh at the same time; trying again.")
-    raise RuntimeError(f"Body {body}: Could not store the body mesh in {store.url}, "
-                       "due to repeated concurrent modifications by other processes.")
-
-
-# The (store URL, info) combinations which this process has already written or verified.
-_verified_store_infos = set()
-
-
-def _ensure_store_info(store, info_json):
-    """
-    Ensure that the object store's (dataset-wide) 'info' file matches the given info.
-
-    We avoid writing it unless necessary: Cloud Storage permits only about one write
-    per second to any single object, and many processes (e.g. cluster workers) may be
-    storing body meshes at the same time.  So we only write it if it's missing or
-    different, and each process checks it only once.
-    """
-    info_bytes = json.dumps(info_json).encode()
-    if (store.url, info_bytes) in _verified_store_infos:
-        return
-
-    if store.get('info') != info_bytes:
-        stat = store.stat('info')
-        try:
-            # Only one of the processes that try to create (or replace) it at the same time will succeed.
-            store.put('info', info_bytes, cache_control=BODY_MESH_CACHE_CONTROL,
-                      content_type='application/json',
-                      if_generation_match=stat.generation if stat else 0)
-        except PreconditionFailed:
-            # Another process wrote it in the meantime.
-            if store.get('info') != info_bytes:
-                raise RuntimeError(f"The 'info' file in {store.url} doesn't match the current config, "
-                                   "and another process is writing it concurrently.  "
-                                   "Are processes with different configs using the same storage?")
-
-    _verified_store_infos.add((store.url, info_bytes))
-
-
-def _preserve_superseded_body_mesh(server, seg_instance, body, store, data_stat, index_stat):
-    """
-    The live body mesh ('<body>') is about to be replaced with a mesh from a different UUID.
-    Copy it to '<body>-<old-uuid>', so that its UUID (and that UUID's descendants)
-    can still find it.  But only do so if the old UUID's mesh_info refers to it.
-    (Otherwise, nothing refers to it anymore.)
-    """
-    old_uuid = data_stat.metadata.get('uuid')
-    old_lastmod = data_stat.metadata.get('lastmod')
-    if not old_uuid or index_stat is None or index_stat.metadata != data_stat.metadata:
-        logger.warning(f"The stored mesh files for body {body} are inconsistent; not preserving them.")
-        return
-
-    names = mesh_instance_names(seg_instance, multires=True)
-    try:
-        old_mesh_info = fetch_key(server, old_uuid, names.info, body, as_json=True)
-    except HTTPError as ex:
-        if ex.response is not None and ex.response.status_code == 404:
-            return
-        raise
-    if old_mesh_info.get('written-uuid') != old_uuid or str(old_mesh_info.get('lastmod')) != old_lastmod:
-        return
-
-    with Timer(f"Preserving the mesh from {old_uuid[:6]} as {body}-{old_uuid}", logger):
-        store.copy(f'{body}', f'{body}-{old_uuid}', source_generation=data_stat.generation)
-        store.copy(f'{body}.index', f'{body}-{old_uuid}.index', source_generation=index_stat.generation)
-
-
-def _is_branch_head(server, uuid, branch):
-    """Return True if the given (full) UUID is the head of the given branch (in the same repo)."""
-    head = resolve_ref(server, f'{uuid}:{branch}', expand=True)
-    return uuid.startswith(head) or head.startswith(uuid)
-
-
-def _chunk_table(server, uuid, seg_instance, body, chunk_config, resource_mgr, enforce_block_hash_match=True, multires=False):
+def _chunk_table(server, uuid, seg_instance, body, chunk_config, resource_mgr, enforce_block_hash_match=True):
     """
     Return a table with a row for each chunk in the given body.
     For chunks with a stored mesh in DVID, their properties are included as columns.
@@ -1097,10 +785,48 @@ def _chunk_table(server, uuid, seg_instance, body, chunk_config, resource_mgr, e
         3   17408  37888  23552     1006321331  0xaa12cc78    1k_04993d  90972  17408,37888,23552  1006321331  sc2_q1  1k_04993d-90972-17408,37888,23552-1006321331-0xaa12cc78-sc2_q1
         4   17408  37888  24576     1006321331  0x39915e1a    1k_04993d  90972  17408,37888,24576  1006321331  sc2_q1  1k_04993d-90972-17408,37888,24576-1006321331-0x39915e1a-sc2_q1
     """
+    chunk_df = body_chunk_surface_table(
+        server, uuid, seg_instance, body, chunk_config['chunk-shape-s0'], chunk_config['base-uuid'], resource_mgr)
+
+    # Fetch all chunk mesh keys this body has
+    with Timer(f"Listing stored chunk mesh keys", logger):
+        key_df = fetch_stored_chunk_keys(server, uuid, seg_instance, chunk_config['config-name'], body,
+                                         storage=chunk_config.get('storage', 'dvid'))
+    logger.info(f"Found {len(key_df)} stored chunk mesh keys (including outdated ones)")
+
+    # Drop all but the most recent key for each chunk
+    key_df = key_df.sort_values('mesh_mutid').drop_duplicates([*'xyz'], keep='last')
+
+    # Append mesh_mutid and block_hash columns
+    chunk_df = chunk_df.merge(key_df, 'left', on=[*'xyz'])
+    chunk_df['mesh_mutid'] = chunk_df['mesh_mutid'].fillna(0).astype(int)
+
+    if enforce_block_hash_match:
+        # If the block_hash doesn't match, we treat it as out-of-date
+        chunk_df.loc[chunk_df.eval('block_hash != mesh_block_hash'), 'mesh_mutid'] = 0
+    return chunk_df
+
+
+def body_chunk_surface_table(server, uuid, seg_instance, body, chunk_shape_s0_xyz, base_uuid, resource_mgr=None):
+    """
+    Return a table with a row for each chunk (of the given shape) which contains part of the given body,
+    with columns:
+
+        z, y, x:        The chunk's corner (full-resolution voxels)
+        surface_mutid:  The most recent mutation that changed the body's surface in any of the
+                        chunk's blocks, according to the label index.
+        block_hash:     A hash of the set of (64^3) blocks the body occupies within the chunk,
+                        which changes when blocks are added to (or removed from) the chunk,
+                        e.g. via merges, which don't update the surface_mutid.
+
+    For blocks whose surface_mutid is unset (0), the body's lastmod in the given base_uuid is used instead
+    (or 1 if the body didn't exist there).  It is assumed that the surface_mutid feature was enabled in DVID
+    immediately after base_uuid was committed.  If base_uuid is empty (or None), such chunks are left with
+    surface_mutid 0.
+    """
     resource_mgr = resource_mgr or DummyResourceMgr()
-    base_uuid = resolve_ref(server, chunk_config['base-uuid'], True)
     # Note: chunk-shape-s0 is given in XYZ order.
-    chunk_shape_s0_zyx = np.array(chunk_config['chunk-shape-s0'])[::-1]
+    chunk_shape_s0_zyx = np.array(chunk_shape_s0_xyz)[::-1]
     assert not (chunk_shape_s0_zyx % 64).any(), "Chunk shape must be a multiple of 64"
 
     with (
@@ -1132,7 +858,8 @@ def _chunk_table(server, uuid, seg_instance, body, chunk_config, resource_mgr, e
         .rename(columns={'cx': 'x', 'cy': 'y', 'cz': 'z'})
     )
 
-    if (chunk_df['surface_mutid'] == 0).any():
+    if base_uuid and (chunk_df['surface_mutid'] == 0).any():
+        base_uuid = resolve_ref(server, base_uuid, True)
         # Any missing surface_mutids will be replaced with the lastmod in the BASE uuid.
         # It is assumed that any chunks that ARE present in the chunk store are at least
         # up-to-date with the base uuid.
@@ -1154,27 +881,10 @@ def _chunk_table(server, uuid, seg_instance, body, chunk_config, resource_mgr, e
                         "its blocks without a surface_mutid will be treated as unchanged since then.")
             base_mutid = 1
         chunk_df.loc[chunk_df['surface_mutid'] == 0, 'surface_mutid'] = base_mutid
-
-    # Fetch all chunk mesh keys this body has
-    with Timer(f"Listing stored chunk mesh keys", logger):
-        key_df = fetch_stored_chunk_keys(server, uuid, seg_instance, chunk_config['config-name'], body,
-                                         multires=multires, storage=chunk_config.get('storage', 'dvid'))
-    logger.info(f"Found {len(key_df)} stored chunk mesh keys (including outdated ones)")
-
-    # Drop all but the most recent key for each chunk
-    key_df = key_df.sort_values('mesh_mutid').drop_duplicates([*'xyz'], keep='last')
-
-    # Append mesh_mutid and block_hash columns
-    chunk_df = chunk_df.merge(key_df, 'left', on=[*'xyz'])
-    chunk_df['mesh_mutid'] = chunk_df['mesh_mutid'].fillna(0).astype(int)
-
-    if enforce_block_hash_match:
-        # If the block_hash doesn't match, we treat it as out-of-date
-        chunk_df.loc[chunk_df.eval('block_hash != mesh_block_hash'), 'mesh_mutid'] = 0
     return chunk_df
 
 
-def fetch_stored_chunk_keys(server, uuid, seg_instance, config_name=None, body=None, multires=False, storage='dvid'):
+def fetch_stored_chunk_keys(server, uuid, seg_instance, config_name=None, body=None, storage='dvid'):
     """
     Fetch the list of all mesh chunk keys in the database for the given segmentation,
     optionally limited to particular chunk configuration prefix, or further limited
@@ -1190,11 +900,11 @@ def fetch_stored_chunk_keys(server, uuid, seg_instance, config_name=None, body=N
         DataFrame
     """
     seg = seg_instance
-    for suffix in ('_multires_chunk_meshes', '_chunk_meshes'):
+    for suffix in ('_chunk_meshes',):
         if seg.endswith(suffix):
             seg = seg[:-len(suffix)]
             break
-    chunk_instance = mesh_instance_names(seg, multires).chunk
+    chunk_instance = mesh_instance_names(seg).chunk
 
     assert config_name or not body, \
         "Can't fetch keys for a specific body unless you also provide the config_name."
@@ -1333,311 +1043,6 @@ def _generate_body_mesh_from_chunks(
     return mesh_bytes, mesh_info
 
 
-def _assemble_multires_object(frag_bytes_by_cell, chunk_shape_s0_xyz, voxel_size_xyz,
-                              chunk_decimation_s0, body_mesh_config):
-    """
-    Assemble a multi-resolution body mesh object from per-cell Draco fragments.
-
-    Pure function (no DVID I/O), so it can be unit-tested directly.
-
-    The fragments are already cell-quantized, cell-trimmed multires fragments
-    (as produced by mesh_for_chunk in multires mode), expressed in
-    full-resolution voxel "stored model" coordinates with a grid whose cell
-    size is ``chunk_shape_s0_xyz``.
-
-    LOD 0 is assembled from the (chunk) fragments.  If no body-level smoothing
-    or decimation is needed, the cached LOD-0 fragment bytes are reused verbatim
-    (fast path).  Coarser LODs (num-lods > 1) are derived by decimating the
-    assembled mesh progressively and re-partitioning onto the LOD's 2x2x2 grid.
-    Decimation/smoothing preserve cell boundaries so neighbors stay aligned and
-    the mesh can be re-split.
-
-    Args:
-        frag_bytes_by_cell:
-            ``{(x, y, z): draco_bytes}`` keyed by integer grid-cell index.
-        chunk_shape_s0_xyz:
-            (3,) LOD-0 cell extents in full-res voxels, XYZ order.
-        voxel_size_xyz:
-            (3,) voxel size in nm, XYZ order; written into the info transform.
-        chunk_decimation_s0:
-            The per-chunk ``decimation-s0`` that was already applied, used by
-            select_body_decimation() to decide the remaining body decimation.
-        body_mesh_config:
-            The validated body mesh config (provides smoothing,
-            small/large-body decimation thresholds, vertex-quantization-bits,
-            num-lods, lod-decimation-factor).
-
-    Returns:
-        ``(data_bytes, index_bytes, info_json, stats)``.
-    """
-    bits = body_mesh_config['vertex-quantization-bits']
-    num_lods = body_mesh_config['num-lods']
-    lod_factor = body_mesh_config['lod-decimation-factor']
-    chunk_shape_s0_xyz = np.asarray(chunk_shape_s0_xyz, dtype=float)
-    grid_origin = [0, 0, 0]
-
-    # Note: For large bodies, memory usage is a concern, so below we take care to
-    # avoid keeping multiple copies of the body's geometry in memory at once.
-
-    # Decode every fragment (needed to count vertices and, if requested, to
-    # decimate as a single mesh).  We store the vertices as float32 ZYX (as Mesh does).
-    decoded = {}
-    with Timer(f"Decoding {len(frag_bytes_by_cell)} chunk fragments", logger):
-        for cell, b in frag_bytes_by_cell.items():
-            if not b:
-                continue
-            v_xyz, faces = v2m_multires.decode_fragment(
-                b, cell, chunk_shape_s0_xyz, grid_origin, vertex_quantization_bits=bits)
-            decoded[cell] = (v_xyz[:, ::-1].astype(np.float32), faces)
-            del v_xyz
-
-    def encode_lod(fragments, lod):
-        """Encode a LOD's fragment meshes right away, so the meshes can be discarded."""
-        encoded = {}
-        for position, fragment_mesh in fragments.items():
-            b = v2m_multires.encode_fragment(
-                fragment_mesh, position, chunk_shape_s0_xyz, grid_origin,
-                lod=lod, vertex_quantization_bits=bits, trim=False)
-            if b is not None:
-                encoded[position] = b
-        return encoded
-
-    orig_vertices = sum(len(v) for v, _ in decoded.values())
-    orig_faces = sum(len(f) for _, f in decoded.values())
-    target_decimation_s0, decimation = select_body_decimation(
-        chunk_decimation_s0, orig_vertices, body_mesh_config)
-    smoothing = body_mesh_config['smoothing']
-    body_ops = bool(smoothing) or (decimation < 1.0)
-    logger.info(f"Chunk fragments have {orig_vertices} vertices and {orig_faces} faces in total; "
-                f"body smoothing: {smoothing}, body decimation: {decimation:.4g}, LODs: {num_lods}")
-
-    fragments_by_lod = {}
-    if not decoded:
-        # No geometry at all (every chunk was empty).  There's nothing to
-        # smooth or decimate (and concatenating zero meshes would fail).
-        applied_decimation = 1.0
-        final_vertices = 0
-    elif num_lods == 1 and not body_ops:
-        # Fast path: the cached LOD-0 fragments are already final -- reuse verbatim.
-        fragments_by_lod[0] = {cell: b for cell, b in frag_bytes_by_cell.items() if b}
-        applied_decimation = 1.0
-        final_vertices = orig_vertices
-    else:
-        with Timer(f"Concatenating {len(decoded)} chunk fragments", logger):
-            meshes = [Mesh(v_zyx, faces) for (v_zyx, faces) in decoded.values()]
-            body_mesh = Mesh.concatenate_meshes(meshes, keep_normals=False)
-            del meshes
-            decoded.clear()
-        if smoothing:
-            with Timer(f"Smoothing body mesh with {smoothing} iterations", logger):
-                body_mesh.laplacian_smooth(smoothing, preserve_border=True)
-        if decimation < 1.0:
-            with Timer(f"Decimating body mesh with {decimation:.4g}", logger):
-                body_mesh.simplify(decimation, preserve_border=True)
-            logger.info(f"Decimated body mesh from {orig_vertices} to {len(body_mesh.vertices_zyx)} vertices")
-        applied_decimation = decimation
-        final_vertices = len(body_mesh.vertices_zyx)
-
-        # LOD 0: reuse cached bytes if we didn't modify the geometry, else split
-        # the assembled mesh.
-        if not body_ops:
-            fragments_by_lod[0] = {cell: b for cell, b in frag_bytes_by_cell.items() if b}
-        else:
-            with Timer("Splitting LOD 0 into fragments and encoding them", logger):
-                fragments = v2m_multires.split_mesh_for_lod(body_mesh, chunk_shape_s0_xyz, 0)
-                fragments_by_lod[0] = encode_lod(fragments, 0)
-                del fragments
-
-        # Coarser LODs: decimate further and re-partition.
-        # Each LOD is decimated from the previous one (in-place), rather than from LOD 0,
-        # so we don't need to keep a separate copy of the LOD 0 mesh.
-        for lod in range(1, num_lods):
-            with Timer(f"Generating LOD {lod} (decimation {lod_factor**lod:.4g} relative to LOD 0)", logger):
-                body_mesh.simplify(lod_factor, preserve_border=True)
-                fragments = v2m_multires.split_mesh_for_lod(body_mesh, chunk_shape_s0_xyz, lod)
-                fragments_by_lod[lod] = encode_lod(fragments, lod)
-                del fragments
-            logger.info(f"LOD {lod} has {len(body_mesh.vertices_zyx)} vertices "
-                        f"in {len(fragments_by_lod[lod])} fragments")
-        del body_mesh
-
-    with Timer(f"Writing {num_lods} LOD(s)", logger):
-        data_bytes, index_bytes, num_fragments_per_lod = v2m_multires.encode_multilod_object(
-            fragments_by_lod, chunk_shape_s0_xyz, grid_origin, vertex_quantization_bits=bits)
-    logger.info(f"Encoded {int(sum(num_fragments_per_lod))} fragments "
-                f"({len(data_bytes) / 1e6:.1f} MB data, {len(index_bytes) / 1e3:.1f} kB index)")
-
-    transform = [voxel_size_xyz[0], 0, 0, 0,
-                 0, voxel_size_xyz[1], 0, 0,
-                 0, 0, voxel_size_xyz[2], 0]
-    info_json = v2m_multires.build_info(vertex_quantization_bits=bits, transform=transform)
-
-    stats = {
-        'orig_vertices': orig_vertices,
-        'target_decimation_s0': target_decimation_s0,
-        'applied_decimation': applied_decimation,
-        'final_vertices': final_vertices,
-        'num_lods': num_lods,
-        'num_fragments_per_lod': num_fragments_per_lod,
-        'num_fragments': int(sum(num_fragments_per_lod)),
-    }
-    return data_bytes, index_bytes, info_json, stats
-
-
-def _assemble_multires_object_in_subprocess(*args):
-    """
-    Call _assemble_multires_object(*args) in a separate, short-lived process.
-
-    Decimating a large mesh (via pyfqmr) requires a lot of memory, and pyfqmr doesn't
-    release all of it afterwards.  In a long-running process (e.g. a mesh service),
-    that memory would be held indefinitely.  Running the assembly in its own process
-    guarantees that it's all released when the process exits.
-
-    The arguments (compressed chunk fragments) and results (the encoded mesh) are
-    relatively small, so passing them between processes is cheap.
-
-    The subprocess is started via the 'forkserver' method (where available),
-    rather than 'fork', since forking a multithreaded process (e.g. a web server)
-    can deadlock.  The forkserver preloads this module, so each subprocess starts quickly.
-    """
-    from concurrent.futures import ProcessPoolExecutor
-    from neuclease import _logging_prefix
-
-    ctx = _assembly_mp_context()
-    prefixes = list(_logging_prefix.get([]))
-    with ProcessPoolExecutor(1, mp_context=ctx) as executor:
-        future = executor.submit(_assemble_multires_object_with_logging, prefixes, logger.getEffectiveLevel(), *args)
-        return future.result()
-
-
-@cache
-def _assembly_mp_context():
-    import multiprocessing
-    if 'forkserver' not in multiprocessing.get_all_start_methods():
-        return multiprocessing.get_context('spawn')
-    ctx = multiprocessing.get_context('forkserver')
-    ctx.set_forkserver_preload(['neuclease.misc.bodymesh'])
-    return ctx
-
-
-def _assemble_multires_object_with_logging(prefixes, log_level, *args):
-    """
-    Runs in the subprocess: configure logging (to match the parent's
-    log prefix and level), and call _assemble_multires_object().
-    """
-    from contextlib import ExitStack
-    from neuclease import configure_default_logging
-
-    if not logging.getLogger().handlers:
-        configure_default_logging()
-    logger.setLevel(log_level)
-    with ExitStack() as stack:
-        for prefix in prefixes:
-            stack.enter_context(PrefixFilter.context(prefix))
-        return _assemble_multires_object(*args)
-
-
-def _generate_multires_body_mesh_from_chunks(
-    server, uuid, seg_instance, body, chunk_df, body_mesh_config,
-    chunk_config, quality, processes, resource_mgr, expect_concurrent_updates=False,
-    chunk_fn=None, chunk_fn_threads=8, assemble_in_subprocess=False
-):
-    """
-    Returns (data_bytes, index_bytes, info_json, mesh_info), or None if
-    expect_concurrent_updates is True and another process has already
-    stored an up-to-date body mesh.
-    """
-    seg = seg_instance
-    names = mesh_instance_names(seg, multires=True)
-    bits = body_mesh_config['vertex-quantization-bits']
-
-    with resource_mgr.access_context(server, True, 1, 0):
-        lastmod = fetch_lastmod(server, uuid, seg, body)['mutation id']
-
-    quality_config = {qc['name']: qc for qc in chunk_config['quality-configs']}[quality]
-
-    # Select chunks which are out-of-date or not of the desired quality.
-    missing = chunk_df.eval('mesh_mutid < surface_mutid or quality != @quality')
-    missing_chunk_df = chunk_df.loc[missing]
-    stored_chunk_df = chunk_df.loc[~missing]
-    logger.info(f"{len(chunk_df)} chunks: {len(missing_chunk_df)} must be generated, "
-                f"{len(stored_chunk_df)} are already stored and up-to-date")
-
-    new_fragment_bytes = meshes_for_chunks(
-        server, uuid, seg, body, chunk_config, quality, True,
-        missing_chunk_df[[*'zyx', 'surface_mutid', 'block_hash']],
-        processes, resource_mgr, multires=True, vertex_quantization_bits=bits,
-        check_stored=expect_concurrent_updates, chunk_fn=chunk_fn, chunk_fn_threads=chunk_fn_threads)
-
-    if expect_concurrent_updates and _body_mesh_is_current(
-            server, uuid, names.info, body, lastmod, body_mesh_config, resource_mgr):
-        logger.info(f"Another process already stored an up-to-date body mesh")
-        return None
-
-    with (
-        Timer(f"Fetching {len(stored_chunk_df)} stored chunks", logger),
-        resource_mgr.access_context(server, True, 1, 0)
-    ):
-        stored_bytes = _fetch_chunks(server, uuid, names.chunk, chunk_config, stored_chunk_df['key'].values)
-
-    chunk_shape_s0_xyz = np.asarray(chunk_config['chunk-shape-s0'], dtype=float)
-
-    # Both new and stored fragments are keyed by grid-cell index. (New and
-    # stored use the same cell formula, so they remain mutually consistent.)
-    frag_bytes_by_cell = {}
-    for (z, y, x), b in zip(missing_chunk_df[[*'zyx']].values, new_fragment_bytes):
-        if b:
-            frag_bytes_by_cell[_chunk_cell_xyz(x, y, z, chunk_shape_s0_xyz)] = b
-    for (z, y, x), key in zip(stored_chunk_df[[*'zyx']].values, stored_chunk_df['key'].values):
-        b = stored_bytes.get(key)
-        if b:
-            frag_bytes_by_cell[_chunk_cell_xyz(x, y, z, chunk_shape_s0_xyz)] = b
-
-    # stored-model space is full-res voxels, so the transform carries voxel->nm.
-    voxel_size_xyz = np.asarray(fetch_resolution_zyx(server, uuid, seg))[::-1]
-
-    assemble = _assemble_multires_object_in_subprocess if assemble_in_subprocess else _assemble_multires_object
-    where = " (in a subprocess)" if assemble_in_subprocess else ""
-    with Timer(f"Assembling multires mesh from {len(frag_bytes_by_cell)} non-empty chunks{where}", logger):
-        data_bytes, index_bytes, info_json, stats = assemble(
-            frag_bytes_by_cell, chunk_shape_s0_xyz, voxel_size_xyz,
-            quality_config['decimation-s0'], body_mesh_config)
-
-    config_name = chunk_config['config-name']
-    mesh_info = {
-        "mesh-info-version": MULTIRES_MESH_INFO_VERSION,
-        "body": int(body),
-        "uuid": uuid,
-        "written-uuid": uuid,
-        "lastmod": lastmod,
-        "method": f"concatenated-chunks-{config_name}-{quality}",
-        "format": "neuroglancer_multilod_draco",
-        "storage": body_mesh_config['storage'],
-        "assembly-settings": _assembly_settings(body_mesh_config),
-        "mesh-timestamp": str(datetime.datetime.now(ZoneInfo("US/Eastern"))),
-        "data-bytes": len(data_bytes),
-        "index-bytes": len(index_bytes),
-        "chunk-quality": quality,
-        "chunk-count": len(chunk_df),
-        "num-lods": stats['num_lods'],
-        "fragment-count": stats['num_fragments'],
-        "fragment-count-per-lod": stats['num_fragments_per_lod'],
-        "chunk-vertex-total": stats['orig_vertices'],
-        "target-body-decimation-s0": stats['target_decimation_s0'],
-        "applied-body-decimation": stats['applied_decimation'],
-        "final-body-vertex-count": stats['final_vertices'],
-        "vertex-quantization-bits": bits,
-    }
-    return data_bytes, index_bytes, info_json, mesh_info
-
-
-def _chunk_cell_xyz(x, y, z, chunk_shape_s0_xyz):
-    """Grid-cell index (XYZ) of the chunk whose full-resolution corner is (x, y, z)."""
-    return (int(x // chunk_shape_s0_xyz[0]),
-            int(y // chunk_shape_s0_xyz[1]),
-            int(z // chunk_shape_s0_xyz[2]))
-
-
 def meshes_for_chunks(
     server,
     uuid,
@@ -1649,8 +1054,6 @@ def meshes_for_chunks(
     missing_chunk_df,
     processes,
     resource_mgr,
-    multires=False,
-    vertex_quantization_bits=16,
     check_stored=False,
     chunk_fn=None,
     chunk_fn_threads=8,
@@ -1667,7 +1070,7 @@ def meshes_for_chunks(
     If chunk_fn is given, it is used instead of mesh_for_chunk() (see update_body_mesh()).
     """
     fn = partial(mesh_for_chunk, server, uuid, seg_instance, body, chunk_config,
-                 quality, store, resource_mgr, multires, vertex_quantization_bits, check_stored)
+                 quality, store, resource_mgr, check_stored)
     chunk_specs = missing_chunk_df[[*'zyx', 'surface_mutid', 'block_hash']].values.tolist()
 
     order = np.arange(len(chunk_specs))
@@ -1713,23 +1116,19 @@ def mesh_for_chunk(
     quality,
     store,
     resource_mgr,
-    multires,
-    vertex_quantization_bits,
     check_stored,
     chunk_spec
 ):
     """
     chunk_spec is a tuple of (*chunk_zyx, surface_mutid, block_hash)
 
-    Returns the chunk mesh: a vol2mesh Mesh for single-resolution, or (for
-    multires) the cell-quantized Draco fragment bytes that are also stored
-    (an empty bytestring if the chunk produced no geometry).
+    Returns the chunk mesh (a vol2mesh Mesh).
 
     If store and check_stored are both True, then first check whether this chunk
     has been stored already (e.g. by another process), and if so, return it as-is.
     """
     seg = seg_instance
-    names = mesh_instance_names(seg, multires)
+    names = mesh_instance_names(seg)
     *chunk_zyx, surface_mutid, block_hash = chunk_spec
     chunk_zyx = np.asarray(chunk_zyx)
 
@@ -1749,8 +1148,6 @@ def mesh_for_chunk(
             stored_value = _fetch_chunk(server, uuid, names.chunk, chunk_config, key)
         if stored_value is not None:
             logger.debug(f"Chunk {chunk_id} was already stored (by another process)")
-            if multires:
-                return stored_value
             if not stored_value:
                 return Mesh(np.zeros((0, 3), np.float32), np.zeros((0, 3), np.uint32))
             return Mesh.from_buffer(stored_value, 'ngmesh')
@@ -1788,8 +1185,6 @@ def mesh_for_chunk(
         if ex.response is None or ex.response.status_code != 404:
             raise
         logger.info(f"Body {body}: no voxels at scale {scale} in chunk {chunk_id}")
-        if multires:
-            return b''
         return Mesh(np.zeros((0, 3), np.float32), np.zeros((0, 3), np.uint32))
 
     fetch_seconds = time.perf_counter() - start
@@ -1819,22 +1214,7 @@ def mesh_for_chunk(
 
     mesh.laplacian_smooth(smoothing)
     mesh.simplify(decimation)
-
-    if multires:
-        # Encode the chunk as its final, cell-quantized multires fragment:
-        # trim to the grid cell and Draco-encode integer cell-relative
-        # positions.  The cached value IS a final body-mesh fragment, so
-        # assembly can reuse it verbatim when no further body decimation is
-        # needed.  The stored-model space is full-resolution voxels (the
-        # mesh's own coordinates here), so the cell grid is chunk-shape-s0.
-        chunk_shape_s0_xyz = np.asarray(chunk_config['chunk-shape-s0'], dtype=float)
-        fragment_position_xyz = tuple(int(c) for c in (chunk_zyx[::-1] // chunk_shape_s0_xyz))
-        draco_bytes = v2m_multires.encode_fragment(
-            mesh, fragment_position_xyz, chunk_shape_s0_xyz, [0, 0, 0],
-            vertex_quantization_bits=vertex_quantization_bits, trim=True)
-        chunk_value = draco_bytes if draco_bytes is not None else b''
-    else:
-        chunk_value = mesh.serialize(fmt='ngmesh')
+    chunk_value = mesh.serialize(fmt='ngmesh')
 
     mesh_seconds = time.perf_counter() - start
 
@@ -1844,7 +1224,7 @@ def mesh_for_chunk(
 
     logger.debug(f"Chunk {chunk_id}: fetched mask {mask.shape[::-1]} in {fetch_seconds:.1f}s, "
                  f"meshed in {mesh_seconds:.1f}s ({len(chunk_value)} bytes)")
-    return chunk_value if multires else mesh
+    return mesh
 
 
 def _fetch_chunk(server, uuid, chunk_instance, chunk_config, key):
@@ -1893,35 +1273,10 @@ def _mesh_info_is_current(mesh_info, lastmod, body_mesh_config):
     """
     Return True if a stored body mesh (according to its mesh_info) was generated
     with the configured source-method from the body's lastmod (or later).
-    For multires meshes, the mesh must also have been generated with the current
-    body mesh settings (e.g. num-lods), and stored in the configured storage.
     """
     if mesh_info.get('method') != body_mesh_config['source-method']:
         return False
-    if mesh_info.get('lastmod', -1) < lastmod:
-        return False
-    if body_mesh_config['format'] != 'neuroglancer-multi-res':
-        return True
-    return (mesh_info.get('storage', 'dvid') == body_mesh_config['storage']
-            and mesh_info.get('assembly-settings') == _assembly_settings(body_mesh_config))
-
-
-# The body mesh settings which affect the (multires) body mesh assembled from the chunks.
-ASSEMBLY_SETTINGS = [
-    'smoothing',
-    'small-body-overall-decimation-s0',
-    'small-body-cutoff-vertices-s0',
-    'large-body-overall-decimation-s0',
-    'large-body-cutoff-vertices-s0',
-    'vertex-quantization-bits',
-    'num-lods',
-    'lod-decimation-factor',
-]
-
-
-def _assembly_settings(body_mesh_config):
-    # (Round-tripped through JSON, to match the mesh_info.)
-    return json.loads(json.dumps({k: body_mesh_config[k] for k in ASSEMBLY_SETTINGS}))
+    return mesh_info.get('lastmod', -1) >= lastmod
 
 
 def make_chunk_ids(df):
