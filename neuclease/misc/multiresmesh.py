@@ -26,6 +26,11 @@ Coarser LODs are made by decimating the chunk mesh further, not by meshing
 downsampled segmentation (which would break up thin neurites).  The cut borders of
 each piece are never decimated, at any LOD.
 
+When a body changes, only its changed chunks are regenerated.  The other chunks'
+pieces are recovered from the body's previous mesh, which therefore serves as the
+chunk cache.  (No chunk meshes are stored separately.)  See stale_chunks() for how
+changed chunks are detected.
+
 Storage
 -------
 See MultiresMeshConfigSchema['storage'].  For each body, three files are stored:
@@ -41,6 +46,7 @@ init_multires_mesh_instances() to create those instances.
 """
 import json
 import time
+import zlib
 import logging
 import datetime
 from functools import partial
@@ -403,9 +409,15 @@ def generate_pieces_for_chunks(server, uuid, seg_instance, body, config, chunk_z
 # Assembly
 #
 
-def assemble_body_mesh(new_pieces, chunk_shape_s0_xyz, voxel_size_xyz, config):
+def assemble_body_mesh(new_pieces, chunk_shape_s0_xyz, voxel_size_xyz, config, reused_cells=(), previous=None):
     """
     Assemble a multi-resolution body mesh from its chunks' pieces.  (No decimation is needed.)
+
+    The pieces of unchanged chunks can be recovered from the body's previous mesh,
+    rather than regenerated: LOD-0 pieces are simply copied (they are the previous mesh's
+    LOD-0 fragments), and coarser pieces are extracted from the previous mesh's fragments
+    (see vol2mesh.multires.partition_fragment_by_cells()).  If none of the chunks within a
+    coarse fragment have changed, the previous fragment is copied as-is.
 
     Pure function (no I/O), so it can be unit-tested directly.
 
@@ -419,6 +431,11 @@ def assemble_body_mesh(new_pieces, chunk_shape_s0_xyz, voxel_size_xyz, config):
             The voxel size (e.g. in nm), for the 'info' transform.
         config:
             The validated config.
+        reused_cells:
+            The cells of the chunks whose pieces should be recovered from the previous mesh.
+            (Disjoint from new_pieces.)
+        previous:
+            The previous mesh (see _load_previous_mesh()), required if reused_cells is non-empty.
 
     Returns:
         (data_bytes, index_bytes, info_json, stats)
@@ -427,35 +444,69 @@ def assemble_body_mesh(new_pieces, chunk_shape_s0_xyz, voxel_size_xyz, config):
     num_lods = len(config['lod-error-thresholds'])
     chunk_shape_s0_xyz = np.asarray(chunk_shape_s0_xyz, dtype=float)
     grid_origin = [0, 0, 0]
+    reused_cells = set(reused_cells)
+    assert not (reused_cells & set(new_pieces)), "Reused chunks can't also be new"
+    assert previous is not None or not reused_cells
+
+    def previous_fragment(lod, position):
+        """The previous mesh's fragment (bytes) at the given position, or None."""
+        offset, size = previous.fragments[lod].get(position, (0, 0))
+        return previous.data[offset:offset + size] if size else None
 
     fragments_by_lod = {lod: {} for lod in range(num_lods)}
+    copied_per_lod = [0] * num_lods
     reencoded_per_lod = [0] * num_lods
 
     # LOD 0: The pieces are the fragments.
     for cell, pieces in new_pieces.items():
         if pieces[0]:
             fragments_by_lod[0][cell] = pieces[0]
+    for cell in reused_cells:
+        if (b := previous_fragment(0, cell)):
+            fragments_by_lod[0][cell] = b
+            copied_per_lod[0] += 1
 
     # Coarser LODs: Each fragment is the concatenation of its chunks' pieces.
     for lod in range(1, num_lods):
-        pieces_by_parent = {}
+        new_by_parent = {}
         for cell, pieces in new_pieces.items():
-            if pieces[lod]:
-                parent = tuple(c >> lod for c in cell)
-                pieces_by_parent.setdefault(parent, []).append(pieces[lod])
+            new_by_parent.setdefault(tuple(c >> lod for c in cell), []).append(pieces[lod])
+        reused_by_parent = {}
+        for cell in reused_cells:
+            reused_by_parent.setdefault(tuple(c >> lod for c in cell), set()).add(cell)
+        previous_by_parent = {}
+        for cell in (previous.cells if previous else ()):
+            previous_by_parent.setdefault(tuple(c >> lod for c in cell), set()).add(cell)
 
-        for parent, piece_bytes in pieces_by_parent.items():
-            if len(piece_bytes) == 1:
-                # Already encoded as this LOD's fragment.
-                fragments_by_lod[lod][parent] = piece_bytes[0]
+        for parent in new_by_parent.keys() | reused_by_parent.keys():
+            new_bytes = [b for b in new_by_parent.get(parent, []) if b]
+            reused = reused_by_parent.get(parent, set())
+
+            if parent not in new_by_parent and reused == previous_by_parent.get(parent):
+                # The fragment's chunks are exactly the same as before.
+                if (b := previous_fragment(lod, parent)):
+                    fragments_by_lod[lod][parent] = b
+                    copied_per_lod[lod] += 1
                 continue
-            decoded = [
+
+            if len(new_bytes) == 1 and not reused:
+                # The only piece is already encoded as this LOD's fragment.
+                fragments_by_lod[lod][parent] = new_bytes[0]
+                continue
+
+            meshes = [
                 v2m_multires.decode_fragment(
                     b, parent, chunk_shape_s0_xyz, grid_origin, lod=lod, vertex_quantization_bits=bits)
-                for b in piece_bytes
+                for b in new_bytes
             ]
-            fragments_by_lod[lod][parent] = _concatenate(decoded)
-            reencoded_per_lod[lod] += 1
+            if reused and (b := previous_fragment(lod, parent)):
+                v, f = v2m_multires.decode_fragment(
+                    b, parent, chunk_shape_s0_xyz, grid_origin, lod=lod, vertex_quantization_bits=bits)
+                previous_pieces = v2m_multires.partition_fragment_by_cells(v, f, chunk_shape_s0_xyz)
+                meshes += [previous_pieces[cell] for cell in reused if cell in previous_pieces]
+            if meshes:
+                fragments_by_lod[lod][parent] = _concatenate(meshes)
+                reencoded_per_lod[lod] += 1
 
     data_bytes, index_bytes, num_fragments_per_lod = v2m_multires.encode_multilod_object(
         fragments_by_lod, chunk_shape_s0_xyz, grid_origin, vertex_quantization_bits=bits)
@@ -465,6 +516,7 @@ def assemble_body_mesh(new_pieces, chunk_shape_s0_xyz, voxel_size_xyz, config):
         'num_lods': num_lods,
         'num_fragments_per_lod': num_fragments_per_lod,
         'num_fragments': int(sum(num_fragments_per_lod)),
+        'copied_fragments_per_lod': copied_per_lod,
         'reencoded_fragments_per_lod': reencoded_per_lod,
     }
     return data_bytes, index_bytes, info_json, stats
@@ -486,6 +538,164 @@ def info_json_for(config, voxel_size_xyz):
                  0, voxel_size_xyz[1], 0, 0,
                  0, 0, voxel_size_xyz[2], 0]
     return v2m_multires.build_info(vertex_quantization_bits=config['vertex-quantization-bits'], transform=transform)
+
+
+#
+# The previous mesh as a chunk cache
+#
+# A stored body mesh contains every piece of every chunk it was made from:
+# the LOD-0 pieces are its LOD-0 fragments, and each coarser fragment is the
+# concatenation of its chunks' pieces (each within its own chunk's cell).
+# So when a body changes, the pieces of its unchanged chunks can be recovered
+# from its previous mesh, and only the changed chunks need to be regenerated.
+#
+# To determine which chunks are unchanged, the mesh's '.chunks' file lists the
+# chunks it was made from, with their block hashes (see body_chunk_surface_table()),
+# and the body's lastmod when the mesh was generated.
+#
+
+CHUNKS_FILE_VERSION = 1
+
+
+def _chunks_file(body, uuid, lastmod, config, chunk_df, data_bytes, index_bytes):
+    """
+    The contents of a body mesh's '.chunks' file (JSON):
+
+        version:        CHUNKS_FILE_VERSION
+        body, uuid:     The body, and the UUID in which the mesh was generated
+        lastmod:        The body's mutation id when the mesh was generated.
+                        (The mesh reflects the body's voxels as of then, or later.)
+        mesh-settings:  See MESH_SETTINGS
+        data-bytes:     The size of the mesh's data file
+        index-crc32:    The CRC32 of the mesh's index file
+        chunks:         [[x, y, z, block_hash], ...]  The chunks the mesh was made from
+                        (their corners, in full-resolution voxels)
+
+    The last two fields are used to verify that the '.chunks' file matches the mesh files.
+    """
+    chunks = [[int(x), int(y), int(z), str(h)] for x, y, z, h in chunk_df[[*'xyz', 'block_hash']].values]
+    contents = {
+        "version": CHUNKS_FILE_VERSION,
+        "body": int(body),
+        "uuid": uuid,
+        "lastmod": int(lastmod),
+        "mesh-settings": mesh_settings(config),
+        "data-bytes": len(data_bytes),
+        "index-crc32": zlib.crc32(index_bytes),
+        "chunks": chunks,
+    }
+    return json.dumps(contents, separators=(',', ':')).encode()
+
+
+def _load_previous_mesh(server, uuid, seg_instance, body, mesh_info, config, resource_mgr=None):
+    """
+    Load the body's stored mesh (if any), to reuse its chunks' pieces.
+
+    Returns None if there's no stored mesh, or if it can't be reused (e.g. it was generated with
+    different settings, or its files are inconsistent).  Otherwise, returns a SimpleNamespace with:
+
+        lastmod:    The body's mutation id when the mesh was generated.
+        chunks:     {chunk_cell_xyz: block_hash} of the chunks it was made from.
+        cells:      The same chunk cells, as a set.
+        data:       The mesh's data file (bytes).
+        fragments:  [{position_xyz: (offset, size)}, ...] The location of each fragment in the data, per LOD.
+    """
+    resource_mgr = resource_mgr or DummyResourceMgr()
+    if (mesh_info is None
+            or mesh_info.get('method') != MESH_METHOD
+            or mesh_info.get('mesh-info-version') != MESH_INFO_VERSION
+            or mesh_info.get('mesh-settings') != mesh_settings(config)):
+        return None
+
+    location = locate_multires_body_mesh(server, uuid, seg_instance, body, mesh_info)
+    if location is None:
+        return None
+
+    with (
+        Timer("Fetching the previous mesh", logger),
+        resource_mgr.access_context(server, True, 1, 0)
+    ):
+        files = _fetch_mesh_files(server, uuid, seg_instance, location)
+
+    chunks_file, data, index = files['.chunks'], files[''], files['.index']
+    if chunks_file is None or data is None or index is None:
+        logger.warning("The previous mesh's files are missing; regenerating all chunks.")
+        return None
+
+    contents = json.loads(chunks_file)
+    if (contents.get('version') != CHUNKS_FILE_VERSION
+            or contents.get('lastmod') != mesh_info['lastmod']
+            or contents.get('mesh-settings') != mesh_settings(config)
+            or contents.get('data-bytes') != len(data)
+            or contents.get('index-crc32') != zlib.crc32(index)):
+        logger.warning("The previous mesh's files are inconsistent; regenerating all chunks.")
+        return None
+
+    chunk_shape_xyz = np.array(config['chunk-shape-s0'])
+    chunks = {
+        tuple(int(c) for c in np.array(xyz) // chunk_shape_xyz): block_hash
+        for *xyz, block_hash in contents['chunks']
+    }
+
+    manifest = v2m_multires.parse_manifest(index)
+    if (manifest['num_lods'] != len(config['lod-error-thresholds'])
+            or (manifest['chunk_shape_xyz'] != chunk_shape_xyz).any()):
+        logger.warning("The previous mesh's manifest doesn't match the config; regenerating all chunks.")
+        return None
+
+    fragments = [
+        {tuple(int(c) for c in p): (int(o), int(s))
+         for p, o, s in zip(lod['positions'], lod['offsets'], lod['sizes'])}
+        for lod in manifest['lods']
+    ]
+    return SimpleNamespace(lastmod=contents['lastmod'], chunks=chunks, cells=set(chunks),
+                           data=data, fragments=fragments)
+
+
+def _fetch_mesh_files(server, uuid, seg_instance, location):
+    """Fetch a stored mesh's files.  Returns {suffix: bytes or None}."""
+    names = {'': location.data_name, '.index': location.index_name, '.chunks': location.chunks_name}
+    if location.store:
+        return {suffix: location.store.get(name) for suffix, name in names.items()}
+
+    mesh_instance = mesh_instance_names(seg_instance, multires=True).body
+    files = {}
+    for suffix, name in names.items():
+        try:
+            files[suffix] = fetch_key(server, uuid, mesh_instance, name)
+        except HTTPError as ex:
+            if ex.response is None or ex.response.status_code != 404:
+                raise
+            files[suffix] = None
+    return files
+
+
+def stale_chunks(chunk_df, chunk_shape_s0_xyz, previous):
+    """
+    Determine which of a body's chunks must be regenerated, given its previous mesh (or None).
+
+    A chunk's pieces can be reused from the previous mesh only if the chunk is listed in it with
+    the same block hash, and its surface_mutid is no greater than the previous mesh's lastmod.
+    (Merges don't update the surface_mutids of the merged blocks, so the block hash is needed to
+    detect them.)  A chunk whose surface_mutid is unknown (0) is always stale.
+
+    Args:
+        chunk_df:
+            As returned by body_chunk_surface_table()
+
+    Returns:
+        A boolean array (aligned with chunk_df's rows), which is True for the stale chunks.
+    """
+    if previous is None:
+        return np.ones(len(chunk_df), dtype=bool)
+
+    cells = chunk_df[[*'xyz']].values // np.asarray(chunk_shape_s0_xyz)
+    previous_hashes = np.array([previous.chunks.get(tuple(int(c) for c in cell)) for cell in cells], dtype=object)
+    return (
+        (previous_hashes != chunk_df['block_hash'].values)
+        | (chunk_df['surface_mutid'].values == 0)
+        | (chunk_df['surface_mutid'].values > previous.lastmod)
+    )
 
 
 #
@@ -556,14 +766,24 @@ def update_multires_body_mesh(
     chunk_shape_s0_xyz = np.array(config['chunk-shape-s0'])
     chunk_df = body_chunk_surface_table(
         server, uuid, seg_instance, body, chunk_shape_s0_xyz, config['base-uuid'], resource_mgr)
-    logger.info(f"Body occupies {len(chunk_df)} chunks")
 
-    chunk_zyxs = chunk_df[[*'zyx']].values
+    # Unchanged chunks can be recovered from the previous mesh.
+    previous = None
+    if not force:
+        previous = _load_previous_mesh(server, uuid, seg_instance, body, mesh_info, config, resource_mgr)
+    stale = stale_chunks(chunk_df, chunk_shape_s0_xyz, previous)
+    logger.info(f"{len(chunk_df)} chunks: {stale.sum()} must be generated, "
+                f"{(~stale).sum()} can be reused from the previous mesh")
+
+    chunk_cells = [tuple(int(c) for c in xyz) for xyz in chunk_df[[*'xyz']].values // chunk_shape_s0_xyz]
+    reused_cells = [cell for cell, s in zip(chunk_cells, stale) if not s]
+
+    stale_zyxs = chunk_df.loc[stale, [*'zyx']].values
     results = generate_pieces_for_chunks(
-        server, uuid, seg_instance, body, config, chunk_zyxs, processes, resource_mgr, chunk_fn, chunk_fn_threads)
+        server, uuid, seg_instance, body, config, stale_zyxs, processes, resource_mgr, chunk_fn, chunk_fn_threads)
     new_pieces = {
         tuple(int(c) for c in zyx[::-1] // chunk_shape_s0_xyz): pieces
-        for zyx, pieces in zip(chunk_zyxs, results)
+        for zyx, pieces in zip(stale_zyxs, results)
     }
 
     if expect_concurrent_updates:
@@ -573,9 +793,10 @@ def update_multires_body_mesh(
             return None
 
     voxel_size_xyz = np.asarray(fetch_resolution_zyx(server, uuid, seg_instance))[::-1]
-    with Timer(f"Assembling multires mesh from {len(new_pieces)} chunks", logger):
+    with Timer(f"Assembling multires mesh from {len(new_pieces)} new and {len(reused_cells)} reused chunks", logger):
         data_bytes, index_bytes, info_json, stats = assemble_body_mesh(
-            new_pieces, chunk_shape_s0_xyz, voxel_size_xyz, config)
+            new_pieces, chunk_shape_s0_xyz, voxel_size_xyz, config, reused_cells, previous)
+    chunks_file = _chunks_file(body, uuid, lastmod, config, chunk_df, data_bytes, index_bytes)
 
     mesh_info = {
         "mesh-info-version": MESH_INFO_VERSION,
@@ -591,13 +812,14 @@ def update_multires_body_mesh(
         "data-bytes": len(data_bytes),
         "index-bytes": len(index_bytes),
         "chunk-count": len(chunk_df),
-        "generated-chunk-count": len(chunk_df),
+        "generated-chunk-count": len(new_pieces),
+        "reused-chunk-count": len(reused_cells),
         "num-lods": stats['num_lods'],
         "fragment-count": stats['num_fragments'],
         "fragment-count-per-lod": stats['num_fragments_per_lod'],
         "vertex-quantization-bits": config['vertex-quantization-bits'],
     }
-    files = {'': data_bytes, '.index': index_bytes}
+    files = {'': data_bytes, '.index': index_bytes, '.chunks': chunks_file}
 
     # FIXME... had to hard-code this because dask workers didn't have the configured dvid timeout.
     set_default_dvid_session_timeout(600.0, 600.0)

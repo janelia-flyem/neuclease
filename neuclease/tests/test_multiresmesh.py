@@ -336,3 +336,149 @@ def test_mesh_in_object_store(dvid):
     loc = locate_multires_body_mesh('fake', UUID, 'segmentation', 1)
     assert loc.store is store and loc.data_name == '1'
     assert v2m.parse_manifest(store.get(loc.index_name))['num_lods'] == 2
+
+
+def _triangles_by_lod(data, index):
+    """{lod: set of triangles (as tuples of rounded vertex coordinates)}"""
+    tris = {}
+    for frag in _read_mesh(data, index)['fragments']:
+        t = np.round(frag['vertices_xyz'][frag['faces']], 3)
+        # Canonical vertex order within each triangle (preserving orientation)
+        t = np.array([np.roll(tri, -np.lexsort(tri.T[::-1])[0], axis=0) for tri in t])
+        tris.setdefault(frag['lod'], set()).update(map(lambda a: a.tobytes(), t))
+    return tris
+
+
+def _lod_fragments(data, index, lod):
+    m = v2m.parse_manifest(index)
+    frags = m['lods'][lod]
+    return {tuple(int(c) for c in p): data[o:o + s]
+            for p, o, s in zip(frags['positions'], frags['offsets'], frags['sizes']) if s}
+
+
+def test_unchanged_chunks_are_reused(dvid):
+    cfg = _config()
+    update_multires_body_mesh('fake', UUID, 'segmentation', 1, cfg)
+    before = dvid.mesh_files()
+    chunks_file = json.loads(before['.chunks'])
+    assert chunks_file['lastmod'] == 10
+    assert len(chunks_file['chunks']) == 27
+    assert len(dvid.sparsevol_requests) == 27
+
+    # The body changed, but not within any of its chunks
+    # (e.g. a supervoxel split which didn't change the body's surface).
+    dvid.mutid += 1
+    mesh_info = update_multires_body_mesh('fake', UUID, 'segmentation', 1, cfg)
+    assert mesh_info['lastmod'] == 11
+    assert (mesh_info['generated-chunk-count'], mesh_info['reused-chunk-count']) == (0, 27)
+    assert len(dvid.sparsevol_requests) == 27
+
+    # The mesh is identical (the fragments were copied verbatim).
+    after = dvid.mesh_files()
+    assert after[''] == before['']
+    assert after['.index'] == before['.index']
+    assert json.loads(after['.chunks'])['lastmod'] == 11
+
+
+def test_only_edited_chunks_are_regenerated(dvid):
+    cfg = _config()
+    update_multires_body_mesh('fake', UUID, 'segmentation', 1, cfg)
+    before = dvid.mesh_files()
+
+    # Carve a dent into the body within chunk (x, y, z) = (2, 1, 1)
+    vol = dvid.vols[0].copy()
+    vol[80:110, 75:115, 150:180] = False
+    dvid.set_volume(vol)
+    dvid.edit_chunk((64, 64, 128))
+    dvid.sparsevol_requests.clear()
+
+    mesh_info = update_multires_body_mesh('fake', UUID, 'segmentation', 1, cfg)
+    assert (mesh_info['generated-chunk-count'], mesh_info['reused-chunk-count']) == (1, 26)
+    assert dvid.sparsevol_requests == [(30, 30, 62)]
+    after = dvid.mesh_files()
+
+    # The other chunks' LOD-0 fragments are unchanged, as are the LOD-1 fragments that don't contain the edited chunk.
+    for lod, edited in [(0, (2, 1, 1)), (1, (1, 0, 0))]:
+        old = _lod_fragments(before[''], before['.index'], lod)
+        new = _lod_fragments(after[''], after['.index'], lod)
+        assert set(old) == set(new)
+        assert {p for p in old if old[p] != new[p]} == {edited}
+
+    # The result has the same geometry as regenerating everything.
+    update_multires_body_mesh('fake', UUID, 'segmentation', 1, cfg, force=True)
+    full = dvid.mesh_files()
+    assert full[''] != after['']  # (The LOD-1 pieces are concatenated in a different order.)
+    assert _triangles_by_lod(full[''], full['.index']) == _triangles_by_lod(after[''], after['.index'])
+
+
+def test_removed_chunks_are_dropped(dvid):
+    cfg = _config()
+    update_multires_body_mesh('fake', UUID, 'segmentation', 1, cfg)
+    before = dvid.mesh_files()
+
+    # Remove the part of the body in chunk (0, 0, 0)
+    vol = dvid.vols[0].copy()
+    vol[:64, :64, :64] = False
+    dvid.set_volume(vol)
+    dvid.mutid += 1
+    dvid.sparsevol_requests.clear()
+
+    mesh_info = update_multires_body_mesh('fake', UUID, 'segmentation', 1, cfg)
+    assert (mesh_info['generated-chunk-count'], mesh_info['reused-chunk-count']) == (0, 26)
+    after = dvid.mesh_files()
+
+    old0 = _lod_fragments(before[''], before['.index'], 0)
+    new0 = _lod_fragments(after[''], after['.index'], 0)
+    assert set(old0) - set(new0) == {(0, 0, 0)}
+
+    # The LOD-1 fragment which contained it no longer has any triangles within it.
+    mesh = _read_mesh(after[''], after['.index'])
+    frag = next(f for f in mesh['fragments'] if f['lod'] == 1 and tuple(f['position']) == (0, 0, 0))
+    centroids = frag['vertices_xyz'][frag['faces']].mean(axis=1)
+    assert len(centroids) > 0
+    assert not (centroids < 64).all(axis=1).any()
+
+
+def test_inconsistent_chunks_file_is_ignored(dvid):
+    cfg = _config()
+    update_multires_body_mesh('fake', UUID, 'segmentation', 1, cfg)
+
+    # The '.chunks' file doesn't match the mesh (as if it were written by another process).
+    contents = json.loads(dvid.kv[(MESH_INSTANCE, '1.chunks')])
+    contents['data-bytes'] += 1
+    dvid.kv[(MESH_INSTANCE, '1.chunks')] = json.dumps(contents).encode()
+
+    dvid.mutid += 1
+    mesh_info = update_multires_body_mesh('fake', UUID, 'segmentation', 1, cfg)
+    assert (mesh_info['generated-chunk-count'], mesh_info['reused-chunk-count']) == (27, 0)
+
+
+def test_stale_chunks():
+    from types import SimpleNamespace
+    from neuclease.misc.multiresmesh import stale_chunks
+
+    chunk_df = pd.DataFrame({
+        'z': [0, 0, 0, 0, 0],
+        'y': [0, 0, 0, 0, 0],
+        'x': [0, 64, 128, 192, 256],
+        'surface_mutid': [5, 5, 11, 5, 0],
+        'block_hash': ['0xa', '0xb', '0xc', '0xdd', '0xe'],
+    })
+    previous = SimpleNamespace(lastmod=10, chunks={(0, 0, 0): '0xa', (2, 0, 0): '0xc', (3, 0, 0): '0xd', (4, 0, 0): '0xe'})
+    stale = stale_chunks(chunk_df, [64, 64, 64], previous)
+
+    # unchanged, new chunk, newer surface, different blocks (e.g. a merge), unknown surface_mutid
+    assert stale.tolist() == [False, True, True, True, True]
+    assert stale_chunks(chunk_df, [64, 64, 64], None).all()
+
+
+def test_object_store_reuses_chunks(dvid):
+    cfg = _config(storage='mem://bucket/meshes')
+    update_multires_body_mesh('fake', UUID, 'segmentation', 1, cfg)
+    store = open_store('mem://bucket/meshes')
+    assert store.list('1') == ['1', '1.chunks', '1.index']
+
+    dvid.edit_chunk((64, 64, 128))
+    mesh_info = update_multires_body_mesh('fake', UUID, 'segmentation', 1, cfg)
+    assert (mesh_info['generated-chunk-count'], mesh_info['reused-chunk-count']) == (1, 26)
+    assert store.stat('1.chunks').metadata == {'uuid': UUID, 'lastmod': '11'}
