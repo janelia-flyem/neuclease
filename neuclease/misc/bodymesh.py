@@ -1097,10 +1097,48 @@ def _chunk_table(server, uuid, seg_instance, body, chunk_config, resource_mgr, e
         3   17408  37888  23552     1006321331  0xaa12cc78    1k_04993d  90972  17408,37888,23552  1006321331  sc2_q1  1k_04993d-90972-17408,37888,23552-1006321331-0xaa12cc78-sc2_q1
         4   17408  37888  24576     1006321331  0x39915e1a    1k_04993d  90972  17408,37888,24576  1006321331  sc2_q1  1k_04993d-90972-17408,37888,24576-1006321331-0x39915e1a-sc2_q1
     """
+    chunk_df = body_chunk_surface_table(
+        server, uuid, seg_instance, body, chunk_config['chunk-shape-s0'], chunk_config['base-uuid'], resource_mgr)
+
+    # Fetch all chunk mesh keys this body has
+    with Timer(f"Listing stored chunk mesh keys", logger):
+        key_df = fetch_stored_chunk_keys(server, uuid, seg_instance, chunk_config['config-name'], body,
+                                         multires=multires, storage=chunk_config.get('storage', 'dvid'))
+    logger.info(f"Found {len(key_df)} stored chunk mesh keys (including outdated ones)")
+
+    # Drop all but the most recent key for each chunk
+    key_df = key_df.sort_values('mesh_mutid').drop_duplicates([*'xyz'], keep='last')
+
+    # Append mesh_mutid and block_hash columns
+    chunk_df = chunk_df.merge(key_df, 'left', on=[*'xyz'])
+    chunk_df['mesh_mutid'] = chunk_df['mesh_mutid'].fillna(0).astype(int)
+
+    if enforce_block_hash_match:
+        # If the block_hash doesn't match, we treat it as out-of-date
+        chunk_df.loc[chunk_df.eval('block_hash != mesh_block_hash'), 'mesh_mutid'] = 0
+    return chunk_df
+
+
+def body_chunk_surface_table(server, uuid, seg_instance, body, chunk_shape_s0_xyz, base_uuid, resource_mgr=None):
+    """
+    Return a table with a row for each chunk (of the given shape) which contains part of the given body,
+    with columns:
+
+        z, y, x:        The chunk's corner (full-resolution voxels)
+        surface_mutid:  The most recent mutation that changed the body's surface in any of the
+                        chunk's blocks, according to the label index.
+        block_hash:     A hash of the set of (64^3) blocks the body occupies within the chunk,
+                        which changes when blocks are added to (or removed from) the chunk,
+                        e.g. via merges, which don't update the surface_mutid.
+
+    For blocks whose surface_mutid is unset (0), the body's lastmod in the given base_uuid is used instead
+    (or 1 if the body didn't exist there).  It is assumed that the surface_mutid feature was enabled in DVID
+    immediately after base_uuid was committed.  If base_uuid is empty (or None), such chunks are left with
+    surface_mutid 0.
+    """
     resource_mgr = resource_mgr or DummyResourceMgr()
-    base_uuid = resolve_ref(server, chunk_config['base-uuid'], True)
     # Note: chunk-shape-s0 is given in XYZ order.
-    chunk_shape_s0_zyx = np.array(chunk_config['chunk-shape-s0'])[::-1]
+    chunk_shape_s0_zyx = np.array(chunk_shape_s0_xyz)[::-1]
     assert not (chunk_shape_s0_zyx % 64).any(), "Chunk shape must be a multiple of 64"
 
     with (
@@ -1132,7 +1170,8 @@ def _chunk_table(server, uuid, seg_instance, body, chunk_config, resource_mgr, e
         .rename(columns={'cx': 'x', 'cy': 'y', 'cz': 'z'})
     )
 
-    if (chunk_df['surface_mutid'] == 0).any():
+    if base_uuid and (chunk_df['surface_mutid'] == 0).any():
+        base_uuid = resolve_ref(server, base_uuid, True)
         # Any missing surface_mutids will be replaced with the lastmod in the BASE uuid.
         # It is assumed that any chunks that ARE present in the chunk store are at least
         # up-to-date with the base uuid.
@@ -1154,23 +1193,6 @@ def _chunk_table(server, uuid, seg_instance, body, chunk_config, resource_mgr, e
                         "its blocks without a surface_mutid will be treated as unchanged since then.")
             base_mutid = 1
         chunk_df.loc[chunk_df['surface_mutid'] == 0, 'surface_mutid'] = base_mutid
-
-    # Fetch all chunk mesh keys this body has
-    with Timer(f"Listing stored chunk mesh keys", logger):
-        key_df = fetch_stored_chunk_keys(server, uuid, seg_instance, chunk_config['config-name'], body,
-                                         multires=multires, storage=chunk_config.get('storage', 'dvid'))
-    logger.info(f"Found {len(key_df)} stored chunk mesh keys (including outdated ones)")
-
-    # Drop all but the most recent key for each chunk
-    key_df = key_df.sort_values('mesh_mutid').drop_duplicates([*'xyz'], keep='last')
-
-    # Append mesh_mutid and block_hash columns
-    chunk_df = chunk_df.merge(key_df, 'left', on=[*'xyz'])
-    chunk_df['mesh_mutid'] = chunk_df['mesh_mutid'].fillna(0).astype(int)
-
-    if enforce_block_hash_match:
-        # If the block_hash doesn't match, we treat it as out-of-date
-        chunk_df.loc[chunk_df.eval('block_hash != mesh_block_hash'), 'mesh_mutid'] = 0
     return chunk_df
 
 
