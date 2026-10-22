@@ -7,7 +7,7 @@ import pytest
 import requests
 from requests import HTTPError
 
-from neuclease.misc import bodymesh, multiresmesh
+from neuclease.misc import multiresmesh
 from neuclease.misc.meshstore import MemoryStore, open_store, PreconditionFailed
 
 UUID_A = 'a' * 32
@@ -32,8 +32,7 @@ class FakeRepo:
         self.parents = {UUID_B: UUID_A, UUID_C: UUID_A}
         self.mesh_info = {}
 
-        # (_is_branch_head() lives in bodymesh.)
-        monkeypatch.setattr(bodymesh, 'resolve_ref', self.resolve_ref)
+        monkeypatch.setattr(multiresmesh, 'resolve_ref', self.resolve_ref)
         monkeypatch.setattr(multiresmesh, 'fetch_key', self.fetch_key)
 
     def resolve_ref(self, server, ref, expand=False, **kwargs):

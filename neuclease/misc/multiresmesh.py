@@ -71,8 +71,7 @@ from neuclease.dvid.keyvalue import fetch_key, post_key, delete_key
 from neuclease.dvid.labelmap import fetch_lastmod, fetch_sparsevol
 from neuclease.misc.meshstore import open_store, PreconditionFailed
 from neuclease.misc.bodymesh import (
-    DummyResourceMgr, mesh_instance_names, init_mesh_instances, body_chunk_surface_table,
-    fetch_resolution_zyx, _is_branch_head)
+    DummyResourceMgr, mesh_instance_names, init_mesh_instances, body_chunk_surface_table, fetch_resolution_zyx)
 
 logger = logging.getLogger(__name__)
 
@@ -1039,6 +1038,12 @@ def _preserve_superseded_body_mesh(server, seg_instance, body, store, stats):
     with Timer(f"Preserving the mesh from {old_uuid[:6]} as {body}-{old_uuid}", logger):
         for suffix, stat in present.items():
             store.copy(f'{body}{suffix}', f'{body}-{old_uuid}{suffix}', source_generation=stat.generation)
+
+
+def _is_branch_head(server, uuid, branch):
+    """Return True if the given (full) UUID is the head of the given branch (in the same repo)."""
+    head = resolve_ref(server, f'{uuid}:{branch}', expand=True)
+    return uuid.startswith(head) or head.startswith(uuid)
 
 
 # The (store URL, info) combinations which this process has already written or verified.
