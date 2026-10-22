@@ -1,0 +1,338 @@
+"""
+Tests for neuclease.misc.multiresmesh.
+
+DVID is faked (see FakeDVID), so the real update machinery runs against an in-memory
+keyvalue store and a fake segmentation: a single body (label 1) shaped like a sphere,
+spanning a 3x3x3 grid of 64-voxel chunks.
+"""
+import json
+import threading
+
+import numpy as np
+import pandas as pd
+import pytest
+import requests
+from requests import HTTPError
+
+pytest.importorskip("vol2mesh")
+pytest.importorskip("DracoPy")
+pytest.importorskip("trimesh")
+
+from vol2mesh import multires as v2m  # noqa: E402
+
+from neuclease.misc import bodymesh, multiresmesh  # noqa: E402
+from neuclease.misc.meshstore import MemoryStore, open_store  # noqa: E402
+from neuclease.misc.multiresmesh import (  # noqa: E402
+    validate_config, generate_chunk_pieces, encode_chunk_pieces, decode_chunk_pieces,
+    assemble_body_mesh, update_multires_body_mesh, locate_multires_body_mesh)
+
+UUID = 'abc123def456abc123def456abc12345'
+MESH_INSTANCE = 'segmentation_multires_meshes'
+INFO_INSTANCE = 'segmentation_multires_mesh_info'
+
+
+def _config(**kwargs):
+    cfg = {
+        'chunk-shape-s0': [64, 64, 64],
+        'chunk-halo': 2,
+        'source-scale': 1,
+        'fill-holes': False,
+        'smoothing': 1,
+        'lod-error-thresholds': [0.5, 5.0],
+        **kwargs
+    }
+    return validate_config(cfg)
+
+
+def _dvid_error(status):
+    r = requests.Response()
+    r.status_code = status
+    return HTTPError(f"{status} Error", response=r)
+
+
+def _crop(vol, box):
+    """Extract box from vol, zero-padding wherever the box extends beyond the volume."""
+    box = np.asarray(box)
+    out = np.zeros(box[1] - box[0], dtype=bool)
+    lo = np.maximum(box[0], 0)
+    hi = np.minimum(box[1], vol.shape)
+    if (hi > lo).all():
+        out[tuple(slice(a - b, c - b) for a, c, b in zip(lo, hi, box[0]))] = \
+            vol[tuple(slice(a, c) for a, c in zip(lo, hi))]
+    return out
+
+
+class FakeDVID:
+    """Just enough of DVID for multiresmesh.update_multires_body_mesh()."""
+
+    def __init__(self, monkeypatch):
+        zz, yy, xx = np.ogrid[:192, :192, :192]
+        self.set_volume(((zz - 96)**2 + (yy - 96)**2 + (xx - 96)**2) <= 70**2)
+        self.mutid = 10
+        self.kv = {}
+        self.sparsevol_requests = []
+        self.head = UUID
+        self._lock = threading.Lock()
+
+        for mod in (bodymesh, multiresmesh):
+            for name in ('resolve_ref', 'fetch_lastmod', 'fetch_labelindex', 'fetch_sparsevol',
+                         'fetch_key', 'post_key', 'delete_key'):
+                if hasattr(mod, name):
+                    monkeypatch.setattr(mod, name, getattr(self, name))
+        monkeypatch.setattr(multiresmesh, 'fetch_resolution_zyx', lambda *args: (8.0, 8.0, 8.0))
+
+    def set_volume(self, vol_s0):
+        self.vols = {0: vol_s0, 1: vol_s0[::2, ::2, ::2]}
+        block_zyx = np.unique((np.argwhere(vol_s0) // 64) * 64, axis=0)
+        old = getattr(self, 'surface_mutids', None)
+        self.blocks_df = pd.DataFrame(block_zyx, columns=[*'zyx'])
+        self.blocks_df['sv'] = np.uint64(1)
+        self.blocks_df['count'] = 1
+        sm = pd.DataFrame(block_zyx, columns=[*'zyx'])
+        sm['surface_mutid'] = 10
+        if old is not None:
+            sm = sm.merge(old, 'left', on=[*'zyx'], suffixes=('_new', ''))
+            sm['surface_mutid'] = sm['surface_mutid'].fillna(sm['surface_mutid_new']).astype(int)
+            sm = sm[[*'zyx', 'surface_mutid']]
+        self.surface_mutids = sm
+
+    def edit_chunk(self, chunk_zyx):
+        """Simulate an edit to the body's surface within the given chunk."""
+        self.mutid += 1
+        sm = self.surface_mutids
+        sm.loc[(sm[[*'zyx']].values == chunk_zyx).all(axis=1), 'surface_mutid'] = self.mutid
+
+    def resolve_ref(self, server, ref, expand=False, **kwargs):
+        if ref.endswith(':master'):
+            return self.head
+        return ref
+
+    def fetch_lastmod(self, server, uuid, instance, label, **kwargs):
+        if label != 1:
+            raise _dvid_error(404)
+        return {'mutation id': self.mutid}
+
+    def fetch_labelindex(self, server, uuid, instance, label, format='protobuf', **kwargs):
+        from neuclease.dvid.labelmap import PandasLabelIndex
+        if label != 1:
+            raise _dvid_error(404)
+        return PandasLabelIndex(self.blocks_df.copy(), 1, self.mutid, '', '', self.surface_mutids.copy())
+
+    def fetch_sparsevol(self, server, uuid, instance, label, scale=0, supervoxels=False, *,
+                        format='coords', mask_box=None, **kwargs):
+        with self._lock:
+            self.sparsevol_requests.append(tuple(np.asarray(mask_box[0])))
+        mask = _crop(self.vols[scale], mask_box)
+        if not mask.any():
+            raise _dvid_error(404)
+        return mask, np.asarray(mask_box)
+
+    def fetch_key(self, server, uuid, instance, key, *, as_json=False, check_head=False, **kwargs):
+        value = self.kv.get((instance, str(key)))
+        if check_head:
+            return value is not None
+        if value is None:
+            raise _dvid_error(404)
+        return json.loads(value) if as_json else value
+
+    def post_key(self, server, uuid, instance, key, data=None, json=None, **kwargs):
+        import json as _json
+        self.kv[(instance, str(key))] = _json.dumps(json).encode() if json is not None else data
+
+    def delete_key(self, server, uuid, instance, key, **kwargs):
+        self.kv.pop((instance, str(key)), None)
+
+    def mesh_files(self, body=1):
+        return {suffix: self.kv.get((MESH_INSTANCE, f'{body}{suffix}')) for suffix in ('', '.index', '.chunks')}
+
+    def mesh_info(self, body=1):
+        return json.loads(self.kv[(INFO_INSTANCE, str(body))])
+
+
+@pytest.fixture
+def dvid(monkeypatch):
+    MemoryStore.clear_all()
+    multiresmesh._verified_store_infos.clear()
+    return FakeDVID(monkeypatch)
+
+
+def _read_mesh(data, index, info_json=None):
+    import tempfile
+    d = tempfile.mkdtemp()
+    with open(f"{d}/1", "wb") as f:
+        f.write(data)
+    with open(f"{d}/1.index", "wb") as f:
+        f.write(index)
+    return v2m.read_object_mesh(d, 1, vertex_quantization_bits=16)
+
+
+def test_config_validation():
+    cfg = _config()
+    assert cfg['vertex-quantization-bits'] == 16
+    assert cfg['storage'] == 'dvid'
+
+    with pytest.raises(ValueError):
+        _config(**{'lod-error-thresholds': [5.0, 1.0]})
+    with pytest.raises(ValueError):
+        _config(**{'chunk-shape-s0': [64, 64, 100]})
+
+
+def test_encode_decode_chunk_pieces():
+    pieces = [b'abc', b'', b'defgh']
+    assert decode_chunk_pieces(encode_chunk_pieces(pieces)) == pieces
+    assert decode_chunk_pieces(encode_chunk_pieces([b''])) == [b'']
+    with pytest.raises(ValueError):
+        decode_chunk_pieces(encode_chunk_pieces(pieces) + b'x')
+
+
+def test_generate_chunk_pieces(dvid):
+    cfg = _config()
+    chunk_shape = np.array([64.0, 64.0, 64.0])
+
+    # A chunk on the sphere's surface (cell (2, 1, 1))
+    pieces = generate_chunk_pieces('fake', UUID, 'segmentation', 1, cfg, (64, 64, 128))
+    assert len(pieces) == 2
+    assert dvid.sparsevol_requests == [(30, 30, 62)]   # scale 1, with a halo of 2
+
+    v0, f0 = v2m.decode_fragment(pieces[0], (2, 1, 1), chunk_shape, [0, 0, 0], lod=0)
+    v1, f1 = v2m.decode_fragment(pieces[1], (1, 0, 0), chunk_shape, [0, 0, 0], lod=1)
+    assert 0 < len(f1) < len(f0)
+
+    # Each LOD's piece is trimmed to the chunk.
+    for v in (v0, v1):
+        assert (v >= [128, 64, 64]).all() and (v <= [192, 128, 128]).all()
+
+    # The vertices lie close to the sphere's surface
+    # (at most about sqrt(threshold) away, plus the meshing/smoothing error).
+    for v, threshold in [(v0, 0.5), (v1, 5.0)]:
+        r = np.linalg.norm(v - 96, axis=1)
+        assert np.abs(r - 70).max() < 2 + 2 * np.sqrt(threshold)
+
+    # A chunk with no voxels at the source scale
+    assert generate_chunk_pieces('fake', UUID, 'segmentation', 1, cfg, (0, 0, 256)) == [b'', b'']
+
+
+def _all_pieces(cfg):
+    """The pieces of every chunk of the fake body, keyed by cell."""
+    pieces = {}
+    for z in range(3):
+        for y in range(3):
+            for x in range(3):
+                pieces[(x, y, z)] = generate_chunk_pieces(
+                    'fake', UUID, 'segmentation', 1, cfg, (64 * z, 64 * y, 64 * x))
+    return pieces
+
+
+def test_assemble_body_mesh(dvid):
+    cfg = _config()
+    chunk_shape = np.array([64.0, 64.0, 64.0])
+    pieces = _all_pieces(cfg)
+
+    data, index, info, stats = assemble_body_mesh(pieces, chunk_shape, [8.0, 8.0, 8.0], cfg)
+    assert info['@type'] == 'neuroglancer_multilod_draco'
+    assert info['transform'] == [8, 0, 0, 0, 0, 8, 0, 0, 0, 0, 8, 0]
+    assert stats['num_lods'] == 2
+
+    m = v2m.parse_manifest(index)
+    lod0 = {tuple(int(c) for c in p): (o, s) for p, o, s in
+            zip(m['lods'][0]['positions'], m['lods'][0]['offsets'], m['lods'][0]['sizes'])}
+
+    # The LOD-0 fragments are the LOD-0 pieces, verbatim.
+    nonempty = {cell for cell, p in pieces.items() if p[0]}
+    assert {cell for cell, (o, s) in lod0.items() if s} == nonempty
+    for cell in nonempty:
+        o, s = lod0[cell]
+        assert data[o:o + s] == pieces[cell][0]
+
+    # The LOD-1 fragments contain all of their chunks' LOD-1 pieces.
+    mesh = _read_mesh(data, index)
+    lod1 = {tuple(int(c) for c in f['position']): f for f in mesh['fragments'] if f['lod'] == 1}
+    assert set(lod1) == {(x, y, z) for x in (0, 1) for y in (0, 1) for z in (0, 1)}
+    for parent, frag in lod1.items():
+        expected_faces = sum(
+            len(v2m.decode_fragment(p[1], parent, chunk_shape, [0, 0, 0], lod=1)[1])
+            for cell, p in pieces.items() if tuple(c // 2 for c in cell) == parent and p[1])
+        assert len(frag['faces']) == expected_faces
+
+    # No triangle crosses an LOD-1 fragment's mid-planes (a neuroglancer requirement).
+    for parent, frag in lod1.items():
+        mid = (np.array(parent) * 128 + 64)
+        side = frag['vertices_xyz'][frag['faces']] >= mid - 1e-3
+        on_plane = np.abs(frag['vertices_xyz'][frag['faces']] - mid) < 1e-3
+        # Each triangle's vertices are all on one side (or on the plane).
+        assert ((side | on_plane).all(axis=1) | (~side | on_plane).all(axis=1)).all()
+
+
+def test_update_body_mesh(dvid):
+    cfg = _config()
+    mesh_info = update_multires_body_mesh('fake', UUID, 'segmentation', 1, cfg)
+    assert mesh_info == dvid.mesh_info()
+    assert mesh_info['lastmod'] == 10
+    assert mesh_info['mesh-settings']['lod-error-thresholds'] == [0.5, 5.0]
+    assert mesh_info['num-lods'] == 2
+
+    # Every chunk which contains part of the body was generated.
+    assert len(dvid.sparsevol_requests) == 27
+    files = dvid.mesh_files()
+    assert files[''] and files['.index']
+    assert json.loads(dvid.kv[(MESH_INSTANCE, 'info')])['@type'] == 'neuroglancer_multilod_draco'
+
+    mesh = _read_mesh(files[''], files['.index'])
+    assert {f['lod'] for f in mesh['fragments']} == {0, 1}
+
+    loc = locate_multires_body_mesh('fake', UUID, 'segmentation', 1)
+    assert loc.store is None and (loc.data_name, loc.index_name) == ('1', '1.index')
+
+    # Up-to-date meshes aren't regenerated...
+    assert update_multires_body_mesh('fake', UUID, 'segmentation', 1, cfg) is None
+    assert len(dvid.sparsevol_requests) == 27
+
+    # ...unless forced, or the settings change.
+    assert update_multires_body_mesh('fake', UUID, 'segmentation', 1, cfg, force=True)
+    assert len(dvid.sparsevol_requests) == 54
+    assert update_multires_body_mesh('fake', UUID, 'segmentation', 1, _config(smoothing=2))
+    assert len(dvid.sparsevol_requests) == 81
+
+    # Deleted bodies' meshes are deleted.
+    assert update_multires_body_mesh('fake', UUID, 'segmentation', 2, cfg) is None
+
+
+def test_deleted_body(dvid, monkeypatch):
+    cfg = _config()
+    update_multires_body_mesh('fake', UUID, 'segmentation', 1, cfg)
+    assert dvid.mesh_files()['']
+
+    def no_body(*args, **kwargs):
+        raise _dvid_error(404)
+
+    monkeypatch.setattr(multiresmesh, 'fetch_lastmod', no_body)
+    assert update_multires_body_mesh('fake', UUID, 'segmentation', 1, cfg) is None
+    assert dvid.mesh_files() == {'': None, '.index': None, '.chunks': None}
+    assert dvid.mesh_info()['method'] == 'deleted'
+    assert locate_multires_body_mesh('fake', UUID, 'segmentation', 1) is None
+
+
+def test_chunk_fn(dvid):
+    cfg = _config()
+    requested = []
+
+    def chunk_fn(chunk_zyx):
+        requested.append(chunk_zyx)
+        return generate_chunk_pieces('fake', UUID, 'segmentation', 1, cfg, chunk_zyx)
+
+    update_multires_body_mesh('fake', UUID, 'segmentation', 1, cfg, chunk_fn=chunk_fn, chunk_fn_threads=4)
+    assert len(requested) == 27
+    assert all(isinstance(c, int) for zyx in requested for c in zyx)
+
+
+def test_mesh_in_object_store(dvid):
+    cfg = _config(storage='mem://bucket/meshes')
+    update_multires_body_mesh('fake', UUID, 'segmentation', 1, cfg)
+    store = open_store('mem://bucket/meshes')
+    assert store.stat('1').metadata == {'uuid': UUID, 'lastmod': '10'}
+    assert json.loads(store.get('info'))['@type'] == 'neuroglancer_multilod_draco'
+    assert (MESH_INSTANCE, '1') not in dvid.kv
+
+    loc = locate_multires_body_mesh('fake', UUID, 'segmentation', 1)
+    assert loc.store is store and loc.data_name == '1'
+    assert v2m.parse_manifest(store.get(loc.index_name))['num_lods'] == 2
