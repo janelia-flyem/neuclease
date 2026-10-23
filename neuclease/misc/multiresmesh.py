@@ -43,13 +43,20 @@ The mesh's 'mesh_info' (see MESH_INFO_VERSION) is stored in DVID, in the
 '<segmentation>_multires_mesh_info' keyvalue instance.  If the meshes are stored in
 DVID, they're stored in the '<segmentation>_multires_meshes' instance.  Use
 init_multires_mesh_instances() to create those instances.
+
+Supervoxel meshes
+-----------------
+Supervoxel meshes can be generated (on demand) with the same settings, via
+update_multires_sv_mesh().  Since supervoxels are immutable, each one's mesh is
+generated just once, and stored separately from the body meshes, without any
+UUID-specific naming or mesh_info.  See MultiresMeshConfigSchema['supervoxel-storage'].
 """
 import json
 import time
 import zlib
 import logging
 import datetime
-from functools import partial
+from functools import cache, partial
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
@@ -66,9 +73,9 @@ from neuclease.util import Timer, compute_parallel
 from neuclease.util.segmentation import fill_holes_in_mask
 
 from neuclease.dvid import set_default_dvid_session_timeout
-from neuclease.dvid.repo import resolve_ref
+from neuclease.dvid.repo import resolve_ref, create_instance, fetch_repo_instances
 from neuclease.dvid.keyvalue import fetch_key, post_key, delete_key
-from neuclease.dvid.labelmap import fetch_lastmod, fetch_sparsevol
+from neuclease.dvid.labelmap import fetch_lastmod, fetch_sparsevol, fetch_sparsevol_coarse
 from neuclease.misc.meshstore import open_store, PreconditionFailed
 from neuclease.misc.bodymesh import (
     DummyResourceMgr, mesh_instance_names, init_mesh_instances, body_chunk_surface_table, fetch_resolution_zyx)
@@ -189,6 +196,24 @@ MultiresMeshConfigSchema = {
             "type": "string",
             "default": "master"
         },
+        "supervoxel-storage": {
+            "description":
+                "Optional.  Where to store supervoxel meshes (generated with the same settings as the\n"
+                "body meshes), if supervoxel meshes are supported.  (See update_multires_sv_mesh().)\n"
+                "Supervoxels are immutable, so each supervoxel's mesh is generated just once, and is\n"
+                "the same in all UUIDs.  Either:\n"
+                "  - 'dvid': the '<segmentation>_multires_sv_meshes' keyvalue instance, which is\n"
+                "    created (unversioned) if necessary,\n"
+                "  - 'dvid:<instance>': the given keyvalue instance (likewise), or\n"
+                "  - an object store URL such as 'gs://my-bucket/some/prefix', which must not be\n"
+                "    the same as the body mesh 'storage'.\n"
+                "In each case, supervoxel '<sv>' is stored as '<sv>' and '<sv>.index', along with an\n"
+                "'info' file and a 'mesh-settings' file.  Meshes generated with different settings\n"
+                "can't share the same storage (supervoxel meshes are never regenerated).\n"
+                "If empty, supervoxel meshes are not supported.\n",
+            "type": "string",
+            "default": ""
+        },
     }
 }
 
@@ -240,6 +265,11 @@ def validate_config(config):
     thresholds = config['lod-error-thresholds']
     if any(b < a for a, b in zip(thresholds[:-1], thresholds[1:])):
         raise ValueError(f"lod-error-thresholds must not decrease: {thresholds}")
+    sv_storage = config['supervoxel-storage'].rstrip('/')
+    if sv_storage and not sv_storage.startswith('dvid') and sv_storage == config['storage'].rstrip('/'):
+        raise ValueError("supervoxel-storage must not be the same as the body mesh storage")
+    if sv_storage.startswith('dvid:') and not sv_storage[len('dvid:'):]:
+        raise ValueError("supervoxel-storage 'dvid:<instance>' requires an instance name")
     return config
 
 
@@ -258,9 +288,9 @@ def init_multires_mesh_instances(server, uuid, seg_instance):
 # Chunks
 #
 
-def generate_chunk_pieces(server, uuid, seg_instance, body, config, chunk_zyx, resource_mgr=None):
+def generate_chunk_pieces(server, uuid, seg_instance, body, config, chunk_zyx, resource_mgr=None, supervoxels=False):
     """
-    Mesh one chunk of a body, and return its piece for each level of detail.
+    Mesh one chunk of a body (or supervoxel), and return its piece for each level of detail.
 
     The chunk's mask is fetched (with a halo), meshed, smoothed, and then decimated
     to each LOD's error threshold in turn.  After each decimation, the mesh is
@@ -276,6 +306,8 @@ def generate_chunk_pieces(server, uuid, seg_instance, body, config, chunk_zyx, r
             A validated MultiresMeshConfigSchema config.
         chunk_zyx:
             The chunk's corner, in full-resolution voxels (ZYX).
+        supervoxels:
+            If True, 'body' is a supervoxel ID.
 
     Returns:
         A list of Draco bytes, one per LOD (b'' if the chunk has no geometry at that LOD).
@@ -295,7 +327,8 @@ def generate_chunk_pieces(server, uuid, seg_instance, body, config, chunk_zyx, r
     start = time.perf_counter()
     try:
         with resource_mgr.access_context(server, True, 1, 0):
-            mask, mask_box = fetch_sparsevol(server, uuid, seg_instance, body, scale, mask_box=box, format='mask')
+            mask, mask_box = fetch_sparsevol(server, uuid, seg_instance, body, scale, supervoxels,
+                                             mask_box=box, format='mask')
     except HTTPError as ex:
         # The chunk list comes from the body's scale-0 blocks, but a tiny piece of
         # the body may vanish at the (coarser) source scale, in which case DVID
@@ -362,7 +395,8 @@ def decode_chunk_pieces(buf):
 
 
 def generate_pieces_for_chunks(server, uuid, seg_instance, body, config, chunk_zyxs,
-                               processes=0, resource_mgr=None, chunk_fn=None, chunk_fn_threads=8):
+                               processes=0, resource_mgr=None, chunk_fn=None, chunk_fn_threads=8,
+                               supervoxels=False):
     """
     Generate the pieces for several chunks (see generate_chunk_pieces()).
 
@@ -377,6 +411,9 @@ def generate_pieces_for_chunks(server, uuid, seg_instance, body, config, chunk_z
             e.g. to send the work to a remote service.  It's called as chunk_fn((z, y, x))
             and must return what generate_chunk_pieces() would.  If given, 'processes' is
             ignored, and chunk_fn is called from chunk_fn_threads threads.
+            (For supervoxels, chunk_fn must handle the supervoxel itself; 'supervoxels' isn't passed to it.)
+        supervoxels:
+            If True, 'body' is a supervoxel ID.
 
     Returns:
         A list of results (in the same order as chunk_zyxs).
@@ -389,7 +426,8 @@ def generate_pieces_for_chunks(server, uuid, seg_instance, body, config, chunk_z
         with Timer(f"Generating {len(chunk_zyxs)} chunks via {chunk_fn_threads} threads", logger):
             return compute_parallel(chunk_fn, chunk_zyxs, threads=chunk_fn_threads)
 
-    fn = partial(generate_chunk_pieces, server, uuid, seg_instance, body, config, resource_mgr=resource_mgr)
+    fn = partial(generate_chunk_pieces, server, uuid, seg_instance, body, config,
+                 resource_mgr=resource_mgr, supervoxels=supervoxels)
     if processes != 'dask-worker-client':
         with Timer(f"Generating {len(chunk_zyxs)} chunks using {processes} processes", logger):
             return compute_parallel(fn, chunk_zyxs, processes=processes)
@@ -1078,3 +1116,191 @@ def _ensure_store_info(store, info_json):
                                    "Are processes with different configs using the same storage?")
 
     _verified_store_infos.add((store.url, info_bytes))
+
+
+#
+# Supervoxel meshes
+#
+# Supervoxels are immutable (a split creates new supervoxels), so a supervoxel's mesh
+# is generated once (on demand), and never needs to be updated.  It is the same in every
+# UUID in which the supervoxel exists, so (unlike body meshes) supervoxel meshes are stored
+# without any UUID-specific naming or mesh_info.  See MultiresMeshConfigSchema['supervoxel-storage'].
+#
+
+# The settings of the supervoxel meshes in a store are recorded (once) in this file.
+SV_MESH_SETTINGS_FILE = 'mesh-settings'
+
+
+def update_multires_sv_mesh(server, uuid, seg_instance, sv, config, *,
+                            processes=0, chunk_fn=None, chunk_fn_threads=8, resource_mgr=None):
+    """
+    Generate and store a supervoxel's multires mesh, unless it's already stored.
+
+    Args:
+        uuid:
+            Any UUID in which the supervoxel exists.
+        config:
+            A MultiresMeshConfigSchema config, with 'supervoxel-storage'.
+        processes, chunk_fn, chunk_fn_threads:
+            How to generate the chunks.  See generate_pieces_for_chunks().
+            (chunk_fn must generate the supervoxel's chunks, not the body's.)
+
+    Returns:
+        The mesh's manifest (index) bytes, which are empty if the supervoxel has
+        no geometry at the source scale.
+
+    Raises:
+        HTTPError (404) if the supervoxel doesn't exist in the given UUID (e.g. it has been split).
+    """
+    resource_mgr = resource_mgr or DummyResourceMgr()
+    validate_config(config)
+    store = open_supervoxel_store(server, uuid, seg_instance, config, create=True)
+    voxel_size_xyz = np.asarray(fetch_resolution_zyx(server, uuid, seg_instance))[::-1]
+    _ensure_sv_store_settings(store, config, info_json_for(config, voxel_size_xyz))
+
+    if (index_bytes := store.get(f'{sv}.index')) is not None:
+        return index_bytes
+
+    chunk_shape_s0_xyz = np.array(config['chunk-shape-s0'])
+    chunk_zyxs = supervoxel_chunks(server, uuid, seg_instance, sv, chunk_shape_s0_xyz, resource_mgr)
+    logger.info(f"Supervoxel {sv}: generating mesh from {len(chunk_zyxs)} chunks")
+
+    results = generate_pieces_for_chunks(
+        server, uuid, seg_instance, sv, config, chunk_zyxs, processes, resource_mgr,
+        chunk_fn, chunk_fn_threads, supervoxels=True)
+    new_pieces = {
+        tuple(int(c) for c in np.asarray(zyx)[::-1] // chunk_shape_s0_xyz): pieces
+        for zyx, pieces in zip(chunk_zyxs, results)
+    }
+    data_bytes, index_bytes, _, _ = assemble_body_mesh(new_pieces, chunk_shape_s0_xyz, voxel_size_xyz, config)
+
+    # The index is written last, so its existence indicates that the mesh is complete.
+    # (Concurrent writers would write identical meshes, so they needn't be coordinated.)
+    store.put(f'{sv}', data_bytes, cache_control=BODY_MESH_CACHE_CONTROL)
+    store.put(f'{sv}.index', index_bytes, cache_control=BODY_MESH_CACHE_CONTROL)
+    return index_bytes
+
+
+def locate_multires_sv_mesh(server, uuid, seg_instance, sv, config):
+    """
+    Return the location of a supervoxel's (possibly not-yet-generated) mesh, as a SimpleNamespace with
+    store (an object store, or a DvidKeyValueStore), data_name, and index_name.
+    """
+    store = open_supervoxel_store(server, uuid, seg_instance, config)
+    return SimpleNamespace(store=store, data_name=f'{sv}', index_name=f'{sv}.index')
+
+
+def supervoxel_chunks(server, uuid, seg_instance, sv, chunk_shape_s0_xyz, resource_mgr=None):
+    """
+    Return the corners (full-resolution, ZYX) of the chunks which contain part of the given supervoxel,
+    according to its 'coarse sparsevol' (i.e. the label index).
+    """
+    resource_mgr = resource_mgr or DummyResourceMgr()
+    with resource_mgr.access_context(server, True, 1, 0):
+        block_coords = fetch_sparsevol_coarse(server, uuid, seg_instance, sv, supervoxels=True)
+    chunk_shape_s0_zyx = np.asarray(chunk_shape_s0_xyz)[::-1]
+    return np.unique((np.asarray(block_coords) * 64) // chunk_shape_s0_zyx * chunk_shape_s0_zyx, axis=0)
+
+
+def supervoxel_mesh_instance(seg_instance, config):
+    """The name of the DVID keyvalue instance for supervoxel meshes, or None if they aren't stored in DVID."""
+    storage = config['supervoxel-storage']
+    if storage == 'dvid':
+        return f"{seg_instance}_multires_sv_meshes"
+    if storage.startswith('dvid:'):
+        return storage[len('dvid:'):]
+    return None
+
+
+def open_supervoxel_store(server, uuid, seg_instance, config, create=False):
+    """
+    Return the store for the configured supervoxel meshes: an object store (see meshstore.py),
+    or a DvidKeyValueStore.  If create is True, the DVID instance is created if necessary.
+    """
+    if not config['supervoxel-storage']:
+        raise ValueError("This config doesn't support supervoxel meshes (it has no 'supervoxel-storage')")
+
+    instance = supervoxel_mesh_instance(seg_instance, config)
+    if instance is None:
+        return open_store(config['supervoxel-storage'])
+
+    if create:
+        _ensure_sv_mesh_instance(server, uuid, instance)
+    return DvidKeyValueStore(server, uuid, instance)
+
+
+@cache
+def _ensure_sv_mesh_instance(server, uuid, instance):
+    """
+    Create the supervoxel mesh instance (if necessary).  It's unversioned,
+    so the meshes stored in it are visible from every UUID.
+    """
+    if instance not in fetch_repo_instances(server, uuid):
+        logger.info(f"Creating (unversioned) DVID instance: {instance}")
+        create_instance(server, uuid, instance, 'keyvalue', versioned=False, tags={'type': 'meshes'})
+
+
+class DvidKeyValueStore:
+    """
+    A DVID keyvalue instance, with (a subset of) the object store interface (see meshstore.py).
+    For an unversioned instance, the UUID doesn't matter.
+    """
+    def __init__(self, server, uuid, instance):
+        self.server = server
+        self.uuid = uuid
+        self.instance = instance
+        self.url = f'dvid://{server}/{instance}'
+
+    def get(self, name):
+        try:
+            return fetch_key(self.server, self.uuid, self.instance, name)
+        except HTTPError as ex:
+            if ex.response is not None and ex.response.status_code == 404:
+                return None
+            raise
+
+    def put(self, name, data, *, metadata=None, cache_control=None, content_type=None, if_generation_match=None):
+        assert not metadata and if_generation_match is None, "Not supported by DVID"
+        post_key(self.server, self.uuid, self.instance, name, data)
+
+    def public_url(self, name):
+        return None
+
+
+def _ensure_sv_store_settings(store, config, info_json):
+    """
+    Record the mesh settings (and the neuroglancer 'info') in the supervoxel store, or verify
+    that they match the ones already recorded there.  Since supervoxel meshes are never regenerated,
+    a store can only hold meshes generated with one set of settings.
+    """
+    settings = mesh_settings(config)
+    key = (store.url, json.dumps(settings, sort_keys=True), json.dumps(info_json, sort_keys=True))
+    if key in _verified_sv_stores:
+        return
+
+    stored = store.get(SV_MESH_SETTINGS_FILE)
+    if stored is None:
+        try:
+            put_kwargs = {} if isinstance(store, DvidKeyValueStore) else {'if_generation_match': 0}
+            store.put(SV_MESH_SETTINGS_FILE, json.dumps(settings).encode(),
+                      content_type='application/json', **put_kwargs)
+        except PreconditionFailed:
+            pass
+        stored = store.get(SV_MESH_SETTINGS_FILE)
+
+    if json.loads(stored) != settings:
+        raise RuntimeError(
+            f"The supervoxel meshes in {store.url} were generated with different settings: "
+            f"{stored.decode()}.  Use a different 'supervoxel-storage' for these settings.")
+
+    if isinstance(store, DvidKeyValueStore):
+        info_bytes = json.dumps(info_json).encode()
+        if store.get('info') != info_bytes:
+            store.put('info', info_bytes)
+    else:
+        _ensure_store_info(store, info_json)
+    _verified_sv_stores.add(key)
+
+
+# The (store URL, settings, info) combinations which this process has already verified.
+_verified_sv_stores = set()

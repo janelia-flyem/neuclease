@@ -74,12 +74,22 @@ class FakeDVID:
         self.head = UUID
         self._lock = threading.Lock()
 
+        # Supervoxels: 7 is the half of the sphere with x < 96,
+        # and 8 is a single voxel, which vanishes at scale 1.
+        self.sv_vols = {7: self.vols[0] & (xx < 96)}
+        self.sv_vols[8] = np.zeros_like(self.vols[0])
+        self.sv_vols[8][101, 101, 101] = True
+        self.instances = {MESH_INSTANCE, INFO_INSTANCE}
+        self.created_instances = []
+
         for mod in (bodymesh, multiresmesh):
             for name in ('resolve_ref', 'fetch_lastmod', 'fetch_labelindex', 'fetch_sparsevol',
-                         'fetch_key', 'post_key', 'delete_key'):
+                         'fetch_sparsevol_coarse', 'fetch_key', 'post_key', 'delete_key',
+                         'fetch_repo_instances', 'create_instance'):
                 if hasattr(mod, name):
                     monkeypatch.setattr(mod, name, getattr(self, name))
         monkeypatch.setattr(multiresmesh, 'fetch_resolution_zyx', lambda *args: (8.0, 8.0, 8.0))
+        multiresmesh._ensure_sv_mesh_instance.cache_clear()
 
     def set_volume(self, vol_s0):
         self.vols = {0: vol_s0, 1: vol_s0[::2, ::2, ::2]}
@@ -122,10 +132,30 @@ class FakeDVID:
                         format='coords', mask_box=None, **kwargs):
         with self._lock:
             self.sparsevol_requests.append(tuple(np.asarray(mask_box[0])))
-        mask = _crop(self.vols[scale], mask_box)
+        if supervoxels:
+            if label not in self.sv_vols:
+                raise _dvid_error(404)
+            vol = self.sv_vols[label][::2**scale, ::2**scale, ::2**scale]
+        else:
+            vol = self.vols[scale]
+        mask = _crop(vol, mask_box)
         if not mask.any():
             raise _dvid_error(404)
         return mask, np.asarray(mask_box)
+
+    def fetch_sparsevol_coarse(self, server, uuid, instance, label, supervoxels=False, **kwargs):
+        """Scale-6 (block) coordinates, ZYX"""
+        assert supervoxels
+        if label not in self.sv_vols:
+            raise _dvid_error(404)
+        return np.unique(np.argwhere(self.sv_vols[label]) // 64, axis=0)
+
+    def fetch_repo_instances(self, server, uuid, **kwargs):
+        return {name: 'keyvalue' for name in self.instances}
+
+    def create_instance(self, server, uuid, instance, typename, versioned=True, compression=None, tags=[], **kwargs):
+        self.instances.add(instance)
+        self.created_instances.append((instance, typename, versioned, tags))
 
     def fetch_key(self, server, uuid, instance, key, *, as_json=False, check_head=False, **kwargs):
         value = self.kv.get((instance, str(key)))
@@ -153,6 +183,7 @@ class FakeDVID:
 def dvid(monkeypatch):
     MemoryStore.clear_all()
     multiresmesh._verified_store_infos.clear()
+    multiresmesh._verified_sv_stores.clear()
     return FakeDVID(monkeypatch)
 
 
@@ -482,3 +513,83 @@ def test_object_store_reuses_chunks(dvid):
     mesh_info = update_multires_body_mesh('fake', UUID, 'segmentation', 1, cfg)
     assert (mesh_info['generated-chunk-count'], mesh_info['reused-chunk-count']) == (1, 26)
     assert store.stat('1.chunks').metadata == {'uuid': UUID, 'lastmod': '11'}
+
+
+SV_INSTANCE = 'segmentation_multires_sv_meshes'
+
+
+def test_sv_mesh_in_dvid(dvid):
+    from neuclease.misc.multiresmesh import update_multires_sv_mesh, locate_multires_sv_mesh
+    cfg = _config(**{'supervoxel-storage': 'dvid'})
+
+    index = update_multires_sv_mesh('fake', UUID, 'segmentation', 7, cfg)
+    assert index
+
+    # The instance was created unversioned (so the meshes are visible from every UUID).
+    assert dvid.created_instances == [(SV_INSTANCE, 'keyvalue', False, {'type': 'meshes'})]
+    assert dvid.kv[(SV_INSTANCE, '7.index')] == index
+    assert json.loads(dvid.kv[(SV_INSTANCE, 'mesh-settings')]) == multiresmesh.mesh_settings(cfg)
+    assert json.loads(dvid.kv[(SV_INSTANCE, 'info')])['@type'] == 'neuroglancer_multilod_draco'
+
+    # The supervoxel's chunks were meshed (and only the supervoxel's voxels).
+    num_requests = len(dvid.sparsevol_requests)
+    assert num_requests == 2 * 3 * 3   # x < 96 spans two chunks in x
+    mesh = _read_mesh(dvid.kv[(SV_INSTANCE, '7')], index)
+    v = np.concatenate([f['vertices_xyz'] for f in mesh['fragments']])
+    assert v[:, 0].max() <= 96 + 1
+    assert {f['lod'] for f in mesh['fragments']} == {0, 1}
+
+    # The mesh is never regenerated...
+    assert update_multires_sv_mesh('fake', UUID, 'segmentation', 7, cfg) == index
+    assert update_multires_sv_mesh('fake', 'some-other-uuid', 'segmentation', 7, cfg) == index
+    assert len(dvid.sparsevol_requests) == num_requests
+
+    loc = locate_multires_sv_mesh('fake', UUID, 'segmentation', 7, cfg)
+    assert (loc.store.instance, loc.data_name, loc.index_name) == (SV_INSTANCE, '7', '7.index')
+    assert loc.store.public_url('7') is None
+
+    # ...so meshes with different settings can't be stored in the same place.
+    multiresmesh._verified_sv_stores.clear()
+    with pytest.raises(RuntimeError, match='different settings'):
+        update_multires_sv_mesh('fake', UUID, 'segmentation', 7, _config(**{'supervoxel-storage': 'dvid', 'smoothing': 3}))
+
+    # But they can be stored elsewhere.
+    other = _config(**{'supervoxel-storage': 'dvid:other_sv_meshes', 'smoothing': 3})
+    assert update_multires_sv_mesh('fake', UUID, 'segmentation', 7, other)
+    assert ('other_sv_meshes', '7.index') in dvid.kv
+
+
+def test_sv_mesh_without_geometry(dvid):
+    from neuclease.misc.multiresmesh import update_multires_sv_mesh
+    cfg = _config(**{'supervoxel-storage': 'dvid'})
+
+    # Supervoxel 8 vanishes at the source scale, so its mesh is empty (and that's stored, too).
+    assert update_multires_sv_mesh('fake', UUID, 'segmentation', 8, cfg) == b''
+    assert dvid.kv[(SV_INSTANCE, '8.index')] == b''
+    num_requests = len(dvid.sparsevol_requests)
+    assert update_multires_sv_mesh('fake', UUID, 'segmentation', 8, cfg) == b''
+    assert len(dvid.sparsevol_requests) == num_requests
+
+    # A supervoxel which doesn't exist (e.g. it was split) isn't stored.
+    with pytest.raises(HTTPError):
+        update_multires_sv_mesh('fake', UUID, 'segmentation', 9, cfg)
+    assert (SV_INSTANCE, '9.index') not in dvid.kv
+
+
+def test_sv_mesh_in_object_store(dvid):
+    from neuclease.misc.multiresmesh import update_multires_sv_mesh, locate_multires_sv_mesh
+    cfg = _config(**{'storage': 'mem://bucket/bodies', 'supervoxel-storage': 'mem://bucket/svs'})
+    index = update_multires_sv_mesh('fake', UUID, 'segmentation', 7, cfg)
+    store = open_store('mem://bucket/svs')
+    assert store.list('') == ['7', '7.index', 'info', 'mesh-settings']
+    assert store.get('7.index') == index
+    assert open_store('mem://bucket/bodies').list('') == []
+    assert dvid.created_instances == []
+
+    loc = locate_multires_sv_mesh('fake', UUID, 'segmentation', 7, cfg)
+    assert loc.store is store
+
+    with pytest.raises(ValueError):
+        _config(**{'storage': 'mem://bucket/bodies', 'supervoxel-storage': 'mem://bucket/bodies/'})
+    with pytest.raises(ValueError, match="no 'supervoxel-storage'"):
+        update_multires_sv_mesh('fake', UUID, 'segmentation', 7, _config())
