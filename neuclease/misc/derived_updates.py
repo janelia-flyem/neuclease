@@ -26,6 +26,9 @@ from neuclease.dvid import (
     fetch_instance_info
 )
 from neuclease.misc.bodymesh import update_body_mesh, BodyMeshParametersSchema, MeshChunkConfigSchema, create_and_upload_missing_supervoxel_meshes
+from neuclease.misc.multiresmesh import (
+    MultiresMeshConfigSchema, validate_config as validate_multires_mesh_config,
+    init_multires_mesh_instances, update_multires_body_mesh)
 from neuclease.misc.skeletonize import skeletonize_neuron, _check_units
 
 logger = logging.getLogger(__name__)
@@ -180,20 +183,35 @@ ConfigSchema = {
         },
         "dvid": SegmentationDvidInstanceSchema,
         "update-derived-types": {
-            "description": "Which types of derived data to update.\n",
+            "description":
+                "Which types of derived data to update.\n"
+                "  - meshes:            single-resolution body meshes (see 'body-meshes' and 'chunk-meshes')\n"
+                "  - multires-meshes:   multi-resolution body meshes (see 'multires-meshes')\n"
+                "  - sv-meshes:         supervoxel meshes\n"
+                "  - skeletons:         body skeletons (see 'skeletons')\n"
+                "  - annotations:       body annotations (deleted when their bodies are merged away)\n"
+                "Each type keeps its own update receipts, so each is brought up-to-date independently.\n",
             "type": "array",
             "items": {
                 "type": "string",
-                "enum": ["meshes", "sv-meshes", "skeletons", "annotations"]
+                "enum": ["meshes", "multires-meshes", "sv-meshes", "skeletons", "annotations"]
             },
             "default": ["meshes", "sv-meshes", "skeletons", "annotations"]
         },
         "body-meshes": BodyMeshParametersSchema,
         "chunk-meshes": MeshChunkConfigSchema,
+        "multires-meshes": {
+            **MultiresMeshConfigSchema,
+            "description":
+                "Settings for multi-resolution body meshes (if 'multires-meshes' is listed in 'update-derived-types').\n"
+                "These are the same settings used by the flyemflows 'multiresbodymeshes' workflow ('mesh-config')\n"
+                "and the ngsupport /multires-mesh endpoints, so use the same settings here as there.\n",
+        },
         "skeletons": SkeletonConfigSchema,
         "force-update": {
             "description":
-                "Ignore body meshes on the server and regenerate them from the component chunks.\n",
+                "Ignore body meshes on the server and regenerate them from the component chunks.\n"
+                "(For multires meshes: regenerate all of each mutated body's chunks.)\n",
             "type": "boolean",
             "default": False
         }
@@ -247,6 +265,15 @@ def main():
             *dvid_seg,
             cfg['body-meshes'],
             cfg['chunk-meshes'],
+            cfg['dvid']['ignore-mutations-before-uuid'],
+            cfg['force-update'],
+            args.processes
+        )
+
+    if 'multires-meshes' in cfg['update-derived-types']:
+        update_multires_body_meshes(
+            *dvid_seg,
+            cfg['multires-meshes'],
             cfg['dvid']['ignore-mutations-before-uuid'],
             cfg['force-update'],
             args.processes
@@ -436,6 +463,34 @@ def update_body_meshes(dvid_server, uuid, seg_instance, body_mesh_config, chunk_
             update_body_mesh(*dvid_seg, body, body_mesh_config, chunk_config, force, processes)
 
     store_update_receipt(*dvid_seg, "meshes", last_mutid)
+
+
+def update_multires_body_meshes(dvid_server, uuid, seg_instance, mesh_config, ignore_before_uuid=None, force=False, processes=0):
+    """
+    Update the multi-resolution meshes (see neuclease.misc.multiresmesh) of all bodies
+    which have been mutated since the previous multires mesh update.
+
+    For each changed body, only the chunks which changed are regenerated (unless force is True).
+    Bodies which no longer exist are marked as deleted in their mesh_info.
+    """
+    dvid_seg = (dvid_server, uuid, seg_instance)
+    validate_multires_mesh_config(mesh_config)
+    init_multires_mesh_instances(*dvid_seg)
+
+    prev_update, affected, last_mutid = mutated_bodies_since_previous_update(*dvid_seg, "multires-meshes", ignore_before_uuid)
+    prev_uuid = prev_update['uuid']
+    prev_mutid = prev_update['mutid']
+    prev_timestamp = prev_update.get('timestamp', '<unknown time>')
+    bodies = [*affected.changed_bodies, *affected.removed_bodies, *affected.new_bodies]
+    logger.info(
+        f"Detected {len(bodies)} mutated bodies since the previous multires mesh update "
+        f"in uuid {prev_uuid} (mutid: {prev_mutid}) at {prev_timestamp}"
+    )
+    for i, body in enumerate(bodies, start=1):
+        with PrefixFilter.context(f"({i}/{len(bodies)})"), Timer(f"Body {body} Updating multires mesh", logger):
+            update_multires_body_mesh(*dvid_seg, body, mesh_config, force=force, processes=processes)
+
+    store_update_receipt(*dvid_seg, "multires-meshes", last_mutid)
 
 
 def update_sv_meshes(dvid_server, uuid, seg_instance, ignore_before_uuid=None):

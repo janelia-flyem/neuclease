@@ -238,5 +238,24 @@ def test_meshes_for_chunks_with_chunk_fn():
 
 
 
+def test_init_mesh_instances_tags(monkeypatch):
+    """The mesh instances are tagged (so DVID can store them separately), and versioned."""
+    from neuclease.misc import bodymesh
+
+    created = []
+    monkeypatch.setattr(bodymesh, 'resolve_ref', lambda server, uuid, expand=False: uuid)
+    monkeypatch.setattr(bodymesh, 'fetch_repo_instances', lambda *args, **kwargs: {})
+    monkeypatch.setattr(bodymesh, 'create_instance', lambda *args, **kwargs: created.append((args, kwargs)))
+    monkeypatch.setattr(bodymesh, 'create_tarsupervoxel_instance', lambda *args, **kwargs: None)
+
+    bodymesh.init_mesh_instances('http://fake-dvid', 'abc123', 'segmentation')
+    by_name = {args[2]: (args, kwargs) for args, kwargs in created}
+    assert set(by_name) == {'segmentation_meshes', 'segmentation_mesh_info', 'segmentation_chunk_meshes'}
+    for name in ('segmentation_meshes', 'segmentation_chunk_meshes'):
+        args, kwargs = by_name[name]
+        assert args[3:] == ('keyvalue',)
+        assert kwargs == {'tags': {'type': 'meshes'}}
+
+
 if __name__ == "__main__":
     pytest.main(['-s', '--tb=native', '--pyargs', 'neuclease.tests.test_bodymesh_chunks'])

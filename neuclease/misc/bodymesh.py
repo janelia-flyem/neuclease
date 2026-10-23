@@ -266,7 +266,7 @@ def init_mesh_instances(server, uuid, seg_instance, body=True, chunks=True, sv=T
 
     if body and names.body not in repo_instances:
         logger.info(f"Creating DVID instance: {names.body}")
-        create_instance(server, uuid, names.body, 'keyvalue', {'type': 'meshes'})
+        create_instance(server, uuid, names.body, 'keyvalue', tags={'type': 'meshes'})
 
     if body and names.info not in repo_instances:
         logger.info(f"Creating DVID instance: {names.info}")
@@ -274,7 +274,7 @@ def init_mesh_instances(server, uuid, seg_instance, body=True, chunks=True, sv=T
 
     if chunks and names.chunk not in repo_instances:
         logger.info(f"Creating DVID instance: {names.chunk}")
-        create_instance(server, uuid, names.chunk, 'keyvalue', {'type': 'meshes'})
+        create_instance(server, uuid, names.chunk, 'keyvalue', tags={'type': 'meshes'})
 
     if sv and not multires and names.sv not in repo_instances:
         logger.info(f"Creating DVID instance: {names.sv}")
