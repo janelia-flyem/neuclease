@@ -1131,6 +1131,10 @@ def _ensure_store_info(store, info_json):
 SV_MESH_SETTINGS_FILE = 'mesh-settings'
 
 
+class SupervoxelMeshSettingsMismatch(RuntimeError):
+    """The supervoxel meshes in a store were generated with different settings than the config's."""
+
+
 def update_multires_sv_mesh(server, uuid, seg_instance, sv, config, *,
                             processes=0, chunk_fn=None, chunk_fn_threads=8, resource_mgr=None):
     """
@@ -1289,7 +1293,7 @@ def _ensure_sv_store_settings(store, config, info_json):
         stored = store.get(SV_MESH_SETTINGS_FILE)
 
     if json.loads(stored) != settings:
-        raise RuntimeError(
+        raise SupervoxelMeshSettingsMismatch(
             f"The supervoxel meshes in {store.url} were generated with different settings: "
             f"{stored.decode()}.  Use a different 'supervoxel-storage' for these settings.")
 
