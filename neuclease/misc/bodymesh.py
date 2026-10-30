@@ -823,6 +823,9 @@ def body_chunk_surface_table(server, uuid, seg_instance, body, chunk_shape_s0_xy
     (or 1 if the body didn't exist there).  It is assumed that the surface_mutid feature was enabled in DVID
     immediately after base_uuid was committed.  If base_uuid is empty (or None), such chunks are left with
     surface_mutid 0.
+
+    The label index's last mutation id (i.e. the body's lastmod) is provided in the
+    table's attrs, as ``chunk_df.attrs['last_mutid']``.
     """
     resource_mgr = resource_mgr or DummyResourceMgr()
     # Note: chunk-shape-s0 is given in XYZ order.
@@ -881,6 +884,7 @@ def body_chunk_surface_table(server, uuid, seg_instance, body, chunk_shape_s0_xy
                         "its blocks without a surface_mutid will be treated as unchanged since then.")
             base_mutid = 1
         chunk_df.loc[chunk_df['surface_mutid'] == 0, 'surface_mutid'] = base_mutid
+    chunk_df.attrs['last_mutid'] = int(pli.last_mutid)
     return chunk_df
 
 

@@ -489,18 +489,36 @@ def test_stale_chunks():
     from neuclease.misc.multiresmesh import stale_chunks
 
     chunk_df = pd.DataFrame({
-        'z': [0, 0, 0, 0, 0],
-        'y': [0, 0, 0, 0, 0],
-        'x': [0, 64, 128, 192, 256],
-        'surface_mutid': [5, 5, 11, 5, 0],
-        'block_hash': ['0xa', '0xb', '0xc', '0xdd', '0xe'],
+        'z': [0] * 7,
+        'y': [0] * 7,
+        'x': [0, 64, 128, 192, 256, 320, 384],
+        'surface_mutid': [5, 5, 11, 5, 0, 7, 12],
+        'block_hash': ['0xa', '0xb', '0xc', '0xdd', '0xe', '0xf', '0x9'],
     })
-    previous = SimpleNamespace(lastmod=10, chunks={(0, 0, 0): '0xa', (2, 0, 0): '0xc', (3, 0, 0): '0xd', (4, 0, 0): '0xe'})
-    stale = stale_chunks(chunk_df, [64, 64, 64], previous)
+    chunks = {
+        (0, 0, 0): ('0xa', None),   # unchanged (unknown recorded mutid)
+        (2, 0, 0): ('0xc', None),   # newer surface
+        (3, 0, 0): ('0xd', None),   # different blocks (e.g. a merge)
+        (4, 0, 0): ('0xe', None),   # unknown current surface_mutid
+        (5, 0, 0): ('0xf', 7),      # unchanged (same recorded mutid)
+        (6, 0, 0): ('0x9', 4),      # changed since (a different recorded mutid, and newer than lastmod)
+    }
 
-    # unchanged, new chunk, newer surface, different blocks (e.g. a merge), unknown surface_mutid
-    assert stale.tolist() == [False, True, True, True, True]
+    # Same lineage: unknown mutids are compared with the previous mesh's lastmod.
+    previous = SimpleNamespace(lastmod=10, same_lineage=True, chunks=chunks)
+    stale = stale_chunks(chunk_df, [64, 64, 64], previous)
+    assert stale.tolist() == [False, True, True, True, True, False, True]
     assert stale_chunks(chunk_df, [64, 64, 64], None).all()
+
+    # Other lineage: only chunks with the same recorded mutid can be reused.
+    previous = SimpleNamespace(lastmod=10, same_lineage=False, chunks=chunks)
+    assert stale_chunks(chunk_df, [64, 64, 64], previous).tolist() == [True, True, True, True, True, False, True]
+
+    # A recorded mutid which differs (e.g. the previous mesh is from a *newer* state, which
+    # changed this chunk) means the chunk is stale, even if its surface_mutid is <= lastmod.
+    chunks = {(0, 0, 0): ('0xa', 8)}
+    previous = SimpleNamespace(lastmod=10, same_lineage=False, chunks=chunks)
+    assert stale_chunks(chunk_df.iloc[:1], [64, 64, 64], previous).tolist() == [True]
 
 
 def test_object_store_reuses_chunks(dvid):
@@ -593,3 +611,163 @@ def test_sv_mesh_in_object_store(dvid):
         _config(**{'storage': 'mem://bucket/bodies', 'supervoxel-storage': 'mem://bucket/bodies/'})
     with pytest.raises(ValueError, match="no 'supervoxel-storage'"):
         update_multires_sv_mesh('fake', UUID, 'segmentation', 7, _config())
+
+
+def _chunks_contents(store_or_dvid, name='1.chunks'):
+    if isinstance(store_or_dvid, FakeDVID):
+        return json.loads(store_or_dvid.kv[(MESH_INSTANCE, name)])
+    return json.loads(store_or_dvid.get(name))
+
+
+def _hide_mesh_info(dvid):
+    """Simulate a request in a UUID in which the body's mesh_info isn't visible (e.g. an older UUID)."""
+    dvid.kv.pop((INFO_INSTANCE, '1'), None)
+
+
+def test_chunks_file_records_surface_mutids(dvid):
+    update_multires_body_mesh('fake', UUID, 'segmentation', 1, _config())
+    contents = _chunks_contents(dvid)
+    assert contents['version'] == 2
+    assert len(contents['chunks']) == 27
+    assert all(len(e) == 5 and e[4] == 10 for e in contents['chunks'])
+
+
+def test_mutids_not_recorded_if_body_changed_during_update(dvid, monkeypatch):
+    real_fetch_lastmod = dvid.fetch_lastmod
+    calls = []
+
+    def fetch_lastmod(*args, **kwargs):
+        calls.append(1)
+        result = real_fetch_lastmod(*args, **kwargs)
+        if len(calls) > 1:
+            result = {'mutation id': result['mutation id'] + 1}   # An edit happened meanwhile
+        return result
+
+    monkeypatch.setattr(multiresmesh, 'fetch_lastmod', fetch_lastmod)
+    update_multires_body_mesh('fake', UUID, 'segmentation', 1, _config())
+    assert all(e[4] is None for e in _chunks_contents(dvid)['chunks'])
+
+
+def test_chunks_reused_from_live_mesh_in_other_uuids(dvid):
+    """Without a visible mesh_info, the live mesh's chunks are reused if their recorded mutids match."""
+    cfg = _config(storage='mem://bucket/meshes')
+    store = open_store('mem://bucket/meshes')
+    update_multires_body_mesh('fake', UUID, 'segmentation', 1, cfg)
+
+    _hide_mesh_info(dvid)
+    num_requests = len(dvid.sparsevol_requests)
+    mesh_info = update_multires_body_mesh('fake', UUID, 'segmentation', 1, cfg)
+    assert (mesh_info['generated-chunk-count'], mesh_info['reused-chunk-count']) == (0, 27)
+    assert len(dvid.sparsevol_requests) == num_requests
+
+
+def test_live_mesh_from_newer_state(dvid):
+    """
+    If the live mesh is from a newer state of the body (e.g. the head), and we're updating
+    an older state (e.g. an older UUID), the chunks changed since then are regenerated.
+    """
+    cfg = _config(storage='mem://bucket/meshes')
+    update_multires_body_mesh('fake', UUID, 'segmentation', 1, cfg)
+    old_surface_mutids = dvid.surface_mutids.copy()
+
+    # A newer state, with one chunk edited
+    dvid.edit_chunk((64, 64, 128))
+    mesh_info = update_multires_body_mesh('fake', UUID, 'segmentation', 1, cfg)
+    assert mesh_info['generated-chunk-count'] == 1
+
+    # Now update the older state (where that chunk still has its old surface_mutid) in an
+    # older UUID, with only the newer mesh available.
+    old_uuid = 'd' * 32
+    dvid.surface_mutids = old_surface_mutids
+    dvid.mutid = 10
+    _hide_mesh_info(dvid)
+    dvid.sparsevol_requests.clear()
+    mesh_info = update_multires_body_mesh('fake', old_uuid, 'segmentation', 1, cfg)
+    assert (mesh_info['generated-chunk-count'], mesh_info['reused-chunk-count']) == (1, 26)
+    assert dvid.sparsevol_requests == [(30, 30, 62)]
+
+    # (The older UUID's mesh is stored under its own name, leaving the live mesh alone.)
+    store = open_store('mem://bucket/meshes')
+    assert store.stat('1').metadata == {'uuid': UUID, 'lastmod': '11'}
+    assert store.stat(f'1-{old_uuid}').metadata == {'uuid': old_uuid, 'lastmod': '10'}
+
+
+def _make_v1(contents):
+    contents = dict(contents, version=1)
+    contents['chunks'] = [e[:4] for e in contents['chunks']]
+    return contents
+
+
+def test_v1_chunks_files(dvid):
+    """Version-1 '.chunks' files (without mutids) are reused in the same lineage, but not otherwise."""
+    cfg = _config(storage='mem://bucket/meshes')
+    store = open_store('mem://bucket/meshes')
+    update_multires_body_mesh('fake', UUID, 'segmentation', 1, cfg)
+    meta = store.stat('1.chunks').metadata
+    store.put('1.chunks', json.dumps(_make_v1(_chunks_contents(store))).encode(), metadata=meta)
+
+    # Same lineage (the mesh_info is visible): reused
+    dvid.edit_chunk((64, 64, 128))
+    mesh_info = update_multires_body_mesh('fake', UUID, 'segmentation', 1, cfg)
+    assert (mesh_info['generated-chunk-count'], mesh_info['reused-chunk-count']) == (1, 26)
+
+    # The new file records all of the mutids (including the reused chunks').
+    contents = _chunks_contents(store)
+    assert contents['version'] == 2 and all(e[4] is not None for e in contents['chunks'])
+
+    # Other lineage: a v1 file's chunks can't be reused.
+    store.put('1.chunks', json.dumps(_make_v1(contents)).encode(), metadata=store.stat('1.chunks').metadata)
+    _hide_mesh_info(dvid)
+    mesh_info = update_multires_body_mesh('fake', UUID, 'segmentation', 1, cfg)
+    assert (mesh_info['generated-chunk-count'], mesh_info['reused-chunk-count']) == (27, 0)
+
+
+def test_chunks_file_missing_chunks_is_not_used(dvid):
+    """If the '.chunks' file doesn't list every chunk with geometry, the previous mesh isn't reused."""
+    update_multires_body_mesh('fake', UUID, 'segmentation', 1, _config())
+    contents = _chunks_contents(dvid)
+    contents['chunks'] = [e for e in contents['chunks'] if e[:3] != [0, 0, 0]]
+    dvid.kv[(MESH_INSTANCE, '1.chunks')] = json.dumps(contents).encode()
+
+    dvid.mutid += 1
+    mesh_info = update_multires_body_mesh('fake', UUID, 'segmentation', 1, _config())
+    assert (mesh_info['generated-chunk-count'], mesh_info['reused-chunk-count']) == (27, 0)
+
+
+def test_backfill_chunks_file(dvid):
+    from neuclease.misc.multiresmesh import backfill_chunks_file
+    cfg = _config()
+    update_multires_body_mesh('fake', UUID, 'segmentation', 1, cfg)
+    complete = _chunks_contents(dvid)
+    v1 = json.dumps(_make_v1(complete)).encode()
+
+    # Unchanged body: all mutids are recovered.
+    new, status = backfill_chunks_file('fake', 'segmentation', cfg, v1)
+    assert status == 'complete'
+    assert json.loads(new) == complete
+    assert backfill_chunks_file('fake', 'segmentation', cfg, new) == (None, 'already-complete')
+
+    # Changed body: only the unchanged chunks' mutids are recovered.
+    dvid.edit_chunk((64, 64, 128))
+    new, status = backfill_chunks_file('fake', 'segmentation', cfg, v1)
+    assert status == 'partial'
+    entries = {tuple(e[:3]): e[4] for e in json.loads(new)['chunks']}
+    assert entries.pop((128, 64, 64)) is None
+    assert set(entries.values()) == {10}
+
+    # ...which can be used in any UUID.
+    store_contents = json.loads(new)
+    assert store_contents['lastmod'] == 10
+
+    # The body hasn't changed, but the hashes don't match (shouldn't happen)
+    dvid.mutid = 10
+    bad = _make_v1(complete)
+    bad['chunks'][0][3] = '0xbad'
+    assert backfill_chunks_file('fake', 'segmentation', cfg, json.dumps(bad).encode()) == (None, 'hash-mismatch')
+
+    # Different settings
+    assert backfill_chunks_file('fake', 'segmentation', _config(smoothing=3), v1) == (None, 'settings-mismatch')
+
+    # No such body (anymore)
+    gone = dict(_make_v1(complete), body=2)
+    assert backfill_chunks_file('fake', 'segmentation', cfg, json.dumps(gone).encode()) == (None, 'body-not-found')

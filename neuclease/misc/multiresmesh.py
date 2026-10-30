@@ -587,14 +587,17 @@ def info_json_for(config, voxel_size_xyz):
 # from its previous mesh, and only the changed chunks need to be regenerated.
 #
 # To determine which chunks are unchanged, the mesh's '.chunks' file lists the
-# chunks it was made from, with their block hashes (see body_chunk_surface_table()),
-# and the body's lastmod when the mesh was generated.
+# chunks it was made from, with their block hashes and surface_mutids
+# (see body_chunk_surface_table()), and the body's lastmod when the mesh was generated.
+# See stale_chunks() for the rules.
 #
 
-CHUNKS_FILE_VERSION = 1
+# Version 1 files didn't record the chunks' surface_mutids.
+CHUNKS_FILE_VERSION = 2
+SUPPORTED_CHUNKS_FILE_VERSIONS = (1, 2)
 
 
-def _chunks_file(body, uuid, lastmod, config, chunk_df, data_bytes, index_bytes):
+def _chunks_file(body, uuid, lastmod, config, chunk_df, data_bytes, index_bytes, record_mutids=True):
     """
     The contents of a body mesh's '.chunks' file (JSON):
 
@@ -605,12 +608,20 @@ def _chunks_file(body, uuid, lastmod, config, chunk_df, data_bytes, index_bytes)
         mesh-settings:  See MESH_SETTINGS
         data-bytes:     The size of the mesh's data file
         index-crc32:    The CRC32 of the mesh's index file
-        chunks:         [[x, y, z, block_hash], ...]  The chunks the mesh was made from
-                        (their corners, in full-resolution voxels)
+        chunks:         [[x, y, z, block_hash, surface_mutid], ...]  The chunks the mesh was made from
+                        (their corners, in full-resolution voxels), with the block hash and surface_mutid
+                        of the body's voxels the chunk was meshed from.  The surface_mutid may be null
+                        if it's unknown.  (In version 1, the surface_mutids were omitted.)
 
-    The last two fields are used to verify that the '.chunks' file matches the mesh files.
+    The data-bytes and index-crc32 are used to verify that the '.chunks' file matches the mesh files.
+
+    If record_mutids is False, the surface_mutids are recorded as null (unknown).
+    (That's necessary if the body may have changed while the chunks were being generated.)
     """
-    chunks = [[int(x), int(y), int(z), str(h)] for x, y, z, h in chunk_df[[*'xyz', 'block_hash']].values]
+    chunks = [
+        [int(x), int(y), int(z), str(h), (int(m) if record_mutids and m else None)]
+        for x, y, z, h, m in chunk_df[[*'xyz', 'block_hash', 'surface_mutid']].values
+    ]
     contents = {
         "version": CHUNKS_FILE_VERSION,
         "body": int(body),
@@ -624,30 +635,74 @@ def _chunks_file(body, uuid, lastmod, config, chunk_df, data_bytes, index_bytes)
     return json.dumps(contents, separators=(',', ':')).encode()
 
 
+def _parse_chunks_file_entries(contents, chunk_shape_xyz):
+    """{chunk_cell_xyz: (block_hash, surface_mutid or None)} from a '.chunks' file's contents."""
+    chunk_shape_xyz = np.asarray(chunk_shape_xyz)
+    chunks = {}
+    for x, y, z, block_hash, *rest in contents['chunks']:
+        mutid = rest[0] if rest else None
+        cell = tuple(int(c) for c in np.array([x, y, z]) // chunk_shape_xyz)
+        chunks[cell] = (block_hash, mutid)
+    return chunks
+
+
 def _load_previous_mesh(server, uuid, seg_instance, body, mesh_info, config, resource_mgr=None):
     """
-    Load the body's stored mesh (if any), to reuse its chunks' pieces.
+    Load a stored mesh of the body (if any), to reuse its chunks' pieces.
 
-    Returns None if there's no stored mesh, or if it can't be reused (e.g. it was generated with
-    different settings, or its files are inconsistent).  Otherwise, returns a SimpleNamespace with:
+    The mesh which the body's mesh_info (in the given UUID) refers to is preferred.
+    Its UUID is the given UUID or an ancestor of it ('same lineage'), so the chunks which
+    haven't changed since then can be identified by their surface_mutids (see stale_chunks()).
+    Failing that (e.g. if the mesh_info in this UUID was never written, because the body
+    has only been meshed in a descendant or a different branch), the body's live mesh in
+    the object store (if any) is used instead, whose chunks can be reused only if their
+    recorded surface_mutids are known.
 
-        lastmod:    The body's mutation id when the mesh was generated.
-        chunks:     {chunk_cell_xyz: block_hash} of the chunks it was made from.
-        cells:      The same chunk cells, as a set.
-        data:       The mesh's data file (bytes).
-        fragments:  [{position_xyz: (offset, size)}, ...] The location of each fragment in the data, per LOD.
+    Returns None if there's no usable stored mesh (e.g. it was generated with different settings,
+    or its files are inconsistent).  Otherwise, returns a SimpleNamespace with:
+
+        lastmod:        The body's mutation id when the mesh was generated.
+        same_lineage:   True if the mesh was generated in this UUID or an ancestor of it.
+        chunks:         {chunk_cell_xyz: (block_hash, surface_mutid or None)} of the chunks it was made from.
+        cells:          The same chunk cells, as a set.
+        data:           The mesh's data file (bytes).
+        fragments:      [{position_xyz: (offset, size)}, ...] The location of each fragment in the data, per LOD.
     """
     resource_mgr = resource_mgr or DummyResourceMgr()
-    if (mesh_info is None
-            or mesh_info.get('method') != MESH_METHOD
-            or mesh_info.get('mesh-info-version') != MESH_INFO_VERSION
-            or mesh_info.get('mesh-settings') != mesh_settings(config)):
+    tried = set()
+    if (mesh_info is not None
+            and mesh_info.get('method') == MESH_METHOD
+            and mesh_info.get('mesh-info-version') == MESH_INFO_VERSION
+            and mesh_info.get('mesh-settings') == mesh_settings(config)
+            and (location := locate_multires_body_mesh(server, uuid, seg_instance, body, mesh_info))):
+        previous = _read_previous_mesh(server, uuid, seg_instance, location, mesh_info['lastmod'],
+                                       config, True, resource_mgr)
+        if previous is not None:
+            return previous
+        tried.add((location.store and location.store.url, location.data_name))
+
+    if config['storage'] == 'dvid':
         return None
 
-    location = locate_multires_body_mesh(server, uuid, seg_instance, body, mesh_info)
-    if location is None:
+    # Try the live mesh (if we didn't already).
+    store = open_store(config['storage'])
+    if (store.url, f'{body}') in tried or (stat := store.stat(f'{body}')) is None:
         return None
+    try:
+        lastmod = int(stat.metadata['lastmod'])
+    except (KeyError, ValueError):
+        return None
+    location = SimpleNamespace(store=store, data_name=f'{body}', index_name=f'{body}.index',
+                               chunks_name=f'{body}.chunks')
+    previous = _read_previous_mesh(server, uuid, seg_instance, location, lastmod, config, False, resource_mgr)
+    if previous is not None:
+        logger.info(f"Using the body's live mesh (from {stat.metadata.get('uuid', '<unknown>')[:6]}) "
+                    "to recover unchanged chunks")
+    return previous
 
+
+def _read_previous_mesh(server, uuid, seg_instance, location, expected_lastmod, config, same_lineage, resource_mgr):
+    """Read and verify a stored mesh's files, for _load_previous_mesh()."""
     with (
         Timer("Fetching the previous mesh", logger),
         resource_mgr.access_context(server, True, 1, 0)
@@ -656,28 +711,25 @@ def _load_previous_mesh(server, uuid, seg_instance, body, mesh_info, config, res
 
     chunks_file, data, index = files['.chunks'], files[''], files['.index']
     if chunks_file is None or data is None or index is None:
-        logger.warning("The previous mesh's files are missing; regenerating all chunks.")
+        logger.warning("The previous mesh's files are missing; not reusing it.")
         return None
 
     contents = json.loads(chunks_file)
-    if (contents.get('version') != CHUNKS_FILE_VERSION
-            or contents.get('lastmod') != mesh_info['lastmod']
+    if (contents.get('version') not in SUPPORTED_CHUNKS_FILE_VERSIONS
+            or contents.get('lastmod') != expected_lastmod
             or contents.get('mesh-settings') != mesh_settings(config)
             or contents.get('data-bytes') != len(data)
             or contents.get('index-crc32') != zlib.crc32(index)):
-        logger.warning("The previous mesh's files are inconsistent; regenerating all chunks.")
+        logger.warning("The previous mesh's files are inconsistent (or have different settings); not reusing it.")
         return None
 
     chunk_shape_xyz = np.array(config['chunk-shape-s0'])
-    chunks = {
-        tuple(int(c) for c in np.array(xyz) // chunk_shape_xyz): block_hash
-        for *xyz, block_hash in contents['chunks']
-    }
+    chunks = _parse_chunks_file_entries(contents, chunk_shape_xyz)
 
     manifest = v2m_multires.parse_manifest(index)
     if (manifest['num_lods'] != len(config['lod-error-thresholds'])
             or (manifest['chunk_shape_xyz'] != chunk_shape_xyz).any()):
-        logger.warning("The previous mesh's manifest doesn't match the config; regenerating all chunks.")
+        logger.warning("The previous mesh's manifest doesn't match the config; not reusing it.")
         return None
 
     fragments = [
@@ -685,8 +737,17 @@ def _load_previous_mesh(server, uuid, seg_instance, body, mesh_info, config, res
          for p, o, s in zip(lod['positions'], lod['offsets'], lod['sizes'])}
         for lod in manifest['lods']
     ]
-    return SimpleNamespace(lastmod=contents['lastmod'], chunks=chunks, cells=set(chunks),
-                           data=data, fragments=fragments)
+
+    # Every chunk with geometry must be listed, since assembly relies on the list to know which
+    # chunks each coarse fragment contains.  (Listed chunks with no geometry are fine.)
+    unlisted = {p for p, (_, size) in fragments[0].items() if size} - set(chunks)
+    if unlisted:
+        logger.warning(f"The previous mesh's '.chunks' file doesn't list {len(unlisted)} of its chunks; "
+                       "not reusing it.")
+        return None
+
+    return SimpleNamespace(lastmod=contents['lastmod'], same_lineage=same_lineage, chunks=chunks,
+                           cells=set(chunks), data=data, fragments=fragments)
 
 
 def _fetch_mesh_files(server, uuid, seg_instance, location):
@@ -712,9 +773,16 @@ def stale_chunks(chunk_df, chunk_shape_s0_xyz, previous):
     Determine which of a body's chunks must be regenerated, given its previous mesh (or None).
 
     A chunk's pieces can be reused from the previous mesh only if the chunk is listed in it with
-    the same block hash, and its surface_mutid is no greater than the previous mesh's lastmod.
-    (Merges don't update the surface_mutids of the merged blocks, so the block hash is needed to
-    detect them.)  A chunk whose surface_mutid is unknown (0) is always stale.
+    the same block hash, and either:
+
+    - its surface_mutid is the same as the one recorded for it in the previous mesh, or
+    - the previous mesh is from the same lineage (this UUID or an ancestor), and the chunk's
+      surface_mutid is no greater than the previous mesh's lastmod.
+
+    (Mutation ids are unique within a repo, so the same surface_mutid means the same most recent
+    change, whichever UUID the previous mesh was generated in.  The second rule applies to chunks
+    whose surface_mutid wasn't recorded.  Merges don't update the surface_mutids of the merged blocks,
+    so the block hash is needed to detect them.)  A chunk whose surface_mutid is unknown (0) is always stale.
 
     Args:
         chunk_df:
@@ -727,12 +795,88 @@ def stale_chunks(chunk_df, chunk_shape_s0_xyz, previous):
         return np.ones(len(chunk_df), dtype=bool)
 
     cells = chunk_df[[*'xyz']].values // np.asarray(chunk_shape_s0_xyz)
-    previous_hashes = np.array([previous.chunks.get(tuple(int(c) for c in cell)) for cell in cells], dtype=object)
-    return (
-        (previous_hashes != chunk_df['block_hash'].values)
-        | (chunk_df['surface_mutid'].values == 0)
-        | (chunk_df['surface_mutid'].values > previous.lastmod)
+    entries = [previous.chunks.get(tuple(int(c) for c in cell), (None, None)) for cell in cells]
+    previous_hashes = np.array([h for h, _ in entries], dtype=object)
+    previous_mutids = np.array([-1 if m is None else m for _, m in entries], dtype=np.int64)
+    mutids = chunk_df['surface_mutid'].values.astype(np.int64)
+
+    reusable = (
+        (previous_hashes == chunk_df['block_hash'].values)
+        & (mutids != 0)
+        & ((previous_mutids == mutids) | (previous.same_lineage & (mutids <= previous.lastmod)))
     )
+    return ~reusable
+
+
+def backfill_chunks_file(server, seg_instance, config, chunks_bytes, resource_mgr=None):
+    """
+    Record the chunks' surface_mutids in an existing '.chunks' file (e.g. a version-1 file,
+    which didn't record them), using the body's current label index, if it's safe to do so.
+    (That allows the mesh's chunks to be reused by updates in any UUID; see stale_chunks().)
+
+    The label index is read in the UUID in which the mesh was generated.  If the body
+    hasn't changed since then (the label index's last mutation id is the mesh's lastmod),
+    all of the chunks' surface_mutids are recorded (after verifying their block hashes).
+    Otherwise, only the chunks which evidently haven't changed since then (with the same
+    block hash, and a surface_mutid no greater than the mesh's lastmod) are recorded,
+    and the others remain unknown (null).
+
+    Returns:
+        (new_chunks_bytes, status), where new_chunks_bytes is None if nothing needs to be
+        written, and status is one of:
+
+            'complete'           All surface_mutids are now recorded.
+            'partial'            Some surface_mutids remain unknown (the body has changed).
+            'already-complete'   All surface_mutids were already recorded.  (Nothing to write.)
+            'no-change'          None could be added.  (Nothing to write.)
+            'hash-mismatch'      The body hasn't changed, but the block hashes don't match.  (Nothing written.)
+            'settings-mismatch'  The file's mesh settings differ from the config's.  (Nothing written.)
+            'unsupported-version'
+            'body-not-found'     The body doesn't exist in the mesh's UUID (anymore).  (Nothing written.)
+    """
+    validate_config(config)
+    contents = json.loads(chunks_bytes)
+    if contents.get('version') not in SUPPORTED_CHUNKS_FILE_VERSIONS:
+        return None, 'unsupported-version'
+    if contents.get('mesh-settings') != mesh_settings(config):
+        return None, 'settings-mismatch'
+
+    old_entries = [list(e) + [None] * (5 - len(e)) for e in contents['chunks']]
+    if all(e[4] is not None for e in old_entries):
+        return None, 'already-complete'
+
+    chunk_shape_xyz = np.array(config['chunk-shape-s0'])
+    try:
+        chunk_df = body_chunk_surface_table(server, contents['uuid'], seg_instance, contents['body'],
+                                            chunk_shape_xyz, config['base-uuid'], resource_mgr)
+    except HTTPError as ex:
+        if ex.response is not None and ex.response.status_code == 404:
+            return None, 'body-not-found'
+        raise
+    unchanged = (chunk_df.attrs['last_mutid'] == contents['lastmod'])
+    current = {
+        (int(x), int(y), int(z)): (h, int(m))
+        for x, y, z, h, m in chunk_df[[*'xyz', 'block_hash', 'surface_mutid']].values
+    }
+
+    entries = []
+    added = 0
+    for x, y, z, block_hash, mutid in old_entries:
+        if mutid is None:
+            cur_hash, cur_mutid = current.get((x, y, z), (None, 0))
+            if unchanged and cur_hash != block_hash:
+                return None, 'hash-mismatch'
+            if cur_hash == block_hash and cur_mutid != 0 and (unchanged or cur_mutid <= contents['lastmod']):
+                mutid = cur_mutid
+                added += 1
+        entries.append([x, y, z, block_hash, mutid])
+
+    if added == 0:
+        return None, 'no-change'
+    contents['version'] = CHUNKS_FILE_VERSION
+    contents['chunks'] = entries
+    status = 'complete' if all(e[4] is not None for e in entries) else 'partial'
+    return json.dumps(contents, separators=(',', ':')).encode(), status
 
 
 #
@@ -829,11 +973,22 @@ def update_multires_body_mesh(
             logger.info("Another process already stored an up-to-date body mesh")
             return None
 
+    # The chunks' surface_mutids (from the label index) are recorded with the mesh, for reusing its
+    # chunks in other UUIDs.  That's only valid if the chunks were generated from the state of the body
+    # which the label index described.  If the body changed in the meantime, some chunks may
+    # reflect a newer state, so we record the surface_mutids as unknown.
+    with resource_mgr.access_context(server, True, 1, 0):
+        final_lastmod = fetch_lastmod(server, uuid, seg_instance, body)['mutation id']
+    record_mutids = (final_lastmod == lastmod == chunk_df.attrs.get('last_mutid'))
+    if not record_mutids:
+        logger.info(f"The body changed while its mesh was being generated (lastmod {lastmod} -> {final_lastmod}); "
+                    "not recording its chunks' surface_mutids")
+
     voxel_size_xyz = np.asarray(fetch_resolution_zyx(server, uuid, seg_instance))[::-1]
     with Timer(f"Assembling multires mesh from {len(new_pieces)} new and {len(reused_cells)} reused chunks", logger):
         data_bytes, index_bytes, info_json, stats = assemble_body_mesh(
             new_pieces, chunk_shape_s0_xyz, voxel_size_xyz, config, reused_cells, previous)
-    chunks_file = _chunks_file(body, uuid, lastmod, config, chunk_df, data_bytes, index_bytes)
+    chunks_file = _chunks_file(body, uuid, lastmod, config, chunk_df, data_bytes, index_bytes, record_mutids)
 
     mesh_info = {
         "mesh-info-version": MESH_INFO_VERSION,
