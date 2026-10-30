@@ -863,19 +863,27 @@ def resolve_ref(server, ref, expand=False, *, uuid_only=False, session=None):
 
         >>> resolve_ref('emdata4:8900', 'master')
         abc123
+
+        >>> resolve_ref('emdata4:8900', 'abc123:master')  # (The repo containing abc123)
+        def456
     """
-    try:
-        # Is it a uuid?
-        expanded = expand_uuid(server, ref, session=session)
-    except HTTPError:
-        pass
-    except RuntimeError as ex:
-        if 'No matching uuid' in str(ex):
+    # A ref of the form '<uuid>:<branch>' is a branch reference, never a uuid.
+    # (We must not even try to expand it: DVID accepts it as a repo reference,
+    # and since uuids_match() compares only the common prefix, a full uuid with
+    # a ':<branch>' suffix would "match" that uuid itself.)
+    if ':' not in ref:
+        try:
+            # Is it a uuid?
+            expanded = expand_uuid(server, ref, session=session)
+        except HTTPError:
             pass
-    else:
-        if expand:
-            return expanded
-        return ref
+        except RuntimeError as ex:
+            if 'No matching uuid' in str(ex):
+                pass
+        else:
+            if expand:
+                return expanded
+            return ref
 
     if uuid_only:
         raise RuntimeError(f'"{ref}" is not a known uuid')
