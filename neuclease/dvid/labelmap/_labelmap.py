@@ -2,6 +2,7 @@ import re
 import gzip
 import time
 import logging
+import operator
 from io import BytesIO
 from functools import partial, lru_cache, wraps, reduce
 from itertools import starmap, chain
@@ -810,7 +811,7 @@ def fetch_labels(server, uuid, instance, coordinates_zyx, scale=0, supervoxels=F
     # I changed the order of these two args, so let's verify
     # that no old code is sending them in the wrong order.
     assert isinstance(supervoxels, bool)
-    assert np.issubdtype(type(scale), np.integer)
+    scale = operator.index(scale)
 
     coordinates_zyx = np.asarray(coordinates_zyx, np.int32)
     assert coordinates_zyx.ndim == 2 and coordinates_zyx.shape[1] == 3
@@ -1819,7 +1820,7 @@ def fetch_sparsevol(server, uuid, instance, label, scale=0, supervoxels=False,
             will be unchanged.)
     """
     assert isinstance(supervoxels, bool)
-    assert np.issubdtype(type(scale), np.integer)
+    scale = operator.index(scale)
     assert format in ('coords', 'rle', 'ranges', 'mask')
 
     rles = fetch_sparsevol_rles(server, uuid, instance, label, scale, supervoxels, box_zyx=mask_box, session=session)
