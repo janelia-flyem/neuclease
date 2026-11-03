@@ -3931,7 +3931,7 @@ def thickest_point_in_body(server, uuid, instance, body, *, session=None):
     return tuple(p + p2), d + d2
 
 
-def recursive_sv_split_by_grid(server, uuid, instance, sv, init_grid=8192, final_grid=2048):
+def recursive_sv_split_by_grid(server, uuid, instance, sv, init_grid=8192, final_grid=2048, check_completion=False):
     """
     Split a huge supervoxel into smaller pieces using a simple, block-aligned strategy.
 
@@ -3942,6 +3942,14 @@ def recursive_sv_split_by_grid(server, uuid, instance, sv, init_grid=8192, final
         The resulting pieces will NOT necessarily be contiguous.  This function exists
         solely to make it easier to work with unmanagably large supervoxels by chopping
         them up.
+
+    Args:
+        check_completion:
+            If True, after each split, poll the voxels (at scales 0, 3, and 6) of every
+            block the new supervoxels occupy, until the old supervoxel ID is gone.
+            This is expensive, and it shouldn't be necessary: DVID doesn't respond to
+            a split-supervoxel request until it has written all of the split's blocks,
+            at every scale (including the downres pyramid), and updated the label index.
     """
     if not isinstance(init_grid, Collection):
         init_grid = 3 * (init_grid,)
@@ -3971,12 +3979,14 @@ def recursive_sv_split_by_grid(server, uuid, instance, sv, init_grid=8192, final
 
             if i < num_blocks - 1:
                 payload = construct_rle_payload_from_ranges(block_rng)
-                with Timer(f"{' '*(indent+2)}Posting split: {sv}", logger):
-                    split_sv, remain_sv = post_split_supervoxel(server, uuid, instance, remain_sv, payload)
+                parent_sv = remain_sv
+                with Timer(f"{' '*(indent+2)}Posting split: {parent_sv}", logger):
+                    split_sv, remain_sv = post_split_supervoxel(server, uuid, instance, parent_sv, payload)
 
-                # Before continuing, poll RLEs until split appears complete.
-                _wait_for_split_done(server, uuid, instance, sv, split_sv, indent + 2)
-                _wait_for_split_done(server, uuid, instance, sv, remain_sv, indent + 2)
+                if check_completion:
+                    # Poll the voxels until the split appears complete.
+                    _wait_for_split_done(server, uuid, instance, parent_sv, split_sv, indent + 2)
+                    _wait_for_split_done(server, uuid, instance, parent_sv, remain_sv, indent + 2)
 
                 new_svs[tuple(init_grid)][block_id] = split_sv
                 if tuple(init_grid) != tuple(final_grid):
@@ -4018,7 +4028,7 @@ def _wait_for_split_done(server, uuid, instance, parent_sv, child_sv, indent=0, 
         incomplete_corners = pd.DataFrame(svc * (2**(6-scale)))
         incomplete_corners = ((incomplete_corners // 64) * 64).drop_duplicates().values
         while len(incomplete_corners):
-            incomplete_corners = _determine_incomplete_blocks(server, uuid, instance, incomplete_corners, 0, parent_sv)
+            incomplete_corners = _determine_incomplete_blocks(server, uuid, instance, incomplete_corners, scale, parent_sv)
             if len(incomplete_corners):
                 logger.info(f"{' '*indent}Split {parent_sv}->{child_sv}: Scale {scale}: Not yet complete.")
                 time.sleep(1.0)

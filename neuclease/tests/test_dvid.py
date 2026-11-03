@@ -22,7 +22,8 @@ from neuclease.dvid import (dvid_api_wrapper, DvidInstanceInfo, fetch_supervoxel
                             copy_labelindices,
                             fetch_maxlabel, post_maxlabel, fetch_nextlabel, post_nextlabel, create_labelmap_instance,
                             post_merge, fetch_sparsevol_coarse, fetch_sparsevol_coarse_via_labelindex, post_branch,
-                            post_hierarchical_cleaves, fetch_mapping, fetch_mutations, post_commit, post_newversion)
+                            post_hierarchical_cleaves, fetch_mapping, fetch_mutations, post_commit, post_newversion,
+                            recursive_sv_split_by_grid)
 
 from neuclease.dvid._dvid import default_dvid_session
 from neuclease.util import box_to_slicing, extract_subvol, ndrange
@@ -335,6 +336,41 @@ def test_fetch_labelmap_specificblocks_missing_block(labelmap_setup):
     assert vol.shape == (64,64,704)
     assert (vol[:, :, :64] == block).all()
     assert (vol[:, :, 64:] == 0).all()
+
+
+@pytest.mark.parametrize('check_completion', [False, True])
+def test_recursive_sv_split_by_grid(labelmap_setup, check_completion):
+    """
+    Split a 256**3 supervoxel along a 128-px grid, then a 64-px grid.
+    Immediately afterwards (with or without check_completion),
+    the voxels should be split at every scale.
+    """
+    dvid_server, dvid_repo, _merge_table_path, _mapping_path, _supervoxel_vol = labelmap_setup
+    instance = f'segmentation-recursive-split-{check_completion}'
+    create_labelmap_instance(dvid_server, dvid_repo, instance, max_scale=2)
+    post_labelmap_voxels(dvid_server, dvid_repo, instance, (0,0,0), np.ones((256,256,256), np.uint64), downres=True)
+
+    new_svs = recursive_sv_split_by_grid(dvid_server, dvid_repo, instance, 1, init_grid=128, final_grid=64,
+                                         check_completion=check_completion)
+    assert len(new_svs[(128,128,128)]) == 8
+    assert len(new_svs[(64,64,64)]) == 64
+
+    # Every 64-px block now has its own supervoxel...
+    vol = fetch_labelmap_voxels(dvid_server, dvid_repo, instance, [(0,0,0), (256,256,256)], supervoxels=True)
+    for block_id, sv in new_svs[(64,64,64)].items():
+        z, y, x = 64 * np.array(block_id)
+        assert (vol[z:z+64, y:y+64, x:x+64] == sv).all()
+
+    # ...still mapped to the original body,
+    svs = np.array([*new_svs[(64,64,64)].values()], np.uint64)
+    assert len(set(svs)) == 64
+    assert (fetch_mapping(dvid_server, dvid_repo, instance, svs) == 1).all()
+
+    # ...and the downres pyramid is consistent with scale 0.
+    for scale in (1, 2):
+        s = 2**scale
+        vol_s = fetch_labelmap_voxels(dvid_server, dvid_repo, instance, [(0,0,0), (256//s,)*3], scale=scale, supervoxels=True)
+        assert (vol_s == vol[::s, ::s, ::s]).all()
 
 
 def test_post_labelmap_blocks(labelmap_setup):
