@@ -23,7 +23,8 @@ from neuclease.dvid import (dvid_api_wrapper, DvidInstanceInfo, fetch_supervoxel
                             fetch_maxlabel, post_maxlabel, fetch_nextlabel, post_nextlabel, create_labelmap_instance,
                             post_merge, fetch_sparsevol_coarse, fetch_sparsevol_coarse_via_labelindex, post_branch,
                             post_hierarchical_cleaves, fetch_mapping, fetch_mutations, post_commit, post_newversion,
-                            recursive_sv_split_by_grid)
+                            recursive_sv_split_by_grid, split_disconnected_supervoxel, split_disconnected_supervoxels,
+                            fetch_sparsevol, SupervoxelSplitError)
 
 from neuclease.dvid._dvid import default_dvid_session
 from neuclease.util import box_to_slicing, extract_subvol, ndrange
@@ -371,6 +372,133 @@ def test_recursive_sv_split_by_grid(labelmap_setup, check_completion):
         s = 2**scale
         vol_s = fetch_labelmap_voxels(dvid_server, dvid_repo, instance, [(0,0,0), (256//s,)*3], scale=scale, supervoxels=True)
         assert (vol_s == vol[::s, ::s, ::s]).all()
+
+
+@pytest.mark.parametrize('connectivity', [6, 26])
+def test_split_disconnected_supervoxels(labelmap_setup, connectivity):
+    dvid_server, dvid_repo, _merge_table_path, _mapping_path, _supervoxel_vol = labelmap_setup
+    instance = f'segmentation-split-disconnected-{connectivity}'
+    create_labelmap_instance(dvid_server, dvid_repo, instance, max_scale=1)
+
+    # Supervoxel 1 consists of five disconnected cubes,
+    # two of which (C and D) touch only at a corner.
+    vol = np.zeros((128,128,128), np.uint64)
+    vol[0:10, 0:10, 0:10] = 1        # A
+    vol[20:40, 20:40, 20:40] = 1     # B
+    vol[60:64, 60:64, 60:64] = 1     # C
+    vol[64:70, 64:70, 64:70] = 1     # D
+    vol[100:128, 0:5, 50:120] = 1    # E (spans several blocks)
+
+    # Supervoxel 2 is a single slab.
+    vol[:, 120:128, :] = 2
+    post_labelmap_voxels(dvid_server, dvid_repo, instance, (0,0,0), vol, downres=True)
+
+    sv1_box_voxels = 128*70*120
+    sv2_box_voxels = 128*8*128
+
+    # If the bounding box is too large, nothing happens.
+    with pytest.raises(SupervoxelSplitError) as exc_info:
+        split_disconnected_supervoxel(dvid_server, dvid_repo, instance, 1, max_voxels=1_000_000)
+    assert exc_info.value.box_voxels == sv1_box_voxels
+    assert exc_info.value.completed_splits == []
+    assert (fetch_labelmap_voxels(dvid_server, dvid_repo, instance, [(0,0,0), (128,128,128)], supervoxels=True) == vol).all()
+
+    # The looping function reports failures (including for a nonexistent supervoxel)
+    # and continues with the remaining supervoxels.
+    df = split_disconnected_supervoxels(dvid_server, dvid_repo, instance, [1, 999, 2], max_voxels=1_000_000)
+    assert df['orig_sv'].tolist() == [1, 999, 2]
+    assert 'max_voxels' in df.loc[0, 'error']
+    assert df.loc[0, 'box_voxels'] == sv1_box_voxels
+    assert pd.isna(df.loc[0, 'sv'])
+    assert df.loc[1, 'error'] is not None
+    assert pd.isna(df.loc[1, 'box_voxels'])
+    assert df.loc[2, 'error'] is None
+    assert df.loc[2, 'box_voxels'] == sv2_box_voxels
+    assert (fetch_labelmap_voxels(dvid_server, dvid_repo, instance, [(0,0,0), (128,128,128)], supervoxels=True) == vol).all()
+
+    df = split_disconnected_supervoxels(dvid_server, dvid_repo, instance, [1, 2], connectivity=connectivity)
+    assert df['error'].isnull().all()
+    assert (df.query('orig_sv == 1')['box_voxels'] == sv1_box_voxels).all()
+
+    # Supervoxel 2 is untouched.
+    assert df.query('orig_sv == 2')[['sv', 'voxel_count']].values.tolist() == [[2, (vol == 2).sum()]]
+
+    expected_sizes = {6: [28*5*70, 20**3, 10**3, 6**3, 4**3],
+                      26: [28*5*70, 20**3, 10**3, 6**3 + 4**3]}[connectivity]
+    df1 = df.query('orig_sv == 1')
+    assert df1['voxel_count'].tolist() == expected_sizes
+    assert df1['sv'].nunique() == len(expected_sizes)
+    assert 1 not in df1['sv'].values
+
+    # Each component now has its own supervoxel, and the original ID is gone.
+    seg = fetch_labelmap_voxels(dvid_server, dvid_repo, instance, [(0,0,0), (128,128,128)], supervoxels=True)
+    assert (seg == 1).sum() == 0
+    assert ((seg == 2) == (vol == 2)).all()
+    assert ((seg != 0) == (vol != 0)).all()
+    for sv, voxel_count in df1[['sv', 'voxel_count']].values:
+        assert (seg == sv).sum() == voxel_count
+        assert len(fetch_sparsevol(dvid_server, dvid_repo, instance, sv, supervoxels=True)) == voxel_count
+
+    # The new supervoxels still belong to the original body.
+    assert (fetch_mapping(dvid_server, dvid_repo, instance, df1['sv'].to_numpy(np.uint64)) == 1).all()
+
+    # The downres pyramid was updated, too.
+    seg_s1 = fetch_labelmap_voxels(dvid_server, dvid_repo, instance, [(0,0,0), (64,64,64)], scale=1, supervoxels=True)
+    assert (seg_s1 == 1).sum() == 0
+    assert set(pd.unique(seg_s1.ravel())) <= {0, 2, *df1['sv']}
+
+
+def test_split_disconnected_supervoxels_partial_failure(labelmap_setup, monkeypatch):
+    """
+    If a split fails after other splits have completed, the error
+    says the supervoxel is partially split, and lists the completed splits.
+    """
+    import neuclease.dvid.labelmap._labelmap as labelmap_module
+
+    dvid_server, dvid_repo, _merge_table_path, _mapping_path, _supervoxel_vol = labelmap_setup
+    instance = 'segmentation-split-disconnected-partial'
+    create_labelmap_instance(dvid_server, dvid_repo, instance)
+
+    # Four disconnected cubes, so three splits are needed.
+    vol = np.zeros((64,64,64), np.uint64)
+    vol[0:10, 0:10, 0:10] = 1
+    vol[20:30, 0:10, 0:10] = 1
+    vol[40:50, 0:10, 0:10] = 1
+    vol[0:10, 40:50, 40:50] = 1
+    post_labelmap_voxels(dvid_server, dvid_repo, instance, (0,0,0), vol)
+
+    # Make the second split fail.
+    orig_post_split = labelmap_module.post_split_supervoxel
+    num_calls = 0
+    def failing_post_split(*args, **kwargs):
+        nonlocal num_calls
+        num_calls += 1
+        if num_calls == 2:
+            raise RuntimeError("Simulated failure")
+        return orig_post_split(*args, **kwargs)
+    monkeypatch.setattr(labelmap_module, 'post_split_supervoxel', failing_post_split)
+
+    with pytest.raises(SupervoxelSplitError) as exc_info:
+        split_disconnected_supervoxel(dvid_server, dvid_repo, instance, 1)
+    assert 'PARTIALLY split' in str(exc_info.value)
+    assert exc_info.value.box_voxels == 50*50*50
+    assert len(exc_info.value.completed_splits) == 1
+    parent_sv, split_sv, remain_sv = exc_info.value.completed_splits[0]
+    assert parent_sv == 1
+
+    # The completed split really happened.
+    seg = fetch_labelmap_voxels(dvid_server, dvid_repo, instance, [(0,0,0), (64,64,64)], supervoxels=True)
+    assert (seg == 1).sum() == 0
+    assert set(pd.unique(seg.ravel())) == {0, split_sv, remain_sv}
+
+    # The looping function reports failed splits, too.
+    # (remain_sv still has two components; make its split fail.)
+    num_calls = 1
+    df = split_disconnected_supervoxels(dvid_server, dvid_repo, instance, [remain_sv])
+    assert len(df) == 1
+    assert 'Simulated failure' in df.loc[0, 'error']
+    assert df.loc[0, 'box_voxels'] > 0
+    assert pd.isna(df.loc[0, 'sv'])
 
 
 def test_post_labelmap_blocks(labelmap_setup):

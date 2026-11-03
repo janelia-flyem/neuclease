@@ -31,7 +31,8 @@ from .. import dvid_api_wrapper, fetch_generic_json, fetch_repo_info, fetch_bran
 from ..server import fetch_server_info
 from ..repo import create_voxel_instance, fetch_repo_dag, is_locked, resolve_ref, find_repo_root, resolve_ref_range, find_parent
 from ..kafka import read_kafka_messages, kafka_msgs_to_df
-from ..rle import parse_rle_response, runlength_decode_from_ranges_to_mask, rle_ranges_box, construct_rle_payload_from_ranges, split_ranges_for_grid
+from ..rle import (parse_rle_response, runlength_decode_from_ranges_to_mask, rle_ranges_box, construct_rle_payload_from_ranges,
+                   split_ranges_for_grid, runlength_encode_labels_to_ranges)
 from ..mutations import fetch_generic_mutations
 
 from ._split import fetch_supervoxel_splits_from_dvid
@@ -1121,8 +1122,8 @@ def post_split_supervoxel(server, uuid, instance, supervoxel, rle_payload_bytes,
         The two new IDs resulting from the split: (split_sv_id, remaining_sv_id)
 
     Note:
-        DVID will not return until the mapping and label index have been updated,
-        but DVID may still be updating the voxel data (and multires pyramids).
+        DVID will not return until the split is complete, including the voxel data,
+        the multires pyramids (if downres=True), the mapping, and the label index.
     """
     url = f'{server}/api/node/{uuid}/{instance}/split-supervoxel/{supervoxel}'
 
@@ -1151,6 +1152,197 @@ def post_split_supervoxel(server, uuid, instance, supervoxel, rle_payload_bytes,
 
 # Legacy name
 split_supervoxel = post_split_supervoxel
+
+
+class SupervoxelSplitError(RuntimeError):
+    """
+    Raised by split_disconnected_supervoxel().
+
+    Attributes:
+        box_voxels:
+            The size (in voxels) of the supervoxel's bounding box.
+        completed_splits:
+            List of (parent_sv, split_sv, remain_sv), one for each split
+            that was completed before the error occurred (if any).
+    """
+    def __init__(self, msg, box_voxels, completed_splits=()):
+        super().__init__(msg)
+        self.box_voxels = box_voxels
+        self.completed_splits = list(completed_splits)
+
+
+@dvid_api_wrapper
+def split_disconnected_supervoxel(server, uuid, instance, supervoxel, max_voxels=500_000_000, connectivity=6, *, session=None):
+    """
+    Split a supervoxel into its connected components, so that
+    each component becomes a separate supervoxel.
+
+    The supervoxel's mask is downloaded (at scale 0) and labeled into connected
+    components.  If there is more than one component, the components are split off
+    via post_split_supervoxel().  (The parent supervoxel ID will no longer exist.)
+
+    Each split causes DVID to rewrite every block of the supervoxel being split,
+    so the components are not split off one at a time.  Instead, they are partitioned
+    into two groups of roughly equal voxel count, the groups are split apart,
+    and then each group is (recursively) partitioned in the same way.
+    For N components, that requires N-1 splits, but each voxel is rewritten
+    only about log2(N) times, rather than up to N times.
+
+    Args:
+        server, uuid, instance:
+            labelmap instance
+
+        supervoxel:
+            The supervoxel ID to split.
+
+        max_voxels:
+            The maximum allowed size (in voxels) of the supervoxel's bounding box.
+            The labeled volume requires 5 bytes per voxel (a uint8 mask and uint32 labels),
+            so the default of 500M voxels requires 2.5 GB of RAM.
+            If the supervoxel's bounding box is larger, a SupervoxelSplitError
+            (a subclass of RuntimeError) is raised before any splits are performed.
+
+        connectivity:
+            Either 6 or 26.
+
+    Returns:
+        DataFrame with one row per connected component and columns
+        ['orig_sv', 'sv', 'voxel_count', 'box_voxels'], sorted by voxel_count (descending),
+        where box_voxels is the size of the original supervoxel's bounding box.
+        If the supervoxel has only one component, then it isn't split,
+        and the result has only one row (in which sv == orig_sv).
+
+    Raises:
+        SupervoxelSplitError, if the bounding box is too large, or if any error
+        occurs after the supervoxel's sparsevol has been fetched.  The exception's
+        box_voxels attribute gives the bounding box size, and its completed_splits
+        attribute lists any splits that were completed before the error.
+        (Errors while fetching the sparsevol are raised as-is.)
+    """
+    neighborhood = {6: 'direct', 26: 'indirect'}[connectivity]
+
+    with Timer(f"Fetching sparsevol for sv {supervoxel}", logger, log_start=False):
+        ranges = fetch_sparsevol(server, uuid, instance, supervoxel, supervoxels=True, format='ranges', session=session)
+
+    box = rle_ranges_box(ranges)
+    box_voxels = int(np.prod(box[1] - box[0], dtype=np.int64))
+    if box_voxels > max_voxels:
+        raise SupervoxelSplitError(
+            f"Supervoxel {supervoxel} has bounding box {box[:, ::-1].tolist()} (XYZ), "
+            f"which contains {box_voxels} voxels.  That exceeds max_voxels ({max_voxels}).",
+            box_voxels)
+
+    # (parent_sv, split_sv, remain_sv) for each completed split
+    completed_splits = []
+    try:
+        with Timer(f"Labeling connected components of sv {supervoxel}", logger, log_start=False):
+            mask, _ = runlength_decode_from_ranges_to_mask(ranges, box)
+            del ranges
+            cc = labelMultiArrayWithBackground(mask.view(np.uint8), neighborhood=neighborhood)
+            del mask
+            cc = np.asarray(cc)
+            num_cc = int(cc.max())
+
+        if num_cc <= 1:
+            voxel_count = np.count_nonzero(cc)
+            return pd.DataFrame({'orig_sv': [supervoxel], 'sv': [supervoxel],
+                                 'voxel_count': [voxel_count], 'box_voxels': [box_voxels]})
+
+        # Run-length encode each component, with each component's runs contiguous.
+        run_ranges, run_labels = runlength_encode_labels_to_ranges(cc, box)
+        del cc
+        order = np.argsort(run_labels, kind='stable')
+        run_ranges = run_ranges[order]
+        run_labels = run_labels[order]
+        del order
+
+        run_sizes = (run_ranges[:, 3] - run_ranges[:, 2] + 1).astype(np.int64)
+        cc_sizes = np.bincount(run_labels, weights=run_sizes, minlength=num_cc+1).astype(np.int64)
+        cc_run_starts = np.searchsorted(run_labels, np.arange(num_cc+2))
+
+        logger.info(f"Supervoxel {supervoxel} has {num_cc} components.  Splitting.")
+
+        # Each item is (sv, [component labels]), where all of the
+        # listed components are currently contained within sv.
+        cc_svs = {}
+        pending = [(supervoxel, np.arange(1, num_cc+1))]
+        with Timer(f"Splitting sv {supervoxel} into {num_cc} supervoxels", logger, log_start=False):
+            while pending:
+                sv, ccs = pending.pop()
+                if len(ccs) == 1:
+                    cc_svs[ccs[0]] = sv
+                    continue
+
+                # Partition the components into two groups of roughly equal voxel count.
+                groups = ([], [])
+                group_sizes = [0, 0]
+                for c in sorted(ccs, key=lambda c: -cc_sizes[c]):
+                    g = int(group_sizes[1] < group_sizes[0])
+                    groups[g].append(c)
+                    group_sizes[g] += cc_sizes[c]
+
+                # Send the smaller group as the split payload
+                g = int(group_sizes[1] < group_sizes[0])
+                split_ccs, remain_ccs = groups[g], groups[1-g]
+                split_ranges = np.concatenate([run_ranges[cc_run_starts[c]:cc_run_starts[c+1]] for c in split_ccs])
+                payload = construct_rle_payload_from_ranges(split_ranges)
+                del split_ranges
+
+                split_sv, remain_sv = post_split_supervoxel(server, uuid, instance, sv, payload, session=session)
+                completed_splits.append((sv, split_sv, remain_sv))
+                pending.append((split_sv, split_ccs))
+                pending.append((remain_sv, remain_ccs))
+    except Exception as ex:
+        msg = f"Failed to split supervoxel {supervoxel}: {type(ex).__name__}: {ex}"
+        if completed_splits:
+            msg += (f"\nNOTE: Supervoxel {supervoxel} is now PARTIALLY split: {len(completed_splits)} of "
+                    f"{num_cc - 1} splits were completed.  See this exception's completed_splits attribute.")
+        raise SupervoxelSplitError(msg, box_voxels, completed_splits) from ex
+
+    df = pd.DataFrame({
+        'orig_sv': supervoxel,
+        'sv': [cc_svs[c] for c in range(1, num_cc+1)],
+        'voxel_count': cc_sizes[1:],
+        'box_voxels': box_voxels,
+    })
+    df = df.sort_values('voxel_count', ascending=False, ignore_index=True)
+    return df
+
+
+def split_disconnected_supervoxels(server, uuid, instance, supervoxels, max_voxels=500_000_000, connectivity=6, *, session=None):
+    """
+    Call split_disconnected_supervoxel() for each of the given supervoxels.
+    See that function for argument descriptions.
+
+    If a supervoxel can't be processed (for example, if its bounding box
+    exceeds max_voxels), the error is logged and the next supervoxel is processed.
+
+    Returns:
+        DataFrame with columns ['orig_sv', 'sv', 'voxel_count', 'box_voxels', 'error'].
+        For each supervoxel that was processed successfully, there is one row per
+        connected component, and 'error' is None.
+        For each supervoxel that failed, there is a single row in which 'error'
+        contains the error message, 'sv' and 'voxel_count' are <NA>, and 'box_voxels'
+        is the size of the supervoxel's bounding box (or <NA> if unknown).
+        If the error says the supervoxel was PARTIALLY split, then the supervoxel
+        ID no longer exists, and the error message says how many splits completed.
+    """
+    dfs = []
+    for sv in tqdm_proxy(supervoxels):
+        try:
+            df = split_disconnected_supervoxel(server, uuid, instance, sv, max_voxels, connectivity, session=session)
+            df['error'] = None
+        except Exception as ex:
+            logger.error(f"Could not split supervoxel {sv}: {ex}")
+            df = pd.DataFrame({'orig_sv': [sv], 'sv': [pd.NA], 'voxel_count': [pd.NA],
+                               'box_voxels': [getattr(ex, 'box_voxels', pd.NA)],
+                               'error': [f"{type(ex).__name__}: {ex}"]})
+        dfs.append(df)
+
+    df = pd.concat(dfs, ignore_index=True)
+    for col in ['sv', 'voxel_count', 'box_voxels']:
+        df[col] = df[col].astype('UInt64')
+    return df
 
 
 @dvid_api_wrapper
