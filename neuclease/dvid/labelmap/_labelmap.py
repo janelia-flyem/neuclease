@@ -4032,10 +4032,14 @@ def _determine_incomplete_blocks(server, uuid, instance, corners, scale, parent_
     """
     corner_batches = iter_batches(corners, 20)
     impl_fn = partial(_determine_incomplete_blocks_impl, server, uuid, instance, scale, parent_sv)
-    proc = min(16, len(corner_batches))
-    if proc == 1:
-        proc = 0
-    incomplete = compute_parallel(impl_fn, corner_batches, processes=proc)
+    threads = min(16, len(corner_batches))
+    if threads == 1:
+        threads = 0
+
+    # Use threads, not processes: spawned worker processes would not
+    # inherit settings such as set_default_dvid_session_timeout().
+    # (Block decoding releases the GIL, so threads parallelize well.)
+    incomplete = compute_parallel(impl_fn, corner_batches, threads=threads)
     return sorted(chain(*incomplete))
 
 
