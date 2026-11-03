@@ -148,6 +148,8 @@ def inflate_labelarray_blocks(buf, shape, offset):
     Args:
         buf:
             bytes, as returned by the ``/blocks`` endpoint.
+            None is treated as an empty stream (DVID omits empty blocks
+            from its response, so callers may have no data for a block).
         shape:
             Shape (ZYX) of the output volume.
         offset:
@@ -160,6 +162,8 @@ def inflate_labelarray_blocks(buf, shape, offset):
     """
     shape = np.asarray(shape)
     offset = np.asarray(offset)
+    if buf is None:
+        buf = b''
     a = np.frombuffer(buf, np.uint8)
     coords, ranges = _parse_blocks_stream(a)
     out = np.zeros(tuple(shape), np.uint64)

@@ -16,7 +16,7 @@ from neuclease.dvid.labelmap.blockcodec import inflate_labelarray_blocks
 from neuclease.dvid import (dvid_api_wrapper, DvidInstanceInfo, fetch_supervoxels, fetch_supervoxel_sizes_for_body,
                             fetch_label, fetch_labels, fetch_labels_batched, fetch_mappings, fetch_complete_mappings, post_mappings,
                             fetch_mutation_id, generate_sample_coordinate, fetch_labelmap_voxels, fetch_labelmap_voxels_chunkwise,
-                            post_labelmap_blocks, post_labelmap_voxels,
+                            post_labelmap_blocks, post_labelmap_voxels, fetch_labelmap_specificblocks,
                             encode_labelarray_volume, encode_nonaligned_labelarray_volume, fetch_raw, post_raw,
                             fetch_labelindex, post_labelindex, fetch_labelindices, create_labelindex, PandasLabelIndex,
                             copy_labelindices,
@@ -306,6 +306,35 @@ def test_fetch_labelmap_voxels_chunkwise(labelmap_setup):
                                                    format='lazy-array')
 
     assert (voxels_proxy() == supervoxel_vol).all()
+
+
+def test_fetch_labelmap_specificblocks_missing_block(labelmap_setup):
+    """
+    DVID omits blocks it has no data for.
+    Such blocks should be returned as zeros, in every format.
+    """
+    dvid_server, dvid_repo, _merge_table_path, _mapping_path, _supervoxel_vol = labelmap_setup
+    instance = 'segmentation-specificblocks'
+    create_labelmap_instance(dvid_server, dvid_repo, instance)
+
+    block = np.random.randint(1, 10, size=(64,64,64), dtype=np.uint64)
+    post_labelmap_voxels(dvid_server, dvid_repo, instance, (0,0,0), block)
+
+    # The second block was never written.
+    corners = [(0,0,0), (0,0,640)]
+
+    blocks = fetch_labelmap_specificblocks(dvid_server, dvid_repo, instance, corners, supervoxels=True, format='blocks')
+    assert (blocks[(0,0,0)] == block).all()
+    assert (blocks[(0,0,640)] == 0).all()
+
+    callables = fetch_labelmap_specificblocks(dvid_server, dvid_repo, instance, corners, supervoxels=True, format='callable-blocks')
+    assert (callables[(0,0,0)]() == block).all()
+    assert (callables[(0,0,640)]() == 0).all()
+
+    vol = fetch_labelmap_specificblocks(dvid_server, dvid_repo, instance, corners, supervoxels=True, format='array')
+    assert vol.shape == (64,64,704)
+    assert (vol[:, :, :64] == block).all()
+    assert (vol[:, :, 64:] == 0).all()
 
 
 def test_post_labelmap_blocks(labelmap_setup):
