@@ -5,7 +5,8 @@ import scipy.ndimage
 
 from neuclease.dvid.rle import (runlength_encode_to_ranges, runlength_decode_from_ranges,
                                 runlength_encode_to_lengths, runlength_decode_from_lengths,
-                                rle_box_dilation)
+                                rle_box_dilation, runlength_encode_mask_to_ranges,
+                                runlength_encode_labels_to_ranges)
 
 @pytest.fixture
 def sparse_object():
@@ -93,6 +94,33 @@ def test_rle_box_dilation(sparse_object):
     assert (decoded_dilated_coords == (dilated_coords - 3)).all()
 
     
+
+def test_runlength_encode_labels_to_ranges():
+    rng = np.random.default_rng(0)
+    vol = rng.integers(0, 4, size=(10, 20, 30), dtype=np.uint32)
+
+    # Include runs that touch the end of each row.
+    vol[:, :, -3:] = 2
+    box = np.array([(100, 200, 300), (110, 220, 330)])
+
+    ranges, labels = runlength_encode_labels_to_ranges(vol, box)
+    assert ranges.dtype == np.int32
+    assert labels.dtype == vol.dtype
+    assert 0 not in labels
+
+    # Runs are in scan order
+    assert (np.lexsort(ranges[:, ::-1].T) == np.arange(len(ranges))).all()
+
+    # For each label, the runs match those of the label's mask
+    for label in (1, 2, 3):
+        expected = runlength_encode_mask_to_ranges(vol == label, box)
+        assert (ranges[labels == label] == expected).all()
+
+    # A volume with no labels has no runs
+    ranges, labels = runlength_encode_labels_to_ranges(np.zeros((2,3,4), np.uint8))
+    assert ranges.shape == (0, 4)
+    assert labels.shape == (0,)
+
 
 if __name__ == "__main__":
     pytest.main(['-s', '--tb=native', '--pyargs', 'neuclease.tests.test_rle'])

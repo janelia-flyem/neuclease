@@ -126,8 +126,11 @@ def test_inflate_volume():
     assert (inflated == expected).all()
 
 
-def test_inflate_empty_stream():
-    vol = inflate_labelarray_blocks(b'', (64,128,64), (0,0,0))
+@pytest.mark.parametrize('buf', [b'', None])
+def test_inflate_empty_stream(buf):
+    # None is accepted for compatibility with libdvid, and because
+    # fetch_labelmap_specificblocks() uses None for blocks DVID didn't return.
+    vol = inflate_labelarray_blocks(buf, (64,128,64), (0,0,0))
     assert vol.shape == (64,128,64)
     assert (vol == 0).all()
 

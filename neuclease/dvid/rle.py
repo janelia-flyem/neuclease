@@ -542,6 +542,90 @@ def _runlength_encode_mask_to_ranges(mask):
     return runs
 
 
+def runlength_encode_labels_to_ranges(label_vol, vol_box=None):
+    """
+    Given a label volume, return the run-length encoding of each
+    nonzero label, as ranges (one run never spans two labels):
+
+        [[Z,Y,X1,X2],
+         [Z,Y,X1,X2],
+         [Z,Y,X1,X2],
+         ...
+        ]
+
+    Note:
+        The interval [X1,X2] is INCLUSIVE, following DVID conventions,
+        not Python conventions (i.e. X2 is not one-past-the-end).
+
+    Args:
+        label_vol:
+            3D label volume (any integer dtype).  Label 0 is treated as background.
+
+        vol_box:
+            If provided, should correspond to the location of the volume in global coordinates.
+            The returned ranges will be offset to reflect global coordinates.
+
+    Returns:
+        (ranges, labels), where ranges has shape (N,4) and dtype int32 (as above),
+        and labels has shape (N,) and gives the label of each run.
+        The runs are listed in ZYX scan order.
+    """
+    assert label_vol.ndim == 3
+    label_vol = np.asarray(label_vol, order='C')
+    ranges, labels = _runlength_encode_labels_to_ranges(label_vol)
+
+    if vol_box is not None:
+        vol_box = np.asarray(vol_box)
+        assert vol_box.shape == (2,3)
+        assert label_vol.shape == tuple(vol_box[1] - vol_box[0]), \
+            "label_vol shape doesn't correspond to vol_box"
+        ranges[:] += vol_box[0, (0,1,2,2)].astype(np.int32)
+
+    return ranges, labels
+
+
+@jit(nopython=True, nogil=True)
+def _runlength_encode_labels_to_ranges(label_vol):
+    """
+    Helper function for runlength_encode_labels_to_ranges(), above.
+    Makes two passes over the volume: one to count the runs, one to record them.
+    """
+    Z, Y, X = label_vol.shape
+
+    num_runs = 0
+    for z in range(Z):
+        for y in range(Y):
+            prev = 0
+            for x in range(X):
+                v = label_vol[z, y, x]
+                if v != 0 and v != prev:
+                    num_runs += 1
+                prev = v
+
+    ranges = np.empty((num_runs, 4), np.int32)
+    labels = np.empty(num_runs, label_vol.dtype)
+    i = -1
+    for z in range(Z):
+        for y in range(Y):
+            prev = 0
+            for x in range(X):
+                v = label_vol[z, y, x]
+                if v != prev:
+                    if prev != 0:
+                        ranges[i, 3] = x - 1
+                    if v != 0:
+                        i += 1
+                        ranges[i, 0] = z
+                        ranges[i, 1] = y
+                        ranges[i, 2] = x
+                        labels[i] = v
+                prev = v
+            if prev != 0:
+                ranges[i, 3] = X - 1
+
+    return ranges, labels
+
+
 def runlength_encode_to_lengths(coord_list_zyx, assume_sorted=False):
     """
     Given an array of coordinates in the form:

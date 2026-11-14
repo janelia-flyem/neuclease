@@ -651,7 +651,9 @@ def dataframe_to_elements(df, prop_cols=[]):
             "Kind": row.Kind
         }
         if 'Tags' in df.columns:
-            if not isinstance(row.Tags, list):
+            if isinstance(row.Tags, np.ndarray):
+                e['Tags'] = row.Tags.tolist()
+            elif not isinstance(row.Tags, list):
                 e['Tags'] = [row.Tags]
             else:
                 e['Tags'] = row.Tags

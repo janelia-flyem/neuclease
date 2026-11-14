@@ -771,3 +771,19 @@ def test_backfill_chunks_file(dvid):
     # No such body (anymore)
     gone = dict(_make_v1(complete), body=2)
     assert backfill_chunks_file('fake', 'segmentation', cfg, json.dumps(gone).encode()) == (None, 'body-not-found')
+
+
+def test_init_supervoxel_mesh_store(dvid):
+    from neuclease.misc.multiresmesh import init_supervoxel_mesh_store, DvidKeyValueStore
+    cfg = _config(**{'supervoxel-storage': 'dvid'})
+    store = init_supervoxel_mesh_store('fake', UUID, 'segmentation', cfg)
+    assert isinstance(store, DvidKeyValueStore) and store.instance == SV_INSTANCE
+    assert json.loads(dvid.kv[(SV_INSTANCE, 'mesh-settings')]) == multiresmesh.mesh_settings(cfg)
+
+    # (Idempotent)
+    init_supervoxel_mesh_store('fake', UUID, 'segmentation', cfg)
+    assert dvid.created_instances == [(SV_INSTANCE, 'keyvalue', False, {'type': 'meshes'})]
+
+    multiresmesh._verified_sv_stores.clear()
+    with pytest.raises(multiresmesh.SupervoxelMeshSettingsMismatch):
+        init_supervoxel_mesh_store('fake', UUID, 'segmentation', _config(**{'supervoxel-storage': 'dvid', 'smoothing': 3}))

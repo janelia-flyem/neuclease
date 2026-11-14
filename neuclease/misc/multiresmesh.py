@@ -1313,9 +1313,8 @@ def update_multires_sv_mesh(server, uuid, seg_instance, sv, config, *,
     """
     resource_mgr = resource_mgr or DummyResourceMgr()
     validate_config(config)
-    store = open_supervoxel_store(server, uuid, seg_instance, config, create=True)
+    store = init_supervoxel_mesh_store(server, uuid, seg_instance, config)
     voxel_size_xyz = np.asarray(fetch_resolution_zyx(server, uuid, seg_instance))[::-1]
-    _ensure_sv_store_settings(store, config, info_json_for(config, voxel_size_xyz))
 
     if (index_bytes := store.get(f'{sv}.index')) is not None:
         return index_bytes
@@ -1338,6 +1337,25 @@ def update_multires_sv_mesh(server, uuid, seg_instance, sv, config, *,
     store.put(f'{sv}', data_bytes, cache_control=BODY_MESH_CACHE_CONTROL)
     store.put(f'{sv}.index', index_bytes, cache_control=BODY_MESH_CACHE_CONTROL)
     return index_bytes
+
+
+def init_supervoxel_mesh_store(server, uuid, seg_instance, config):
+    """
+    Prepare the configured supervoxel mesh storage (see MultiresMeshConfigSchema['supervoxel-storage']):
+    create its DVID instance (if necessary), and record (or verify) its mesh settings and 'info'.
+    Returns the store.
+
+    (update_multires_sv_mesh() calls this.  When generating many supervoxel meshes in parallel,
+    call it once beforehand, to avoid creating the DVID instance concurrently.)
+
+    Raises:
+        SupervoxelMeshSettingsMismatch if the store's meshes were generated with different settings.
+    """
+    validate_config(config)
+    store = open_supervoxel_store(server, uuid, seg_instance, config, create=True)
+    voxel_size_xyz = np.asarray(fetch_resolution_zyx(server, uuid, seg_instance))[::-1]
+    _ensure_sv_store_settings(store, config, info_json_for(config, voxel_size_xyz))
+    return store
 
 
 def locate_multires_sv_mesh(server, uuid, seg_instance, sv, config):
