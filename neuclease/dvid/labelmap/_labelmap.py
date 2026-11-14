@@ -2920,7 +2920,7 @@ def encode_labelarray_blocks(corners_zyx, blocks, gzip_level=6, progress=False):
             The level of gzip compression to use, from 0 (no compression) to 9.
 
     Returns:
-        memoryview
+        bytes
     """
     if not hasattr(corners_zyx, '__len__'):
         corners_zyx = list(corners_zyx)
@@ -2960,8 +2960,11 @@ def encode_labelarray_blocks(corners_zyx, blocks, gzip_level=6, progress=False):
         stream.write(len_buf)
         stream.write(block_buf)
 
-    body_data = stream.getbuffer()
-    return body_data
+    # Note: Return a copy (getvalue()), not a view of the stream's buffer (getbuffer()).
+    # A view outlives the stream, and finalizing a BytesIO with an outstanding view raises
+    # 'BufferError: Existing exports of data: object cannot be re-sized'
+    # (reported as "Exception ignored while finalizing file ..." in Python 3.14).
+    return stream.getvalue()
 
 
 def encode_labelarray_volume(offset_zyx, volume, gzip_level=6, omit_empty_blocks=False):

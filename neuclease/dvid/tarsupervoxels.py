@@ -242,7 +242,8 @@ def create_tar_from_dict(d, tar_name, in_memory=False):
     if in_memory:
         tar_stream = BytesIO()
         _create_tar_from_dict(d, tar_name, tar_stream)
-        return tar_stream.getbuffer()
+        # (getvalue(), not getbuffer(): see encode_labelarray_blocks())
+        return tar_stream.getvalue()
 
     with open(tar_name, 'wb') as f:
         _create_tar_from_dict(d, tar_name, f)
