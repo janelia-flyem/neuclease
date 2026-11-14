@@ -82,6 +82,8 @@ def view_edges_for_body(edges, body, initial_ngstate, seg_layer_name='.*', link_
     In the future, it would be nice to offer an option to construct
     a skeleton for tree data, rather than line annotations.
     (Can skeleton nodes/edges have properties associated with them?)
+
+    Note: It is assumed that the edges are given in the same units that the neuroglancer viewer state dimensions use.
     """
     assert isinstance(initial_ngstate, (dict, str))
     if isinstance(initial_ngstate, dict):
@@ -102,6 +104,8 @@ def view_edges_for_body(edges, body, initial_ngstate, seg_layer_name='.*', link_
         if layer['type'] == 'segmentation' and re.match(seg_layer_name, layer['name'])
     ][0]
 
+    res_nm_xyz = [state['dimensions'][k][0] * 1e9 for k in 'xyz']
+
     state['title'] = f'Body {body}'
     state['position'] = max_gap_midpoint.tolist()
     seg_layer['segments'] = [str(body)]
@@ -111,7 +115,8 @@ def view_edges_for_body(edges, body, initial_ngstate, seg_layer_name='.*', link_
         f'{body}-edges-max-{max_gap:.1f}',
         linkedSegmentationLayer=seg_layer['name'],
         properties=['distance'],
-        shader=SHADER
+        shader=SHADER,
+        unit_res_nm=res_nm_xyz
     )
     state['layers'].append(line_layer)
 
