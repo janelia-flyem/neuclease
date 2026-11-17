@@ -2049,7 +2049,7 @@ def meshes_from_volume(vol, fullres_box_zyx=None, subset_labels=None, *,
                 m.laplacian_smooth(smoothing)
 
             if len(m.vertices_zyx) > minimum_decimation_vertices:
-                m.simplify_openmesh(decimation)
+                m.simplify(decimation)
 
             if not keep_normals:
                 m.drop_normals()
