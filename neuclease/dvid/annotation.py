@@ -646,9 +646,14 @@ def dataframe_to_elements(df, prop_cols=[]):
 
     elements = []
     for row in df.itertuples():
+        # Always include Tags and Prop (even if empty).
+        # Older versions of DVID store omitted fields as null in the label
+        # and tag denormalizations, which some clients (e.g. neuroglancer) reject.
         e = {
             "Pos": [int(row.x), int(row.y), int(row.z)],
-            "Kind": row.Kind
+            "Kind": row.Kind,
+            "Tags": [],
+            "Prop": {},
         }
         if 'Tags' in df.columns:
             if isinstance(row.Tags, np.ndarray):
@@ -660,8 +665,6 @@ def dataframe_to_elements(df, prop_cols=[]):
         elements.append(e)
 
     if prop_cols:
-        for e in elements:
-            e['Prop'] = {}
         for col in prop_cols:
             # Properties must be strings.
             for e, p in zip(elements, df[col].astype('string')):
@@ -837,8 +840,28 @@ def post_elements(server, uuid, instance, elements, kafkalog=True, *, session=No
     if not kafkalog or kafkalog == 'off':
         params['kafkalog'] = 'off'
 
+    # Older versions of DVID store omitted (or null) Tags/Prop as null in the
+    # label and tag denormalizations, which some clients (e.g. neuroglancer) reject.
+    # Fill them in explicitly (without modifying the caller's dicts).
+    elements = [_fill_empty_fields(e) for e in elements]
+
     r = session.post(f'{server}/api/node/{uuid}/{instance}/elements', json=elements, params=params)
     r.raise_for_status()
+
+
+def _fill_empty_fields(e):
+    """
+    Return the given element, or a shallow copy of it in which
+    missing/null 'Tags' and 'Prop' have been replaced with [] and {}.
+    """
+    if e.get('Tags') is not None and e.get('Prop') is not None:
+        return e
+    e = {**e}
+    if e.get('Tags') is None:
+        e['Tags'] = []
+    if e.get('Prop') is None:
+        e['Prop'] = {}
+    return e
 
 
 @dvid_api_wrapper
